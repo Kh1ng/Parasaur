@@ -9,8 +9,14 @@ WCAG contrast from the token values. The component test
 ## What was there
 
 The app shipped two themes, Dark and Light, as two blocks of CSS custom
-properties in `src/index.css`. No Gruvbox theme existed in this repository,
-in the enterprise overlay, on any branch or in history.
+properties in `src/index.css`. No Gruvbox palette existed in this repository,
+in the enterprise overlay, on any branch, in history, or in the owner's local
+checkout (searched by name and by the Gruvbox hex values). The only brand
+reference, `docs/branding/parasaur-reference.png`, is a green palette, not
+Gruvbox. Gruvbox below is therefore built from the published palette.
+
+The app now ships four themes: Dark (default), Light, Gruvbox and Tokyo
+Night.
 
 The token layer itself was sound: surfaces, ink, status, accent and chart
 series were already semantic, and most components used them. The drift came
@@ -36,9 +42,10 @@ its author was looking at and wrong in the other.
 
 | # | Where | Finding |
 |---|---|---|
-| O1 | Enterprise overlay | `integration/overlay/apps/web/src/pages/SettingsPage.tsx` is a full copy of core's Settings page pinned to an older core revision. It still has the hand-written Dark/Light toggle with white on `bg-accent` (2.86:1) and four more white-on-accent buttons. Once the overlay's core pin moves past this change, its Appearance section can render `<ThemePicker />` and pick up Gruvbox. |
+| O1 | Enterprise overlay | `integration/overlay/apps/web/src/pages/SettingsPage.tsx` is a full copy of core's Settings page pinned to an older core revision. It still has the hand-written Dark/Light toggle, so enterprise builds cannot pick Gruvbox or Tokyo Night, and six `bg-accent text-white` buttons: 2.86:1 in Dark and 2.69:1 under Gruvbox's accent. `CloudHosting.tsx` has further palette classes. Once the overlay's core pin moves past this change, its Appearance section can render `<ThemePicker />` and pick up Gruvbox. |
 | O2 | Android | `values/themes.xml` and `values-night/themes.xml` use an indigo accent (#4F46E5 / #818CF8) unrelated to the web accent, and have no Gruvbox variant. |
 | O3 | iOS | Uses system colors only; there is no app theme to align. |
+| O4 | PWA manifest | `manifest.webmanifest` and the initial `<meta name="theme-color">` are fixed at Dark's #0d0d0d. `applyTheme` updates the meta tag at runtime; an installed app's splash screen stays dark whatever theme is chosen, since a manifest cannot vary per theme. |
 
 ## Gruvbox
 
@@ -57,13 +64,25 @@ Muted ink stays fg4 (#a89984), 4.72:1 on the raised surface.
 Fills (`accent-fill` blue #83a598, `critical-fill` red #fb4934) take dark
 text (`--on-fill` #1d2021): 6.09:1 and 4.77:1.
 
+## Tokyo Night
+
+The night variant: page `bg_dark`, card `bg`, raised the storm `bg`, borders
+`fg_gutter`, ink `fg`/`fg_dark`. Status, accent and series use the published
+hues unchanged, all above 4.5:1 including on their badge tints. Muted ink is
+the one exception: `dark5` (#737aa2) is 3.49:1 on the raised surface and is
+lightened to #8c92b3 (4.77:1). Fills take dark text (`--on-fill` #1a1b26):
+6.79:1 on the blue accent fill, 6.46:1 on the red critical fill.
+
 ## Adding a theme
 
 1. Add an entry to `THEMES` in `src/lib/themes.ts`.
 2. Add a `[data-theme='<id>']` block to `src/index.css` with every token the
    Dark block defines.
-3. Run `npm run test:component --workspace=apps/web`; the contrast test
-   covers the new theme without changes.
+3. Run `npm run test:unit --workspace=apps/web` and
+   `npm run test:component --workspace=apps/web`. `themes.test.ts` fails if
+   the block misses a token that Dark declares (a missing token would
+   silently inherit Dark's value) or if `chrome` differs from the block's
+   `--surface-page`; the contrast test covers the new theme's values.
 
 Components need no change, provided they keep to the token classes. A
 palette class such as `text-red-400` or `bg-white/5` in a component is the

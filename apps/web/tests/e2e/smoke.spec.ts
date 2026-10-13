@@ -141,6 +141,9 @@ test.describe('desktop content', () => {
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     await page.getByRole('button', { name: 'Gruvbox' }).click();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'gruvbox');
+    await page.getByRole('button', { name: 'Tokyo Night' }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'tokyo-night');
+    await page.getByRole('button', { name: 'Gruvbox' }).click();
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'gruvbox');
     await page.getByRole('button', { name: 'Dark' }).click();

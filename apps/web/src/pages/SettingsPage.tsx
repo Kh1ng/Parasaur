@@ -30,7 +30,7 @@ const SETTINGS_SECTION_TITLES: Record<SettingsSectionId, string> = { general: 'G
  * Per-profile dispatch and routing live in the Profile sidebar, not here. */
 const SETTINGS_INDEX: { heading: string; section: SettingsSectionId | null; keywords: string }[] = [
   { heading: 'Connection & pairing', section: null, keywords: 'access token device pair qr central server' },
-  { heading: 'Appearance', section: 'general', keywords: 'theme dark light gruvbox notifications popup bell' },
+  { heading: 'Appearance', section: 'general', keywords: 'theme dark light gruvbox tokyo night notifications popup bell' },
   { heading: 'Global manager', section: 'general', keywords: 'manager wake autonomy' },
   { heading: 'Machine capacity', section: 'general', keywords: 'node capacity memory cpu cores ceiling reservation floor admission workers' },
   { heading: 'Notification channel', section: 'general', keywords: 'notifications alerts telegram' },

@@ -117,6 +117,43 @@
   --series-8: 254 128 25;   /* orange */
 }
 
+/* Tokyo Night (night variant). Every hue is the published palette except
+   muted ink: dark5 (#737aa2) is 3.49:1 on the raised surface and is
+   lightened to 4.5:1. Fills take dark text. */
+[data-theme='tokyo-night'] {
+  color-scheme: dark;
+  --surface-page: 22 22 30;      /* bg_dark #16161e */
+  --surface-card: 26 27 38;      /* bg #1a1b26 */
+  --surface-raised: 36 40 59;    /* bg (storm) #24283b */
+  --border-subtle: 59 66 97;     /* fg_gutter #3b4261 */
+  --overlay: 192 202 245;
+  --scrim: 0 0 0;
+
+  --ink-primary: 192 202 245;    /* fg #c0caf5 */
+  --ink-secondary: 169 177 214;  /* fg_dark #a9b1d6 */
+  --ink-muted: 140 146 179;      /* dark5 #737aa2, lightened */
+
+  --status-good: 158 206 106;    /* green #9ece6a */
+  --status-warning: 224 175 104; /* yellow #e0af68 */
+  --status-serious: 255 158 100; /* orange #ff9e64 */
+  --status-critical: 247 118 142; /* red #f7768e */
+  --status-unknown: 140 146 179;
+
+  --accent: 122 162 247;         /* blue #7aa2f7 */
+  --accent-fill: 122 162 247;
+  --critical-fill: 247 118 142;
+  --on-fill: 26 27 38;
+
+  --series-1: 122 162 247;  /* blue */
+  --series-2: 125 207 255;  /* cyan */
+  --series-3: 224 175 104;  /* yellow */
+  --series-4: 158 206 106;  /* green */
+  --series-5: 187 154 247;  /* magenta */
+  --series-6: 247 118 142;  /* red */
+  --series-7: 255 0 124;    /* magenta2 */
+  --series-8: 255 158 100;  /* orange */
+}
+
 @layer base {
   html {
     @apply antialiased;

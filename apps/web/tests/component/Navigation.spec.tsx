@@ -89,6 +89,8 @@ test('session controls stay reachable on small phones, landscape, and desktop', 
 
 test('semantic text, badges and filled buttons retain contrast in every theme', async ({ mount, page }, testInfo) => {
   await mount(<div className="bg-card p-4"><p className="text-primary">Fleet</p><p className="text-secondary">Two nodes</p><p className="text-muted">Last seen</p><button className="btn-primary">Add node</button><button className="btn-danger">Delete</button>{['good', 'warning', 'serious', 'critical'].map((status) => <span key={status} className={`badge badge-${status}`}>{status}</span>)}<div className="bg-raised"><p className="text-muted">Raised</p>{['good', 'warning', 'serious', 'critical'].map((status) => <p key={status} className={`text-${status}`}>{status}</p>)}</div></div>);
+  // Buttons animate color changes; read the settled colors, not a frame mid-transition.
+  await page.addStyleTag({ content: '* { transition: none !important; }' });
   for (const { id } of THEMES) {
     await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, id);
     const ratios = await page.evaluate(() => {
@@ -111,9 +113,15 @@ test('semantic text, badges and filled buttons retain contrast in every theme', 
 });
 
 test('the theme picker offers every registered theme and applies the one pressed', async ({ mount, page }) => {
-  await mount(<ThemePicker />);
+  await page.setViewportSize({ width: 320, height: 568 });
+  await mount(<section className="card-padded max-w-md"><ThemePicker /></section>);
   const group = page.getByRole('group', { name: 'Theme' });
   await expect(group.getByRole('button')).toHaveText(THEMES.map(({ label }) => label));
+  // Every button stays on screen on a small phone: the row wraps instead of clipping.
+  for (const button of await group.getByRole('button').all()) {
+    const box = (await button.boundingBox())!;
+    expect(box.x + box.width).toBeLessThanOrEqual(320);
+  }
   for (const { id, label, scheme } of THEMES) {
     await group.getByRole('button', { name: label }).click();
     await expect(group.getByRole('button', { name: label })).toHaveAttribute('aria-pressed', 'true');

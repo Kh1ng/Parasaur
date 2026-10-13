@@ -4,7 +4,7 @@
  * only the semantic token classes (bg-card, text-muted, hover:bg-overlay/5,
  * text-on-fill, ...), so adding or changing a theme touches no component.
  */
-import { Flame, Moon, Sun, type LucideIcon } from 'lucide-react';
+import { Flame, Moon, Sparkles, Sun, type LucideIcon } from 'lucide-react';
 
 export interface ThemeDefinition {
   id: string;
@@ -20,6 +20,7 @@ export const THEMES = [
   { id: 'dark', label: 'Dark', icon: Moon, scheme: 'dark', chrome: '#0d0d0d' },
   { id: 'light', label: 'Light', icon: Sun, scheme: 'light', chrome: '#f9f9f7' },
   { id: 'gruvbox', label: 'Gruvbox', icon: Flame, scheme: 'dark', chrome: '#1d2021' },
+  { id: 'tokyo-night', label: 'Tokyo Night', icon: Sparkles, scheme: 'dark', chrome: '#16161e' },
 ] as const satisfies readonly ThemeDefinition[];
 
 export type Theme = (typeof THEMES)[number]['id'];
