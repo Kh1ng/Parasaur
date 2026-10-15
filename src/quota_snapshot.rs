@@ -1,6 +1,6 @@
 use crate::availability;
 use crate::config::{self, CandidateConfig, GahConfig, RoutingPolicy};
-use crate::ledger::{self, LedgerEntry};
+use crate::ledger;
 use crate::quota_store;
 use crate::status::ProfileIdentity;
 use anyhow::Result;
@@ -789,28 +789,6 @@ fn summarize_groups(groups: Vec<ledger::summary::GroupSummary>) -> UsageSummary 
         summary.success_rate = Some(summary.validation_pass as f64 / summary.entries as f64);
     }
     summary
-}
-
-fn entry_matches_candidate(entry: &LedgerEntry, backend: &str, model: Option<&str>) -> bool {
-    if config::canonical_backend_name(&entry.effective_backend) != backend {
-        return false;
-    }
-    match model {
-        Some(model) => entry.effective_model.as_deref() == Some(model),
-        None => true,
-    }
-}
-
-#[allow(dead_code)]
-fn filtered_entries<'a>(
-    entries: &'a [LedgerEntry],
-    backend: &str,
-    model: Option<&str>,
-) -> Vec<&'a LedgerEntry> {
-    entries
-        .iter()
-        .filter(|entry| entry_matches_candidate(entry, backend, model))
-        .collect()
 }
 
 #[cfg(test)]

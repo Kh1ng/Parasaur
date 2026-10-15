@@ -16,7 +16,6 @@
 //! `dispatch::attempts::mark_backend_unavailable_from_output_for_identity_at`,
 //! which calls `parse()` after a backend run completes and feeds the result
 //! into `availability::record_unavailable_for_identity`.
-#![allow(dead_code)]
 
 use chrono::{DateTime, Duration as ChronoDuration, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;

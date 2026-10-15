@@ -18,7 +18,6 @@ static READ_ENTRIES_CALLS: LazyLock<Mutex<std::collections::HashMap<PathBuf, usi
 
 /// Resolve current paid-route grants for one work item. Later grant/revoke
 /// entries supersede earlier ones for the same exact backend/model identity.
-#[allow(dead_code)]
 pub fn active_paid_route_approvals(
     cfg: &GahConfig,
     profile_name: &str,
@@ -93,7 +92,6 @@ fn is_review_hold_stale(entry: &LedgerEntry) -> bool {
 /// actively reviewing out of band. Entries are appended in chronological
 /// order, so a single forward pass where each hold/release overwrites the
 /// previous verdict for its work_id naturally lands on the latest one.
-#[allow(dead_code)]
 pub fn active_review_hold_work_ids(
     cfg: &GahConfig,
     profile_name: &str,

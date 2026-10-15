@@ -352,7 +352,6 @@ pub struct Profile {
     #[serde(default)]
     pub publishing: PublishingPolicy,
     #[serde(default)]
-    #[allow(dead_code)]
     pub pacing: crate::quota::PacingConfig,
     /// TICKET-158: per-profile retention window (days) for `gah prune`.
     /// High-churn self-hosting profiles can prune aggressively (e.g. 3-7)
