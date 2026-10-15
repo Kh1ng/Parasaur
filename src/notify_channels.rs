@@ -214,11 +214,12 @@ fn deliver(transport: &dyn NotifyTransport, url: &str, body: &str, label: &str) 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    /// Shared with other modules' tests that set the channel credential env.
+    pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn curl_args_send_json_content_type_and_keep_url_out_of_argv() {
@@ -231,13 +232,13 @@ mod tests {
         assert!(!args.iter().any(|arg| arg.contains("://")));
     }
 
-    struct RecordingTransport {
-        requests: Mutex<Vec<(String, String)>>,
+    pub(crate) struct RecordingTransport {
+        pub(crate) requests: Mutex<Vec<(String, String)>>,
         status: u16,
     }
 
     impl RecordingTransport {
-        fn new(status: u16) -> Self {
+        pub(crate) fn new(status: u16) -> Self {
             Self {
                 requests: Mutex::new(Vec::new()),
                 status,

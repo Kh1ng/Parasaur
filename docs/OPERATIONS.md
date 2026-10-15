@@ -245,9 +245,13 @@ of the prebuild gate issue.
   by calling the dashboard's start endpoint, resuming concurrent work during
   a blocker repair; that incident is exactly what this contract prevents. The
   timer is installed by `gah update`/`scripts/install.sh` alongside the loop
-  unit but is never automatically enabled — opt in once you've configured an
-  alert command in a `systemctl --user edit gah-watchdog.service` drop-in.
-  The packaged check writes to the journal and requires no alert transport:
+  unit but is never automatically enabled. The check always writes its alert
+  lines to the journal. When `[defaults] notification_channel` is `telegram`
+  or `discord` (see [Notification delivery methods](#notification-delivery-methods)), it also
+  sends all alerts of a run as one redacted message through that channel. The
+  unit reads the credential from `/etc/gah/server.env`. If the delivery fails,
+  the run exits non-zero after it prints the alerts, so the journal shows the
+  failure. With the default `none`, nothing is sent. Opt in with:
   ```bash
   systemctl --user enable --now gah-watchdog.timer
   ```

@@ -150,3 +150,110 @@ fn collect_alerts_scopes_to_one_named_profile() {
     let record = fs::read_to_string(&record_path).unwrap();
     assert!(!record.contains("crashed"), "{record}");
 }
+
+mod channel_delivery {
+    use super::super::notify_alerts;
+    use crate::notify_channels::tests::{RecordingTransport, ENV_LOCK};
+    use crate::notify_channels::NotificationChannel;
+
+    fn config(channel: NotificationChannel) -> crate::config::GahConfig {
+        let (_tmp, mut cfg) = crate::ledger::test_util::test_config();
+        cfg.defaults.notification_channel = channel;
+        cfg.defaults.telegram_chat_id = Some("12345".to_string());
+        cfg
+    }
+
+    fn alerts() -> Vec<String> {
+        vec![
+            "[gah watchdog] gah-loop@a.service is stopped".to_string(),
+            "[gah watchdog] gah-loop@b.service has FAILED".to_string(),
+        ]
+    }
+
+    /// Runs `notify_alerts` with `TELEGRAM_BOT_TOKEN` set to `token` (or
+    /// unset), restoring the previous value afterwards.
+    fn notify_with_token(
+        channel: NotificationChannel,
+        alerts: &[String],
+        token: Option<&str>,
+        transport: &RecordingTransport,
+    ) -> anyhow::Result<()> {
+        let _env = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+        let previous = std::env::var("TELEGRAM_BOT_TOKEN").ok();
+        match token {
+            Some(token) => std::env::set_var("TELEGRAM_BOT_TOKEN", token),
+            None => std::env::remove_var("TELEGRAM_BOT_TOKEN"),
+        }
+        let result = notify_alerts(&config(channel), alerts, transport);
+        match previous {
+            Some(value) => std::env::set_var("TELEGRAM_BOT_TOKEN", value),
+            None => std::env::remove_var("TELEGRAM_BOT_TOKEN"),
+        }
+        result
+    }
+
+    #[test]
+    fn no_channel_sends_nothing() {
+        let transport = RecordingTransport::new(200);
+        notify_with_token(NotificationChannel::None, &alerts(), None, &transport).unwrap();
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn telegram_sends_one_message_for_multiple_alerts() {
+        let transport = RecordingTransport::new(200);
+        notify_with_token(
+            NotificationChannel::Telegram,
+            &alerts(),
+            Some("test-token-123"),
+            &transport,
+        )
+        .unwrap();
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1, "{requests:?}");
+        let body: serde_json::Value = serde_json::from_str(&requests[0].1).unwrap();
+        assert_eq!(body["text"], alerts().join("\n"));
+    }
+
+    #[test]
+    fn no_alerts_sends_nothing() {
+        let transport = RecordingTransport::new(200);
+        notify_with_token(
+            NotificationChannel::Telegram,
+            &[],
+            Some("test-token-123"),
+            &transport,
+        )
+        .unwrap();
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn delivery_failure_is_an_error_without_the_token() {
+        let rejected = RecordingTransport::new(401);
+        let error = notify_with_token(
+            NotificationChannel::Telegram,
+            &alerts(),
+            Some("test-token-123"),
+            &rejected,
+        )
+        .expect_err("a rejected delivery must fail the run");
+        let text = format!("{error:#}");
+        assert!(
+            text.contains("telegram notification channel failed"),
+            "{text}"
+        );
+        assert!(text.contains("HTTP 401"), "{text}");
+        assert!(!text.contains("test-token-123"), "{text}");
+
+        let missing_token = RecordingTransport::new(200);
+        let error = notify_with_token(
+            NotificationChannel::Telegram,
+            &alerts(),
+            None,
+            &missing_token,
+        )
+        .expect_err("a missing credential must fail the run");
+        assert!(format!("{error:#}").contains("TELEGRAM_BOT_TOKEN is not set"));
+    }
+}

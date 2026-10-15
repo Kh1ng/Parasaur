@@ -14,12 +14,14 @@
 #
 # `gah update`/`scripts/install.sh` install this template deterministically
 # and reload the user systemd manager, but deliberately never `enable` or
-# `start` the paired timer -- opt in explicitly once you've configured an
-# alert command:
+# `start` the paired timer -- opt in explicitly:
 #   systemctl --user enable --now gah-watchdog.timer
 #
-# The packaged check writes alerts to the journal. To forward alerts, configure
-# ExecStart in a systemctl --user edit drop-in using your installed transport.
+# The packaged check always writes alerts to the journal. Issue #1358: when
+# `[defaults] notification_channel` is "telegram" or "discord", it also sends
+# them as one message through that channel, and a failed delivery fails the
+# run. The channel credential (TELEGRAM_BOT_TOKEN / DISCORD_WEBHOOK_URL) comes
+# from the optional environment file below, as for gah-prune.service.
 [Unit]
 Description=GAH loop health check (alert-only, never starts a loop)
 After=network-online.target
@@ -31,6 +33,7 @@ WorkingDirectory=%h
 Environment=HOME=%h
 Environment=GAH_CONFIG=%h/.config/gah/config.toml
 Environment="PATH=@PATH@"
+EnvironmentFile=-/etc/gah/server.env
 ExecStart="@GAH@" watchdog-check
 TimeoutStartSec=90
 StandardOutput=journal
