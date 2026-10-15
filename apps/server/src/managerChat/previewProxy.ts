@@ -283,12 +283,19 @@ class PreviewProxy {
           return;
         }
         const port = candidates[index];
-        const onError = (): void => tryNext(index + 1);
-        server.once('error', onError);
-        server.listen(port, this.bindHost(), () => {
+        // Each attempt removes the other handler, or a failed attempt's
+        // 'listening' callback would resolve with its occupied port.
+        const onListening = (): void => {
           server.off('error', onError);
           resolve(port);
-        });
+        };
+        const onError = (): void => {
+          server.off('listening', onListening);
+          tryNext(index + 1);
+        };
+        server.once('error', onError);
+        server.once('listening', onListening);
+        server.listen(port, this.bindHost());
       };
       tryNext(0);
     });

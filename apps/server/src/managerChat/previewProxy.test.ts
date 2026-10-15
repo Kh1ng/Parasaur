@@ -122,6 +122,24 @@ test('preview proxy re-points a session to a new dev port (stable URL) and repor
   }
 });
 
+test('preview proxy skips an occupied port and reports the port it actually bound', async () => {
+  previewProxy.configure({ basePort: TEST_BASE_PORT, maxPort: TEST_MAX_PORT, advertiseHost: '127.0.0.1', bindHost: '127.0.0.1' });
+  const squatter = http.createServer();
+  await new Promise<void>((done) => squatter.listen(TEST_BASE_PORT, '127.0.0.1', done));
+  const dev = await fakeDevServer((_req, res) => { res.end('dev'); });
+  try {
+    const preview = await previewProxy.set('p', 'busy', dev.port);
+    assert.notEqual(preview.listenPort, TEST_BASE_PORT);
+    assert.equal(new URL(preview.url).port, String(preview.listenPort));
+    const served = await fetchUrl(preview.url);
+    assert.match(served.body, /dev/);
+  } finally {
+    await previewProxy.clear('p', 'busy');
+    await dev.close();
+    await new Promise<void>((done) => squatter.close(() => done()));
+  }
+});
+
 test('a preview never inherits the control plane\'s loopback owner trust', async () => {
   // The proxy connects upstream from loopback with Host rewritten to
   // localhost. Without a forwarding marker, authMiddleware would treat a
