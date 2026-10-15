@@ -417,19 +417,128 @@ fn a_claim_whose_comment_cannot_be_posted_leaves_no_assignee_behind() {
 }
 
 #[test]
-fn a_local_profile_and_a_ticket_file_are_never_claimed_on_the_provider() {
-    // No `gh` is reachable here: any provider call would fail the claim.
+fn only_a_github_issue_target_is_claimed_on_the_provider() {
     let tmp = tempfile::tempdir().unwrap();
-    crate::provider::set_test_provider_path(&tmp.path().display().to_string());
     let mut prof = profile(tmp.path());
+    assert_eq!(provider_claimed_issue(&prof, "7"), None, "local claims");
 
-    let local = claim_issue(&prof, "7");
     prof.publishing.issue_claim.mode = IssueClaimMode::GithubAssignee;
-    let ticket_file = claim_issue(&prof, "docs/tickets/TICKET-007-example.md");
-    crate::provider::clear_test_provider_path();
+    // `gah dispatch` takes `#7` for the same issue the loop dispatches as `7`.
+    for target in ["7", "#7", " #7 "] {
+        assert_eq!(
+            provider_claimed_issue(&prof, target).as_deref(),
+            Some("7"),
+            "{target:?}"
+        );
+    }
+    // Work with no GitHub issue skips the provider claim; it is no error.
+    for target in [
+        "docs/tickets/TICKET-007-example.md",
+        "",
+        "#",
+        "fix the tests",
+    ] {
+        assert_eq!(provider_claimed_issue(&prof, target), None, "{target:?}");
+    }
+}
 
-    assert_eq!(local.unwrap(), ClaimOutcome::Won);
-    assert_eq!(ticket_file.unwrap(), ClaimOutcome::Won);
+#[test]
+fn a_person_assigned_next_to_an_expired_claim_keeps_every_loop_out() {
+    let issue = Rc::new(RefCell::new(Issue {
+        view: view(&[COLTON, "a-person"], vec![claim(1, COLTON, 0)]),
+        next_comment_id: 1,
+        ..Default::default()
+    }));
+    let (michael, _) = two_loops(&issue, 600);
+
+    let outcome = stake(&michael, &policy(&[MICHAEL]), MICHAEL, "7", at(600)).unwrap();
+
+    assert_eq!(outcome, Some(ClaimOutcome::Lost("held by a-person".into())));
+    // Nothing is removed, not even the other loop's expired assignee.
+    assert_eq!(assignees(&issue), [COLTON, "a-person"]);
+    assert_eq!(issue.borrow().view.claims.len(), 1);
+}
+
+#[test]
+fn a_person_assigned_while_a_loop_works_ends_its_lease_and_stays_assigned() {
+    let issue = Rc::new(RefCell::new(Issue {
+        view: view(&[MICHAEL, "a-person"], vec![claim(1, MICHAEL, 0)]),
+        ..Default::default()
+    }));
+    let (michael, _) = two_loops(&issue, 20);
+
+    let lost = renew(&michael, &policy(&[MICHAEL]), MICHAEL, "7", at(20)).unwrap();
+
+    assert_eq!(lost, Some("lease taken over by a-person".into()));
+    assert_eq!(assignees(&issue), [MICHAEL, "a-person"]);
+}
+
+#[test]
+fn an_old_claim_renewed_within_its_ttl_is_not_reclaimable() {
+    let mut renewed = claim(1, COLTON, 0);
+    renewed.renewed_at = at(170);
+    let issue = Rc::new(RefCell::new(Issue {
+        view: view(&[COLTON], vec![renewed]),
+        next_comment_id: 1,
+        ..Default::default()
+    }));
+    let (michael, _) = two_loops(&issue, 200);
+
+    // Posted 200 minutes ago, more than three TTLs, but renewed 30 minutes ago.
+    let outcome = stake(&michael, &policy(&[MICHAEL]), MICHAEL, "7", at(200)).unwrap();
+
+    assert_eq!(
+        outcome,
+        Some(ClaimOutcome::Lost(format!("held by {COLTON}")))
+    );
+    assert_eq!(assignees(&issue), [COLTON]);
+}
+
+#[test]
+fn a_contender_seen_only_after_the_verify_pause_wins_the_claim() {
+    let issue = Rc::new(RefCell::new(Issue::default()));
+    let (michael, colton) = two_loops(&issue, 0);
+    let policy = policy(&[COLTON]);
+
+    // Colton read the issue before Michael's assignment landed, and his own
+    // claim lands while Michael waits out the pause.
+    let outcome = run_claim(&michael, &policy, MICHAEL, "7", at(0), || {
+        let seen_by_michael = std::mem::take(&mut issue.borrow_mut().view.assignees);
+        assert_eq!(stake(&colton, &policy, COLTON, "7", at(0)).unwrap(), None);
+        issue
+            .borrow_mut()
+            .view
+            .assignees
+            .splice(0..0, seen_by_michael);
+        at(1)
+    })
+    .unwrap();
+
+    // Deciding before the pause, Michael would have kept the issue too.
+    assert_eq!(outcome, ClaimOutcome::Lost(format!("yielded to {COLTON}")));
+    assert_eq!(
+        settle(&colton, &policy, COLTON, "7", at(1)).unwrap(),
+        ClaimOutcome::Won
+    );
+    assert_eq!(assignees(&issue), [COLTON]);
+}
+
+#[test]
+fn one_failed_renewal_is_retried_and_two_in_a_row_end_the_lease() {
+    let failed = || Err(anyhow::anyhow!("HTTP 502"));
+    let mut missed = 0;
+
+    assert_eq!(renewal_verdict(failed(), &mut missed, "7"), None);
+    assert_eq!(renewal_verdict(Ok(None), &mut missed, "7"), None);
+    assert_eq!(renewal_verdict(failed(), &mut missed, "7"), None);
+    let lost = renewal_verdict(failed(), &mut missed, "7").unwrap();
+
+    assert!(lost.contains("2 times in a row"), "{lost}");
+    // The limit stops a dispatch while its claim is still live for others:
+    // the last success is at most two intervals, two thirds of a TTL, old.
+    let policy = policy(&[]);
+    let ttl = std::time::Duration::from_secs(u64::from(policy.ttl_minutes) * 60);
+    assert!(renewal_interval(&policy) * MAX_MISSED_RENEWALS < ttl);
 }
 
 /// A `gh` that answers the reads intake makes: the signed-in login, the

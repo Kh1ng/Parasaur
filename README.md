@@ -615,7 +615,10 @@ claimed it at the same moment, the first login in `priority_logins` keeps it,
 otherwise the earliest claim comment; the other loop removes its own assignee
 and moves on. Intake leaves alone every issue that another login holds,
 including one a person assigned by hand, which is held until that assignee is
-removed.
+removed. A loop never removes or replaces a person's assignment: a claim only
+adds the loop's own login. A person is any assignee, other than the loop's own
+login, with no claim comment on the issue. A loop with one worker that loses a
+claim goes on to the next eligible item in the same pass.
 
 A claim is a lease of `ttl_minutes`. While the dispatch runs it renews the
 lease every third of that by editing its claim comment (an edit notifies
@@ -623,14 +626,19 @@ nobody). A loop that crashes or stops stops renewing, and `ttl_minutes` after
 the last renewal another loop may remove the stale assignee and claim the
 issue, unless an open pull request for the issue exists. A dispatch that finds
 its lease taken over stops before it publishes: it keeps its work on a local
-WIP commit and the loop reports the issue as skipped.
+WIP commit and the loop reports the issue as skipped. One failed renewal is
+retried at the next interval. Two in a row count as a lost lease, while the
+claim is still live, so the dispatch stops before another loop could take the
+issue over.
 
 Every loop sharing the repository must use the same `ttl_minutes` and
 `priority_logins`, because each one decides a contested claim from its own
 copy. The mode is independent of `issue_intake_mode`: it adds no label
 requirement and removes none. It applies whenever an issue is dispatched for
-implementation, by the loop or by hand, and not to planning decomposition or
-pull request review.
+implementation, by the loop or by hand (`--target 7` and `--target "#7"` both
+claim issue 7), and not to planning decomposition or pull request review or
+repair. Work with no GitHub issue, such as a ticket file or a candidates file,
+has nothing to claim on GitHub and runs under the machine-local claim alone.
 
 ### Generated-artifact publication guard
 

@@ -12,14 +12,25 @@
 //! - A claim is live for `ttl_minutes` after its comment was posted or last
 //!   renewed. A dispatch that won a claim renews it while it runs (see
 //!   [`IssueLease`]), so only an abandoned claim expires. A dispatch whose
-//!   lease is lost stops before it publishes.
-//! - An assignee with no claim comment was assigned by hand. That holds the
-//!   issue until the assignee is removed.
+//!   lease is lost stops before it publishes. Renewal failing
+//!   [`MAX_MISSED_RENEWALS`] times in a row counts as lost, while the claim
+//!   is still live, so no other loop can have taken the issue meanwhile.
+//! - An assignee with no claim comment, other than this loop's own login,
+//!   was assigned by hand: a person, not a loop (this loop's own login
+//!   assigned by hand asks this loop to do the work). A person holds the
+//!   issue against every loop, whatever else is assigned, until the person
+//!   is removed. No loop ever removes or replaces such an assignee: a claim
+//!   only adds the loop's own login, and a loop only removes its own login
+//!   or another loop's expired one.
 //! - When two loops hold live claims, the first login in `priority_logins`
 //!   wins, otherwise the earliest claim comment.
 //! - An expired claim keeps holding the issue while an open pull request
 //!   references it. Otherwise another loop may remove the stale assignee and
 //!   claim the issue itself.
+//!
+//! Work with no GitHub issue (a ticket file, a candidates file, a target
+//! that is not an issue number) has nothing to claim on the provider and
+//! runs under the machine-local claim alone; see [`provider_claimed_issue`].
 //!
 //! The machine-local claim store still guards against two workers on one
 //! machine; this module only arbitrates between logins.
@@ -101,7 +112,9 @@ impl IssueClaimSlot {
         let guard = reserve_backend_attempt(profile, identity, args.route_admission.as_ref())
             .map_err(|error| super::contextualize_capacity_deferral(error, attempt as usize))?;
         if attempt == 0 {
-            self.lease = claim_or_lose(profile, &args.target, ledger)?;
+            if let Some(issue) = provider_claimed_issue(profile, &args.target) {
+                self.lease = Some(claim_or_lose(profile, &issue, ledger)?);
+            }
         }
         Ok(guard)
     }
@@ -134,29 +147,33 @@ impl IssueClaimSlot {
     }
 }
 
-fn claim_or_lose(
-    profile: &Profile,
-    target: &str,
-    ledger: &mut LedgerEntry,
-) -> Result<Option<IssueLease>> {
-    match claim_issue(profile, target)? {
+/// The provider issue a dispatch of `target` must claim, as bare digits.
+/// `None` when the profile keeps claims local, or when `target` names no
+/// GitHub issue (a ticket file, a candidates file, an empty target): such
+/// work has nothing on the provider for another loop to see, so it runs
+/// under the machine-local claim alone. A `#123` target is the same issue as
+/// `123`, which the dispatch resolves it to, so it is claimed the same way.
+fn provider_claimed_issue(profile: &Profile, target: &str) -> Option<String> {
+    if profile.publishing.issue_claim.mode == IssueClaimMode::Local
+        || !super::issues::is_issue_number_reference(target)
+    {
+        return None;
+    }
+    super::issues::extract_issue_number(target)
+}
+
+fn claim_or_lose(profile: &Profile, issue: &str, ledger: &mut LedgerEntry) -> Result<IssueLease> {
+    match claim_issue(profile, issue)? {
         ClaimOutcome::Lost(reason) => {
             ledger.validation_result = Some(crate::ledger::gates::CLAIM_LOST.into());
             Err(IssueClaimLost {
-                issue: target.to_string(),
+                issue: issue.to_string(),
                 reason,
             }
             .into())
         }
-        ClaimOutcome::Won if claims_on_provider(profile, target) => {
-            Ok(Some(IssueLease::start(profile, target)))
-        }
-        ClaimOutcome::Won => Ok(None),
+        ClaimOutcome::Won => Ok(IssueLease::start(profile, issue)),
     }
-}
-
-fn claims_on_provider(profile: &Profile, target: &str) -> bool {
-    profile.publishing.issue_claim.mode != IssueClaimMode::Local && is_issue_number(target)
 }
 
 /// A won claim, renewed in the background while the dispatch runs. Renewal
@@ -182,24 +199,24 @@ impl IssueLease {
         let renewer = std::thread::spawn(move || {
             let policy = profile.publishing.issue_claim.clone();
             let board = GithubBoard { profile: &profile };
+            // Read once, so a renewal costs two reads and one edit.
+            let mut me: Option<String> = None;
+            let mut missed = 0;
             while let Err(RecvTimeoutError::Timeout) =
                 stopped.recv_timeout(renewal_interval(&policy))
             {
-                let renewed = own_login()
-                    .and_then(|me| renew(&board, &policy, &me, &target, OffsetDateTime::now_utc()));
-                match renewed {
-                    Ok(None) => {}
-                    Ok(Some(reason)) => {
-                        *thread_lost.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason);
-                        return;
-                    }
-                    // A missed renewal is retried next interval; the claim
-                    // lapses only if renewals keep failing for a whole TTL.
-                    Err(error) => {
-                        eprintln!(
-                            "warning: could not renew the claim on issue #{target}: {error:#}"
-                        )
-                    }
+                let now = OffsetDateTime::now_utc();
+                let renewed = match me.as_deref() {
+                    Some(login) => renew(&board, &policy, login, &target, now),
+                    None => own_login().and_then(|login| {
+                        let renewed = renew(&board, &policy, &login, &target, now);
+                        me = Some(login);
+                        renewed
+                    }),
+                };
+                if let Some(reason) = renewal_verdict(renewed, &mut missed, &target) {
+                    *thread_lost.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason);
+                    return;
                 }
             }
         });
@@ -241,6 +258,41 @@ fn renewal_interval(policy: &IssueClaimPolicy) -> std::time::Duration {
     std::time::Duration::from_secs((u64::from(policy.ttl_minutes) * 60 / 3).max(1))
 }
 
+/// Failed renewals in a row after which a dispatch counts its claim as lost.
+/// At three renewals per TTL the claim is still live on the provider after
+/// this many misses, so the dispatch stops before another loop could take
+/// the issue over, never after. Fewer misses are retried at the next
+/// interval: one failed or rate-limited read does not end a dispatch.
+const MAX_MISSED_RENEWALS: u32 = 2;
+
+/// Fold one renewal attempt into the run of misses. Returns why the claim
+/// is lost: another loop holds it, or renewal failed too often in a row.
+fn renewal_verdict(
+    renewed: Result<Option<String>>,
+    missed: &mut u32,
+    issue: &str,
+) -> Option<String> {
+    match renewed {
+        Ok(lost) => {
+            *missed = 0;
+            lost
+        }
+        Err(error) => {
+            *missed += 1;
+            eprintln!(
+                "warning: could not renew the claim on issue #{issue} \
+                 ({missed}/{MAX_MISSED_RENEWALS} in a row): {error:#}"
+            );
+            (*missed >= MAX_MISSED_RENEWALS).then(|| {
+                format!(
+                    "could not renew the claim {MAX_MISSED_RENEWALS} times in a row; \
+                     stopping before it can lapse"
+                )
+            })
+        }
+    }
+}
+
 /// Extend this loop's live claim on `issue`. Returns why the claim is lost
 /// when this loop no longer holds the issue, and renews nothing then.
 fn renew(
@@ -270,21 +322,40 @@ fn renew(
     Ok(None)
 }
 
-/// Claim `target` on the provider, waiting out the verify window. Returns
-/// `Won` without touching the provider when the profile keeps claims local
-/// or `target` is not an issue number.
-fn claim_issue(profile: &Profile, target: &str) -> Result<ClaimOutcome> {
+/// Claim `issue` on the provider, waiting out the verify window.
+fn claim_issue(profile: &Profile, issue: &str) -> Result<ClaimOutcome> {
     let policy = &profile.publishing.issue_claim;
-    if policy.mode == IssueClaimMode::Local || !is_issue_number(target) {
-        return Ok(ClaimOutcome::Won);
-    }
     let board = GithubBoard::for_writing(profile)?;
     let me = own_login()?;
-    if let Some(outcome) = stake(&board, policy, &me, target, OffsetDateTime::now_utc())? {
+    run_claim(
+        &board,
+        policy,
+        &me,
+        issue,
+        OffsetDateTime::now_utc(),
+        || {
+            std::thread::sleep(std::time::Duration::from_secs(policy.verify_seconds.into()));
+            OffsetDateTime::now_utc()
+        },
+    )
+}
+
+/// The claim protocol: [`stake`] at `now`, `pause` for the verify window,
+/// then [`settle`] at the time the pause returns. The pause is not an
+/// optimization: it is what lets a contender whose write was already in
+/// flight become visible before this loop decides it won.
+fn run_claim(
+    board: &impl IssueBoard,
+    policy: &IssueClaimPolicy,
+    me: &str,
+    issue: &str,
+    now: OffsetDateTime,
+    pause: impl FnOnce() -> OffsetDateTime,
+) -> Result<ClaimOutcome> {
+    if let Some(outcome) = stake(board, policy, me, issue, now)? {
         return Ok(outcome);
     }
-    std::thread::sleep(std::time::Duration::from_secs(policy.verify_seconds.into()));
-    settle(&board, policy, &me, target, OffsetDateTime::now_utc())
+    settle(board, policy, me, issue, pause())
 }
 
 /// Numbers of the issues another login holds, out of `issues` given as
