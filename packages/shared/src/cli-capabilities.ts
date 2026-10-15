@@ -1762,6 +1762,10 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
           "description": "Notification channel: none, telegram, or discord.",
           "type": "string"
         },
+        "notifications_enabled": {
+          "description": "Switch the Telegram/Discord notification module on or off.",
+          "type": "boolean"
+        },
         "telegram_chat_id": {
           "description": "Telegram chat identifier.",
           "type": "string"

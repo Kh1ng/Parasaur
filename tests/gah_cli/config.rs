@@ -467,6 +467,165 @@ fn notification_channel_settings_round_trip_and_validate() {
     let _ = tmp;
 }
 
+/// Issue #1454: the notification module switch end to end through the CLI.
+#[test]
+fn notification_module_switch_credential_and_notify_send() {
+    let (tmp, config) = config_with_profile();
+    let config_path = config.to_str().unwrap();
+    let credentials = tmp.path().join("notify.env");
+    let gah = || {
+        let mut command = bin();
+        command
+            .env("GAH_NOTIFY_CREDENTIALS_FILE", &credentials)
+            .env_remove("TELEGRAM_BOT_TOKEN")
+            .env_remove("DISCORD_WEBHOOK_URL");
+        command
+    };
+    let show = || -> Value {
+        let output = gah()
+            .args([
+                "config",
+                "show",
+                "--json",
+                "--full",
+                "--config",
+                config_path,
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()["notifications"].clone()
+    };
+    let notify = || {
+        gah()
+            .args([
+                "notify-send",
+                "--config-path",
+                config_path,
+                "--title",
+                "t",
+                "--message",
+                "m",
+            ])
+            .output()
+            .unwrap()
+    };
+
+    // Fresh config: off, and notify-send is a silent success.
+    assert_eq!(show()["enabled"], false);
+    let sent = notify();
+    assert!(sent.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&sent.stdout).trim(),
+        r#"{"channel":"none","ok":true}"#
+    );
+    assert!(
+        sent.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&sent.stderr)
+    );
+
+    // On needs a channel (fail closed).
+    gah()
+        .args([
+            "config",
+            "set",
+            "--config",
+            config_path,
+            "--notifications-enabled",
+            "true",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Notifications need a channel"));
+
+    // On with a channel but no credential: a clear, non-blocking failure line.
+    gah()
+        .args([
+            "config",
+            "set",
+            "--config",
+            config_path,
+            "--notifications-enabled",
+            "true",
+            "--notification-channel",
+            "telegram",
+            "--telegram-chat-id",
+            "42",
+        ])
+        .assert()
+        .success();
+    let failed = notify();
+    assert!(!failed.status.success());
+    let receipt: Value = serde_json::from_slice(&failed.stdout).unwrap();
+    assert_eq!(receipt["channel"], "telegram");
+    assert_eq!(receipt["ok"], false);
+    assert!(receipt["reason"]
+        .as_str()
+        .unwrap()
+        .contains("TELEGRAM_BOT_TOKEN is not set"));
+    assert!(show()["credential_source"].is_null());
+
+    // The credential arrives on stdin, never argv, and lands in a 0600 file.
+    gah()
+        .args([
+            "config",
+            "set",
+            "--config",
+            config_path,
+            "--notification-credential-stdin",
+        ])
+        .write_stdin("not-a-token")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("not a Telegram bot token"));
+    gah()
+        .args([
+            "config",
+            "set",
+            "--config",
+            config_path,
+            "--notification-credential-stdin",
+        ])
+        .write_stdin("123456:cli-secret\n")
+        .assert()
+        .success();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&credentials)
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    let shown = show();
+    assert_eq!(shown["credential_source"], "file");
+    assert!(!shown.to_string().contains("cli-secret"));
+    assert!(!std::fs::read_to_string(&config)
+        .unwrap()
+        .contains("cli-secret"));
+
+    // Off again: silent, and the channel is remembered for later.
+    gah()
+        .args([
+            "config",
+            "set",
+            "--config",
+            config_path,
+            "--notifications-enabled",
+            "false",
+        ])
+        .assert()
+        .success();
+    let sent = notify();
+    assert!(sent.status.success());
+    assert!(sent.stderr.is_empty());
+    let shown = show();
+    assert_eq!(shown["enabled"], false);
+    assert_eq!(shown["channel"], "telegram");
+}
+
 #[test]
 fn routing_candidate_add_remove_move_round_trip_with_preview_and_validation() {
     let (tmp, config) = config_with_profile();

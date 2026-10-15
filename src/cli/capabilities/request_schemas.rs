@@ -496,6 +496,12 @@ pub(super) fn add_request_schemas(manifest: &mut CapabilityManifest) {
                     "Default manager backend.",
                 ),
                 (
+                    "notifications_enabled",
+                    "boolean",
+                    false,
+                    "Switch the Telegram/Discord notification module on or off.",
+                ),
+                (
                     "notification_channel",
                     "string",
                     false,

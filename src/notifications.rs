@@ -1290,8 +1290,10 @@ fn notify_event_with_deliveries<F, P, C>(
     // approval, it must only be observable. Dedup stays the caller's job:
     // notify paths that would repeat (e.g. paid-route skips) already
     // notify once per occurrence through `claim_notice`.
+    // Issue #1454: an off module is the same silent no-op as no channel.
+    let channel_name = crate::notify_channels::active_channel(&cfg.defaults);
     if (!posted_to_central || !feed_relays_to_channel)
-        && cfg.defaults.notification_channel != crate::notify_channels::NotificationChannel::None
+        && channel_name != crate::notify_channels::NotificationChannel::None
     {
         let message = crate::redact::redact(&format_message(&event));
         if let Err(err) = channel(cfg, &message) {
@@ -1307,7 +1309,7 @@ fn notify_event_with_deliveries<F, P, C>(
                     "profile": event_profile,
                     "work_id": event_work_id(&event),
                     "run_id": event_run_id(&event),
-                    "channel": cfg.defaults.notification_channel.as_str(),
+                    "channel": channel_name.as_str(),
                     "error": format!("{err:#}"),
                 })
                 .to_string(),
