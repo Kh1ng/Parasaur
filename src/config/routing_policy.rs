@@ -308,14 +308,10 @@ impl RoutingPolicy {
         errors
     }
 
+    /// Merge stored routing policy without deriving billing from credentials.
+    /// Editors must preserve these flags when they write candidates back.
     pub fn merged_with_defaults(&self, defaults: &RoutingPolicy) -> RoutingPolicy {
-        let mut routing = merge_routing_policy(defaults.clone(), self.clone());
-        routing.normalize_subscription_candidates(|id| {
-            crate::credentials::get(id).is_ok_and(|info| {
-                info.kind == crate::credentials::CredentialKind::ClaudeSubscriptionToken
-            })
-        });
-        routing
+        merge_routing_policy(defaults.clone(), self.clone())
     }
 
     /// `canonical` quota sources overridden by this policy's same-key entries.
@@ -428,8 +424,23 @@ fn configured_quota_pool<'a>(
 }
 
 impl Profile {
-    pub fn effective_routing(&self, defaults: &Defaults) -> RoutingPolicy {
+    /// The owner's policy merged with defaults, without credential-derived
+    /// billing. Every editor that writes candidates back reads this, never
+    /// `effective_routing`, so a bound subscription token cannot persist
+    /// `included_in_quota` past its replacement.
+    pub fn stored_routing(&self, defaults: &Defaults) -> RoutingPolicy {
         self.routing.merged_with_defaults(&defaults.routing)
+    }
+
+    /// Resolve runtime billing without changing the owner's stored policy.
+    pub fn effective_routing(&self, defaults: &Defaults) -> RoutingPolicy {
+        let mut routing = self.stored_routing(defaults);
+        routing.normalize_subscription_candidates(|id| {
+            crate::credentials::get(id).is_ok_and(|info| {
+                info.kind == crate::credentials::CredentialKind::ClaudeSubscriptionToken
+            })
+        });
+        routing
     }
 
     pub fn max_parallel_workers(&self) -> u32 {

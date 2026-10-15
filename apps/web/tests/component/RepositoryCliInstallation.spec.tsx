@@ -1,6 +1,17 @@
 import { test, expect } from '@playwright/experimental-ct-react';
 import { LoginRepairPanel } from '../../src/components/LoginRepairPanel.js';
 
+test('a named Claude login shows instance repair instructions without ambient auth', async ({ mount, page }) => {
+  let started = 0;
+  await page.route('**/api/auth-health/repairs', route => { started++; return route.abort(); });
+  const component = await mount(<LoginRepairPanel login={{ node_id: 'worker', node_name: 'Work Mac',
+    backend: 'claude', backend_instance: 'claude-work', provider: null }} />);
+  await expect(component.getByText('Repair instance claude-work on Work Mac.', { exact: false })).toBeVisible();
+  await expect(component.getByText(/replace its saved credential/)).toBeVisible();
+  await expect(component.getByRole('button', { name: 'Fix login' })).toHaveCount(0);
+  expect(started).toBe(0);
+});
+
 for (const [backend, provider, label, url] of [
   ['gh', 'github', 'GitHub CLI', 'https://cli.github.com/'],
   ['glab', 'gitlab', 'GitLab CLI', 'https://gitlab.com/gitlab-org/cli#installation'],

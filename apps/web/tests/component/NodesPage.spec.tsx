@@ -79,6 +79,21 @@ test('unknown and failed login checks cannot be presented as working logins', as
   await expect(logins.getByRole('button', { name: 'Fix login' })).toHaveCount(0);
 });
 
+test('named Claude failures show distinct accounts and manual repairs', async ({ mount, page }) => {
+  await connectSocket(page);
+  await page.route('**/api/registry/fleet/snapshot', route => route.fulfill({ json: { nodes: [], observations: [], leases: [] } }));
+  await page.route('**/api/auth-health', route => route.fulfill({ json: { rows: ['work', 'personal'].map(backend_instance => ({
+    node_id: 'mac', node_name: 'Mac', backend: 'claude', backend_instance, provider: null, state: 'expired', source: 'dispatch'
+  })) } }));
+  const component = await mount(<WebSocketProvider><NodesPage /></WebSocketProvider>);
+  const logins = component.getByRole('region', { name: 'Logins' });
+  for (const name of ['work', 'personal']) {
+    await expect(logins.getByText(`Mac · claude · ${name}`, { exact: true })).toBeVisible();
+    await expect(logins.getByText(`Repair instance ${name} on Mac.`, { exact: false })).toBeVisible();
+  }
+  await expect(logins.getByRole('button', { name: 'Fix login' })).toHaveCount(0);
+});
+
 test('fleet lists unknown, stale and classified health; click checks health and WS invalidates cached data', async ({ mount, page }, testInfo) => {
   await connectSocket(page);
   let offline = false;

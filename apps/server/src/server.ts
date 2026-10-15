@@ -899,11 +899,14 @@ export function createServer(
       };
     app.post('/api/auth-health/repairs', mutation('auth.repair.start'), repairRoute(async (req, res, who) => {
       const { node_id: nodeId, backend, provider } = req.body ?? {};
+      if (req.body?.backend_instance != null) {
+        return res.status(409).json({ error: 'instance_repair_required', message: 'Repair the named instance on its owning machine. Replace a saved subscription credential or sign in through its isolated state.' });
+      }
       const text = (value: unknown) => typeof value === 'string' && value.length > 0 && value.length <= 64;
       if (!text(nodeId) || !text(backend) || !(provider === null || text(provider))) {
         return res.status(400).json({ error: 'invalid_login', message: 'Name the node, backend, and provider of the login.' });
       }
-      const known = configDeps.authHealthMonitor?.rows().some((row) => row.node_id === nodeId && row.backend === backend && row.provider === provider);
+      const known = configDeps.authHealthMonitor?.rows().some((row) => row.node_id === nodeId && row.backend === backend && row.provider === provider && row.backend_instance == null);
       if (!known) return res.status(404).json({ error: 'unknown_login', message: 'GAH has not seen this login on that node.' });
       res.status(201).json(await broker.start(who, nodeId, { backend, provider }));
     }));
@@ -928,10 +931,13 @@ export function createServer(
       const id = typeof body.id === 'string' ? body.id : '';
       try {
         if (body.action === 'start') {
+          if (body.backend_instance != null) {
+            return res.status(409).json({ message: 'Repair the named instance on this machine through its saved credential or isolated state.' });
+          }
           if (typeof body.backend !== 'string' || !(body.provider === null || typeof body.provider === 'string')) {
             return res.status(400).json({ message: 'Name the backend and provider of the login.' });
           }
-          const known = configDeps.authHealthProber?.latest()?.probes.some((probe) => probe.backend === body.backend && probe.provider === body.provider);
+          const known = configDeps.authHealthProber?.latest()?.probes.some((probe) => probe.backend === body.backend && probe.provider === body.provider && probe.backend_instance == null);
           if (!known) return res.status(404).json({ message: 'This machine has not checked that login.' });
           return res.status(201).json(repairs.start({ backend: body.backend, provider: body.provider }));
         }

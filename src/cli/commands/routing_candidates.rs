@@ -73,7 +73,7 @@ pub(crate) fn switch_model(
     from: &str,
     to: &str,
 ) -> Result<()> {
-    let effective = profile.effective_routing(defaults);
+    let effective = profile.stored_routing(defaults);
     let mut switched = false;
     for list in CandidateList::ALL {
         let mut candidates = list.get(&effective).unwrap_or_default();
@@ -179,7 +179,7 @@ fn apply(
 ) -> Result<()> {
     let effective = {
         let profile = config::get_profile(cfg, profile_name)?;
-        let routing = profile.effective_routing(&cfg.defaults);
+        let routing = profile.stored_routing(&cfg.defaults);
         list.get(&routing).unwrap_or_default()
     };
     let mut updated = effective.clone();

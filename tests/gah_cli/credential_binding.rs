@@ -317,6 +317,160 @@ fn auth_health_reports_subscription_instances_without_leaking_the_token() {
 }
 
 #[test]
+fn subscription_route_edits_preserve_paid_policy_for_credential_replacement() {
+    let f = BindingFixture::new("claude", "#!/bin/sh\nexit 0\n");
+    f.save(
+        "account",
+        "claude",
+        "ANTHROPIC_API_KEY",
+        "synthetic-paid-key",
+    );
+    f.add("claude-work", "claude", "account");
+    for list in ["pm", "improve", "review", "escalatory"] {
+        f.command()
+            .args([
+                "config",
+                "routing-candidate",
+                "add",
+                "--config",
+                f.config.to_str().unwrap(),
+                "--profile",
+                "test",
+                "--list",
+                list,
+                "--backend",
+                "claude",
+                "--instance",
+                "claude-work",
+                "--model",
+                "sonnet",
+                "--requires-approval",
+                "--marginal-cost-usd",
+                "0.5",
+            ])
+            .assert()
+            .success();
+    }
+    f.save_subscription("account", "claude", "synthetic-subscription-token");
+    for list in ["pm", "improve", "review", "escalatory"] {
+        f.command()
+            .args([
+                "config",
+                "routing-candidate",
+                "move",
+                "--config",
+                f.config.to_str().unwrap(),
+                "--profile",
+                "test",
+                "--list",
+                list,
+                "--from",
+                "0",
+                "--to",
+                "0",
+            ])
+            .assert()
+            .success();
+    }
+    // The model-switch editor writes all four lists back as well.
+    f.command()
+        .args([
+            "profile",
+            "set",
+            "test",
+            "--agent-model",
+            "claude/sonnet=opus",
+            "--config",
+            f.config.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    f.save(
+        "account",
+        "claude",
+        "ANTHROPIC_API_KEY",
+        "synthetic-replacement-key",
+    );
+    let output = f
+        .command()
+        .args([
+            "config",
+            "show",
+            "--json",
+            "--full",
+            "--profile",
+            "test",
+            "--config",
+            f.config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let routing = &report["profiles"]["test"];
+    for key in [
+        "pm_candidates",
+        "improve_candidates",
+        "review_candidates",
+        "escalatory_reviewers",
+    ] {
+        let candidate = &routing[key][0];
+        assert_eq!(candidate["model"], "opus", "{key}");
+        assert_eq!(candidate["included_in_quota"], false, "{key}");
+        assert_eq!(candidate["requires_approval"], true, "{key}");
+        assert_eq!(candidate["marginal_cost_usd"], 0.5, "{key}");
+    }
+}
+
+#[test]
+fn subscription_dispatch_failures_report_each_named_login() {
+    let f = BindingFixture::new("claude", "#!/bin/sh\nprintf '{\"loggedIn\":true}'\n");
+    let now = time::OffsetDateTime::now_utc();
+    let timestamp = |value: time::OffsetDateTime| {
+        value
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap()
+    };
+    let mut records = Vec::new();
+    for name in ["work", "personal"] {
+        f.save_subscription(name, "claude", "synthetic-subscription-token");
+        f.add(&format!("claude-{name}"), "claude", name);
+        records.push(serde_json::json!({
+            "backend": "claude", "backend_instance": format!("claude-{name}"),
+            "status": "unavailable", "reason": "authentication_error", "source": "backend_error",
+            "observed_at": timestamp(now), "unavailable_until": timestamp(now + time::Duration::hours(1)),
+        }));
+    }
+    let path = f.root.path().join("availability.json");
+    fs::write(
+        &path,
+        serde_json::json!({"version": 2, "records": records}).to_string(),
+    )
+    .unwrap();
+    let output = f
+        .command()
+        .env("GAH_CONFIG", &f.config)
+        .env("GAH_AVAILABILITY_PATH", &path)
+        .args(["auth-health"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let failures: Vec<_> = report["probes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|probe| probe["source"] == "dispatch")
+        .collect();
+    assert_eq!(failures.len(), 2);
+    for name in ["claude-work", "claude-personal"] {
+        assert!(failures
+            .iter()
+            .any(|probe| probe["backend_instance"] == name && probe["state"] == "expired"));
+    }
+}
+
+#[test]
 fn missing_selected_source_never_launches_or_falls_back() {
     let f = BindingFixture::new("vibe", "#!/bin/sh\nprintf launched\n");
     f.save("source", "mistral", "MISTRAL_API_KEY", "synthetic-first");
