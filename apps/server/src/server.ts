@@ -62,7 +62,6 @@ import type {
   SettingsConfigProfileSummary,
   DoctorSnapshot,
   ProfileSummary,
-  ChatNodeInfo,
   ChatSessionEvent
 } from '@git-agent-harness/contracts';
 import { getFleetDispatch, sessionStore } from './wsServer.js';

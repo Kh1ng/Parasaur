@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import type { ServerMessage, Session } from '@git-agent-harness/contracts';
+import type { ServerMessage } from '@git-agent-harness/contracts';
 import { createSessionManager } from './SessionManager.js';
 
 test('explicit manual workers launch alongside an active same-profile session and retain their reasoning', async () => {

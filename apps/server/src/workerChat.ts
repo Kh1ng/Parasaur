@@ -2,7 +2,7 @@
  * central owns prompts, permissions, memory, skills, and the conversation log. */
 import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
-import type { ChatSessionSummary, ChatTranscriptTurn, HelperRoutePreference, HelperTaskKind, NodeRoleStatus, ProfileSummary } from '@git-agent-harness/contracts';
+import type { ChatTranscriptTurn, HelperRoutePreference, HelperTaskKind, NodeRoleStatus, ProfileSummary } from '@git-agent-harness/contracts';
 import { runProfileList, runSubscriptionRoutes, runQuotaFailure } from './gahCli.js';
 import { resolveInstanceAdapter, type ManagerAdapter } from './managerChat/registry.js';
 import { archiveSession, chatKey, createSession, getSession, publishWorkspace, refreshWorkspace, resolveSessionCwd, restoreSession, touchSession, updateSession, type ChatSessionStoreOptions } from './managerChat/chatSessions.js';
@@ -229,7 +229,6 @@ export function createWorkerChatRouter(deps: {
         if (!sessionId) return void res.status(400).json({ error: 'A session is required.' });
         return void res.json(await restoreSession(body.profile, sessionId, profile, deps.sessions));
       }
-      let session: ChatSessionSummary | null = null;
       let cwd = profile.local_path;
       if (sessionId) {
         if (!getSession(body.profile, sessionId, deps.sessions)) {
@@ -238,7 +237,6 @@ export function createWorkerChatRouter(deps: {
         updateSession(body.profile, sessionId, settings, deps.sessions);
         const resolved = await resolveSessionCwd(body.profile, sessionId, profile, deps.sessions);
         if (!resolved) return void res.status(409).json({ error: 'Worker session is unavailable or archived.' });
-        session = resolved.session;
         cwd = resolved.cwd;
       }
       if (body.action === 'prepare') {

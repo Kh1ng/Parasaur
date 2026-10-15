@@ -1,7 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { parseNodeAuthHealth } from './authHealth.js';
 import { resolve, dirname, sep } from 'node:path';
-import crypto from 'node:crypto';
 import { hostname, networkInterfaces } from 'node:os';
 import type {
   RunningWorker,

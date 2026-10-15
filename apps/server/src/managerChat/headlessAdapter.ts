@@ -26,7 +26,7 @@ import { spawn, execFile as execFileCallback, execFileSync } from 'node:child_pr
 import { readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import type { ChatTranscriptTurn, ChatUsage } from '@git-agent-harness/contracts';
+import type { ChatTranscriptTurn } from '@git-agent-harness/contracts';
 import { runConfigShowProfile } from '../gahCli.js';
 import type { ManagerAdapter, ManagerCommandInfo, ManagerModelInfo, ManagerReasoningEffortInfo } from './registry.js';
 

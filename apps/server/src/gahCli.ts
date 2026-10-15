@@ -18,8 +18,6 @@ import type {
   ReportSeriesData,
   ReportGroupBy,
   LedgerEntry,
-  ConfigSummary,
-  ConfigSetData,
   ConfigShowFull,
   ConfigProfileSummary,
   ProfileSummary,

@@ -3,13 +3,6 @@ import { test } from 'node:test';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
-import { authMiddleware } from './authMiddleware.js';
-import {
-  runTelemetryAggregate,
-  runClaimsList,
-  runQuotaList,
-  runExternalApprovalInspect,
-} from './gahCli.js';
 import type { ExternalApprovalScope } from '@git-agent-harness/contracts';
 
 // Issue #519: the four JSON-ready read adapters must expose typed responses,
