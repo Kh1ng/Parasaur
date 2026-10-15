@@ -424,9 +424,17 @@ fn configured_quota_pool<'a>(
 }
 
 impl Profile {
+    /// The owner's policy merged with defaults, without credential-derived
+    /// billing. Every editor that writes candidates back reads this, never
+    /// `effective_routing`, so a bound subscription token cannot persist
+    /// `included_in_quota` past its replacement.
+    pub fn stored_routing(&self, defaults: &Defaults) -> RoutingPolicy {
+        self.routing.merged_with_defaults(&defaults.routing)
+    }
+
     /// Resolve runtime billing without changing the owner's stored policy.
     pub fn effective_routing(&self, defaults: &Defaults) -> RoutingPolicy {
-        let mut routing = self.routing.merged_with_defaults(&defaults.routing);
+        let mut routing = self.stored_routing(defaults);
         routing.normalize_subscription_candidates(|id| {
             crate::credentials::get(id).is_ok_and(|info| {
                 info.kind == crate::credentials::CredentialKind::ClaudeSubscriptionToken

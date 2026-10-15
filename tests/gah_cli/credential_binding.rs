@@ -342,6 +342,8 @@ fn subscription_route_edits_preserve_paid_policy_for_credential_replacement() {
                 "claude",
                 "--instance",
                 "claude-work",
+                "--model",
+                "sonnet",
                 "--requires-approval",
                 "--marginal-cost-usd",
                 "0.5",
@@ -370,6 +372,19 @@ fn subscription_route_edits_preserve_paid_policy_for_credential_replacement() {
             .assert()
             .success();
     }
+    // The model-switch editor writes all four lists back as well.
+    f.command()
+        .args([
+            "profile",
+            "set",
+            "test",
+            "--agent-model",
+            "claude/sonnet=opus",
+            "--config",
+            f.config.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
     f.save(
         "account",
         "claude",
@@ -400,6 +415,7 @@ fn subscription_route_edits_preserve_paid_policy_for_credential_replacement() {
         "escalatory_reviewers",
     ] {
         let candidate = &routing[key][0];
+        assert_eq!(candidate["model"], "opus", "{key}");
         assert_eq!(candidate["included_in_quota"], false, "{key}");
         assert_eq!(candidate["requires_approval"], true, "{key}");
         assert_eq!(candidate["marginal_cost_usd"], 0.5, "{key}");
