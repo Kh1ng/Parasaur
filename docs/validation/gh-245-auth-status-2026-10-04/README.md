@@ -88,8 +88,8 @@ timeout tests verify recovery semantics only; they do not close this criterion.
 - A genuinely *expired* token: gh 2.45.0 prints the same
   `invalidTokenEntry` for any rejected credential, so the bogus-token
   capture above is the same shape it would emit.
-- The timeout entry (`X Timeout trying to log in …`): taken from the
-  v2.45.0 source (`timeoutErrorEntry`); not reproduced live.
+- The timeout entry (`X Timeout trying to log in …`): reproduced live on
+  2026-10-15 (below).
 - The `You are not logged into any GitHub Enterprise Server hosts.`
   line used by one defensive regression: no gh between 2.45.0 and
   2.102.0 prints it in `auth status` (checked the tag's `status.go`); it
@@ -126,3 +126,48 @@ names the command to run by hand, and says how to resume. A status check
 that fails or is not recognized is retried once. If it is still
 unsettled, setup offers no login and does not refuse to build: it warns
 that the login may still be valid and how to re-check it.
+
+## Linux reproduction with gh 2.45.0 (2026-10-15)
+
+Linux Mint 22.3 VM, Ubuntu's gh 2.45.0 package, the published `edge`
+`gah-linux-x86_64` (commit 8d80865e). No GitHub login on the VM: every state
+used a synthetic `GH_CONFIG_DIR`, the account names `octo`/`octo2`, and
+`gho_000…` tokens. `gh auth status` ran the way `host.probe` runs it, with
+stdin closed and output to files. "edge" is
+`gah setup --check --json --role cli-only` → `provider_login`.
+
+| State | `gh auth status` | Elapsed | Active github.com entry | edge | `gh api --hostname github.com user` |
+| --- | --- | --- | --- | --- | --- |
+| (a) no hosts.yml | exit 1 | 0.04 s | stderr: not logged into any hosts | not_logged_in | exit 4, "run: gh auth login" |
+| (b) rejected token | exit 0 | 0.37 s | X Failed … token is invalid | credentials_rejected | exit 1, `Bad credentials (HTTP 401)` |
+| (c) 2 accounts + GHE host | exit 0 | 0.20 s | X Failed (active octo2) | credentials_rejected | exit 1, HTTP 401 |
+| (d) GH_TOKEN / GITHUB_TOKEN junk | exit 0 | 0.15 s | X Failed … using token (GH_TOKEN) | credentials_rejected | exit 1, HTTP 401 |
+| (d) GH_HOST=ghe.example.invalid | exit 0 | 0.15 s | github.com still listed | credentials_rejected | exit 1, HTTP 401 |
+| (e) GH_CONFIG_DIR / XDG_CONFIG_HOME empty dir | exit 1 | 0.04 s | not logged into any hosts | not_logged_in | not run |
+| (f) api.github.com → 127.0.0.1, TCP reset, or a refused HTTPS_PROXY | exit 0 | 0.04–0.06 s | **X Failed … token is invalid** | **credentials_rejected (wrong)** | exit 1, `dial tcp …: connection refused` |
+| (f) api.github.com blackholed or iptables DROP | exit 0 | 30.1 s | X Timeout trying to log in | status_failed after 2 × 20 s | not run |
+| (f) 12 s added latency | exit 0 | 22.1 s | X Timeout trying to log in | status_failed after 2 × 20 s | not run |
+
+gh 2.45.0 prints `The token … is invalid` for any failed scope request
+(`buildEntry` in `pkg/cmd/auth/status/status.go`); only a `net.Error`
+timeout gets the timeout entry. A refused connection never sends the token,
+so the "rejected credential" reading is false for a valid login too. Setup
+then offered `gh auth login` to a user who was already logged in. gah now
+asks `gh api --hostname github.com user` when the active entry says
+"invalid". Only `(HTTP 401)` confirms a rejection, success means logged in,
+and anything else is `status_failed`. The regression is in
+`gh_245_login_states_stay_distinct`.
+
+v0.1.3 shows a probe that ran out the 20-second budget as `missing`, not
+`not logged in`. The transcript's `gh login: not logged in` therefore means
+gh answered within the budget. A pure timeout did not cause that line. A
+fast network failure or a gh timeout entry can, but the tester's raw output
+is still needed to say which.
+
+Under a pseudo-terminal, setup's `gh auth login` menu waits for input.
+Without a TTY (plain `ssh`), `gah setup` refuses to start without `--yes`.
+With `--yes`, gh skips the menu and starts the device flow. Ctrl-C at the
+menu makes gh exit 2 at once with nothing printed, because the menu holds
+the terminal in raw mode and the `^C` is not echoed. Setup then prints
+`did not finish successfully`. That matches the transcript, so "no visible
+keypress" does not rule out an interrupt.

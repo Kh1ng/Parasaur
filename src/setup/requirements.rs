@@ -309,7 +309,13 @@ fn login_status(host: &dyn Host, program: &str, args: &[&str]) -> Status {
     let (stdout, stderr) = (probe.stdout.as_bytes(), probe.stderr.as_bytes());
     let health = match program {
         "claude" => auth_health::classify_claude_status(probe.success, stdout),
-        "gh" => auth_health::classify_gh_status("github.com", probe.success, stdout, stderr),
+        "gh" => auth_health::confirm_gh_rejection(
+            auth_health::classify_gh_status("github.com", probe.success, stdout, stderr),
+            || {
+                host.probe(program, &auth_health::GH_USER_CHECK)
+                    .map(|check| (check.success, check.stderr))
+            },
+        ),
         _ => auth_health::classify_status_output(probe.success, stdout, stderr),
     };
     // Every classifier explains a state that is not Ok.
@@ -988,15 +994,37 @@ pub(crate) mod tests {
             )),
             Status::Ok { found: None }
         );
+        // gh 2.45.0 prints the same "token is invalid" entry for a 401 and
+        // for a refused connection, so `gh api user` decides (#1324).
+        let dead_token = || {
+            with_gh(true, "github.com\n  X Failed to log in to github.com account octo (keyring)\n  - Active account: true\n  - The token in keyring is invalid.\n  - To re-authenticate, run: gh auth login -h github.com\n", "")
+        };
+        let user_check = "gh api --hostname github.com user";
         assert_eq!(
-            provider_login(&with_gh(
-                true,
-                "github.com\n  X Failed to log in to github.com account octo (keyring)\n  - Active account: true\n  - The token in keyring is invalid.\n  - To re-authenticate, run: gh auth login -h github.com\n",
-                ""
+            provider_login(&dead_token().with_streams(
+                user_check,
+                false,
+                "",
+                "gh: Bad credentials (HTTP 401)\n"
             )),
             Status::CredentialsRejected {
                 reason: "The saved login has expired.".into()
             }
+        );
+        assert_eq!(
+            provider_login(&dead_token().with_streams(
+                user_check,
+                false,
+                "",
+                "Get \"https://api.github.com/user\": dial tcp 127.0.0.1:443: connect: connection refused\n"
+            )),
+            Status::StatusFailed {
+                reason: "GitHub could not be reached to check the saved login.".into()
+            }
+        );
+        assert_eq!(
+            provider_login(&dead_token().with(user_check, true, "{}")),
+            Status::Ok { found: None }
         );
         assert_eq!(
             provider_login(&with_gh(
@@ -1004,8 +1032,8 @@ pub(crate) mod tests {
                 "github.com\n  X Timeout trying to log in to github.com account octo (keyring)\n  - Active account: true\n",
                 ""
             )),
-            Status::StatusUnknown {
-                reason: "The login status was not recognized.".into()
+            Status::StatusFailed {
+                reason: "The login check did not finish.".into()
             }
         );
         assert_eq!(
