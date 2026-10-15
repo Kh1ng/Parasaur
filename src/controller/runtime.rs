@@ -9,6 +9,7 @@ use super::recovery::{
 use super::NextAction;
 use anyhow::Result;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::sync::mpsc::sync_channel;
 use std::time::{Duration, Instant};
 
@@ -348,140 +349,21 @@ pub fn run_once(
             skip_validation_gate,
         )?;
     } else {
-        // Original single action behavior
-        let original_action = decide_next_action(&snapshot);
-        let original_review_generation = action_review_generation(&snapshot, &original_action);
-        let mut action = original_action.clone();
-        let reset_after = original_action.work_id().and_then(|work_id| {
-            latest_clear_attempts_timestamp(
-                &ledger_entries,
-                profile_name,
-                &crate::config::get_profile(cfg, profile_name).ok()?.repo_id,
-                work_id,
-            )
-        });
-        if let Some(reason) = detect_stuck_loop(
-            &history,
-            profile_name,
-            &original_action,
-            reset_after,
-            original_review_generation.as_deref(),
-        ) {
-            // Persist a work-item-scoped durable human gate so that
-            // subsequent loop iterations see human_required=true for this
-            // work_id via ledger_lookup_for_ticket and skip it, rather than
-            // re-selecting DispatchTicket every cycle (the original
-            // trip-without-latch bug).
-            if let Some(wid) = original_action.work_id() {
-                if let Err(e) = append_stuck_loop_gate_if_transition(
+        // Original single action behavior, moving past work another worker
+        // or loop holds (issue #1430).
+        let (action, outcome) =
+            run_moving_past_held_work(&snapshot, &capacity_deferred_work_ids, |view, excluded| {
+                run_selected_action(
                     cfg,
                     profile_name,
-                    wid,
-                    &reason,
-                    original_review_generation.as_deref(),
-                ) {
-                    eprintln!("warning: failed to persist stuck-loop gate: {e:#}");
-                }
-            }
-            // TICKET-skip-and-continue: the gate is now persisted as a
-            // work-item-scoped human_required (above). Re-decide with a fresh
-            // snapshot that EXCLUDES the stuck work_id, so the controller
-            // picks the NEXT eligible work item instead of parking the whole
-            // profile. Only if nothing else is actionable do we surface
-            // profile-wide HumanRequired -- that is a genuine profile stall,
-            // not a single blocked ticket.
-            let fresh = crate::status::build_snapshot_from_entries(
-                cfg,
-                profile_name,
-                time::OffsetDateTime::now_utc(),
-                &ledger_entries,
-            )?;
-            let mut scoped = fresh;
-            let mut excluded_work_ids = capacity_deferred_work_ids.clone();
-            excluded_work_ids.extend(original_action.work_id().map(str::to_string));
-            retain_snapshot_candidates(
-                &mut scoped,
-                &excluded_work_ids,
-                &std::collections::HashSet::new(),
-            );
-            let redispatched = decide_next_action(&scoped);
-            if redispatched.kind() == "no_op" {
-                // Nothing else actionable -> genuine stall, surface it.
-                action = NextAction::HumanRequired {
-                    work_id: original_action.work_id().map(str::to_string),
-                    reason,
-                    reference: original_action.work_id().map(str::to_string),
-                    reason_code: Some(HumanRequiredReason::StuckLoopGate.as_str().to_string()),
-                };
-            } else {
-                action = redispatched;
-            }
-        }
-        // TICKET-282: a FixMr reusing a branch already attached to a foreign
-        // or stale worktree must be deferred (non-terminal) and the loop
-        // continued with the next eligible item, never allowed to stall the
-        // recurring loop on a hard `git worktree add` failure.
-        if let Some(redispatch) =
-            defer_if_branch_attached(cfg, profile_name, &action, &capacity_deferred_work_ids)?
-        {
-            action = redispatch;
-        }
-        record_action_events(
-            cfg,
-            profile_name,
-            &original_action,
-            &action,
-            original_review_generation.as_deref(),
-        )?;
-
-        let outcome = if let Some(work_id) = action
-            .work_id()
-            .map(crate::work_claim::normalize_work_identity)
-            .filter(|_| {
-                !matches!(
-                    action,
-                    NextAction::WaitUntil { .. }
-                        | NextAction::HumanRequired { .. }
-                        | NextAction::NoOp { .. }
-                )
-            }) {
-            if !crate::work_claim::try_claim_work(&claim_scope, &work_id)? {
-                format!("Skipped already-claimed work '{work_id}'")
-            } else {
-                match execute_action(
-                    cfg,
-                    profile_name,
-                    &action,
+                    &claim_scope,
+                    view,
+                    excluded,
+                    &history,
                     &ledger_entries,
                     skip_validation_gate,
-                    Some(RouteNodeAdmission::single_worker(
-                        action.clone(),
-                        cfg.defaults.node_capacity,
-                    )),
-                ) {
-                    Ok(outcome) => {
-                        crate::work_claim::release_work(&claim_scope, &work_id)?;
-                        outcome
-                    }
-                    Err(error) => {
-                        crate::work_claim::release_work(&claim_scope, &work_id)?;
-                        return Err(error);
-                    }
-                }
-            }
-        } else {
-            execute_action(
-                cfg,
-                profile_name,
-                &action,
-                &ledger_entries,
-                skip_validation_gate,
-                Some(RouteNodeAdmission::single_worker(
-                    action.clone(),
-                    cfg.defaults.node_capacity,
-                )),
-            )?
-        };
+                )
+            })?;
 
         let stop_event_type = match &action {
             NextAction::WaitUntil { .. } => crate::events::EventType::WaitSelected,
@@ -524,6 +406,199 @@ pub fn run_once(
         }
     }
     Ok(())
+}
+
+/// Issue #1430: run the selected action and, while its item turns out to be
+/// held by another worker or loop, drop that item and run the next selection
+/// in this same cycle, so a single-worker factory moves on instead of idling
+/// until the next cycle. Every selection goes through `select_and_run`, the
+/// same gates included. Each round excludes one more item, so the loop ends;
+/// when nothing else is actionable the last skip is the cycle's outcome.
+fn run_moving_past_held_work(
+    snapshot: &crate::status::StatusSnapshot,
+    excluded_work_ids: &HashSet<String>,
+    mut select_and_run: impl FnMut(
+        &crate::status::StatusSnapshot,
+        &HashSet<String>,
+    ) -> Result<(NextAction, String)>,
+) -> Result<(NextAction, String)> {
+    let mut view = snapshot.clone();
+    let mut excluded = excluded_work_ids.clone();
+    loop {
+        let (action, outcome) = select_and_run(&view, &excluded)?;
+        let Some(work_id) = action
+            .work_id()
+            .filter(|_| outcome_held_elsewhere(&outcome))
+        else {
+            return Ok((action, outcome));
+        };
+        excluded.insert(work_id.to_string());
+        retain_snapshot_candidates(&mut view, &excluded, &HashSet::new());
+        if !selects_work(&decide_next_action(&view)) {
+            return Ok((action, outcome));
+        }
+        eprintln!("gah loop: {outcome}; selecting the next item");
+    }
+}
+
+/// Outcome prefix of an action whose item another worker or loop holds: the
+/// machine-local claim store or the provider claim refused it.
+const HELD_ELSEWHERE_PREFIX: &str = "Skipped ";
+
+fn outcome_held_elsewhere(outcome: &str) -> bool {
+    outcome.starts_with(HELD_ELSEWHERE_PREFIX)
+}
+
+fn selects_work(action: &NextAction) -> bool {
+    !matches!(
+        action,
+        NextAction::WaitUntil { .. } | NextAction::HumanRequired { .. } | NextAction::NoOp { .. }
+    )
+}
+
+/// One single-worker selection: decide, apply the stuck-loop and attached-
+/// branch gates, take the machine-local claim, and execute.
+#[allow(clippy::too_many_arguments)]
+fn run_selected_action(
+    cfg: &crate::config::GahConfig,
+    profile_name: &str,
+    claim_scope: &str,
+    snapshot: &crate::status::StatusSnapshot,
+    excluded_work_ids: &HashSet<String>,
+    history: &[crate::events::ControllerEvent],
+    ledger_entries: &[crate::ledger::LedgerEntry],
+    skip_validation_gate: bool,
+) -> Result<(NextAction, String)> {
+    let original_action = decide_next_action(snapshot);
+    let original_review_generation = action_review_generation(snapshot, &original_action);
+    let mut action = original_action.clone();
+    let reset_after = original_action.work_id().and_then(|work_id| {
+        latest_clear_attempts_timestamp(
+            ledger_entries,
+            profile_name,
+            &crate::config::get_profile(cfg, profile_name).ok()?.repo_id,
+            work_id,
+        )
+    });
+    if let Some(reason) = detect_stuck_loop(
+        history,
+        profile_name,
+        &original_action,
+        reset_after,
+        original_review_generation.as_deref(),
+    ) {
+        // Persist a work-item-scoped durable human gate so that
+        // subsequent loop iterations see human_required=true for this
+        // work_id via ledger_lookup_for_ticket and skip it, rather than
+        // re-selecting DispatchTicket every cycle (the original
+        // trip-without-latch bug).
+        if let Some(wid) = original_action.work_id() {
+            if let Err(e) = append_stuck_loop_gate_if_transition(
+                cfg,
+                profile_name,
+                wid,
+                &reason,
+                original_review_generation.as_deref(),
+            ) {
+                eprintln!("warning: failed to persist stuck-loop gate: {e:#}");
+            }
+        }
+        // TICKET-skip-and-continue: the gate is now persisted as a
+        // work-item-scoped human_required (above). Re-decide with a fresh
+        // snapshot that EXCLUDES the stuck work_id, so the controller
+        // picks the NEXT eligible work item instead of parking the whole
+        // profile. Only if nothing else is actionable do we surface
+        // profile-wide HumanRequired -- that is a genuine profile stall,
+        // not a single blocked ticket.
+        let fresh = crate::status::build_snapshot_from_entries(
+            cfg,
+            profile_name,
+            time::OffsetDateTime::now_utc(),
+            ledger_entries,
+        )?;
+        let mut scoped = fresh;
+        let mut excluded_work_ids = excluded_work_ids.clone();
+        excluded_work_ids.extend(original_action.work_id().map(str::to_string));
+        retain_snapshot_candidates(&mut scoped, &excluded_work_ids, &HashSet::new());
+        let redispatched = decide_next_action(&scoped);
+        if redispatched.kind() == "no_op" {
+            // Nothing else actionable -> genuine stall, surface it.
+            action = NextAction::HumanRequired {
+                work_id: original_action.work_id().map(str::to_string),
+                reason,
+                reference: original_action.work_id().map(str::to_string),
+                reason_code: Some(HumanRequiredReason::StuckLoopGate.as_str().to_string()),
+            };
+        } else {
+            action = redispatched;
+        }
+    }
+    // TICKET-282: a FixMr reusing a branch already attached to a foreign
+    // or stale worktree must be deferred (non-terminal) and the loop
+    // continued with the next eligible item, never allowed to stall the
+    // recurring loop on a hard `git worktree add` failure.
+    if let Some(redispatch) =
+        defer_if_branch_attached(cfg, profile_name, &action, excluded_work_ids)?
+    {
+        action = redispatch;
+    }
+    record_action_events(
+        cfg,
+        profile_name,
+        &original_action,
+        &action,
+        original_review_generation.as_deref(),
+    )?;
+
+    let outcome = if let Some(work_id) = action
+        .work_id()
+        .map(crate::work_claim::normalize_work_identity)
+        .filter(|_| {
+            !matches!(
+                action,
+                NextAction::WaitUntil { .. }
+                    | NextAction::HumanRequired { .. }
+                    | NextAction::NoOp { .. }
+            )
+        }) {
+        if !crate::work_claim::try_claim_work(claim_scope, &work_id)? {
+            format!("{HELD_ELSEWHERE_PREFIX}already-claimed work '{work_id}'")
+        } else {
+            match execute_action(
+                cfg,
+                profile_name,
+                &action,
+                ledger_entries,
+                skip_validation_gate,
+                Some(RouteNodeAdmission::single_worker(
+                    action.clone(),
+                    cfg.defaults.node_capacity,
+                )),
+            ) {
+                Ok(outcome) => {
+                    crate::work_claim::release_work(claim_scope, &work_id)?;
+                    outcome
+                }
+                Err(error) => {
+                    crate::work_claim::release_work(claim_scope, &work_id)?;
+                    return Err(error);
+                }
+            }
+        }
+    } else {
+        execute_action(
+            cfg,
+            profile_name,
+            &action,
+            ledger_entries,
+            skip_validation_gate,
+            Some(RouteNodeAdmission::single_worker(
+                action.clone(),
+                cfg.defaults.node_capacity,
+            )),
+        )?
+    };
+    Ok((action, outcome))
 }
 
 /// Record the stop event for a wait/human-required/no-op action. A repeated
@@ -576,8 +651,6 @@ fn run_parallel_once(
     max_parallel: usize,
     skip_validation_gate: bool,
 ) -> Result<()> {
-    use std::collections::HashSet;
-
     let mut executed_work_ids = HashSet::new();
     let profile = crate::config::get_profile(cfg, profile_name)?;
     let claim_scope = crate::work_claim::canonical_claim_scope(profile_name, &profile.repo_id);
@@ -1070,10 +1143,8 @@ fn run_parallel_once(
 /// Capacity fallback after an attempt still represents admitted work; an
 /// initial deferral or a lost claim does not.
 fn action_admitted_work(action: &NextAction, outcome: &str) -> bool {
-    !matches!(
-        action,
-        NextAction::WaitUntil { .. } | NextAction::HumanRequired { .. } | NextAction::NoOp { .. }
-    ) && !outcome.starts_with("Skipped ")
+    selects_work(action)
+        && !outcome_held_elsewhere(outcome)
         && (!outcome.starts_with("Deferred ") || !outcome.contains("no backend launched"))
 }
 
@@ -1101,7 +1172,9 @@ fn update_parallel_refill_budget(
 /// Only agent work that ran to the end qualifies: it changes what the item
 /// needs next. A merge or other bookkeeping step has no follow-up, and its
 /// failures are reported in an ordinary outcome, so releasing it would retry
-/// a refused merge at once. Errors and capacity deferrals stay excluded too.
+/// a refused merge at once. Errors and capacity deferrals stay excluded too,
+/// and so does an item another worker or loop holds: re-selecting it would
+/// only lose the same claim again (issue #1430).
 fn has_follow_up_in_batch(action: &NextAction, outcome: &str) -> bool {
     matches!(
         action,
@@ -1112,6 +1185,7 @@ fn has_follow_up_in_batch(action: &NextAction, outcome: &str) -> bool {
             | NextAction::ReviewMr { .. }
     ) && !outcome.starts_with("Error:")
         && !outcome.starts_with("Deferred ")
+        && !outcome_held_elsewhere(outcome)
 }
 
 fn parallel_outcome_is_failure(outcome: &str) -> bool {
@@ -1177,7 +1251,7 @@ pub(crate) fn run_dispatch_and_record(
                 args.run_id.as_deref(),
                 format!("{label}: claim_lost: {e:#}"),
             )?;
-            Ok(Some(format!("Skipped {e:#}")))
+            Ok(Some(format!("{HELD_ELSEWHERE_PREFIX}{e:#}")))
         }
         Err(e) => {
             let event_type = if crate::dispatch::duplicate_work_error(&e).is_some() {
