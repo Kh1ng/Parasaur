@@ -18,12 +18,13 @@ log="${shot%.png}.log"
 profile=$(mktemp -d)
 
 # No config, server, CLI login or checkout: a fresh install must still show
-# actionable onboarding. Extract-and-run avoids a FUSE requirement.
+# actionable onboarding. Extract-and-run avoids a FUSE requirement; TMPDIR
+# keeps the extracted copy inside the profile so cleanup removes it.
 HOME="$profile" XDG_CONFIG_HOME="$profile/config" XDG_DATA_HOME="$profile/data" \
-  XDG_CACHE_HOME="$profile/cache" XDG_STATE_HOME="$profile/state" \
-  APPIMAGE_EXTRACT_AND_RUN=1 setsid "$appimage" >"$log" 2>&1 &
+  XDG_CACHE_HOME="$profile/cache" XDG_STATE_HOME="$profile/state" TMPDIR="$profile" \
+  APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" >"$log" 2>&1 &
 pid=$!
-trap 'kill -- -"$pid" 2>/dev/null || true; rm -rf "$profile"' EXIT
+trap 'pkill -P "$pid" || true; wait "$pid" 2>/dev/null || true; rm -rf "$profile"' EXIT
 
 # A blank WebKit view is one flat colour; the Settings page has text. Look
 # below the native menu bar so the menu's own text cannot pass the check.
