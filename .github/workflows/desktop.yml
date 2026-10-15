@@ -9,6 +9,7 @@ on:
       - '.github/workflows/desktop.yml'
       - '.github/workflows/release-macos.yml'
       - 'scripts/build-signed-macos*'
+      - 'scripts/smoke-linux-appimage.sh'
       - 'scripts/setup-windows.ps1'
       - 'scripts/test-windows-setup.ps1'
       - 'apps/desktop/**'
@@ -105,6 +106,65 @@ jobs:
           name: gah-worker-windows-nsis
           path: node-test-desktop/*
           if-no-files-found: error
+
+  linux:
+    name: Linux AppImage (GUI smoke)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop
+
+      - name: Install Tauri and smoke-test system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential file libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
+            xvfb xdotool imagemagick
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shared packages
+        run: npm run build:contracts && npm run build:shared
+
+      - name: Build local connection screen
+        working-directory: apps/desktop
+        run: npx vite build
+
+      - name: Generate icons
+        working-directory: apps/desktop
+        run: npx tauri icon icons/icon.png
+
+      - name: Build the AppImage
+        working-directory: apps/desktop
+        run: npx tauri build --bundles appimage
+
+      # Issue #1326: the artifact itself must show the Settings page, not a blank view.
+      - name: Smoke-test the AppImage's first window
+        run: scripts/smoke-linux-appimage.sh apps/desktop/target/release/bundle/appimage/*.AppImage appimage-smoke/first-window.png
+
+      - name: Upload AppImage and smoke screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gah-desktop-linux-appimage
+          path: |
+            apps/desktop/target/release/bundle/appimage/*.AppImage
+            appimage-smoke/*
+          if-no-files-found: warn
 
   macos:
     name: macOS app

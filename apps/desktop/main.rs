@@ -293,6 +293,8 @@ fn forget_owner_credential(window: tauri::WebviewWindow, origin: String) -> Resu
 
 // Only the bundled Settings document may operate this computer. The dashboard
 // shares its window, but has no native command capability.
+// Linux loads the bundle as `tauri://localhost`: a non-special scheme keeps an
+// empty path, and rejecting it left the first window on about:blank (#1326).
 fn is_local_settings(url: &tauri::Url) -> bool {
     let origin = url.origin().ascii_serialization();
     let local = (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
@@ -300,7 +302,7 @@ fn is_local_settings(url: &tauri::Url) -> bool {
         || origin == "https://tauri.localhost"
         || (cfg!(debug_assertions) && origin == "http://localhost:1420");
     local
-        && matches!(url.path(), "/" | "/index.html")
+        && matches!(url.path(), "" | "/" | "/index.html")
         && url.username().is_empty()
         && url.password().is_none()
 }
@@ -1181,9 +1183,22 @@ mod tests {
         }
     }
 
+    // The updater plugin panics at startup without this section; the real
+    // key and endpoint are provisioned at runtime (desktop_update.rs).
+    #[test]
+    fn bundled_config_starts_the_updater_plugin() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("tauri.conf.json")).unwrap();
+        serde_json::from_value::<tauri_plugin_updater::Config>(
+            config["plugins"]["updater"].clone(),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn local_controls_and_settings_navigation_have_separate_trust_boundaries() {
         for value in [
+            "tauri://localhost",
             "tauri://localhost/index.html",
             "http://tauri.localhost/",
             "https://tauri.localhost/index.html",
