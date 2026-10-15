@@ -57,12 +57,7 @@ pub(crate) fn experiment(
         route.effective_model.as_deref(),
     )?;
 
-    // Resolve env_file: use env_file_prod if --prod, otherwise env_file (dev)
-    let resolved_env = if args.prod {
-        profile.env_file_prod.as_deref().unwrap_or("")
-    } else {
-        profile.env_file.as_deref().unwrap_or("")
-    };
+    let resolved_env = crate::dispatch::environment::profile_env_file(profile, args.prod);
     if !resolved_env.is_empty() {
         println!("Env file: {}", resolved_env);
         if args.prod {
