@@ -4,15 +4,25 @@ use std::time::{Duration, Instant};
 
 mod protocol;
 
-fn wait_for_updates(session: &mut CodexManagerSession, id: &GahSessionId) -> Vec<SessionUpdate> {
-    for _ in 0..100 {
-        let updates = session.stream(id).unwrap();
-        if !updates.is_empty() {
-            return updates;
+/// Polls `stream()` until at least `min` updates have been collected
+/// (or 5 s pass), returning everything collected. A burst like "delta
+/// then usage" can be split across polls under parallel load, so a test
+/// asserting on a whole burst passes its full length as `min`.
+fn wait_for_updates(
+    session: &mut CodexManagerSession,
+    id: &GahSessionId,
+    min: usize,
+) -> Vec<SessionUpdate> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut all = Vec::new();
+    while Instant::now() < deadline {
+        all.extend(session.stream(id).unwrap());
+        if all.len() >= min {
+            return all;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    panic!("timed out waiting for Codex updates");
+    panic!("timed out waiting for {min} Codex updates; got {all:?}");
 }
 
 fn wait_for_terminal(session: &mut CodexManagerSession, id: &GahSessionId) -> TerminalStatus {
@@ -25,13 +35,13 @@ fn wait_for_terminal(session: &mut CodexManagerSession, id: &GahSessionId) -> Te
     panic!("timed out waiting for Codex terminal status");
 }
 
-/// Unlike `wait_for_updates` (which returns as soon as a single
-/// `stream()` call is non-empty), this waits out a short quiet window
+/// Unlike `wait_for_updates` (which returns once a known count of
+/// updates has arrived), this waits out a short quiet window
 /// after the last update seen -- a burst like "delta then usage" is
 /// emitted via two separate notifications a moment apart, and under
 /// full-suite parallel load those can land in two different `stream()`
-/// polls. Tests that need *all* of a burst (not just proof that
-/// something arrived) should use this instead.
+/// polls. Tests that need *all* of a burst whose length isn't fixed
+/// should use this instead.
 fn drain_all_pending(session: &mut CodexManagerSession, id: &GahSessionId) -> Vec<SessionUpdate> {
     let mut all = Vec::new();
     let mut idle_polls = 0;
@@ -71,7 +81,7 @@ fn assert_restart_resumes_mapping(executable: &Path, session_dir: &Path, id: &Ga
     restarted.resume(id).unwrap();
     restarted.send(id, "after transport restart").unwrap();
     assert!(
-        wait_for_updates(&mut restarted, id).contains(&SessionUpdate::MessageChunk(
+        wait_for_updates(&mut restarted, id, 1).contains(&SessionUpdate::MessageChunk(
             "reply: after transport restart".into()
         ))
     );
@@ -476,7 +486,7 @@ fn adapter_runs_turn_and_streams_message_chunks() {
             instruction: "hello".into(),
         })
         .unwrap();
-    let updates = wait_for_updates(&mut session, &id);
+    let updates = wait_for_updates(&mut session, &id, 2);
     assert_eq!(
         updates,
         vec![
@@ -1273,7 +1283,7 @@ fn restart_resumes_through_durable_gah_to_codex_mapping() {
         CodexManagerSession::new_with_session_dir(f.bin_dir.join("codex"), &session_dir).unwrap();
     restarted.resume(&restored_id).unwrap();
     restarted.send(&restored_id, "after restart").unwrap();
-    assert!(wait_for_updates(&mut restarted, &restored_id)
+    assert!(wait_for_updates(&mut restarted, &restored_id, 1)
         .contains(&SessionUpdate::MessageChunk("reply: after restart".into())));
 }
 
