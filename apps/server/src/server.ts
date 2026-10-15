@@ -9,6 +9,7 @@ import { backendInstancesRouter } from './backendInstances.js';
 import { pmPlansRouter } from './pmPlans.js';
 import { planningRouter } from './planning.js';
 import { nodeSetupRouter } from './nodeSetup.js';
+import { notificationSettingsRouter, type NotificationSettingsDeps } from './notificationSettings.js';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import os from 'node:os';
@@ -190,6 +191,8 @@ type CreateServerOptions = Partial<ConfigEffectiveDeps> & {
   /** Central's coordinator-driven worker update broker (#1416). */
   workerUpdateBroker?: WorkerUpdateBroker;
   cliRouterQuotaObserver?: ReturnType<typeof createCliRouterQuotaObserver>;
+  /** Issue #1454: test seams for the notification module routes. */
+  notificationSettings?: Omit<NotificationSettingsDeps, 'record'>;
 };
 
 const activityKinds = new Set<ActivityKind>([
@@ -1933,6 +1936,7 @@ export function createServer(
         cpu_ceiling_percent: req.body.cpu_ceiling_percent,
         notification_channel: req.body.notification_channel,
         telegram_chat_id: req.body.telegram_chat_id,
+        notifications_enabled: typeof req.body.notifications_enabled === 'boolean' ? req.body.notifications_enabled : undefined,
         clear: req.body.clear,
       };
       await runConfigSet(options);
@@ -1944,6 +1948,14 @@ export function createServer(
       });
     }
   });
+
+  // Issue #1454: the notification module switch, credential and test message.
+  app.use('/api/settings/notifications', requireOwner, notificationSettingsRouter({
+    ...configDeps.notificationSettings,
+    record: (event) => {
+      if (configDeps.activityFeed?.record(event, false)) sessionStore.broadcast({ type: 'activity.event', event });
+    }
+  }));
 
   app.get('/api/config/effective', async (req, res) => {
     const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;

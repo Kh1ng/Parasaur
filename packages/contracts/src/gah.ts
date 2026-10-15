@@ -17,6 +17,7 @@
  */
 
 import type { NodeObservationSnapshot, NodeResourcePressure } from './registry.js';
+import type { DeliveryReceipt } from './ws.js';
 
 // ---------------------------------------------------------------------------
 // gah status --json (src/status.rs)
@@ -1096,10 +1097,31 @@ export const NODE_CAPACITY_CPU_LIMITS = { cores: [1, 64], ceiling_percent: [10, 
 
 /** Issue #653: notification channel settings projection. */
 export interface NotificationSettingsSummary {
+  /** Issue #1454: the module switch. Absent from older hosts; treat it as
+   * `channel !== 'none'`, which is how those hosts behave. */
+  enabled?: boolean;
+  /** The remembered channel; it delivers only while `enabled`. */
   channel: 'none' | 'telegram' | 'discord';
   telegram_chat_id: string | null;
-  /** The environment variable the operator must supply for this channel. */
+  /** The variable that carries this channel's credential. */
   credential_env: string | null;
+  /** Where the credential was found, never its value. `null` means missing;
+   * absent on older hosts. */
+  credential_source?: 'file' | 'environment' | null;
+}
+
+/** Issue #1454: PUT /api/settings/notifications (owner only). */
+export interface NotificationSettingsUpdate {
+  enabled: boolean;
+  channel?: 'telegram' | 'discord';
+  telegram_chat_id?: string | null;
+  /** Bot token or webhook URL; written to a 0600 file, never echoed back. */
+  credential?: string;
+}
+
+/** Issue #1454: POST /api/settings/notifications/test (owner only). */
+export interface NotificationTestResult {
+  receipt: DeliveryReceipt;
 }
 
 export interface RoutingCandidateSummary {
@@ -1290,9 +1312,11 @@ export interface ConfigSetData {
   memory_floor_mib?: number;
   worker_cpu_cores?: number;
   cpu_ceiling_percent?: number;
-  /** Issue #653: none | telegram | discord. Credentials come from the
-   * environment (TELEGRAM_BOT_TOKEN / DISCORD_WEBHOOK_URL), never config. */
+  /** Issue #653: none | telegram | discord. Credentials never live in config;
+   * save them through PUT /api/settings/notifications. */
   notification_channel?: 'none' | 'telegram' | 'discord';
+  /** Issue #1454: the notification module switch. */
+  notifications_enabled?: boolean;
   telegram_chat_id?: string | null;
   /** Field names to clear (e.g. "current_manager"). */
   clear?: string[];

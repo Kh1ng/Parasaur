@@ -1681,6 +1681,9 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     }
     res.json({ success: true, message: 'Global config updated' });
   });
+  // Issue #1454: the fixture accepts the switch and never stores a credential.
+  app.put('/api/settings/notifications', (_req, res) => res.json({ saved: true }));
+  app.post('/api/settings/notifications/test', (_req, res) => jsonError(res, 409, 'notifications_off', 'Turn notifications on and choose a channel first.'));
   app.get('/api/config/effective', (req, res) => {
     res.json({ ...MOCK_PROFILE_CONFIG, profile: bodyString(req.query.profile) ?? 'fixture' } satisfies SettingsConfigProfileSummary);
   });

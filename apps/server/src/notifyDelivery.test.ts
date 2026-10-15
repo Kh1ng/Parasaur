@@ -4,7 +4,8 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ActivityEvent } from '@git-agent-harness/contracts';
-import { channelDelivery, commandDelivery, deliverToAll } from './notifyDelivery.js';
+import { ActivityFeed } from './activityFeed.js';
+import { channelDelivery, commandDelivery, deliverToAll, sendTestNotification } from './notifyDelivery.js';
 
 const BASE = 'https://central.example';
 
@@ -92,3 +93,42 @@ test('one failing delivery method does not stop the others', async () => {
   assert.deepEqual(delivered, ['chat:gah:s1:1:chat_turn_completed']);
   assert.deepEqual(receipts.map((receipt) => receipt.target), ['iPhone']);
 });
+
+/** Collects console.error lines while `run` executes. */
+async function errorsDuring(run: () => Promise<unknown>): Promise<string[]> {
+  const lines: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+  try { await run(); } finally { console.error = original; }
+  return lines;
+}
+
+test('an off notification module is a silent no-op: no receipt, no error log (#1454)', () => withDirectory(async (directory) => {
+  const gah = join(directory, 'gah');
+  writeFileSync(gah, `#!/bin/sh\necho '{"channel":"none","ok":true}'\n`);
+  chmodSync(gah, 0o755);
+  let receipts: unknown;
+  let test: unknown;
+  const errors = await errorsDuring(async () => {
+    receipts = await channelDelivery(BASE, () => gah)(event());
+    test = await sendTestNotification(() => gah);
+  });
+  assert.deepEqual(receipts, []);
+  assert.equal(test, null);
+  assert.deepEqual(errors, []);
+}));
+
+test('a channel failure lands in notification history with its CLI reason (#1273, #1454)', () => withDirectory(async (directory) => {
+  const gah = join(directory, 'gah');
+  writeFileSync(gah, `#!/bin/sh\necho '{"channel":"telegram","ok":false,"reason":"TELEGRAM_BOT_TOKEN is not set (Settings → Notifications)"}'\necho 'Error: TELEGRAM_BOT_TOKEN is not set (Settings → Notifications)' >&2\nexit 1\n`);
+  chmodSync(gah, 0o755);
+  const feed = new ActivityFeed(null, deliverToAll([channelDelivery(BASE, () => gah)]));
+  await errorsDuring(async () => {
+    feed.record(event());
+    for (let tries = 0; tries < 100 && !feed.notifications()[0]?.deliveries; tries++) await new Promise((done) => setTimeout(done, 10));
+  });
+  const [notification] = feed.notifications();
+  assert.deepEqual(notification.deliveries?.map(({ at: _at, ...receipt }) => receipt), [
+    { method: 'channel', target: 'Telegram', ok: false, reason: 'TELEGRAM_BOT_TOKEN is not set (Settings → Notifications)' }
+  ]);
+}));

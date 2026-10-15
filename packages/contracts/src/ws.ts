@@ -54,7 +54,11 @@ export type ActivityKind =
   | "gateway_down"
   | "action_required"
   | "auth_expired"
-  | "auth_restored";
+  | "auth_restored"
+  /** Issue #1454: a Settings test message and its channel receipt. Recorded
+   * with `notificationMuted: false`, so it shows in notification history
+   * without being fanned out to push, APNs or the command hook. */
+  | "notification_test";
 
 /** Durable, de-duplicated operator event shared by web, desktop, and mobile. */
 export interface ActivityEvent {

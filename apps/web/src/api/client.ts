@@ -333,6 +333,9 @@ export interface GahDataSource {
   getConfig(): Promise<ConfigSummary>;
   getProfileConfig(profile: string): Promise<SettingsConfigProfileSummary>;
   setConfig(data: ConfigSetData): Promise<{ success: boolean; message: string }>;
+  /** Issue #1454: the notification module (owner only). */
+  saveNotificationSettings(data: import('@git-agent-harness/contracts').NotificationSettingsUpdate): Promise<{ saved: boolean }>;
+  sendTestNotification(): Promise<import('@git-agent-harness/contracts').NotificationTestResult>;
   ledgerClearAttempts(params: { profile?: string; work_id: string; dry_run?: boolean }): Promise<unknown>;
   holdSet(params: { profile: string; work_id: string; reason?: string }): Promise<unknown>;
   holdClear(params: { profile: string; work_id: string }): Promise<unknown>;
@@ -654,6 +657,12 @@ export const gahApi: GahDataSource = {
 
   async setConfig(data) {
     return postJson<{ success: boolean; message: string }, ConfigSetData>('/api/config', data);
+  },
+  saveNotificationSettings(data) {
+    return putJson('/api/settings/notifications', data);
+  },
+  sendTestNotification() {
+    return postJson('/api/settings/notifications/test', {});
   },
   getManagerChatSettings() {
     return getJson<ManagerChatSettingsSummary>('/api/manager-chat/settings');

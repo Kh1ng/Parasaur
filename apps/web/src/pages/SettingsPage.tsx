@@ -33,7 +33,7 @@ const SETTINGS_INDEX: { heading: string; section: SettingsSectionId | null; keyw
   { heading: 'Appearance', section: 'general', keywords: 'theme dark light gruvbox tokyo night notifications popup bell' },
   { heading: 'Global manager', section: 'general', keywords: 'manager wake autonomy' },
   { heading: 'Machine capacity', section: 'general', keywords: 'node capacity memory cpu cores ceiling reservation floor admission workers' },
-  { heading: 'Notification channel', section: 'general', keywords: 'notifications alerts telegram' },
+  { heading: 'Telegram and Discord notifications', section: 'general', keywords: 'notifications alerts telegram discord channel' },
   { heading: 'Chat', section: 'general', keywords: 'manager chat backend model helper routing' },
   { heading: 'Update GAH', section: 'general', keywords: 'version upgrade release' },
   { heading: 'Agent backends', section: 'general', keywords: 'providers eligibility availability quota' },
@@ -205,6 +205,7 @@ export function SettingsPage() {
         config={config}
         setConfig={setConfig}
         clearConfigErrors={clearConfigErrors}
+        reloadConfig={() => fetchConfig({ force: true })}
       />
 
       <ManagerChatSettingsSection configuredProfiles={configuredProfiles} />
@@ -453,102 +454,166 @@ export function GlobalManagerSection({ config, setConfig, clearConfigErrors }: G
   );
 }
 
-const NOTIFICATION_CHANNELS: { value: 'none' | 'telegram' | 'discord'; label: string; hint: string }[] = [
-  { value: 'none', label: 'None', hint: 'No channel delivery; per-profile notify_command still applies.' },
-  { value: 'telegram', label: 'Telegram', hint: 'Bot API sendMessage. Requires TELEGRAM_BOT_TOKEN in the server environment.' },
-  { value: 'discord', label: 'Discord', hint: 'Incoming webhook. Requires DISCORD_WEBHOOK_URL in the server environment.' }
-];
+type NotificationChannelName = 'telegram' | 'discord';
 
-/** Issue #653: where notify-worthy events (terminal failures, paid-route and
- * external-approval requests, review verdicts) are delivered in addition to
- * any per-profile notify_command. Credentials live in the server environment
- * (TELEGRAM_BOT_TOKEN / DISCORD_WEBHOOK_URL) — never in config or this UI. */
-export function NotificationChannelSection({ config, setConfig, clearConfigErrors }: GlobalManagerSectionProps) {
+const CHANNEL_LABEL: Record<NotificationChannelName, string> = { telegram: 'Telegram', discord: 'Discord' };
+
+const CREDENTIAL_SOURCE_LABEL = {
+  file: 'Saved on this host (private file).',
+  environment: 'Set in the server environment. A value saved here takes precedence.',
+} as const;
+
+type NotificationSectionProps = GlobalManagerSectionProps & {
+  /** Reloads the config summary after a save. */
+  reloadConfig?: () => Promise<void>;
+  notificationApi?: Pick<typeof gahApi, 'saveNotificationSettings' | 'sendTestNotification'>;
+};
+
+/** Issue #1454: Telegram/Discord notifications as one optional module. Off by
+ * default; while off, nothing here asks for a token. The credential is sent
+ * once to the owner-only route, written to a 0600 file, and never shown. */
+export function NotificationChannelSection({ config, reloadConfig, notificationApi = gahApi }: NotificationSectionProps) {
   const notifications = config.data?.notifications;
-  const [channel, setChannel] = useState<'none' | 'telegram' | 'discord'>('none');
+  // Older hosts send no `enabled`: they deliver whenever a channel is set.
+  const savedEnabled = notifications ? notifications.enabled ?? notifications.channel !== 'none' : false;
+  const savedChannel: NotificationChannelName = notifications?.channel === 'discord' ? 'discord' : 'telegram';
+  const [enabled, setEnabled] = useState(false);
+  const [channel, setChannel] = useState<NotificationChannelName>('telegram');
   const [chatId, setChatId] = useState('');
+  const [credential, setCredential] = useState('');
+  const [busy, setBusy] = useState<'save' | 'test' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const fieldId = useId();
-  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setChannel(notifications?.channel ?? 'none');
+    setEnabled(savedEnabled);
+    setChannel(savedChannel);
     setChatId(notifications?.telegram_chat_id ?? '');
-  }, [notifications?.channel, notifications?.telegram_chat_id]);
+  }, [savedEnabled, savedChannel, notifications?.telegram_chat_id]);
 
-  const selected = NOTIFICATION_CHANNELS.find((entry) => entry.value === channel);
+  const sameChannel = notifications?.channel === channel;
+  const credentialSource = sameChannel ? notifications?.credential_source ?? null : null;
+  const needsCredential = enabled && !credentialSource && credential.trim() === '';
+  const needsChatId = enabled && channel === 'telegram' && chatId.trim() === '';
 
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      await setConfig({
-        notification_channel: channel,
-        telegram_chat_id: channel === 'telegram' && chatId.trim() !== '' ? chatId.trim() : null,
-        clear: channel === 'telegram' ? [] : ['telegram_chat_id'],
-      });
-    } finally {
-      setSaving(false);
-    }
+  const run = async (kind: 'save' | 'test', action: () => Promise<void>) => {
+    setBusy(kind);
+    setError(null);
+    setResult(null);
+    try { await action(); } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); } finally { setBusy(null); }
   };
 
+  const handleSave = () => run('save', async () => {
+    await notificationApi.saveNotificationSettings(enabled
+      ? { enabled, channel, ...(channel === 'telegram' ? { telegram_chat_id: chatId.trim() } : {}), ...(credential.trim() ? { credential: credential.trim() } : {}) }
+      : { enabled: false });
+    setCredential('');
+    await reloadConfig?.();
+    setResult({ ok: true, text: enabled ? `Saved. ${CHANNEL_LABEL[channel]} notifications are on; send a test message to check them.` : 'Saved. Notifications are off.' });
+  });
+
+  const handleTest = () => run('test', async () => {
+    const { receipt } = await notificationApi.sendTestNotification();
+    setResult(receipt.ok
+      ? { ok: true, text: `Sent a test message to ${receipt.target}. Check that it arrived.` }
+      : { ok: false, text: `The test message to ${receipt.target} failed: ${receipt.reason ?? 'unknown error'}. It is recorded in notification history.` });
+  });
+
   return (
-    <section className="card-padded max-w-md">
-      <h3 className="text-sm font-semibold text-primary mb-1">Notification channel</h3>
+    <section className="card-padded max-w-md" aria-labelledby={`${fieldId}-title`}>
+      <h3 id={`${fieldId}-title`} className="text-sm font-semibold text-primary mb-1">Telegram and Discord notifications</h3>
       <p className="text-xs text-muted mb-3">
-        Where notify-worthy events are delivered in addition to any per-profile
-        notify_command. Messages are the same redacted one-liners the dashboard
-        events page records; delivery failures are visible there and never block dispatch.
+        Optional. GAH can message you when work fails, a review is ready, or a node goes offline. Each delivery, and each failure, is recorded in notification history.
       </p>
 
-      <label htmlFor={`${fieldId}-channel`} className="block text-xs font-medium text-secondary mb-1">Channel</label>
-      <select
-        id={`${fieldId}-channel`}
-        value={channel}
-        onChange={(e) => setChannel(e.target.value as 'none' | 'telegram' | 'discord')}
-        className="w-full bg-raised border border-subtle rounded-md px-3 py-1.5 text-sm text-primary"
-      >
-        {NOTIFICATION_CHANNELS.map((entry) => (
-          <option key={entry.value} value={entry.value}>
-            {entry.label}
-          </option>
-        ))}
-      </select>
-      {selected && <p className="text-xs text-muted mt-1">{selected.hint}</p>}
+      <label className="flex items-start gap-2 text-sm text-primary">
+        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="mt-1" />
+        <span>
+          Send notifications to Telegram or Discord
+          <span className="block text-xs text-muted">Off: nothing is sent and nothing asks for a token. Turning it off keeps the channel and credential for later.</span>
+        </span>
+      </label>
 
-      {channel === 'telegram' && (
+      {enabled && (
         <>
-          <label htmlFor={`${fieldId}-telegram-chat-id`} className="block text-xs font-medium text-secondary mb-1 mt-3">
-            Telegram chat ID
+          <label htmlFor={`${fieldId}-channel`} className="block text-xs font-medium text-secondary mb-1 mt-3">Channel</label>
+          <select
+            id={`${fieldId}-channel`}
+            value={channel}
+            onChange={(e) => setChannel(e.target.value as NotificationChannelName)}
+            className="w-full bg-raised border border-subtle rounded-md px-3 py-1.5 text-sm text-primary"
+          >
+            <option value="telegram">Telegram</option>
+            <option value="discord">Discord</option>
+          </select>
+
+          {channel === 'telegram' ? (
+            <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-muted">
+              <li>In Telegram, message @BotFather, send /newbot, and copy the token it replies with.</li>
+              <li>Open a chat with your new bot and press Start, so it may message you.</li>
+              <li>Message @userinfobot to get your chat id. For a group, add the bot to it; a group id starts with -100.</li>
+            </ol>
+          ) : (
+            <p className="mt-2 text-xs text-muted">In Discord, open Server Settings → Integrations → Webhooks → New Webhook, choose the channel, and select Copy Webhook URL.</p>
+          )}
+
+          <label htmlFor={`${fieldId}-credential`} className="block text-xs font-medium text-secondary mb-1 mt-3">
+            {channel === 'telegram' ? 'Bot token' : 'Webhook URL'}
           </label>
           <input
-            id={`${fieldId}-telegram-chat-id`}
-            type="text"
-            value={chatId}
-            onChange={(e) => setChatId(e.target.value)}
-            placeholder="e.g. 123456789 (from @userinfobot)"
+            id={`${fieldId}-credential`}
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={credential}
+            onChange={(e) => setCredential(e.target.value)}
+            placeholder={credentialSource ? 'Leave empty to keep the saved value' : channel === 'telegram' ? '123456789:AAE…' : 'https://discord.com/api/webhooks/…'}
             className="w-full bg-raised border border-subtle rounded-md px-3 py-1.5 text-sm text-primary"
           />
           <p className="text-xs text-muted mt-1">
-            Non-secret. The bot token must be set as TELEGRAM_BOT_TOKEN in the server environment — it is never stored in config or shown here.
+            {credentialSource ? CREDENTIAL_SOURCE_LABEL[credentialSource] : 'Not saved yet.'} It is never shown again.
           </p>
+
+          {channel === 'telegram' && (
+            <>
+              <label htmlFor={`${fieldId}-telegram-chat-id`} className="block text-xs font-medium text-secondary mb-1 mt-3">
+                Telegram chat ID
+              </label>
+              <input
+                id={`${fieldId}-telegram-chat-id`}
+                type="text"
+                inputMode="numeric"
+                value={chatId}
+                onChange={(e) => setChatId(e.target.value)}
+                placeholder="e.g. 123456789"
+                className="w-full bg-raised border border-subtle rounded-md px-3 py-1.5 text-sm text-primary"
+              />
+            </>
+          )}
         </>
       )}
 
-      {channel !== 'none' && notifications?.credential_env && (
-        <p className="text-xs text-critical mt-2">
-          Requires {notifications.credential_env} in the server environment; without it, delivery failures appear on the Events page.
-        </p>
-      )}
+      {error && <p role="alert" className="mt-3 text-xs text-critical">Error: {error}</p>}
+      {result && <p role="status" className={`mt-3 text-xs ${result.ok ? 'text-good' : 'text-critical'}`}>{result.text}</p>}
 
-      {config.error && <p className="mt-3 text-xs text-critical">Error: {config.error}</p>}
-
-      <button
-        onClick={handleSave}
-        disabled={config.loading || saving}
-        className="mt-3 btn-primary"
-      >
-        {saving || config.loading ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Save size={14} aria-hidden="true" />}
-        {saving || config.loading ? 'Saving…' : 'Save notification channel'}
-      </button>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => void handleSave()}
+          disabled={busy !== null || needsCredential || needsChatId}
+          className="btn-primary"
+        >
+          {busy === 'save' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Save size={14} aria-hidden="true" />}
+          {busy === 'save' ? 'Saving…' : 'Save notifications'}
+        </button>
+        {savedEnabled && (
+          <button type="button" onClick={() => void handleTest()} disabled={busy !== null} className="btn-secondary">
+            {busy === 'test' && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
+            Send test message
+          </button>
+        )}
+      </div>
     </section>
   );
 }
