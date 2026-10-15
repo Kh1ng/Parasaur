@@ -89,6 +89,9 @@ test('a late quota response cannot replace availability after a profile switch',
   await expect(backends).toContainText('second-backend');
   await expect(backends).not.toContainText('old-backend');
   await openUsage(page, 'Quota');
-  await expect(page.getByText(/^second-backend \//)).toBeVisible();
+  // The candidate's label also appears as a route heading on the page, so
+  // assert on the quota candidate rows themselves.
+  await expect(page.getByTestId(/^quota-candidate-second-backend-/).getByText(/^second-backend \//)).toBeVisible();
+  await expect(page.getByTestId(/^quota-candidate-old-backend-/)).toHaveCount(0);
   await expect(page.getByText(/^old-backend \//)).toHaveCount(0);
 });
