@@ -1196,6 +1196,78 @@ mod tests {
         .unwrap();
     }
 
+    /// Tauri's app ACL rejects a command that is not in build.rs's manifest
+    /// or not granted by a capability, before the handler runs. Every command
+    /// the frontend invokes must therefore be registered, listed and granted
+    /// (#1454 review: `set_notifications_enabled` and `set_factory_enabled`
+    /// were registered but rejected in the packaged app).
+    #[test]
+    fn every_invoked_command_is_registered_listed_and_granted() {
+        let quoted = |text: &str, start: &str, end: &str| -> Vec<String> {
+            let from = text.find(start).expect(start) + start.len();
+            let body = &text[from..from + text[from..].find(end).expect(end)];
+            body.split(',')
+                .map(|item| item.trim().trim_matches('"'))
+                .filter(|item| !item.is_empty())
+                .map(|item| item.rsplit("::").next().unwrap().to_string())
+                .collect()
+        };
+        let handlers = quoted(include_str!("main.rs"), "generate_handler![", "]");
+        let manifest = quoted(include_str!("build.rs"), ".commands(&[", "]");
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("tauri.conf.json")).unwrap();
+        let grants: Vec<(String, bool)> = config["app"]["security"]["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|capability| {
+                let local = capability["identifier"] == "local-settings";
+                capability["permissions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|p| p.as_str())
+                    .map(move |p| (p.to_string(), local))
+            })
+            .collect();
+        let frontend = include_str!("src/main.ts");
+        let invoked: std::collections::BTreeSet<String> = frontend
+            .match_indices("invoke")
+            .filter_map(|(at, _)| {
+                let rest = &frontend[at..];
+                let open = rest.find("('")?;
+                (open < 40).then(|| rest[open + 2..].split('\'').next().unwrap().to_string())
+            })
+            .filter(|name| !name.contains(':'))
+            .collect();
+        for name in &invoked {
+            assert!(
+                handlers.contains(name),
+                "{name} is invoked but has no handler"
+            );
+        }
+        for name in &handlers {
+            assert!(manifest.contains(name), "{name} is missing from build.rs");
+            let permission = format!("allow-{}", name.replace('_', "-"));
+            assert!(
+                grants.iter().any(|(p, _)| *p == permission),
+                "{permission} is granted by no capability"
+            );
+        }
+        for name in ["set_factory_enabled", "set_notifications_enabled"] {
+            let permission = format!("allow-{}", name.replace('_', "-"));
+            assert_eq!(
+                grants
+                    .iter()
+                    .filter(|(p, _)| *p == permission)
+                    .map(|(_, local)| *local)
+                    .collect::<Vec<_>>(),
+                [true],
+                "{permission} must be granted only to the bundled Settings capability"
+            );
+        }
+    }
+
     #[test]
     fn local_controls_and_settings_navigation_have_separate_trust_boundaries() {
         for value in [
