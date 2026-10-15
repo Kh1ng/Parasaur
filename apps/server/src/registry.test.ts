@@ -1077,6 +1077,7 @@ test('authMiddleware accepts non-loopback requests when req.secure is true and t
 
   assert.equal(nextCalled, true);
   assert.equal(statusCalledWith, null);
+  assert.equal(jsonCalledWith, null);
   
   delete process.env.COORDINATOR_TOKEN;
 });

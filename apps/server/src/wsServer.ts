@@ -296,7 +296,7 @@ export function createWebSocketHandler(
   
   // Set up push bus to broadcast to all connected clients. Chat messages are
   // scoped to the profile they concern; everything else fans out everywhere.
-  pushBus.subscribe((message: ServerMessage) => {
+  const unsubscribePush = pushBus.subscribe((message: ServerMessage) => {
     if (
       message.type === 'manager.chat.chunk'
       || message.type === 'manager.chat.toolCall'
@@ -309,6 +309,9 @@ export function createWebSocketHandler(
       sessionStore.broadcast(message);
     }
   });
+  // The bus is module-wide; a closed server must not keep fanning out to it,
+  // or every later handler in the process delivers each message again.
+  wss.once('close', unsubscribePush);
 
   // Live-tee each logged assistant/chunk onto the push bus (#959) so every
   // subscribed client renders a turn progressively, not just the sender.

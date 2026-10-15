@@ -489,6 +489,8 @@ test('tool calls stream as structured events and permissions round-trip through 
     const toolReply = await request(client, 'manager.chat.reply', 'turn-tool', {
       type: 'manager.chat.send', requestId: 'turn-tool', profile, message: 'use a tool', sessionId
     } satisfies ClientMessage);
+    assert.equal(toolReply.reply, 'tool done');
+    assert.deepEqual(toolEvents, ['in_progress', 'completed'], 'live tool-call stream reaches the client in order');
 
     const permissionPush = new Promise<Extract<ServerMessage, { type: 'manager.chat.permission' }>>((resolve) => {
       client.on('message', (raw) => {
