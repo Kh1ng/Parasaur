@@ -71,7 +71,6 @@ impl std::str::FromStr for ExportFormat {
 }
 
 /// Configuration for telemetry export
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TelemetryConfig {
     /// Path to the telemetry repository root
@@ -605,7 +604,6 @@ impl TelemetryExporter {
     }
 
     /// Get the set of exported record IDs
-    #[allow(dead_code)]
     pub fn exported_ids(&self) -> &BTreeSet<String> {
         &self.exported_ids
     }
@@ -657,7 +655,6 @@ fn legacy_store_quota_id_alias(value: &serde_json::Value) -> Result<Option<Strin
 }
 
 /// Export telemetry from ledger entries
-#[allow(dead_code)]
 pub fn export_telemetry(
     entries: &[LedgerEntry],
     telemetry_repo_path: &Path,
@@ -693,7 +690,6 @@ pub fn telemetry_repo_exists(telemetry_repo_path: &Path) -> bool {
 }
 
 /// Get the default telemetry repository path
-#[allow(dead_code)]
 pub fn default_telemetry_repo_path() -> PathBuf {
     // Look for telemetry submodule first
     let repo_root = std::env::current_dir().unwrap_or_default();

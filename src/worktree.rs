@@ -588,7 +588,6 @@ pub fn has_uncommitted_changes(worktree: &Path) -> Result<bool> {
     Ok(!status.stdout.is_empty())
 }
 
-#[allow(dead_code)]
 pub fn diff_patch(worktree: &Path, target_branch: &str) -> Result<String> {
     let origin_ref = format!("origin/{}", target_branch);
     Ok(
@@ -597,7 +596,6 @@ pub fn diff_patch(worktree: &Path, target_branch: &str) -> Result<String> {
     )
 }
 
-#[allow(dead_code)]
 pub fn changed_files(worktree: &Path, target_branch: &str) -> Result<Vec<String>> {
     let origin_ref = format!("origin/{}", target_branch);
     let out = git_raw(&["diff", "--name-only", &origin_ref, "HEAD"], worktree)?;

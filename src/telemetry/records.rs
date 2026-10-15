@@ -41,7 +41,6 @@ use serde::{Deserialize, Serialize};
 pub const SCHEMA_VERSION: u32 = 12;
 
 /// Record types for telemetry data (used for enum tags)
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecordType {
@@ -454,7 +453,6 @@ impl ExportedTelemetryRecord {
         }
     }
 
-    #[allow(dead_code)]
     pub fn get_record_type(&self) -> RecordType {
         match self {
             ExportedTelemetryRecord::AttemptUsage(_) => RecordType::AttemptUsage,
