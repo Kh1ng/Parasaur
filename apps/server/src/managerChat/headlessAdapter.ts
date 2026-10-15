@@ -240,7 +240,9 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
                 { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
                 { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
               ],
-              locations: plan.locations
+              locations: plan.locations,
+              kind: plan.kind,
+              rawInput: request.args
             });
           } else {
             console.warn(`[managerChat] ${spec.displayName} requested permission for "${plan.title}" -- declining (no permission UI attached)`);

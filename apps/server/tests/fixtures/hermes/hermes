@@ -150,7 +150,31 @@ class MockHermes {
     // the structured activity stream end to end. The permission branch is
     // checked FIRST -- "do a dangerous thing" also says "use a tool"-ish
     // things, and branches below must not shadow it.
-    if (/dangerous thing/i.test(liveText)) {
+    // Issue #1382: "ask permission {json}" requests permission for the
+    // given tool call ({kind, path?, command?}); a relative path resolves
+    // against the session cwd. Tests drive the permission-mode policy.
+    // Only the newest line counts: a resumed prompt replays earlier turns.
+    const permissionCall = liveText.trim().split('\n').at(-1).match(/ask permission (\{.*\})/)?.[1];
+    if (permissionCall) {
+      const call = JSON.parse(permissionCall);
+      const cwd = sessionCwds.get(sessionId) ?? '/';
+      const response = await this.connection.requestPermission({
+        sessionId,
+        toolCall: {
+          toolCallId: `perm-call-${prompts}`,
+          title: call.command ?? call.path ?? call.kind,
+          kind: call.kind,
+          status: 'pending',
+          ...(call.path ? { locations: [{ path: call.path.startsWith('/') ? call.path : `${cwd}/${call.path}` }] } : {}),
+          ...(call.command ? { rawInput: { command: call.command } } : {})
+        },
+        options: [
+          { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+        ]
+      });
+      reply = `permission ${response.outcome?.outcome === 'selected' ? response.outcome.optionId : 'cancelled'}`;
+    } else if (/dangerous thing/i.test(liveText)) {
       // Slice 3: request permission and honor the client's choice. The
       // decision is echoed back so tests assert the round trip.
       const response = await this.connection.requestPermission({

@@ -627,6 +627,7 @@ function createState(scenario: MockScenarioName, reset: number, previewOrigin?: 
       defaultBackend: defaultBackendFor(scenario),
       profileOverrides: {},
       helperRoutes: [],
+      permissionMode: 'ask',
       availableBackends: BACKENDS
     } satisfies ManagerChatSettingsSummary,
     profiles: structuredClone(MOCK_PROFILES),
@@ -1906,7 +1907,8 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       ...state.settings,
       ...(defaultBackend ? { defaultBackend } : {}),
       ...(overrides && typeof overrides === 'object' ? { profileOverrides: overrides as Record<string, string> } : {}),
-      ...(Array.isArray(helperRoutes) ? { helperRoutes } : {})
+      ...(Array.isArray(helperRoutes) ? { helperRoutes } : {}),
+      ...(req.body?.permissionMode === 'ask' || req.body?.permissionMode === 'bypass' ? { permissionMode: req.body.permissionMode } : {})
     } satisfies ManagerChatSettingsSummary;
     res.json({ success: true });
   });

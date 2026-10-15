@@ -175,6 +175,9 @@ export interface ChatPermissionDecision {
   permissionId: string;
   /** The chosen optionId, or 'cancelled' when nobody answered in time. */
   optionId: string;
+  /** True when the permission-mode bypass chose the option without asking
+   * (issue #1382). Absent on older logs and human decisions. */
+  autoApproved?: boolean;
   timestamp: number;
 }
 

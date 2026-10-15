@@ -1966,9 +1966,16 @@ export function createServer(
     res.json({ ...readManagerChatSettings(), availableBackends: listManagerBackends() });
   });
 
-  app.post('/api/manager-chat/settings', requireOwner, (req, res) => {
+  // Writes a state file and can turn off Manager Chat permission prompts
+  // (issue #1382): owner-only and rate-limited.
+  app.post('/api/manager-chat/settings', rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false }), requireOwner, (req, res) => {
     try {
       const current = readManagerChatSettings();
+      const requestedMode: unknown = req.body?.permissionMode;
+      if (requestedMode !== undefined && requestedMode !== 'ask' && requestedMode !== 'bypass') {
+        return res.status(400).json({ error: 'invalid_permission_mode', message: "permissionMode must be 'ask' or 'bypass'." });
+      }
+      const permissionMode = requestedMode ?? current.permissionMode;
       const defaultBackend = typeof req.body?.defaultBackend === 'string' ? req.body.defaultBackend : current.defaultBackend;
       const profileOverrides =
         typeof req.body?.profileOverrides === 'object' && req.body.profileOverrides !== null
@@ -1985,7 +1992,8 @@ export function createServer(
         profileOverrides,
         modelOverrides: current.modelOverrides,
         reasoningEffortOverrides: current.reasoningEffortOverrides,
-        helperRoutes
+        helperRoutes,
+        permissionMode
       });
       res.json({ success: true });
     } catch (error) {

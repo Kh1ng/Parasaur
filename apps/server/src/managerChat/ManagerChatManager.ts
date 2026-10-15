@@ -29,8 +29,10 @@ import {
   reasoningEffortOverrideForProfile,
   helperRouteFor,
   setModelOverrideForProfile,
-  setReasoningEffortOverrideForProfile
+  setReasoningEffortOverrideForProfile,
+  readSettings
 } from './settingsStore.js';
+import { autoApprovedOption } from './permissionPolicy.js';
 import { effectiveContextPolicy, buildMemoryPrompt } from '../gatewaySettingsStore.js';
 import { appendEvents, createEventWriter, deriveModelHistory, foldSession, loadLog, nextSeqAndTurn, seedOpeningMessage, type SessionLogOptions } from './sessionLog.js';
 import {
@@ -820,6 +822,20 @@ export async function runTurn(
             // until the human answers, the turn is cancelled, or the
             // timeout cancels fail-closed.
             const permissionId = `perm-${active.turnNo}-${Date.now().toString(36)}`;
+            // Issue #1382: the opt-in bypass applies only to chats served
+            // on this machine, and only to ordinary in-worktree actions.
+            // The request and its decision are journaled before the
+            // backend proceeds, so every auto-approval stays auditable.
+            const autoOption = context.route?.remote || !active.chunkWriter
+              ? null
+              : autoApprovedOption(readSettings().permissionMode, request, context.cwd);
+            if (autoOption) {
+              const timestamp = Date.now();
+              active.chunkWriter!.append({ type: 'permission/request', seq: ++active.seq, turn: active.turnNo, permissionId, title: request.title, options: request.options, locations: request.locations, timestamp });
+              active.chunkWriter!.append({ type: 'permission/decision', seq: ++active.seq, turn: active.turnNo, permissionId, optionId: autoOption, autoApproved: true, timestamp });
+              active.chunkWriter!.flush().then(() => resolve(autoOption), reject);
+              return;
+            }
             active.pendingPermission = {
               permissionId,
               resolve: (optionId) => {

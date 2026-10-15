@@ -254,7 +254,7 @@ export function deriveModelHistory(events: ChatSessionEvent[]): ChatTranscriptTu
         role: 'system',
         text: event.type === 'permission/request'
           ? `[permission requested] ${event.title}`
-          : `[permission ${event.optionId === 'cancelled' ? 'cancelled' : `granted: ${event.optionId}`}]`,
+          : permissionDecisionText(event),
         timestamp: event.timestamp
       });
     } else if (event.type === 'tool/result' && !isLegacyHarnessError(events, index)) {
@@ -396,7 +396,7 @@ export function foldSession(
       case 'permission/decision':
         turns.push({
           role: 'system',
-          text: `[permission ${e.optionId === 'cancelled' ? 'cancelled' : `granted: ${e.optionId}`}]`,
+          text: permissionDecisionText(e),
           timestamp: e.timestamp
         });
         if (permission?.permissionId === e.permissionId) permission = null;
@@ -440,4 +440,9 @@ export function foldSession(
   }
 
   return { profile, cursor, turns, streaming, permission };
+}
+
+function permissionDecisionText(event: Extract<ChatSessionEvent, { type: 'permission/decision' }>): string {
+  if (event.optionId === 'cancelled') return '[permission cancelled]';
+  return event.autoApproved ? `[permission auto-approved: ${event.optionId}]` : `[permission granted: ${event.optionId}]`;
 }

@@ -525,6 +525,37 @@ test('tool calls stream as structured events and permissions round-trip through 
     const historyText = history.turns.map((t) => t.text).join('\n');
     assert.match(historyText, /permission requested/);
     assert.match(historyText, /allow-once/);
+    assert.doesNotMatch(historyText, /auto-approved/, 'the unset default asks for every action');
+
+    // Issue #1382: with bypass on, an ordinary in-worktree action runs
+    // without a prompt and is journaled; a push, an outside path, and an
+    // unclassifiable request still ask.
+    writeFileSync(process.env.GAH_MANAGER_CHAT_SETTINGS_PATH!, JSON.stringify({ permissionMode: 'bypass' }));
+    const prompts: Extract<ServerMessage, { type: 'manager.chat.permission' }>[] = [];
+    client.on('message', (raw) => {
+      const message = JSON.parse(raw.toString()) as ServerMessage;
+      if (message.type !== 'manager.chat.permission') return;
+      prompts.push(message);
+      client.send(JSON.stringify({
+        type: 'manager.chat.permission.respond', requestId: `answer-${prompts.length}`, profile, sessionId,
+        permissionId: message.permissionId, optionId: 'reject-once'
+      } satisfies ClientMessage));
+    });
+    const send = async (turn: string, message: string) => (await request(client, 'manager.chat.reply', turn, {
+      type: 'manager.chat.send', requestId: turn, profile, message, sessionId
+    } satisfies ClientMessage)).reply;
+    assert.equal(await send('turn-auto', 'ask permission {"kind":"edit","path":"README.md"}'), 'permission allow-once');
+    assert.equal(prompts.length, 0, 'an in-worktree edit is not prompted');
+    assert.equal(await send('turn-push', 'ask permission {"kind":"execute","command":"git push origin HEAD"}'), 'permission reject-once');
+    assert.equal(await send('turn-outside', 'ask permission {"kind":"edit","path":"/etc/hosts"}'), 'permission reject-once');
+    assert.equal(await send('turn-unknown', 'do a dangerous thing'), 'permission reject-once');
+    assert.deepEqual(prompts.map((prompt) => prompt.title), ['git push origin HEAD', '/etc/hosts', 'Run `rm -rf /tmp/scratch`']);
+    const bypassHistory = await request(client, 'manager.chat.history', 'history-bypass', {
+      type: 'manager.chat.historyRequest', requestId: 'history-bypass', profile, sessionId
+    } satisfies ClientMessage);
+    const audit = bypassHistory.turns.map((t) => t.text);
+    assert.equal(audit.filter((text) => text === '[permission auto-approved: allow-once]').length, 1, 'the auto-approval is recorded once');
+    assert.ok(audit.some((text) => /\[permission requested\] .*README\.md/.test(text)), 'the auto-approved action is named in the transcript');
 
     client.close();
     await once(client, 'close');
