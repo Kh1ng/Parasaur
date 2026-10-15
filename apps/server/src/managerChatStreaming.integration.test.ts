@@ -1,18 +1,19 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync, WriteStream } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test, type TestContext } from 'node:test';
+import { test } from 'node:test';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { ClientMessage, ServerMessage } from '@git-agent-harness/contracts';
 import { createWebSocketHandler } from './wsServer.js';
 import { readLog } from './managerChat/sessionLog.js';
 import { writeGatewaySettings } from './gatewaySettingsStore.js';
 import { cancelManagerChatTurn } from './managerChat/ManagerChatManager.js';
+import { delayPermissionWrite } from './permissionWriteHold.js';
 
 const fixtures = resolve(dirname(fileURLToPath(import.meta.url)), '../tests/fixtures');
 
@@ -230,31 +231,6 @@ test('assistant chunks stream to every client subscribed to the profile, in orde
     await closeSocket(observer);
   });
 });
-
-/** Hold the actual journal write, including batches, while websocket IO runs. */
-function delayPermissionWrite(t: TestContext, failure?: Error): Promise<void> {
-  let writing!: () => void;
-  const started = new Promise<void>((resolve) => { writing = resolve; });
-  let held = false;
-  t.after(() => assert.ok(held, 'the test intercepted a permission journal write'));
-  const write = WriteStream.prototype._write;
-  const writev = WriteStream.prototype._writev;
-  assert.ok(writev);
-  t.after(() => { WriteStream.prototype._writev = writev; });
-  t.mock.method(WriteStream.prototype, '_write', function(this: WriteStream, chunk: Buffer, encoding: BufferEncoding, callback: (error?: Error | null) => void) {
-    if (!chunk.toString().includes('"type":"permission/request"')) return write.call(this, chunk, encoding, callback);
-    held = true;
-    writing();
-    setTimeout(() => failure ? callback(failure) : write.call(this, chunk, encoding, callback), 250);
-  });
-  WriteStream.prototype._writev = function(chunks, callback) {
-    if (!chunks.some(({ chunk }) => chunk.toString().includes('"type":"permission/request"'))) return writev.call(this, chunks, callback);
-    held = true;
-    writing();
-    setTimeout(() => failure ? callback(failure) : writev.call(this, chunks, callback), 250);
-  };
-  return started;
-}
 
 test('live tool and permission state stays profile-scoped and an actionable permission survives reconnect', { timeout: 30_000 }, async (t) => {
   delayPermissionWrite(t);
