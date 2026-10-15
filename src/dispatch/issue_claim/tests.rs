@@ -553,6 +553,54 @@ fn renewals_are_scheduled_from_the_confirmed_expiry() {
 }
 
 #[test]
+fn a_renewal_confirmed_after_the_deadline_loses_the_lease_for_good() {
+    let start = Instant::now();
+    let deadline = start + Duration::from_millis(150);
+    let lease = IssueLease {
+        issue: "7".into(),
+        state: Arc::new(Mutex::new(LeaseState {
+            lost: None,
+            deadline,
+        })),
+        stop: None,
+        renewer: None,
+    };
+    let extended = start + Duration::from_secs(3600);
+
+    // The renewal call returned success, but only seen 10 ms after the old
+    // deadline, and nobody called `ensure_held` in between.
+    let held = confirm_renewal(&lease.state, extended, deadline + Duration::from_millis(10));
+
+    assert!(!held);
+    assert_eq!(lock(&lease.state).deadline, deadline, "not extended");
+    for _ in 0..2 {
+        let error = lease.ensure_held().unwrap_err();
+        assert!(issue_claim_lost(&error).is_some());
+        assert!(error.to_string().contains("expired"), "{error:#}");
+    }
+    // A later on-time success cannot revive it.
+    assert!(!confirm_renewal(&lease.state, extended, start));
+    assert!(lease.ensure_held().is_err());
+}
+
+#[test]
+fn a_renewal_confirmed_before_the_deadline_extends_the_lease() {
+    let start = Instant::now();
+    let state = Mutex::new(LeaseState {
+        lost: None,
+        deadline: start + Duration::from_millis(150),
+    });
+    let extended = start + Duration::from_secs(3600);
+
+    assert!(confirm_renewal(
+        &state,
+        extended,
+        start + Duration::from_millis(140)
+    ));
+    assert_eq!(lock(&state).deadline, extended);
+}
+
+#[test]
 fn the_lease_expires_at_its_deadline_without_the_renewer() {
     // No renewer runs and nothing marked the lease lost: only the deadline.
     let lease = IssueLease {

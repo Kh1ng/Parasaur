@@ -278,7 +278,9 @@ impl IssueLease {
                 match renew(&board, &policy, &me, &target, OffsetDateTime::now_utc()) {
                     Ok(None) => {
                         failed = false;
-                        lock(&thread_state).deadline = began + ttl;
+                        if !confirm_renewal(&thread_state, began + ttl, Instant::now()) {
+                            return;
+                        }
                     }
                     Ok(Some(reason)) => {
                         lose(&thread_state, &reason);
@@ -329,6 +331,24 @@ fn lock(state: &Mutex<LeaseState>) -> std::sync::MutexGuard<'_, LeaseState> {
 
 fn lose(state: &Mutex<LeaseState>, reason: &str) {
     lock(state).lost.get_or_insert_with(|| reason.to_string());
+}
+
+/// Record a renewal that succeeded, observed at `now`: move the deadline to
+/// `extended`, unless the lease already lapsed. A renewal seen at or after
+/// the current deadline proves nothing: the claim was expired in between,
+/// when another loop could have taken the issue, so the lease is lost even
+/// though the call succeeded and even if nobody checked in that gap.
+/// Returns whether the lease still holds.
+fn confirm_renewal(state: &Mutex<LeaseState>, extended: Instant, now: Instant) -> bool {
+    let mut state = lock(state);
+    if state.lost.is_none() && now >= state.deadline {
+        state.lost = Some("the claim expired before its renewal was confirmed".to_string());
+    }
+    if state.lost.is_some() {
+        return false;
+    }
+    state.deadline = extended;
+    true
 }
 
 impl Drop for IssueLease {
