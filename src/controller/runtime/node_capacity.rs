@@ -385,6 +385,14 @@ pub(crate) fn sample() -> std::io::Result<NodePressure> {
         });
     }
 
+    #[cfg(target_os = "macos")]
+    return sample_macos();
+    #[cfg(not(target_os = "macos"))]
+    sample_proc()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn sample_proc() -> std::io::Result<NodePressure> {
     let meminfo = std::fs::read_to_string("/proc/meminfo")?;
     let memory_total_bytes = meminfo_kib(&meminfo, "MemTotal")
         .ok_or_else(|| std::io::Error::other("MemTotal missing from /proc/meminfo"))?
@@ -410,6 +418,57 @@ pub(crate) fn sample() -> std::io::Result<NodePressure> {
     })
 }
 
+/// macOS has no /proc. `kern.memorystatus_level` is the kernel's percentage
+/// of memory still available, the figure `memory_pressure` reports. macOS has
+/// no PSI, so those signals stay unknown as on Linux kernels without it.
+#[cfg(target_os = "macos")]
+fn sample_macos() -> std::io::Result<NodePressure> {
+    let memory_total_bytes: u64 = sysctl_value("hw.memsize")?;
+    let available_percent: u32 = sysctl_value("kern.memorystatus_level")?;
+    let mut load = [0f64; 1];
+    if unsafe { libc::getloadavg(load.as_mut_ptr(), 1) } != 1 {
+        return Err(std::io::Error::other(
+            "getloadavg returned no one-minute load",
+        ));
+    }
+    Ok(NodePressure {
+        memory_total_bytes,
+        memory_available_bytes: memory_total_bytes / 100 * u64::from(available_percent.min(100)),
+        logical_cpus: std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(1),
+        load_one: load[0],
+        memory_full_psi_avg10: None,
+        cpu_some_psi_avg10: None,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn sysctl_value<T: Copy + Default>(name: &str) -> std::io::Result<T> {
+    let c_name = std::ffi::CString::new(name)?;
+    let mut value = T::default();
+    let mut size = std::mem::size_of::<T>();
+    let status = unsafe {
+        libc::sysctlbyname(
+            c_name.as_ptr(),
+            (&mut value as *mut T).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if status != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if size != std::mem::size_of::<T>() {
+        return Err(std::io::Error::other(format!(
+            "sysctl {name} returned {size} bytes"
+        )));
+    }
+    Ok(value)
+}
+
+#[cfg(any(test, not(target_os = "macos")))]
 fn meminfo_kib(contents: &str, key: &str) -> Option<u64> {
     contents.lines().find_map(|line| {
         let (name, value) = line.split_once(':')?;
@@ -419,6 +478,7 @@ fn meminfo_kib(contents: &str, key: &str) -> Option<u64> {
     })
 }
 
+#[cfg(any(test, not(target_os = "macos")))]
 fn read_psi_avg10(path: &str, class: &str) -> Option<f64> {
     let contents = std::fs::read_to_string(path).ok()?;
     contents.lines().find_map(|line| {
@@ -693,6 +753,15 @@ mod tests {
             admission_for(&review(), 0, WorkerReservation::default(), node),
             Admission::Defer(reason) if reason.contains("memory PSI")
         ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_sample_reads_live_memory_and_load() {
+        let node = sample_macos().unwrap();
+        assert!(node.memory_total_bytes > 0);
+        assert!(node.memory_available_bytes <= node.memory_total_bytes);
+        assert!(node.load_one >= 0.0);
     }
 
     #[test]
