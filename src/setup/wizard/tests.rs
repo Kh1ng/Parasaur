@@ -47,6 +47,7 @@ struct Recorder {
     status: Option<u16>,
     profiles: Vec<String>,
     fails: bool,
+    chat_permissions: Vec<ChatPermissions>,
 }
 
 impl Effects for Recorder {
@@ -74,6 +75,10 @@ impl Effects for Recorder {
     }
     fn add_profile(&mut self, args: InitArgs) -> Result<()> {
         self.profiles.push(args.profile);
+        Ok(())
+    }
+    fn set_chat_permissions(&mut self, _source: &Path, mode: ChatPermissions) -> Result<()> {
+        self.chat_permissions.push(mode);
         Ok(())
     }
 }
@@ -365,7 +370,7 @@ fn installer_effects_are_disclosed_before_a_declined_confirmation() {
 fn a_ready_central_machine_asks_three_questions_then_installs() {
     let host = ready_host();
     let mut prompter = Script {
-        answers: ["1", "", "0", "0", "0", "y"].map(String::from).into(),
+        answers: ["1", "", "0", "0", "0", "n", "y"].map(String::from).into(),
         ..Default::default()
     };
     let mut effects = Recorder::default();
@@ -385,6 +390,11 @@ fn a_ready_central_machine_asks_three_questions_then_installs() {
     let (command, env) = &effects.commands[0];
     assert_eq!(command, "scripts/install.sh");
     assert!(env.contains(&("GAH_NODE_ROLE".into(), "central".into())));
+    assert_eq!(
+        effects.chat_permissions,
+        [ChatPermissions::Ask],
+        "declining keeps prompts on"
+    );
     assert!(
         prompter
             .said
@@ -398,7 +408,7 @@ fn a_ready_central_machine_asks_three_questions_then_installs() {
 fn accepting_the_default_role_sets_up_standalone_so_networking_is_opt_in() {
     let host = ready_host();
     let mut prompter = Script {
-        answers: ["0", "", "0", "0", "0", "y"].map(String::from).into(),
+        answers: ["0", "", "0", "0", "0", "y", "y"].map(String::from).into(),
         ..Default::default()
     };
     let mut effects = Recorder::default();
@@ -429,6 +439,46 @@ fn accepting_the_default_role_sets_up_standalone_so_networking_is_opt_in() {
         .said
         .iter()
         .any(|line| line.contains("http://127.0.0.1:3773")));
+    assert_eq!(effects.chat_permissions, [ChatPermissions::Bypass]);
+    assert!(prompter
+        .asked
+        .iter()
+        .any(|question| question.contains("Skip permission prompts")));
+}
+
+/// #1382: an unattended run keeps the stored mode unless the flag sets it.
+#[test]
+fn unattended_setup_changes_chat_permissions_only_when_asked() {
+    for (flag, stored) in [
+        (None, vec![]),
+        (Some(ChatPermissions::Bypass), vec![ChatPermissions::Bypass]),
+        (Some(ChatPermissions::Ask), vec![ChatPermissions::Ask]),
+    ] {
+        let host = ready_host();
+        let mut prompter = Script {
+            answers: [""].map(String::from).into(),
+            ..Default::default()
+        };
+        let mut effects = Recorder::default();
+        Setup {
+            host: &host,
+            prompter: &mut prompter,
+            effects: &mut effects,
+            options: Options {
+                role: Some(Role::Standalone),
+                agent: Some(Agent::Claude),
+                provider: Some(Provider::Github),
+                memory: Some(MemoryMode::Off),
+                chat_permissions: flag,
+                source: PathBuf::from("/src"),
+                yes: true,
+                ..Default::default()
+            },
+        }
+        .run()
+        .unwrap();
+        assert_eq!(effects.chat_permissions, stored, "{flag:?}");
+    }
 }
 
 #[test]
