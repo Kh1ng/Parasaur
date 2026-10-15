@@ -52,7 +52,9 @@ jobs:
             patchelf \
             xvfb \
             xdotool \
-            imagemagick
+            imagemagick \
+            at-spi2-core \
+            python3-pyatspi
 
       - name: Install dependencies
         run: npm ci
