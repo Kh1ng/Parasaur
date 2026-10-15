@@ -720,7 +720,6 @@ test('auth-file and model normalization: absent fields, bounded strings, zero-ti
 
 test('quota cache is keyed per origin and account identity', async () => {
   const files = [file({})];
-  let origin = '';
   const rec = recordingFetch(c => {
     if (c.url.endsWith('/auth-files')) return { status: 200, body: { files } };
     if (c.url.endsWith('/api-call')) return { status: 200, body: { status_code: 200, body: { five_hour: { utilization: 10 } } } };
