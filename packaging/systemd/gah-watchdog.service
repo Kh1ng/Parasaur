@@ -18,10 +18,10 @@
 #   systemctl --user enable --now gah-watchdog.timer
 #
 # The packaged check always writes alerts to the journal. Issue #1358: when
-# `[defaults] notification_channel` is "telegram" or "discord", it also sends
-# them as one message through that channel, and a failed delivery fails the
-# run. The channel credential (TELEGRAM_BOT_TOKEN / DISCORD_WEBHOOK_URL) comes
-# from the optional environment file below, as for gah-prune.service.
+# the notification module is on (#1454; off by default), it also sends them
+# as one message through the chosen Telegram/Discord channel, and a failed
+# delivery fails the run. The credential comes from ~/.config/gah/notify.env
+# or, as for gah-prune.service, the optional environment file below.
 [Unit]
 Description=GAH loop health check (alert-only, never starts a loop)
 After=network-online.target

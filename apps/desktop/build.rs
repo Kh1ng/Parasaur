@@ -18,6 +18,8 @@ fn main() {
             "repository_tools",
             "setup_check",
             "open_setup_terminal",
+            "set_factory_enabled",
+            "set_notifications_enabled",
             "mistral_login_start",
             "mistral_login_finish",
             "credential_list",

@@ -117,8 +117,8 @@ pub fn run(profile_name: Option<&str>, config_path: Option<&str>) -> Result<()> 
     notify_alerts(&cfg, &alerts, &notify_channels::CurlNotifyTransport)
 }
 
-/// Send every alert as ONE redacted channel message. No alerts, or
-/// `notification_channel = "none"` (the default), sends nothing.
+/// Send every alert as ONE redacted channel message. No alerts, or the
+/// notification module off (the default, #1454), sends nothing.
 fn notify_alerts(
     cfg: &config::GahConfig,
     alerts: &[String],
@@ -132,7 +132,7 @@ fn notify_alerts(
         anyhow::anyhow!(
             "[gah watchdog] delivering {} alert(s) through the {} notification channel failed: {}",
             alerts.len(),
-            cfg.defaults.notification_channel.as_str(),
+            notify_channels::active_channel(&cfg.defaults).as_str(),
             redact::redact(&format!("{err:#}"))
         )
     })

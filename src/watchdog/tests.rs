@@ -153,7 +153,7 @@ fn collect_alerts_scopes_to_one_named_profile() {
 
 mod channel_delivery {
     use super::super::notify_alerts;
-    use crate::notify_channels::tests::{RecordingTransport, ENV_LOCK};
+    use crate::notify_channels::tests::{with_env, RecordingTransport};
     use crate::notify_channels::NotificationChannel;
 
     fn config(channel: NotificationChannel) -> crate::config::GahConfig {
@@ -171,25 +171,28 @@ mod channel_delivery {
     }
 
     /// Runs `notify_alerts` with `TELEGRAM_BOT_TOKEN` set to `token` (or
-    /// unset), restoring the previous value afterwards.
+    /// unset) and no stored credential file.
     fn notify_with_token(
         channel: NotificationChannel,
         alerts: &[String],
         token: Option<&str>,
         transport: &RecordingTransport,
     ) -> anyhow::Result<()> {
-        let _env = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
-        let previous = std::env::var("TELEGRAM_BOT_TOKEN").ok();
-        match token {
-            Some(token) => std::env::set_var("TELEGRAM_BOT_TOKEN", token),
-            None => std::env::remove_var("TELEGRAM_BOT_TOKEN"),
-        }
-        let result = notify_alerts(&config(channel), alerts, transport);
-        match previous {
-            Some(value) => std::env::set_var("TELEGRAM_BOT_TOKEN", value),
-            None => std::env::remove_var("TELEGRAM_BOT_TOKEN"),
-        }
-        result
+        with_env(&[("TELEGRAM_BOT_TOKEN", token)], |_| {
+            notify_alerts(&config(channel), alerts, transport)
+        })
+    }
+
+    #[test]
+    fn switched_off_module_sends_nothing_and_does_not_error() {
+        let mut cfg = config(NotificationChannel::Telegram);
+        cfg.defaults.notifications_enabled = Some(false);
+        let transport = RecordingTransport::new(200);
+        with_env(&[("TELEGRAM_BOT_TOKEN", None)], |_| {
+            notify_alerts(&cfg, &alerts(), &transport)
+        })
+        .expect("an off module is a silent no-op, even without credentials");
+        assert!(transport.requests.lock().unwrap().is_empty());
     }
 
     #[test]

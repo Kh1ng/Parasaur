@@ -23,7 +23,8 @@ const EVENT_ICON: Record<ActivityKind, LucideIcon> = {
   gateway_down: DatabaseZap,
   action_required: Bell,
   auth_expired: KeyRound,
-  auth_restored: KeyRound
+  auth_restored: KeyRound,
+  notification_test: Radio
 };
 
 const SEVERITY_COLOR = {

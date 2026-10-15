@@ -48,6 +48,12 @@ struct Recorder {
     profiles: Vec<String>,
     fails: bool,
     chat_permissions: Vec<ChatPermissions>,
+    notifications: NotificationSettings,
+    saved_notifications: Vec<(NotificationSettings, Option<String>)>,
+    /// `Some(reason)` makes the save fail; the real one validates the credential.
+    notification_save_error: Option<String>,
+    test_notification_error: Option<String>,
+    test_notifications: usize,
 }
 
 impl Effects for Recorder {
@@ -80,6 +86,177 @@ impl Effects for Recorder {
     fn set_chat_permissions(&mut self, _source: &Path, mode: ChatPermissions) -> Result<()> {
         self.chat_permissions.push(mode);
         Ok(())
+    }
+    fn notification_settings(&mut self) -> NotificationSettings {
+        self.notifications.clone()
+    }
+    fn save_notification_settings(
+        &mut self,
+        settings: &NotificationSettings,
+        credential: Option<&str>,
+    ) -> Result<()> {
+        if let Some(error) = &self.notification_save_error {
+            bail!("{error}");
+        }
+        self.saved_notifications
+            .push((settings.clone(), credential.map(str::to_string)));
+        self.notifications = settings.clone();
+        Ok(())
+    }
+    fn send_test_notification(&mut self) -> Result<()> {
+        self.test_notifications += 1;
+        match &self.test_notification_error {
+            Some(error) => bail!("{error}"),
+            None => Ok(()),
+        }
+    }
+}
+
+mod notifications {
+    use super::*;
+    use crate::notify_channels::NotificationChannel;
+
+    fn step(options: Options, answers: &[&str], effects: &mut Recorder) -> Script {
+        let host = ready_host();
+        let mut prompter = Script {
+            answers: answers.iter().map(|a| a.to_string()).collect(),
+            ..Default::default()
+        };
+        Setup {
+            host: &host,
+            prompter: &mut prompter,
+            effects,
+            options,
+        }
+        .notifications();
+        prompter
+    }
+
+    #[test]
+    fn unattended_setup_leaves_notifications_alone_and_asks_nothing() {
+        let mut effects = Recorder::default();
+        let prompter = step(
+            Options {
+                yes: true,
+                ..Default::default()
+            },
+            &[],
+            &mut effects,
+        );
+        assert!(prompter.asked.is_empty());
+        assert!(effects.saved_notifications.is_empty());
+    }
+
+    #[test]
+    fn choosing_off_never_asks_for_a_token_or_chat_id() {
+        let mut effects = Recorder::default();
+        let prompter = step(Options::default(), &["0"], &mut effects);
+        assert_eq!(prompter.asked, ["Send notifications to a chat app?"]);
+        assert!(
+            effects.saved_notifications.is_empty(),
+            "fresh install stays off"
+        );
+        assert_eq!(effects.test_notifications, 0);
+    }
+
+    #[test]
+    fn telegram_takes_token_and_chat_id_then_sends_a_test_in_one_step() {
+        let mut effects = Recorder::default();
+        let prompter = step(
+            Options::default(),
+            &["1", " 123456:secret-token ", "4242"],
+            &mut effects,
+        );
+        assert_eq!(prompter.asked.len(), 3, "{:?}", prompter.asked);
+        assert!(prompter.asked[1].contains("hidden"));
+        let (saved, credential) = &effects.saved_notifications[0];
+        assert!(saved.enabled);
+        assert_eq!(saved.channel, NotificationChannel::Telegram);
+        assert_eq!(saved.telegram_chat_id.as_deref(), Some("4242"));
+        assert_eq!(credential.as_deref(), Some("123456:secret-token"));
+        assert_eq!(effects.test_notifications, 1);
+        let said = prompter.said.join("\n");
+        assert!(
+            said.contains("@BotFather") && said.contains("@userinfobot"),
+            "{said}"
+        );
+        assert!(said.contains("Sent a test message"));
+        assert!(!said.contains("secret-token"), "the token is never echoed");
+    }
+
+    #[test]
+    fn a_failed_test_or_save_is_reported_and_never_fails_setup() {
+        let mut effects = Recorder {
+            test_notification_error: Some("Telegram notification rejected with HTTP 401".into()),
+            ..Default::default()
+        };
+        let prompter = step(Options::default(), &["1", "1:t", "7"], &mut effects);
+        assert!(prompter
+            .said
+            .join("\n")
+            .contains("test message failed: Telegram notification rejected with HTTP 401"));
+        assert!(
+            effects.notifications.enabled,
+            "the module stays on to be repaired"
+        );
+
+        let mut effects = Recorder {
+            notification_save_error: Some("That is not a Telegram bot token.".into()),
+            ..Default::default()
+        };
+        let prompter = step(Options::default(), &["1", "nope", "7"], &mut effects);
+        assert!(prompter
+            .said
+            .join("\n")
+            .contains("Notifications were not changed: That is not a Telegram bot token."));
+        assert_eq!(effects.test_notifications, 0);
+    }
+
+    #[test]
+    fn rerunning_setup_keeps_a_saved_channel_and_its_credential() {
+        let mut effects = Recorder {
+            notifications: NotificationSettings {
+                enabled: true,
+                channel: NotificationChannel::Discord,
+                telegram_chat_id: None,
+                credential_saved: true,
+            },
+            ..Default::default()
+        };
+        let prompter = step(Options::default(), &["2", ""], &mut effects);
+        assert!(prompter.asked[1].contains("empty keeps the saved one"));
+        let (saved, credential) = &effects.saved_notifications[0];
+        assert_eq!(saved.channel, NotificationChannel::Discord);
+        assert_eq!(credential, &None);
+    }
+
+    #[test]
+    fn notifications_enabled_false_switches_off_without_questions() {
+        let mut effects = Recorder {
+            notifications: NotificationSettings {
+                enabled: true,
+                channel: NotificationChannel::Telegram,
+                telegram_chat_id: Some("1".into()),
+                credential_saved: true,
+            },
+            ..Default::default()
+        };
+        let prompter = step(
+            Options {
+                notifications_enabled: Some(false),
+                ..Default::default()
+            },
+            &[],
+            &mut effects,
+        );
+        assert!(prompter.asked.is_empty());
+        let (saved, _) = &effects.saved_notifications[0];
+        assert!(!saved.enabled);
+        assert_eq!(
+            saved.channel,
+            NotificationChannel::Telegram,
+            "kept for later"
+        );
     }
 }
 

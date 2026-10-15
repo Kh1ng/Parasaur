@@ -1207,9 +1207,13 @@ export interface ConfigSetOptions {
   memory_floor_mib?: number;
   worker_cpu_cores?: number;
   cpu_ceiling_percent?: number;
+  /** Issue #1454: the notification module switch. */
+  notifications_enabled?: boolean;
   /** Issue #653: none | telegram | discord. */
   notification_channel?: string;
   telegram_chat_id?: string | null;
+  /** The channel credential. It reaches the CLI on stdin, never argv. */
+  notification_credential?: string;
   clear?: string[];
   config?: string;
 }
@@ -1227,9 +1231,13 @@ export function buildConfigSetArgs(options: ConfigSetOptions): string[] {
     args.push('--clear', 'current_manager');
   }
 
+  if (options.notifications_enabled !== undefined) {
+    args.push('--notifications-enabled', String(options.notifications_enabled));
+  }
   if (options.notification_channel !== undefined && options.notification_channel !== null) {
     args.push('--notification-channel', options.notification_channel);
   }
+  if (options.notification_credential !== undefined) args.push('--notification-credential-stdin');
   if (options.telegram_chat_id !== undefined && options.telegram_chat_id !== null) {
     args.push('--telegram-chat-id', options.telegram_chat_id);
   } else if (options.clear?.includes('telegram_chat_id')) {
@@ -1248,7 +1256,9 @@ export function buildConfigSetArgs(options: ConfigSetOptions): string[] {
 export async function runConfigSet(options: ConfigSetOptions): Promise<void> {
   const args = buildConfigSetArgs(options);
   return new Promise((resolve, reject) => {
-    const child = spawn(findGahBinary(), args, getSpawnOptions(options.config));
+    const secret = options.notification_credential;
+    const child = spawn(findGahBinary(), args, { ...getSpawnOptions(options.config), stdio: [secret === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
+    if (secret !== undefined) { child.stdin?.on('error', () => undefined); child.stdin?.end(secret); }
 
     let stderr = '';
 

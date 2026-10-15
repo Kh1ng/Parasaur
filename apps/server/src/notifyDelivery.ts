@@ -57,33 +57,50 @@ function run(label: string, command: string, args: string[], stdin?: string): Pr
 
 const CHANNEL_NAMES: Record<string, string> = { telegram: 'Telegram', discord: 'Discord' };
 
-/** `gah notify-send` prints one JSON line naming the channel it used. An older
+/** `gah notify-send` prints one JSON line naming the channel it used (`none`
+ * while the module is off) and, on failure, a redacted `reason`. An older
  * CLI prints nothing; its success is then unknown and records no receipt. */
 function channelReceipt(stdout: string, failure?: unknown): DeliveryReceipt[] {
-  let channel: unknown;
-  try { channel = (JSON.parse(stdout.trim().split('\n').at(-1) ?? '') as { channel?: unknown }).channel; } catch { /* Older CLI. */ }
+  let line: { channel?: unknown; reason?: unknown } = {};
+  try { line = JSON.parse(stdout.trim().split('\n').at(-1) ?? '') as typeof line; } catch { /* Older CLI. */ }
+  const { channel, reason } = line;
   if (channel === 'none' || (channel === undefined && failure === undefined)) return [];
   const target = typeof channel === 'string' ? CHANNEL_NAMES[channel] ?? channel : 'Channel';
-  return [deliveryReceipt('channel', target, failure)];
+  const why = typeof reason === 'string' && reason ? reason : failure;
+  return [deliveryReceipt('channel', target, failure === undefined ? undefined : why)];
+}
+
+/** One `gah notify-send`. Resolves to its receipt, or none when the module is
+ * off (the CLI then exits 0 and prints channel "none", so nothing is logged). */
+async function sendThroughChannel(gahBinary: string, args: string[], label: string): Promise<DeliveryReceipt[]> {
+  try {
+    return channelReceipt(await run('gah notify-send', gahBinary, ['notify-send', ...args]));
+  } catch (error) {
+    console.error(`[activity] channel delivery failed for ${label}: ${error instanceof Error ? error.message : String(error)}`);
+    return channelReceipt(error instanceof ExitError ? error.stdout : '', error);
+  }
 }
 
 /** Telegram/Discord through `gah notify-send`, reusing the Rust channel code.
- * The CLI no-ops when no channel is configured. */
+ * The CLI no-ops when the module is off or no channel is configured. */
 export function channelDelivery(baseUrl: string, gahBinary: () => string = findGahBinary): ActivityDelivery {
   return async (event) => {
     if (!notifiableActivity(event) || fromControllerLog(event)) return [];
-    try {
-      return channelReceipt(await run('gah notify-send', gahBinary(), [
-        'notify-send',
-        '--title', event.title,
-        '--message', event.message,
-        '--url', new URL(activityPath(event), baseUrl).href
-      ]));
-    } catch (error) {
-      console.error(`[activity] channel delivery failed for ${event.id}: ${error instanceof Error ? error.message : String(error)}`);
-      return channelReceipt(error instanceof ExitError ? error.stdout : '', error);
-    }
+    return sendThroughChannel(gahBinary(), [
+      '--title', event.title,
+      '--message', event.message,
+      '--url', new URL(activityPath(event), baseUrl).href
+    ], event.id);
   };
+}
+
+/** Issue #1454: the Settings test message. `null` means the module is off. */
+export async function sendTestNotification(gahBinary: () => string = findGahBinary): Promise<DeliveryReceipt | null> {
+  const [receipt] = await sendThroughChannel(gahBinary(), [
+    '--title', 'Test notification',
+    '--message', 'Sent from GAH Settings. Notifications reach you here.'
+  ], 'the test notification');
+  return receipt ?? null;
 }
 
 /** One shell hook for every notifiable event, piped as a single line on stdin

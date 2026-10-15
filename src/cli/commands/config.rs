@@ -59,8 +59,10 @@ pub fn run(command: ConfigCommands) -> Result<()> {
             node_role,
             registry_central_url,
             clear,
+            notifications_enabled,
             notification_channel,
             telegram_chat_id,
+            notification_credential_stdin,
             worker_memory_mib,
             memory_floor_mib,
             worker_cpu_cores,
@@ -105,6 +107,25 @@ pub fn run(command: ConfigCommands) -> Result<()> {
                 } else {
                     cfg.defaults.telegram_chat_id = Some(trimmed.to_string());
                 }
+            }
+            if let Some(enabled) = notifications_enabled {
+                cfg.defaults.notifications_enabled = Some(enabled);
+            }
+            // Only this command's own notification change is checked, so a
+            // hand-edited switch cannot block unrelated `config set` repairs.
+            if notifications_enabled.is_some() || notification_channel.is_some() {
+                crate::notify_channels::validate_module(&cfg.defaults)?;
+            }
+            if notification_credential_stdin {
+                let mut value = String::new();
+                std::io::Read::read_to_string(
+                    &mut std::io::Read::take(std::io::stdin(), 4096),
+                    &mut value,
+                )?;
+                crate::notify_channels::store_credential(
+                    cfg.defaults.notification_channel,
+                    &value,
+                )?;
             }
             // Node-capacity values (issue #1380): lower-bound validation
             // runs once, inside config::save. Review of #1383: also

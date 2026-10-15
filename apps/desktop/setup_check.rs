@@ -166,6 +166,25 @@ pub async fn set_factory_enabled(window: tauri::WebviewWindow, enabled: bool) ->
     Ok(())
 }
 
+/// Issue #1454: off saves the switch directly. On opens Terminal for the
+/// guided step, so the bot token is typed there (hidden), never in this app.
+#[tauri::command]
+pub async fn set_notifications_enabled(window: tauri::WebviewWindow, enabled: bool) -> Result<(), String> {
+    local_only(&window)?;
+    let gah = installed_gah().ok_or("Install GAH before changing notifications.")?;
+    if enabled {
+        let line = format!("{gah} setup --notifications-only");
+        return if open_terminal(&line) { Ok(()) } else { Err(format!("No terminal opened. Run this in a terminal: {line}")) };
+    }
+    let output = shell(&format!("exec {gah} \"$@\""))
+        .args(["config", "set", "--notifications-enabled", "false"])
+        .output().map_err(|error| format!("Cannot change notifications: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 fn open_terminal(line: &str) -> bool {
     let script = format!(

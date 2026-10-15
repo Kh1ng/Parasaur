@@ -37,6 +37,16 @@ pub trait Effects {
     fn add_profile(&mut self, args: InitArgs) -> Result<()>;
     /// Stores the Manager Chat permission mode the server reads (#1382).
     fn set_chat_permissions(&mut self, source: &Path, mode: ChatPermissions) -> Result<()>;
+    /// Issue #1454: the saved notification module settings.
+    fn notification_settings(&mut self) -> NotificationSettings;
+    /// Saves the module settings, and a new credential to its 0600 file.
+    fn save_notification_settings(
+        &mut self,
+        settings: &NotificationSettings,
+        credential: Option<&str>,
+    ) -> Result<()>;
+    /// Sends one test message through the saved channel.
+    fn send_test_notification(&mut self) -> Result<()>;
 }
 
 /// Manager Chat permission prompts on this machine (#1382). `Ask` is the
@@ -64,6 +74,7 @@ impl ChatPermissions {
 pub struct Options {
     pub role: Option<Role>,
     pub factory_enabled: Option<bool>,
+    pub notifications_enabled: Option<bool>,
     pub agent: Option<Agent>,
     pub provider: Option<Provider>,
     pub memory: Option<MemoryMode>,
@@ -285,6 +296,9 @@ impl<'a> Setup<'a> {
                 );
             }
         }
+
+        // 7. Optional Telegram/Discord notifications (#1454). Never blocks.
+        self.notifications();
 
         self.summary(&selection);
         Ok(())
@@ -865,8 +879,12 @@ impl<'a> Setup<'a> {
             .iter()
             .filter(|requirement| requirement.optional && !requirement.status.is_ok())
             .collect();
-        if !skipped.is_empty() || selection.memory == MemoryMode::Off {
+        let notifications_off = !self.effects.notification_settings().enabled;
+        if !skipped.is_empty() || selection.memory == MemoryMode::Off || notifications_off {
             self.prompter.say("Skipped, and how to add it later:");
+            if notifications_off {
+                self.prompter.say("  · Telegram or Discord notifications: gah setup --notifications-only, or Settings → Notifications");
+            }
             for requirement in skipped {
                 let how = requirement
                     .action
@@ -967,6 +985,9 @@ pub fn find_source(explicit: Option<PathBuf>) -> Result<PathBuf> {
         .or(from_cwd)
         .context("Cannot find the git-agent-harness checkout to build. Pass --source <path>.")
 }
+
+mod notifications;
+pub use notifications::NotificationSettings;
 
 #[cfg(test)]
 mod tests;

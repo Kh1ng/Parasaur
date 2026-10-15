@@ -261,23 +261,28 @@ pub struct ConfigShowFull {
 
 #[derive(serde::Serialize, Clone)]
 pub struct NotificationSettingsSummary {
+    /// Issue #1454: the module switch, resolved (upgrades with a channel are on).
+    pub enabled: bool,
+    /// The remembered channel; it delivers only while `enabled`.
     pub channel: crate::notify_channels::NotificationChannel,
     pub telegram_chat_id: Option<String>,
-    /// Which credential the operator must supply in the environment for
-    /// this channel, so the UI can show a precise setup hint.
+    /// Which credential the operator must supply for this channel, so the
+    /// UI can show a precise setup hint.
     pub credential_env: Option<&'static str>,
+    /// Where that credential was found, never its value; `None` when missing.
+    pub credential_source: Option<crate::notify_channels::CredentialSource>,
 }
 
 impl NotificationSettingsSummary {
     fn from_defaults(defaults: &crate::config::Defaults) -> Self {
+        let channel = defaults.notification_channel;
         NotificationSettingsSummary {
-            channel: defaults.notification_channel,
+            enabled: crate::notify_channels::module_enabled(defaults),
+            channel,
             telegram_chat_id: defaults.telegram_chat_id.clone(),
-            credential_env: match defaults.notification_channel {
-                crate::notify_channels::NotificationChannel::None => None,
-                crate::notify_channels::NotificationChannel::Telegram => Some("TELEGRAM_BOT_TOKEN"),
-                crate::notify_channels::NotificationChannel::Discord => Some("DISCORD_WEBHOOK_URL"),
-            },
+            credential_env: channel.credential_env(),
+            credential_source: crate::notify_channels::credential(channel)
+                .map(|(_, source)| source),
         }
     }
 }

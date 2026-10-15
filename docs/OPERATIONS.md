@@ -246,12 +246,13 @@ of the prebuild gate issue.
   a blocker repair; that incident is exactly what this contract prevents. The
   timer is installed by `gah update`/`scripts/install.sh` alongside the loop
   unit but is never automatically enabled. The check always writes its alert
-  lines to the journal. When `[defaults] notification_channel` is `telegram`
-  or `discord` (see [Notification delivery methods](#notification-delivery-methods)), it also
+  lines to the journal. When the notification module is on (see
+  [The notification module](#the-notification-module-issue-1454)), it also
   sends all alerts of a run as one redacted message through that channel. The
-  unit reads the credential from `/etc/gah/server.env`. If the delivery fails,
-  the run exits non-zero after it prints the alerts, so the journal shows the
-  failure. With the default `none`, nothing is sent. Opt in with:
+  credential comes from `~/.config/gah/notify.env` or `/etc/gah/server.env`.
+  If the delivery fails, the run exits non-zero after it prints the alerts, so
+  the journal shows the failure. With the module off (the default), nothing is
+  sent and nothing fails. Opt in with:
   ```bash
   systemctl --user enable --now gah-watchdog.timer
   ```
@@ -1229,7 +1230,7 @@ login that expired or came back. Every delivery method below uses that filter.
 | Dashboard alert | Every feed event (in-page); notifiable events as system notifications | Activity page → **Enable system alerts** |
 | Web Push | Notifiable events | Same toggle, on an HTTPS dashboard |
 | APNs and Live Activity | Notifiable events; Live Activity for each running chat turn | `GAH_APNS_*` on the central server |
-| Telegram or Discord channel | Notifiable chat and node events from the feed; dispatch events directly from the Rust CLI | `[defaults] notification_channel` |
+| Telegram or Discord channel | Notifiable chat and node events from the feed; dispatch events directly from the Rust CLI; watchdog alerts | `gah setup --notifications-only`, or Settings → **Telegram and Discord notifications** |
 | `GAH_NOTIFY_COMMAND` | Notifiable events, as one line on stdin | Set it in the central server's environment |
 | Per-profile `notify_command` | Rust dispatch and controller events only | `notify_command` on a profile |
 
@@ -1238,21 +1239,62 @@ events itself, because a worker's event log never reaches the central feed.
 The feed sends the events that only the server sees, through
 `gah notify-send --title --message --url`. Each event goes to the channel once.
 
-Configure the channel in the GAH config. Credentials stay in the environment
-of both the CLI and the central server:
+#### The notification module (issue #1454)
+
+Telegram and Discord delivery is one optional module with an on/off switch,
+`[defaults] notifications_enabled`. A fresh install is off. While it is off,
+nothing asks for a token, `gah notify-send`, the server feed and the watchdog
+send nothing, and nothing logs an error. Turning it off keeps the channel,
+chat id and credential, so turning it on again needs no new values.
+
+Upgrade: a config written before the switch has no `notifications_enabled`
+key. It is on exactly when `notification_channel` is `telegram` or `discord`,
+so an existing channel keeps delivering.
+
+Turn it on in one guided step. It explains where to get each value, reads
+the token with echo off, and sends a test message:
+
+```bash
+gah setup --notifications-only
+```
+
+The same step runs at the end of `gah setup`, and the desktop app's setup
+section opens it in Terminal. The dashboard does the same in Settings →
+**Telegram and Discord notifications**, which also has **Send test message**
+(owner only, ten requests a minute). The test and its receipt are recorded in
+notification history.
+
+- Telegram: message @BotFather, send `/newbot`, and copy the token. Open a
+  chat with the bot and press Start. Message @userinfobot for your chat id; a
+  group id starts with `-100`.
+- Discord: Server Settings → Integrations → Webhooks → New Webhook → Copy
+  Webhook URL.
+
+Credentials never live in the config and never reach argv. Setup and Settings
+write them to `~/.config/gah/notify.env` (mode `0600`, replaced atomically;
+`GAH_NOTIFY_CREDENTIALS_FILE` moves it). Settings sends the value once to the
+server, which passes it to `gah config set --notification-credential-stdin`
+on stdin. Responses report only where a credential was found
+(`credential_source`), never the value. The environment still works, so
+existing hosts need no change; a value in the private file takes precedence.
 
 ```toml
 [defaults]
-notification_channel = "telegram"   # or "discord", or "none"
+notifications_enabled = true
+notification_channel = "telegram"   # or "discord"
 telegram_chat_id = "12345"
 ```
 
 ```bash
-# /etc/gah/server.env and the CLI environment
+# Optional instead of ~/.config/gah/notify.env: /etc/gah/server.env and the CLI environment
 TELEGRAM_BOT_TOKEN=123456:replace-me     # telegram
 DISCORD_WEBHOOK_URL=https://discord...   # discord
 GAH_NOTIFY_COMMAND=/home/you/bin/notify  # optional shell hook
 ```
+
+When the module is on and a delivery fails, for example because the token is
+missing, the feed records a failed receipt with the reason on that
+notification. The failure never blocks setup, the loop or the dashboard.
 
 `GAH_NODE_LIVENESS_NOTIFY_COMMAND` still works as an alias for
 `GAH_NOTIFY_COMMAND`. The server prints one deprecation line at startup. The

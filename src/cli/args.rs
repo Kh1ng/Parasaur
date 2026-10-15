@@ -586,15 +586,22 @@ pub enum ConfigCommands {
         /// Clear the specified field(s).
         #[arg(long, value_delimiter = ',')]
         clear: Vec<String>,
+        /// Issue #1454: switch the Telegram/Discord notification module on or
+        /// off. Off keeps the channel and credential for later.
+        #[arg(long, action = clap::ArgAction::Set)]
+        notifications_enabled: Option<bool>,
         /// Issue #653: notification channel for notify-worthy events
         /// (in addition to any per-profile notify_command). Credentials
-        /// come from the environment (TELEGRAM_BOT_TOKEN /
-        /// DISCORD_WEBHOOK_URL), never from config or argv.
+        /// never come from argv.
         #[arg(long)]
         notification_channel: Option<String>,
         /// Telegram chat id for the telegram channel (non-secret).
         #[arg(long)]
         telegram_chat_id: Option<String>,
+        /// Read the channel's credential (Telegram bot token or Discord
+        /// webhook URL) from stdin into ~/.config/gah/notify.env (0600).
+        #[arg(long)]
+        notification_credential_stdin: bool,
         /// Issue #1380: memory reservation (MiB) per implementation,
         /// fix, retry, or escalation worker. At least 512; the default
         /// is 4096.

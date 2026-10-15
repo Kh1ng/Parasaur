@@ -10,6 +10,7 @@ import {
   findGahBinary,
   loopSystemctlArgs,
   runDispatchCancellable,
+  runConfigSet,
   runConfigShow,
   runDoctor,
   runPromptPolicyMutation,
@@ -135,6 +136,20 @@ test('config set args deduplicate clear values and use the CLI config flag', () 
       '/tmp/gah-config.toml',
     ],
   );
+});
+
+test('the notification credential reaches gah config set on stdin, never argv (#1454)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-config-set-stdin-'));
+  const restore = pinFakeGah(`printf '%s\\n' "$@" > ${dir}/argv; cat > ${dir}/stdin`);
+  try {
+    await runConfigSet({ notifications_enabled: true, notification_channel: 'telegram', notification_credential: '123:secret' });
+    const argv = readFileSync(join(dir, 'argv'), 'utf8');
+    assert.deepEqual(argv.trim().split('\n'), ['config', 'set', '--notifications-enabled', 'true', '--notification-channel', 'telegram', '--notification-credential-stdin']);
+    assert.equal(readFileSync(join(dir, 'stdin'), 'utf8'), '123:secret');
+  } finally {
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('node capacity fields travel through config set arguments', () => {

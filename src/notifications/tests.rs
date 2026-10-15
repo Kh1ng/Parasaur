@@ -832,6 +832,36 @@ fn posted_events_outside_the_channel_relay_set_still_send_directly() {
 }
 
 #[test]
+fn switched_off_notification_module_skips_the_direct_channel() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut cfg = test_gah_config(None);
+    cfg.defaults.notification_channel = crate::notify_channels::NotificationChannel::Discord;
+    cfg.defaults.notifications_enabled = Some(false);
+    cfg.defaults.artifact_root = tmp.path().to_string_lossy().into();
+    let profile = crate::config::tests::test_profile_for_notifications();
+    let sent = std::cell::Cell::new(false);
+    notify_event_with_deliveries(
+        &cfg,
+        &profile,
+        NotifyEvent::MrMerged {
+            url: "https://example.com/pr/42",
+            work_id: "#42",
+        },
+        |_, _, _, _| Ok(()),
+        |_, _, _| Ok(()),
+        |_, _| {
+            sent.set(true);
+            anyhow::bail!("must not be called")
+        },
+    );
+    assert!(!sent.get());
+    let events = crate::events::read_events(&cfg).unwrap_or_default();
+    assert!(!events.iter().any(|event| {
+        event.event_type == crate::events::EventType::NotificationDeliveryFailed.as_str()
+    }));
+}
+
+#[test]
 fn notify_event_wakes_configured_manager_when_autonomy_set() {
     let tmp = tempfile::tempdir().unwrap();
     let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
