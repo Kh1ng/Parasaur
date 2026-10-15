@@ -208,9 +208,10 @@ impl NotifyTransport for CurlNotifyTransport {
             Some(index) => (&raw[..index], raw[index + 1..].trim()),
             None => (raw.as_ref(), ""),
         };
-        let status: u16 = status.parse().with_context(|| {
-            format!("parsing curl status output for channel notification: {status:?}")
-        })?;
+        // The unparsed tail is response text, which may echo the credential.
+        let status: u16 = status
+            .parse()
+            .context("curl reported no HTTP status for the channel notification")?;
         Ok((status, response_body.as_bytes().to_vec()))
     }
 }
@@ -261,13 +262,25 @@ pub(crate) fn deliver_channel_message(
                 .context("telegram_chat_id is not set (Settings → Notifications)")?;
             let url = format!("https://api.telegram.org/bot{token}/sendMessage");
             let body = serde_json::json!({ "chat_id": chat_id, "text": message }).to_string();
-            deliver(transport, &url, &body, "Telegram")
+            deliver(
+                transport,
+                &url,
+                &body,
+                "Telegram",
+                ("TELEGRAM_BOT_TOKEN", &token),
+            )
         }
         NotificationChannel::Discord => {
             let (webhook, _) = credential(NotificationChannel::Discord)
                 .context("DISCORD_WEBHOOK_URL is not set (Settings → Notifications)")?;
             let body = serde_json::json!({ "content": message }).to_string();
-            deliver(transport, &webhook, &body, "Discord")
+            deliver(
+                transport,
+                &webhook,
+                &body,
+                "Discord",
+                ("DISCORD_WEBHOOK_URL", &webhook),
+            )
         }
     }
 }
@@ -312,16 +325,28 @@ fn activity_text(title: &str, message: &str, url: Option<&str>) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn deliver(transport: &dyn NotifyTransport, url: &str, body: &str, label: &str) -> Result<()> {
-    let (status, response) = transport.post_json(url, body, 10)?;
-    if (200..300).contains(&status) {
-        return Ok(());
-    }
-    // Never echo the response body by default: for Telegram errors it can
-    // reflect parameter content, and the caller's message is already known.
-    let snippet = String::from_utf8_lossy(&response);
-    let snippet = snippet.chars().take(120).collect::<String>();
-    anyhow::bail!("{label} notification rejected with HTTP {status}: {snippet}");
+/// One POST. Diagnostics are fixed text plus the HTTP status: the response
+/// body is untrusted and may echo the credential, so it is never included,
+/// and every error is scrubbed of `secret` (#1454 review).
+fn deliver(
+    transport: &dyn NotifyTransport,
+    url: &str,
+    body: &str,
+    label: &str,
+    (key, secret): (&str, &str),
+) -> Result<()> {
+    let outcome = match transport.post_json(url, body, 10) {
+        Ok((status, _response)) if (200..300).contains(&status) => return Ok(()),
+        Ok((status, _response)) => format!("{label} notification rejected with HTTP {status}"),
+        Err(error) => format!("{error:#}"),
+    };
+    // A plain replace also catches the token inside the URL (`bot<token>/`),
+    // where the word-boundary redactor would not match.
+    let scrubbed = outcome.replace(secret, &format!("[REDACTED:{key}]"));
+    bail!(crate::redact::redact_with_known_secrets(
+        &scrubbed,
+        &[(key.to_string(), secret.to_string())]
+    ))
 }
 
 #[cfg(test)]
@@ -346,6 +371,9 @@ pub(crate) mod tests {
     pub(crate) struct RecordingTransport {
         pub(crate) requests: Mutex<Vec<(String, String)>>,
         status: u16,
+        response: String,
+        /// Fail at the transport level with this text instead of answering.
+        transport_error: Option<String>,
     }
 
     impl RecordingTransport {
@@ -353,6 +381,8 @@ pub(crate) mod tests {
             Self {
                 requests: Mutex::new(Vec::new()),
                 status,
+                response: "{}".into(),
+                transport_error: None,
             }
         }
 
@@ -372,7 +402,10 @@ pub(crate) mod tests {
                 .lock()
                 .unwrap()
                 .push((url.to_string(), body.to_string()));
-            Ok((self.status, b"{}".to_vec()))
+            if let Some(error) = &self.transport_error {
+                anyhow::bail!("{error}");
+            }
+            Ok((self.status, self.response.clone().into_bytes()))
         }
     }
 
@@ -654,5 +687,60 @@ pub(crate) mod tests {
         );
         assert_eq!(NotificationChannel::parse("slack"), None);
         assert_eq!(NotificationChannel::Telegram.as_str(), "telegram");
+    }
+
+    #[test]
+    fn a_file_only_credential_never_reaches_diagnostics_even_when_reflected() {
+        let secret = "123456:file-only-secret_TOKEN-value";
+        let cfg = config_with_channel(NotificationChannel::Telegram, Some("12345"));
+        let reflecting = RecordingTransport {
+            response: format!(
+                r#"{{"ok":false,"description":"Unauthorized bot{secret}","url":"https://api.telegram.org/bot{secret}/sendMessage"}}"#
+            ),
+            ..RecordingTransport::new(401)
+        };
+        let transport_failure = RecordingTransport {
+            transport_error: Some(format!(
+                "curl: (6) could not resolve api.telegram.org/bot{secret}/sendMessage"
+            )),
+            ..RecordingTransport::new(200)
+        };
+        let (rejected, failed, missing_chat) = with_env(
+            &[("TELEGRAM_BOT_TOKEN", None), ("DISCORD_WEBHOOK_URL", None)],
+            |_| {
+                store_credential(NotificationChannel::Telegram, secret).unwrap();
+                let mut no_chat = cfg.clone();
+                no_chat.defaults.telegram_chat_id = None;
+                (
+                    deliver_channel_message(&cfg, "hi", &reflecting).unwrap_err(),
+                    deliver_channel_message(&cfg, "hi", &transport_failure).unwrap_err(),
+                    deliver_channel_message(&no_chat, "hi", &reflecting).unwrap_err(),
+                )
+            },
+        );
+        let rejected_text = format!("{rejected:#}");
+        assert_eq!(
+            rejected_text,
+            "Telegram notification rejected with HTTP 401"
+        );
+        let failed_text = format!("{failed:#}");
+        assert!(failed_text.contains("could not resolve"), "{failed_text}");
+        assert!(
+            failed_text.contains("[REDACTED:TELEGRAM_BOT_TOKEN]"),
+            "{failed_text}"
+        );
+        assert!(format!("{missing_chat:#}").contains("telegram_chat_id is not set"));
+        for error in [Err(rejected), Err(failed), Err(missing_chat)] {
+            let line = activity_receipt_line(NotificationChannel::Telegram, &error);
+            assert!(!line.contains("file-only-secret"), "{line}");
+            assert!(!format!("{:#}", error.unwrap_err()).contains("file-only-secret"));
+        }
+        assert!(activity_receipt_line(
+            NotificationChannel::Telegram,
+            &Err(anyhow::anyhow!(
+                "Telegram notification rejected with HTTP 401"
+            ))
+        )
+        .contains("HTTP 401"));
     }
 }
