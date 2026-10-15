@@ -1318,6 +1318,17 @@ for the 5-hour and weekly windows. That endpoint needs the `user:profile`
 scope, and `claude setup-token` tokens are reported to be inference-only; when
 the endpoint rejects the scope, the check records "quota unavailable" for the
 credential and the instance's windows stay unknown. That is not a token fault.
+
+Route edits preserve the stored billing policy. Replacing the token with an
+API key restores that policy, including its approval requirement and
+marginal cost.
+
+Named instances require repair on their owning machine. For a subscription
+token, save its replacement through stdin under the same credential ID.
+For native OAuth, run `gah config authenticate-backend-instance` with the
+profile and instance name. Dashboard login repair shows these instructions
+instead of starting a browser login for the ambient account.
+
 Save one credential per account and give each instance its own `state_root`,
 so concurrent instances never rewrite shared login state. The token is
 stored owner-only and never appears in argv, logs, ledger, or telemetry.

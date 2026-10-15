@@ -179,7 +179,8 @@ fn apply(
 ) -> Result<()> {
     let effective = {
         let profile = config::get_profile(cfg, profile_name)?;
-        let routing = profile.effective_routing(&cfg.defaults);
+        // Persist the owner's policy, not credential-derived runtime flags.
+        let routing = profile.routing.merged_with_defaults(&cfg.defaults.routing);
         list.get(&routing).unwrap_or_default()
     };
     let mut updated = effective.clone();

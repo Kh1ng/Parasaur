@@ -6,7 +6,7 @@ import { ExternalAnchor } from './ExternalAnchor.js';
 const POLL_MS = 2_000;
 const FINISHED = new Set<LoginRepairView['status']>(['succeeded', 'failed', 'expired', 'manual', 'install_required']);
 
-export type RepairableLogin = { node_id: string; node_name?: string; backend: string; provider: string | null; installed?: boolean };
+export type RepairableLogin = { node_id: string; node_name?: string; backend: string; provider: string | null; backend_instance?: string | null; installed?: boolean };
 
 /** "Fix login" for one broken login (#1272). The login runs on the machine
  * that owns the credential; this device sees only the link, the code, and
@@ -54,6 +54,13 @@ export function LoginRepairPanel({ login }: { login: RepairableLogin }) {
     setSession(null);
   };
   const where = login.node_name ?? 'that machine';
+
+  if (login.backend_instance) {
+    return <p className="text-sm text-secondary">
+      Repair instance {login.backend_instance} on {where}. If it uses a subscription token, replace its saved credential.
+      Otherwise, sign in through the instance's isolated state using <code>gah config authenticate-backend-instance</code> with its profile and instance name.
+    </p>;
+  }
 
   const tool = repositoryCli(login.backend);
   if (tool && (repair?.status === 'install_required' || !repair && login.installed === false)) {

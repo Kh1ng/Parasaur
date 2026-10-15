@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { AuthProbe, NodeObservationSnapshot } from '@git-agent-harness/contracts';
-import { AuthHealthMonitor, AuthHealthProber, parseNodeAuthHealth } from './authHealth.js';
+import { AuthHealthMonitor, AuthHealthProber, authActivity, parseNodeAuthHealth } from './authHealth.js';
 
 type RawProbe = Omit<AuthProbe, 'since'>;
 const copilot = (state: AuthProbe['state']): RawProbe => ({ backend: 'opencode', provider: 'github-copilot', state, source: 'probe' });
@@ -112,4 +112,19 @@ test('claude backend instances stay separate logins, each announced on its own (
   assert.deepEqual(f.monitor.rows().map((row) => [row.backend_instance, row.state]), [
     ['claude-work', 'ok'], ['claude-personal', 'expired']
   ]);
+});
+
+test('dispatch failures override only their named login and events preserve repair identity', async () => {
+  const f = fixture([
+    { backend: 'claude', backend_instance: 'work', provider: null, state: 'unknown', source: 'probe' },
+    { backend: 'claude', backend_instance: 'personal', provider: null, state: 'unknown', source: 'probe' },
+    { backend: 'claude', provider: null, state: 'ok', source: 'probe' },
+    { backend: 'claude', backend_instance: 'work', provider: null, state: 'expired', source: 'dispatch' }
+  ]);
+  await f.prober.refresh();
+  assert.deepEqual(f.monitor.rows().map(row => [row.backend_instance ?? null, row.state]), [
+    ['work', 'expired'], ['personal', 'unknown'], [null, 'ok']
+  ]);
+  const event = authActivity(f.monitor.rows()[0], 'auth_expired', Date.now());
+  assert.deepEqual(event.login, { backend: 'claude', provider: null, backend_instance: 'work' });
 });

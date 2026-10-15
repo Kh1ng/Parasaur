@@ -164,9 +164,9 @@ function Logins({ revision }: { revision: string }) {
     {rows && rows.length > 0 && rows.every(row => row.state === 'ok') && <p className="text-sm text-secondary">All {rows.length} checked logins work.</p>}
     {unverified.length > 0 && <p className="text-sm text-secondary">{unverified.length} of {rows?.length} login checks could not verify login validity.</p>}
     {problems.length > 0 && <ul className="divide-y divide-subtle border-y border-critical/40">
-      {problems.map((row) => <li key={`${row.node_id}|${row.backend}|${row.provider ?? ''}`} className="py-3 space-y-1">
+      {problems.map((row) => <li key={`${row.node_id}|${row.backend}|${row.provider ?? ''}|${row.backend_instance ?? ''}`} className="py-3 space-y-1">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <span className="font-semibold text-critical">{[row.node_name, row.backend, row.provider].filter(Boolean).join(' · ')}</span>
+          <span className="font-semibold text-critical">{[row.node_name, row.backend, row.backend_instance, row.provider].filter(Boolean).join(' · ')}</span>
           <span className="text-sm text-critical">{row.installed === false ? 'CLI not installed' : LOGIN_PROBLEM[row.state]} · detected {age(row.since)}</span>
         </div>
         {row.detail && <p className="text-sm text-secondary">{row.detail}</p>}
