@@ -181,12 +181,40 @@ pub fn classify_gh_status(host: &str, success: bool, stdout: &[u8], stderr: &[u8
             .any(|line| line.trim().eq_ignore_ascii_case("- active account: true"))
     });
     match (active, section) {
+        // gh's own request timed out: the login was never checked.
+        (Some(entry), _) if entry[0].contains("Timeout trying to log in") => timed_out(),
         // The entry's own mark decides; the exit code covers every account.
         (Some(entry), _) => classify_status_output(true, entry.join("\n").as_bytes(), b""),
         (None, Some(section)) => {
             classify_status_output(success, section.join("\n").as_bytes(), b"")
         }
         (None, None) => classify_status_output(success, stdout, stderr),
+    }
+}
+
+/// The follow-up check `confirm_gh_rejection` reads.
+pub const GH_USER_CHECK: [&str; 4] = ["api", "--hostname", "github.com", "user"];
+
+/// gh 2.45.0 says "The token ... is invalid" whenever its scope request
+/// fails, also for a refused connection, a DNS failure or an HTTP 5xx
+/// (#1324). `gh api user` names the HTTP status, so only its 401 confirms a
+/// rejected credential. `user_check` runs `GH_USER_CHECK` and returns its
+/// exit success and stderr, or `None` when it did not finish.
+pub fn confirm_gh_rejection(
+    health: AuthHealth,
+    user_check: impl FnOnce() -> Option<(bool, String)>,
+) -> AuthHealth {
+    if health.state != AuthState::Expired {
+        return health;
+    }
+    match user_check() {
+        Some((true, _)) => AuthHealth::new(AuthState::Ok, None),
+        Some((false, stderr)) if stderr.contains("(HTTP 401)") => health,
+        Some(_) => AuthHealth::new(
+            AuthState::Error,
+            Some("GitHub could not be reached to check the saved login."),
+        ),
+        None => timed_out(),
     }
 }
 
@@ -362,11 +390,19 @@ fn repository_probe(cli: &str, provider: &str, executable: Option<&Path>) -> Aut
         Some(executable) => run(executable, &["auth", "status"], &[])
             .map(|output| {
                 if cli == "gh" {
-                    classify_gh_status(
-                        "github.com",
-                        output.status.success(),
-                        &output.stdout,
-                        &output.stderr,
+                    confirm_gh_rejection(
+                        classify_gh_status(
+                            "github.com",
+                            output.status.success(),
+                            &output.stdout,
+                            &output.stderr,
+                        ),
+                        || {
+                            run(executable, &GH_USER_CHECK, &[]).map(|check| {
+                                let stderr = String::from_utf8_lossy(&check.stderr).into_owned();
+                                (check.status.success(), stderr)
+                            })
+                        },
                     )
                 } else {
                     classify_status_output(output.status.success(), &output.stdout, &output.stderr)
@@ -876,7 +912,7 @@ mod tests {
                 "github.com\n  X Timeout trying to log in to github.com account octo (keyring)\n  - Active account: true\n",
                 ""
             ),
-            AuthState::Unknown
+            AuthState::Error
         );
         assert_eq!(gh(false, "", ""), AuthState::Error);
     }
