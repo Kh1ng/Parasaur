@@ -719,6 +719,8 @@ pub struct Report {
     pub application_ready: bool,
     pub factory_enabled: bool,
     pub factory_ready: bool,
+    /// Issue #1454: the Telegram/Discord notification module switch.
+    pub notifications_enabled: bool,
     pub os: Os,
     pub package_manager: Option<PackageManager>,
     pub selection: Selection,
@@ -734,6 +736,7 @@ pub fn report(selection: Selection, host: &dyn Host) -> Report {
         application_ready: !requirements.iter().any(Requirement::blocking),
         factory_enabled: false,
         factory_ready: false,
+        notifications_enabled: false,
         os: host.os(),
         package_manager: host.package_manager(),
         features: selection.features(),

@@ -17,6 +17,7 @@ try {
     window.calls = [];
     window.repositoryInstalled = false;
     window.factoryEnabled = false;
+    window.notificationsEnabled = false;
     window.setupInstalled = false;
     window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
       window.calls.push([command, args]);
@@ -27,8 +28,10 @@ try {
       };
       if (command === 'open_setup_terminal') { window.setupInstalled = true; window.factoryEnabled = args.factoryEnabled ?? false; return 'http://127.0.0.1:3773'; }
       if (command === 'setup_check' && !window.setupInstalled) return { installed: false, report: null, terminal: true };
-      if (command === 'setup_check') return { installed: true, report: { ready: true, application_ready: true, factory_enabled: window.factoryEnabled, factory_ready: window.factoryEnabled, requirements: [] }, terminal: true };
+      if (command === 'setup_check') return { installed: true, report: { ready: true, application_ready: true, factory_enabled: window.factoryEnabled, factory_ready: window.factoryEnabled, notifications_enabled: window.notificationsEnabled, requirements: [] }, terminal: true };
       if (command === 'set_factory_enabled') { window.factoryEnabled = args.enabled; return; }
+      // Turning notifications on opens the guided Terminal step; the fixture finishes it.
+      if (command === 'set_notifications_enabled') { window.notificationsEnabled = args.enabled; return; }
       if (command === 'node_role_status') return { role: 'worker', running: false, supported: true };
       if (command === 'set_node_role') return { role: args.role, running: true, supported: true };
       if (command === 'save_presence') return args.presence;
@@ -67,6 +70,17 @@ try {
     await page.getByText(enabled ? 'Factory module enabled · prerequisites ready.' : 'Factory module disabled · local application remains available.', { exact: false }).waitFor();
     assert.equal(await page.evaluate(() => window.factoryEnabled), enabled);
   }
+  // Issue #1454: the notification switch, off by default, beside the factory one.
+  assert.equal(await page.getByLabel('Send notifications to Telegram or Discord').isChecked(), false);
+  await page.getByText('Notifications off · nothing is sent and nothing asks for a token.').waitFor();
+  await page.getByLabel('Send notifications to Telegram or Discord').setChecked(true);
+  await page.getByRole('button', { name: 'Save notifications' }).click();
+  await page.getByText('Finish in Terminal: choose Telegram or Discord', { exact: false }).waitFor();
+  assert.deepEqual(await page.evaluate(() => window.calls.findLast(([command]) => command === 'set_notifications_enabled')), ['set_notifications_enabled', { enabled: true }]);
+  await page.getByLabel('Send notifications to Telegram or Discord').setChecked(false);
+  await page.getByRole('button', { name: 'Save notifications' }).click();
+  await page.getByText('Notifications off · nothing is sent and nothing asks for a token.').waitFor();
+  assert.equal(await page.evaluate(() => window.notificationsEnabled), false);
   await page.getByRole('button', { name: 'Back to Settings' }).click();
   assert.equal(await page.evaluate(() => window.calls.at(-1)[0]), 'open_central_settings');
   await page.getByLabel('Central node address').fill('http://another-central.test');

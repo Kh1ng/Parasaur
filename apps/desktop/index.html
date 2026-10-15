@@ -94,6 +94,10 @@
         <p>Factory automation runs ticket dispatch loops and their watchdog. Dashboard, chats, agents, repository workflows, quota collection, and daily storage maintenance are available with this module off.</p>
         <p id="factory-state" role="status">Factory automation is optional; fresh standalone installs default to off.</p>
         <button id="factory-save" type="button" hidden>Save factory module</button>
+        <label class="preference"><input id="notifications-enabled" type="checkbox" />Send notifications to Telegram or Discord</label>
+        <p>Optional. GAH messages you when work fails, a review is ready, or a node goes offline. Turning it on opens Terminal for one guided step: choose the app, paste the bot token or webhook URL, and GAH sends a test message.</p>
+        <p id="notifications-state" role="status">Notifications are optional and off by default; nothing asks for a token while they are off.</p>
+        <button id="notifications-save" type="button" hidden>Save notifications</button>
         <p id="standalone-note" hidden>Standalone runs the dashboard and agents on this computer only. It accepts every setup default and connects this app when setup finishes.</p>
         <p id="setup-command" hidden>Run in a terminal: <code></code></p>
         <div class="actions">

@@ -172,6 +172,63 @@ impl wizard::Effects for SystemEffects {
             .with_context(|| format!("replacing {}", path.display()))?;
         Ok(())
     }
+
+    fn notification_settings(&mut self) -> wizard::NotificationSettings {
+        let defaults = load_or_default_config()
+            .map(|cfg| cfg.defaults)
+            .unwrap_or_default();
+        wizard::NotificationSettings {
+            enabled: crate::notify_channels::module_enabled(&defaults),
+            channel: defaults.notification_channel,
+            telegram_chat_id: defaults.telegram_chat_id.clone(),
+            // Only the private file counts: this shell's environment is not
+            // what the server and watchdog services read.
+            credential_saved: matches!(
+                crate::notify_channels::credential(defaults.notification_channel),
+                Some((_, crate::notify_channels::CredentialSource::File))
+            ),
+        }
+    }
+
+    fn save_notification_settings(
+        &mut self,
+        settings: &wizard::NotificationSettings,
+        credential: Option<&str>,
+    ) -> Result<()> {
+        let mut cfg = load_or_default_config()?;
+        cfg.defaults.notifications_enabled = Some(settings.enabled);
+        cfg.defaults.notification_channel = settings.channel;
+        cfg.defaults.telegram_chat_id = settings.telegram_chat_id.clone();
+        crate::notify_channels::validate_module(&cfg.defaults)?;
+        if let Some(credential) = credential {
+            crate::notify_channels::store_credential(settings.channel, credential)?;
+        }
+        crate::config::save(&cfg, None)
+    }
+
+    fn send_test_notification(&mut self) -> Result<()> {
+        let cfg = crate::config::load(None)?;
+        crate::notify_channels::send_activity(
+            &cfg,
+            "Test notification",
+            "GAH notifications reach you here.",
+            None,
+        )
+        .1
+    }
+}
+
+/// The saved config, or empty defaults on a host that has none yet.
+fn load_or_default_config() -> Result<crate::config::GahConfig> {
+    if crate::config::resolve_config_path(None).exists() {
+        crate::config::load(None)
+    } else {
+        Ok(crate::config::GahConfig {
+            defaults: Default::default(),
+            profiles: Default::default(),
+            context: Default::default(),
+        })
+    }
 }
 
 /// `gah setup` flags. Choices only: secrets come from the environment or a
@@ -184,6 +241,14 @@ pub struct Args {
     /// Factory automation module (fresh standalone default: false; upgrades preserve state).
     #[arg(long, action = clap::ArgAction::Set)]
     factory_enabled: Option<bool>,
+    /// Telegram/Discord notification module (default: off; upgrades with a
+    /// channel stay on). `false` switches it off without asking anything.
+    #[arg(long, action = clap::ArgAction::Set)]
+    notifications_enabled: Option<bool>,
+    /// Run only the notification step: pick Telegram or Discord, enter the
+    /// credential (hidden), and send a test message.
+    #[arg(long, conflicts_with = "check")]
+    notifications_only: bool,
     #[arg(long, value_enum)]
     agent: Option<requirements::Agent>,
     #[arg(long, value_enum)]
@@ -235,6 +300,8 @@ pub fn run(args: Args) -> Result<()> {
         // requirements are still worth reporting, with the factory shown off.
         report.factory_enabled = crate::factory::enabled(None).unwrap_or(false);
         report.factory_ready = report.factory_enabled && report.ready;
+        report.notifications_enabled = load_or_default_config()
+            .is_ok_and(|cfg| crate::notify_channels::module_enabled(&cfg.defaults));
         if args.json {
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else {
@@ -262,6 +329,7 @@ pub fn run(args: Args) -> Result<()> {
     let options = wizard::Options {
         role: args.role,
         factory_enabled: args.factory_enabled,
+        notifications_enabled: args.notifications_enabled,
         agent: args.agent,
         provider: args.provider,
         memory: args.memory,
@@ -270,7 +338,12 @@ pub fn run(args: Args) -> Result<()> {
         gateway_url: args.gateway_url,
         memorycore: args.memorycore,
         chat_permissions: args.chat_permissions,
-        source: wizard::find_source(args.source)?,
+        // The notification step builds nothing, so it needs no checkout.
+        source: if args.notifications_only {
+            PathBuf::new()
+        } else {
+            wizard::find_source(args.source)?
+        },
         yes: args.yes,
     };
     if !options.yes && !std::io::stdin().is_terminal() {
@@ -278,6 +351,16 @@ pub fn run(args: Args) -> Result<()> {
     }
     let mut prompter = TerminalPrompter;
     let mut effects = SystemEffects;
+    if args.notifications_only {
+        wizard::Setup {
+            host: &host,
+            prompter: &mut prompter,
+            effects: &mut effects,
+            options,
+        }
+        .notifications();
+        return Ok(());
+    }
     wizard::Setup {
         host: &host,
         prompter: &mut prompter,

@@ -95,7 +95,7 @@ type SetupStatus = { state: 'ok' | 'missing' | 'outdated' | 'not_logged_in' | 'c
 type SetupRequirement = { id: string; label: string; why: string; optional: boolean; status: SetupStatus; action: { command: string; sudo: boolean } | null };
 type SetupCheck = {
   installed: boolean;
-  report: { ready: boolean; application_ready: boolean; factory_enabled: boolean; factory_ready: boolean; requirements: SetupRequirement[] } | null;
+  report: { ready: boolean; application_ready: boolean; factory_enabled: boolean; factory_ready: boolean; notifications_enabled?: boolean; requirements: SetupRequirement[] } | null;
   error: string | null;
   command: string;
   terminal: boolean;
@@ -106,6 +106,8 @@ let factoryLoaded = false;
 /** True once the checkbox reflects the host or the user; until then setup must not send a factory choice. */
 let factoryChosen = false;
 const factory = document.querySelector<HTMLInputElement>('#factory-enabled')!;
+let notificationsLoaded = false;
+const notifications = document.querySelector<HTMLInputElement>('#notifications-enabled')!;
 
 function statusText(status: SetupStatus): string {
   switch (status.state) {
@@ -140,6 +142,14 @@ async function refreshSetup(): Promise<boolean> {
     document.querySelector('#factory-state')!.textContent = result.report.factory_enabled
       ? `Factory module enabled · ${result.report.factory_ready ? 'prerequisites ready' : 'prerequisites missing'}. Start each project loop explicitly from the dashboard.`
       : 'Factory module disabled · local application remains available.';
+  }
+  document.querySelector<HTMLElement>('#notifications-save')!.hidden = !result.installed;
+  // An older gah reports no switch; leave the checkbox alone then.
+  if (result.report && typeof result.report.notifications_enabled === 'boolean') {
+    if (!notificationsLoaded) { notifications.checked = result.report.notifications_enabled; notificationsLoaded = true; }
+    document.querySelector('#notifications-state')!.textContent = result.report.notifications_enabled
+      ? 'Notifications on · send a test message from the dashboard: Settings → Telegram and Discord notifications.'
+      : 'Notifications off · nothing is sent and nothing asks for a token.';
   }
   if (!result.installed) {
     state.textContent = 'GAH is not installed on this computer yet. Setup builds it, asks whether this computer is the central node, a worker, or command line only, and offers each missing tool before installing it.';
@@ -290,6 +300,16 @@ document.querySelector('#factory-save')!.addEventListener('click', () => {
     await invoke('set_factory_enabled', { enabled: factory.checked });
     factoryLoaded = false;
     await refreshSetup();
+  });
+});
+document.querySelector('#notifications-save')!.addEventListener('click', () => {
+  void perform(async () => {
+    const enabled = notifications.checked;
+    await invoke('set_notifications_enabled', { enabled });
+    notificationsLoaded = false;
+    await refreshSetup();
+    // Turning on finishes in Terminal (the credential is typed there, hidden).
+    if (enabled) document.querySelector('#notifications-state')!.textContent = 'Finish in Terminal: choose Telegram or Discord, paste the token, and GAH sends a test message. Select Check again when it is done.';
   });
 });
 document.querySelector('#setup-terminal')!.addEventListener('click', () => {
