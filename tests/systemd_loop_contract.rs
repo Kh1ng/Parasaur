@@ -24,6 +24,8 @@ fn watchdog_unit_runs_the_packaged_check_and_never_references_the_old_host_scrip
     assert!(!unit.contains("/home/khing/workspace/agent-lab"));
     assert!(!unit.contains("gah-watchdog.py"));
     assert!(!unit.contains("/api/loop/start"));
+    // Issue #1358: the channel credential reaches the check from here.
+    assert!(unit.contains("EnvironmentFile=-/etc/gah/server.env"));
 
     // Scope the "never invokes a start mechanism" check to the actual
     // executed command, not the surrounding doc comments -- those legitimately

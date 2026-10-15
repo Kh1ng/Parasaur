@@ -13,7 +13,7 @@
 //! no code path here capable of starting a loop, not just a policy choice
 //! not to.
 
-use crate::config;
+use crate::{config, notify_channels, redact};
 use anyhow::{Context, Result};
 use std::process::Command;
 
@@ -103,15 +103,39 @@ pub(crate) fn collect_alerts(
 }
 
 /// Print at most one alert line per profile whose loop is stopped or
-/// crashed. Never fails on a single profile's query error -- this is a
-/// health check, not a gate; it must not itself become a silent-failure
-/// risk.
+/// crashed, then (issue #1358) send them as one message through the opt-in
+/// `[defaults].notification_channel`. Never fails on a single profile's
+/// query error -- this is a health check, not a gate. A channel delivery
+/// failure does fail the run, after the alerts are printed, so a broken
+/// channel is not silent.
 pub fn run(profile_name: Option<&str>, config_path: Option<&str>) -> Result<()> {
     let cfg = config::load(config_path)?;
-    for alert in collect_alerts(&cfg, profile_name)? {
+    let alerts = collect_alerts(&cfg, profile_name)?;
+    for alert in &alerts {
         println!("{alert}");
     }
-    Ok(())
+    notify_alerts(&cfg, &alerts, &notify_channels::CurlNotifyTransport)
+}
+
+/// Send every alert as ONE redacted channel message. No alerts, or
+/// `notification_channel = "none"` (the default), sends nothing.
+fn notify_alerts(
+    cfg: &config::GahConfig,
+    alerts: &[String],
+    transport: &dyn notify_channels::NotifyTransport,
+) -> Result<()> {
+    if alerts.is_empty() {
+        return Ok(());
+    }
+    let message = redact::redact(&alerts.join("\n"));
+    notify_channels::deliver_channel_message(cfg, &message, transport).map_err(|err| {
+        anyhow::anyhow!(
+            "[gah watchdog] delivering {} alert(s) through the {} notification channel failed: {}",
+            alerts.len(),
+            cfg.defaults.notification_channel.as_str(),
+            redact::redact(&format!("{err:#}"))
+        )
+    })
 }
 
 #[cfg(test)]
