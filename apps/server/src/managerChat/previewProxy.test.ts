@@ -7,8 +7,10 @@ import rateLimit from 'express-rate-limit';
 import { previewProxy, detectDevPort, PreviewTargetRefusedError } from './previewProxy.js';
 import { authMiddleware } from '../authMiddleware.js';
 
-const TEST_BASE_PORT = 44_900;
-const TEST_MAX_PORT = 44_949;
+// Below every common ephemeral range (Linux 32768+, macOS 49152+), so a
+// concurrently running test file's outbound sockets can't hold these ports.
+const TEST_BASE_PORT = 31_900;
+const TEST_MAX_PORT = 31_949;
 
 /** listen(0) on an ephemeral port outside the preview range the tests
  * configure, which `set()` refuses as a target. */
@@ -58,7 +60,7 @@ test('detectDevPort matches common dev-server output shapes, last match wins', (
 });
 
 test('preview proxy serves the dev server through a dedicated port with the Host rewritten to localhost', async () => {
-  previewProxy.configure({ basePort: TEST_BASE_PORT, maxPort: TEST_MAX_PORT, advertiseHost: '127.0.0.1' });
+  previewProxy.configure({ basePort: TEST_BASE_PORT, maxPort: TEST_MAX_PORT, advertiseHost: '127.0.0.1', bindHost: '127.0.0.1' });
   const seenHosts: string[] = [];
   const dev = await fakeDevServer((req, res) => {
     seenHosts.push(String(req.headers.host));
@@ -67,7 +69,7 @@ test('preview proxy serves the dev server through a dedicated port with the Host
   });
   try {
     const preview = await previewProxy.set('p', 's1', dev.port);
-    assert.ok(preview.listenPort >= 44_900 && preview.listenPort <= 44_949, 'listen port from the configured range');
+    assert.ok(preview.listenPort >= TEST_BASE_PORT && preview.listenPort <= TEST_MAX_PORT, 'listen port from the configured range');
     assert.equal(preview.devPort, dev.port);
     assert.equal(preview.url, `http://127.0.0.1:${preview.listenPort}`);
 
@@ -89,7 +91,7 @@ test('preview proxy serves the dev server through a dedicated port with the Host
 });
 
 test('preview proxy re-points a session to a new dev port (stable URL) and reports unreachable targets as 502', async () => {
-  previewProxy.configure({ basePort: TEST_BASE_PORT, maxPort: TEST_MAX_PORT, advertiseHost: '127.0.0.1' });
+  previewProxy.configure({ basePort: TEST_BASE_PORT, maxPort: TEST_MAX_PORT, advertiseHost: '127.0.0.1', bindHost: '127.0.0.1' });
   const first = await fakeDevServer((_req, res) => { res.end('one'); });
   const second = await fakeDevServer((_req, res) => { res.end('two'); });
   try {
@@ -145,7 +147,7 @@ test('a preview never inherits the control plane\'s loopback owner trust', async
 test('a preview refuses the control-plane port and its own listener range', async () => {
   previewProxy.configure({ basePort: TEST_BASE_PORT, maxPort: TEST_MAX_PORT, advertiseHost: '127.0.0.1', protectedPorts: [3773] });
   await assert.rejects(previewProxy.set('p', 'cp', 3773), PreviewTargetRefusedError);
-  await assert.rejects(previewProxy.set('p', 'loop', 44_910), PreviewTargetRefusedError);
+  await assert.rejects(previewProxy.set('p', 'loop', TEST_BASE_PORT + 10), PreviewTargetRefusedError);
   assert.equal(previewProxy.get('p', 'cp'), null);
 });
 
