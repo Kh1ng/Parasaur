@@ -19,6 +19,7 @@ import {
 } from './acpAdapter.js';
 import { createHeadlessBackend, vibeBackendSpec, agyBackendSpec, openhandsBackendSpec } from './headlessAdapter.js';
 import type { ChatTranscriptTurn, ChatUsage } from '@git-agent-harness/contracts';
+import type { PermissionAsk } from './permissionPolicy.js';
 import { runBackendInstanceRuntime } from '../gahCli.js';
 import { bindOpenCodeModels, instanceAcpSpawn, instanceHeadlessSpec } from './instanceLaunch.js';
 
@@ -58,11 +59,7 @@ export interface ManagerAdapter extends ManagerBackendInfo {
         summary: string | null;
       }) => void;
       /** Permission round-trip (slice 3). */
-      requestPermission?: (request: {
-        title: string;
-        options: { optionId: string; name: string; kind: string }[];
-        locations: string[];
-      }) => Promise<string>;
+      requestPermission?: (request: PermissionAsk) => Promise<string>;
     }
   ): Promise<{ reply: string; model: string | null; usage: ChatUsage | null }>;
   listCommands(gahProfile: string): Promise<ManagerCommandInfo[]>;

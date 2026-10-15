@@ -9,7 +9,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { DEFAULT_BACKEND_ID } from './registry.js';
-import type { HelperRoutePreference, ChatSessionSummary } from '@git-agent-harness/contracts';
+import type { HelperRoutePreference, ChatSessionSummary, ManagerChatPermissionMode } from '@git-agent-harness/contracts';
 
 export interface ManagerChatSettings {
   defaultBackend: string;
@@ -23,6 +23,8 @@ export interface ManagerChatSettings {
   /** Last ACP-advertised thought level picked per profile/backend. */
   reasoningEffortOverrides: Record<string, string>;
   helperRoutes: HelperRoutePreference[];
+  /** Issue #1382. Anything but the exact string 'bypass' reads as 'ask'. */
+  permissionMode: ManagerChatPermissionMode;
   quotaRoutes?: Record<string, { backend: string; backendInstance: string | null; model: string | null; original: NonNullable<ChatSessionSummary['quotaHandoff']> }>;
 }
 
@@ -44,7 +46,8 @@ export function readSettings(): ManagerChatSettings {
             ? data.reasoningEffortOverrides
             : {},
         quotaRoutes: data.quotaRoutes ?? {},
-        helperRoutes: Array.isArray(data.helperRoutes) ? data.helperRoutes.filter(validHelperRoute) : []
+        helperRoutes: Array.isArray(data.helperRoutes) ? data.helperRoutes.filter(validHelperRoute) : [],
+        permissionMode: data.permissionMode === 'bypass' ? 'bypass' : 'ask'
       };
     } catch {
       // Fall through to defaults on a corrupt file rather than crash.
@@ -55,7 +58,8 @@ export function readSettings(): ManagerChatSettings {
     profileOverrides: {},
     modelOverrides: {},
     reasoningEffortOverrides: {},
-    helperRoutes: []
+    helperRoutes: [],
+    permissionMode: 'ask'
   };
 }
 

@@ -35,6 +35,27 @@ pub trait Effects {
     ) -> Option<u16>;
     fn profile_exists(&mut self, profile: &str) -> bool;
     fn add_profile(&mut self, args: InitArgs) -> Result<()>;
+    /// Stores the Manager Chat permission mode the server reads (#1382).
+    fn set_chat_permissions(&mut self, source: &Path, mode: ChatPermissions) -> Result<()>;
+}
+
+/// Manager Chat permission prompts on this machine (#1382). `Ask` is the
+/// default; `Bypass` skips prompts for ordinary actions in a chat's
+/// worktree, while pushes and actions outside it still ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ChatPermissions {
+    Ask,
+    Bypass,
+}
+
+impl ChatPermissions {
+    /// The `permissionMode` value in manager-chat-settings.json.
+    pub fn stored(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Bypass => "bypass",
+        }
+    }
 }
 
 /// Choices given on the command line; anything unset is asked (or, with
@@ -50,6 +71,7 @@ pub struct Options {
     pub central_url: Option<String>,
     pub gateway_url: Option<String>,
     pub memorycore: Option<PathBuf>,
+    pub chat_permissions: Option<ChatPermissions>,
     pub source: PathBuf,
     pub yes: bool,
 }
@@ -215,9 +237,13 @@ impl<'a> Setup<'a> {
         // 4. Role-specific settings, checked before anything is built.
         let mut env = InstallEnv::default();
         let mut memory = MemoryMode::Off;
+        let mut chat_permissions = None;
         match role {
             Role::Worker => self.worker_settings(&mut env)?,
-            Role::Central | Role::Standalone => memory = self.memory_settings(&mut env)?,
+            Role::Central | Role::Standalone => {
+                memory = self.memory_settings(&mut env)?;
+                chat_permissions = self.chat_permissions()?;
+            }
             Role::CliOnly => {}
         }
         let selection = Selection {
@@ -232,6 +258,17 @@ impl<'a> Setup<'a> {
 
         // 6. The service (or just the CLI), then the first project.
         self.install(&selection, env)?;
+        if let Some(mode) = chat_permissions {
+            self.effects
+                .set_chat_permissions(&self.options.source, mode)?;
+            say(
+                &mut self,
+                match mode {
+                    ChatPermissions::Ask => "✓ Manager Chat asks before every action.",
+                    ChatPermissions::Bypass => "✓ Manager Chat skips prompts for ordinary actions in a chat's worktree; pushes and actions outside it still ask.",
+                },
+            );
+        }
         if let Some(checkout) = checkout {
             let profile = project::profile_name(&checkout.repo);
             if self.effects.profile_exists(&profile) {
@@ -251,6 +288,27 @@ impl<'a> Setup<'a> {
 
         self.summary(&selection);
         Ok(())
+    }
+
+    /// The permission mode to store, or `None` to keep what is stored: an
+    /// unattended run without `--chat-permissions` never changes it.
+    fn chat_permissions(&mut self) -> Result<Option<ChatPermissions>> {
+        if let Some(mode) = self.options.chat_permissions {
+            return Ok(Some(mode));
+        }
+        if self.options.yes {
+            return Ok(None);
+        }
+        self.prompter.say("Manager Chat asks before each action an agent takes. You can let it skip the prompt for ordinary actions inside a chat's worktree; pushes and anything outside the worktree still ask, and each skipped prompt is recorded in the chat. You can change this later in Settings.");
+        let bypass = self.prompter.confirm(
+            "Skip permission prompts for ordinary worktree actions?",
+            false,
+        )?;
+        Ok(Some(if bypass {
+            ChatPermissions::Bypass
+        } else {
+            ChatPermissions::Ask
+        }))
     }
 
     fn first_project(&mut self) -> Result<Option<project::Checkout>> {

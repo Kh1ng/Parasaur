@@ -1692,7 +1692,15 @@ export interface ManagerChatSettingsSummary {
   profileOverrides: Record<string, string>;
   availableBackends: ManagerBackendInfo[];
   helperRoutes: HelperRoutePreference[];
+  /** Always present; 'ask' when unset or unrecognized. */
+  permissionMode: ManagerChatPermissionMode;
 }
+
+/** Manager Chat permission policy for this machine (issue #1382).
+ * 'ask' (default) asks for every action. 'bypass' auto-approves ordinary
+ * actions inside the session's worktree; pushes, actions outside the
+ * worktree, and anything unclassifiable still ask. */
+export type ManagerChatPermissionMode = 'ask' | 'bypass';
 
 export type HelperTaskKind = 'chat_title' | 'commit_message' | 'pr_summary' | 'price_table';
 
@@ -1796,6 +1804,7 @@ export interface ManagerChatSettingsUpdate {
   defaultBackend?: string;
   profileOverrides?: Record<string, string>;
   helperRoutes?: HelperRoutePreference[];
+  permissionMode?: ManagerChatPermissionMode;
 }
 
 /** A real slash command from the active backend's own command registry

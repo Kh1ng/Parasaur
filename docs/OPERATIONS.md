@@ -1020,6 +1020,35 @@ Each backend authenticates through its own CLI, not through GAH:
   `agy-second` is isolated by `agy_second_home` as a distinct account.
 - **vibe**, **opencode**, **openhands** — their own respective CLI auth.
 
+### Manager Chat permission prompts
+
+By default, Manager Chat asks before each action an agent requests. The owner
+can select **Settings → Chat → Permission prompts → Skip prompts for ordinary
+actions in the chat's worktree**, or run `gah setup --chat-permissions
+ask|bypass`. Interactive `gah setup` asks on central and standalone machines.
+An unattended run without the flag keeps the stored value. The value is
+`permissionMode` in `config/manager-chat-settings.json` (or
+`GAH_MANAGER_CHAT_SETTINGS_PATH`). A missing or unknown value means `ask`. The
+setting applies only to chats that this machine runs.
+
+With bypass on, GAH still asks for these requests:
+
+- a push or other publish (`git push`, `gh`, `npm publish`, `docker push`, and
+  similar commands), and any git subcommand that is not on the local list;
+- a location, path field, or command word that physically resolves outside
+  the chat session's worktree (symbolic links are followed before `..`);
+- a command with shell chaining, pipes, redirection, substitution, or globbing,
+  or a command that runs another command (`env`, `xargs`, `sudo`, `npx`);
+- a tool kind that GAH cannot classify, a request without an "allow once"
+  option, a chat without its own session worktree (the default conversation,
+  or a session that runs in the shared checkout), or a request that arrives
+  after Stop.
+
+GAH records each automatic approval in the transcript as
+`[permission auto-approved: <option>]`. The check reads the request's tool
+kind, locations, and command. It does not inspect what a build or test script
+does after it starts.
+
 ### Runner permissions
 
 By default, `gah` injects necessary flags so implementation dispatches (`improve`, `experiment`), which run in a GAH worktree, can make progress. Read-only dispatches (`research`, `audit`, `estimate`, `pm`) run in the profile's real checkout and, like review dispatches, receive none of these flags: they keep the backend CLI's own default permissions plus whatever the profile's `codex_args`/`claude_args` set.

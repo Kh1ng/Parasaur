@@ -20,6 +20,7 @@ import { Writable, Readable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import type { Writable as NodeWritable, Readable as NodeReadable } from 'node:stream';
 import type { ChatTranscriptTurn, ChatUsage } from '@git-agent-harness/contracts';
+import type { PermissionAsk } from './permissionPolicy.js';
 
 export interface ManagerCommandInfo {
   name: string;
@@ -84,11 +85,7 @@ class AcpClient implements acp.Client {
   /** Permission decision hook (slice 3): when set, requestPermission asks
    * the human through the chat UI instead of auto-declining; resolves with
    * the chosen optionId or 'cancelled'. */
-  permissionRequest?: (request: {
-    title: string;
-    options: { optionId: string; name: string; kind: string }[];
-    locations: string[];
-  }) => Promise<string>;
+  permissionRequest?: (request: PermissionAsk) => Promise<string>;
   toolCalls = new Map<string, acp.ToolCallUpdate>();
   usageUpdate: acp.UsageUpdate | null = null;
   cumulativeUsage: acp.Usage | null = null;
@@ -108,11 +105,15 @@ class AcpClient implements acp.Client {
       }
       return { outcome: { outcome: 'cancelled' } };
     }
-    const locations = (params.toolCall?.locations ?? []).map((l) => l.path);
+    // The permission request may carry only part of the tool call; the
+    // earlier tool_call notification for the same id holds the rest.
+    const tool = { ...this.toolCalls.get(params.toolCall.toolCallId), ...params.toolCall };
     const chosen = await this.permissionRequest({
       title,
       options: params.options.map((o) => ({ optionId: o.optionId, name: o.name, kind: o.kind })),
-      locations
+      locations: (tool.locations ?? []).map((l) => l.path),
+      kind: tool.kind ?? null,
+      rawInput: tool.rawInput
     });
     console.log(`[managerChat] ${this.label} permission "${title}" -> ${chosen}`);
     if (chosen === 'cancelled') {
@@ -612,11 +613,7 @@ export function createAcpBackend(
       /** Permission round-trip (slice 3): resolve with the chosen optionId
        * or 'cancelled'. Absent = fail-closed auto-decline (previous
        * behavior, e.g. for adapter-driven turns without a UI attached). */
-      requestPermission?: (request: {
-        title: string;
-        options: { optionId: string; name: string; kind: string }[];
-        locations: string[];
-      }) => Promise<string>;
+      requestPermission?: (request: PermissionAsk) => Promise<string>;
       /** Per-session reasoning effort (WP2 sessions); undefined = none.
        * Applied like model: only when the backend advertises the
        * thought_level control and the value differs from current. */

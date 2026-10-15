@@ -17,7 +17,7 @@ import { oldestFetchedAt, formatAge, isStale } from '../lib/format.js';
 import { gahApi, backendInstancesApi, GahApiError } from '../api/client.js';
 import type { ConfigSetData, NotificationSettingsSummary, NodeCapacitySettings, NodeResources } from '@git-agent-harness/contracts';
 import { NODE_CAPACITY_MIN_MIB, NODE_CAPACITY_DEFAULTS, NODE_CAPACITY_CPU_LIMITS } from '@git-agent-harness/contracts';
-import type { ManagerChatSettingsSummary, ProfileSummary, GatewaySettingsSummary, MemoryContextPolicy, AdminUpdatePendingInfo, AdminUpdateState, ReleaseChannelStatus, BackendInstanceSummary, HelperRoutePreference, ManagerModelInfo } from '@git-agent-harness/contracts';
+import type { ManagerChatSettingsSummary, ManagerChatSettingsUpdate, ProfileSummary, GatewaySettingsSummary, MemoryContextPolicy, AdminUpdatePendingInfo, AdminUpdateState, ReleaseChannelStatus, BackendInstanceSummary, HelperRoutePreference, ManagerModelInfo } from '@git-agent-harness/contracts';
 
 const SETTINGS_REFRESH_MS = 60 * 1000;
 const SETTINGS_SECTIONS_KEY = 'gah.settings.openSections';
@@ -683,12 +683,14 @@ export function ManagerChatSettingsSection({ configuredProfiles }: { configuredP
   const [newOverrideProfile, setNewOverrideProfile] = useState('');
   const [newOverrideBackend, setNewOverrideBackend] = useState('');
   const defaultBackendId = useId();
+  const permissionModeId = useId();
 
   const load = () => {
     gahApi
       .getManagerChatSettings()
       .then((data) => {
-        setSettings({ ...data, helperRoutes: data.helperRoutes ?? [] });
+        // An older server omits permissionMode; anything but 'bypass' is 'ask'.
+        setSettings({ ...data, helperRoutes: data.helperRoutes ?? [], permissionMode: data.permissionMode === 'bypass' ? 'bypass' : 'ask' });
         setError(null);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
@@ -700,7 +702,7 @@ export function ManagerChatSettingsSection({ configuredProfiles }: { configuredP
   }, []);
   useWsReconnectRefresh(load);
 
-  const save = async (update: { defaultBackend?: string; profileOverrides?: Record<string, string>; helperRoutes?: HelperRoutePreference[] }) => {
+  const save = async (update: ManagerChatSettingsUpdate) => {
     setLoading(true);
     try {
       await gahApi.setManagerChatSettings(update);
@@ -762,6 +764,23 @@ export function ManagerChatSettingsSection({ configuredProfiles }: { configuredP
           </option>
         ))}
       </select>
+
+      <label htmlFor={permissionModeId} className="block text-xs font-medium text-secondary mb-1">Permission prompts</label>
+      <select
+        id={permissionModeId}
+        aria-describedby={`${permissionModeId}-help`}
+        value={settings.permissionMode}
+        onChange={(e) => save({ permissionMode: e.target.value === 'bypass' ? 'bypass' : 'ask' })}
+        disabled={loading}
+        className="w-full bg-raised border border-subtle rounded-md px-3 py-1.5 text-sm text-primary mb-1"
+      >
+        <option value="ask">Ask for every action</option>
+        <option value="bypass">Skip prompts for ordinary actions in the chat's worktree</option>
+      </select>
+      <p id={`${permissionModeId}-help`} className="text-xs text-muted mb-4">
+        Applies to chats on this machine. Pushes, actions outside the chat's worktree, and anything GAH
+        cannot classify still ask. Each skipped prompt is recorded in the chat transcript. Owner only.
+      </p>
 
       <p className="text-xs font-medium text-secondary mb-1">Per-profile overrides</p>
       {overrideEntries.length === 0 ? (

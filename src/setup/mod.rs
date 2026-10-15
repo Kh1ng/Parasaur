@@ -9,7 +9,7 @@ pub mod project;
 pub mod requirements;
 pub mod wizard;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -139,6 +139,39 @@ impl wizard::Effects for SystemEffects {
     fn add_profile(&mut self, args: crate::init::InitArgs) -> Result<()> {
         crate::init::run(args)
     }
+
+    /// Sets `permissionMode` in the file the server reads (its
+    /// GAH_MANAGER_CHAT_SETTINGS_PATH, else `config/` in the checkout it runs
+    /// from), keeping every other setting, and replaces the file atomically.
+    fn set_chat_permissions(&mut self, source: &Path, mode: wizard::ChatPermissions) -> Result<()> {
+        let path = std::env::var_os("GAH_MANAGER_CHAT_SETTINGS_PATH")
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| source.join("config/manager-chat-settings.json"));
+        let mut settings = match std::fs::read(&path) {
+            Ok(bytes) => {
+                serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&bytes)
+                    .with_context(|| {
+                        format!(
+                            "{} is not a JSON object; fix or remove it and run setup again",
+                            path.display()
+                        )
+                    })?
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+            Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
+        };
+        settings.insert("permissionMode".into(), mode.stored().into());
+        let parent = path.parent().context("settings path has no parent")?;
+        std::fs::create_dir_all(parent)?;
+        let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+        serde_json::to_writer_pretty(&mut temp, &settings)?;
+        temp.as_file().sync_all()?;
+        temp.persist(&path)
+            .map_err(|error| error.error)
+            .with_context(|| format!("replacing {}", path.display()))?;
+        Ok(())
+    }
 }
 
 /// `gah setup` flags. Choices only: secrets come from the environment or a
@@ -158,6 +191,9 @@ pub struct Args {
     /// Shared memory for chats and dispatched work (default: off).
     #[arg(long, value_enum)]
     memory: Option<requirements::MemoryMode>,
+    /// Manager Chat permission prompts on this machine (default: ask; unattended runs keep the stored mode).
+    #[arg(long, value_enum)]
+    chat_permissions: Option<wizard::ChatPermissions>,
     /// A repository checkout to add as the first project.
     #[arg(long)]
     project: Option<PathBuf>,
@@ -233,6 +269,7 @@ pub fn run(args: Args) -> Result<()> {
         central_url: args.central_url,
         gateway_url: args.gateway_url,
         memorycore: args.memorycore,
+        chat_permissions: args.chat_permissions,
         source: wizard::find_source(args.source)?,
         yes: args.yes,
     };
@@ -248,4 +285,41 @@ pub fn run(args: Args) -> Result<()> {
         options,
     }
     .run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wizard::{ChatPermissions, Effects};
+    use super::SystemEffects;
+
+    #[test]
+    fn chat_permissions_keep_other_manager_chat_settings() {
+        if std::env::var_os("GAH_MANAGER_CHAT_SETTINGS_PATH").is_some() {
+            return;
+        }
+        let source = tempfile::tempdir().unwrap();
+        let path = source.path().join("config/manager-chat-settings.json");
+        SystemEffects
+            .set_chat_permissions(source.path(), ChatPermissions::Bypass)
+            .unwrap();
+        std::fs::write(
+            &path,
+            r#"{"defaultBackend":"codex","permissionMode":"bypass"}"#,
+        )
+        .unwrap();
+        SystemEffects
+            .set_chat_permissions(source.path(), ChatPermissions::Ask)
+            .unwrap();
+        let stored: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            stored,
+            serde_json::json!({"defaultBackend": "codex", "permissionMode": "ask"})
+        );
+        std::fs::write(&path, "not json").unwrap();
+        assert!(SystemEffects
+            .set_chat_permissions(source.path(), ChatPermissions::Bypass)
+            .is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "not json");
+    }
 }

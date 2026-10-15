@@ -29,8 +29,10 @@ import {
   reasoningEffortOverrideForProfile,
   helperRouteFor,
   setModelOverrideForProfile,
-  setReasoningEffortOverrideForProfile
+  setReasoningEffortOverrideForProfile,
+  readSettings
 } from './settingsStore.js';
+import { autoApprovedOption } from './permissionPolicy.js';
 import { effectiveContextPolicy, buildMemoryPrompt } from '../gatewaySettingsStore.js';
 import { appendEvents, createEventWriter, deriveModelHistory, foldSession, loadLog, nextSeqAndTurn, seedOpeningMessage, type SessionLogOptions } from './sessionLog.js';
 import {
@@ -700,6 +702,10 @@ export interface RunTurnContext {
   backendInstance?: string | null;
   /** Session working directory (WP2); undefined = the server's cwd. */
   cwd?: string;
+  /** The session's own worktree, set only when the turn runs in it. A
+   * session without one runs in the shared checkout (cwd = local_path), so
+   * the permission bypass requires this, never cwd (PR #1493). */
+  worktree?: string;
   /** Per-conversation model override (WP2 sessions); undefined = none. */
   model?: string | null;
   /** Per-conversation reasoning effort (WP2 sessions); undefined = none.
@@ -820,6 +826,42 @@ export async function runTurn(
             // until the human answers, the turn is cancelled, or the
             // timeout cancels fail-closed.
             const permissionId = `perm-${active.turnNo}-${Date.now().toString(36)}`;
+            // Issue #1382: the opt-in bypass applies only to chats served
+            // on this machine, and only to ordinary in-worktree actions.
+            // The request and its decision are journaled before the
+            // backend proceeds, so every auto-approval stays auditable. A
+            // Stop at any point, including during either journal write,
+            // answers 'cancelled' and is recorded as such.
+            if (active.cancelled) {
+              resolve('cancelled');
+              return;
+            }
+            const writer = active.chunkWriter;
+            const autoOption = context.route?.remote || !writer
+              ? null
+              : autoApprovedOption(readSettings().permissionMode, request, context.worktree);
+            if (writer && autoOption) {
+              const decision = (optionId: string): ChatSessionEvent => ({
+                type: 'permission/decision', seq: ++active.seq, turn: active.turnNo, permissionId, optionId,
+                ...(optionId === 'cancelled' ? {} : { autoApproved: true }), timestamp: Date.now()
+              });
+              // A Stop closes the turn's writer, so its decision goes
+              // straight to the log, after the already-flushed request.
+              const cancelled = () => {
+                appendEvents(profile, [decision('cancelled')], context.sessionId && context.sessionId !== 'default' ? { ...logOptions, sessionId: context.sessionId } : logOptions);
+                return 'cancelled';
+              };
+              writer.append({ type: 'permission/request', seq: ++active.seq, turn: active.turnNo, permissionId, title: request.title, options: request.options, locations: request.locations, timestamp: Date.now() });
+              writer.flush()
+                .then(async () => {
+                  if (active.cancelled) return cancelled();
+                  writer.append(decision(autoOption));
+                  await writer.flush();
+                  return active.cancelled ? cancelled() : autoOption;
+                })
+                .then(resolve, reject);
+              return;
+            }
             active.pendingPermission = {
               permissionId,
               resolve: (optionId) => {
@@ -1061,7 +1103,7 @@ export function sendManagerChatMessage(
   // materializing it from the branch if prune reclaimed the idle worktree)
   // and serve the turn from the session's own backend. Unknown or archived
   // sessions fail loudly rather than silently landing in the default log.
-  const prepareSession = async (): Promise<{ cwd?: string; backend: string; backendInstance?: string | null; model?: string | null; reasoningEffort?: string | null; route: ChatRoute }> => {
+  const prepareSession = async (): Promise<{ cwd?: string; worktree?: string; backend: string; backendInstance?: string | null; model?: string | null; reasoningEffort?: string | null; route: ChatRoute }> => {
     if (!sessionId || sessionId === 'default') {
       const pinned = backendOverride ? undefined : quotaRouteForProfile(profile);
       const backend = backendOverride ?? pinned?.backend ?? backendForProfile(profile);
@@ -1109,7 +1151,8 @@ export function sendManagerChatMessage(
       // Degrade to the workspace's current state; the turn still runs.
       console.error(`[chat] workspace refresh failed for ${profile}/${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
     });
-    return { cwd: resolved.cwd, backend: resolved.session.backend, backendInstance: resolved.session.backendInstance, model: resolved.session.model, reasoningEffort: resolved.session.reasoningEffort, route };
+    const worktree = resolved.session.worktreePath && resolved.cwd === resolved.session.worktreePath ? resolved.cwd : undefined;
+    return { cwd: resolved.cwd, worktree, backend: resolved.session.backend, backendInstance: resolved.session.backendInstance, model: resolved.session.model, reasoningEffort: resolved.session.reasoningEffort, route };
   };
 
   const key = chatKey(profile, sessionId);
@@ -1334,7 +1377,7 @@ export function sendManagerChatMessage(
           detectPreview(text);
         },
         active,
-        { key, sessionId, backend: sessionContext.backend, backendInstance: sessionContext.backendInstance, cwd: sessionContext.cwd, model: sessionContext.model, reasoningEffort: sessionContext.reasoningEffort, route: sessionContext.route },
+        { key, sessionId, backend: sessionContext.backend, backendInstance: sessionContext.backendInstance, cwd: sessionContext.cwd, worktree: sessionContext.worktree, model: sessionContext.model, reasoningEffort: sessionContext.reasoningEffort, route: sessionContext.route },
         onToolCall
       );
       // A cancel is a barrier for the queue: once we've sent session/cancel

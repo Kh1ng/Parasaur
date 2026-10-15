@@ -144,6 +144,7 @@ test('real HTTP/WS pairing confirms access, rejects CSRF and owner exports, and 
       ['DELETE', '/api/profiles/paired-test', {}],
       ['PUT', '/api/settings/gateway', { url: 'https://attacker.example.test' }],
       ['POST', '/api/manager-chat/settings', { defaultBackend: 'codex' }],
+      ['POST', '/api/manager-chat/settings', { permissionMode: 'bypass' }],
       ['POST', '/api/manager-chat/reclaim', { profile: 'paired-test', dryRun: false }],
       ['POST', '/api/skills', { id: 'paired-skill', version: '1.0.0', content: '# Unsafe edit' }],
       ['DELETE', '/api/skills/gah-manager', {}],
@@ -165,9 +166,17 @@ test('real HTTP/WS pairing confirms access, rejects CSRF and owner exports, and 
     });
     assert.equal(bindSkills.status, 200, 'Paired devices can change project skill bindings');
     assert.equal(JSON.parse(readFileSync(process.env.GAH_MANAGER_CHAT_SETTINGS_PATH, 'utf8')).profileOverrides['paired-test'], 'codex');
+    assert.notEqual(JSON.parse(readFileSync(process.env.GAH_MANAGER_CHAT_SETTINGS_PATH, 'utf8')).permissionMode, 'bypass', 'Paired requests cannot turn off chat permission prompts');
     assert.equal(adminUpdates, 0, 'Denied admin requests never start an update');
     assert.equal((await post('/api/admin/update', {}, owner)).status, 202);
     assert.equal(adminUpdates, 1, 'Explicit owner credentials retain administration access');
+    const chatSettings = () => JSON.parse(readFileSync(process.env.GAH_MANAGER_CHAT_SETTINGS_PATH!, 'utf8'));
+    assert.equal((await post('/api/manager-chat/settings', { permissionMode: 'always' }, owner)).status, 400, 'An unknown permission mode is rejected');
+    assert.equal(chatSettings().permissionMode, 'ask');
+    assert.equal((await post('/api/manager-chat/settings', { permissionMode: 'bypass' }, owner)).status, 200);
+    assert.equal(chatSettings().permissionMode, 'bypass', 'The owner can opt in to bypass');
+    assert.equal((await post('/api/manager-chat/backend', { profile: 'paired-test', backendId: 'claude' }, paired)).status, 200);
+    assert.equal(chatSettings().permissionMode, 'bypass', 'Unrelated chat-setting writes keep the mode');
     assert.equal((await fetch(base + '/api/info', { headers: { ...paired, Cookie: `${cookie}; ${cookie}` } })).status, 401);
     assert.equal(await connect(cookie, 'http://attacker.test'), 403);
     assert.equal(await connect(cookie, null), 401, 'Referer alone cannot authorize a WebSocket upgrade');
