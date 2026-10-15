@@ -418,13 +418,22 @@ fn sample_proc() -> std::io::Result<NodePressure> {
     })
 }
 
-/// macOS has no /proc. `kern.memorystatus_level` is the kernel's percentage
-/// of memory still available, the figure `memory_pressure` reports. macOS has
-/// no PSI, so those signals stay unknown as on Linux kernels without it.
+/// macOS has no /proc. Available memory counts only what the kernel can hand
+/// out without touching another process's anonymous memory: free pages,
+/// file-backed pages (clean cache, including speculative read-ahead) and
+/// purgeable pages. Active and inactive anonymous working sets are excluded,
+/// so they cannot satisfy the memory floor the way `kern.memorystatus_level`
+/// would. macOS has no PSI, so those signals stay unknown as on Linux kernels
+/// without it.
 #[cfg(target_os = "macos")]
 fn sample_macos() -> std::io::Result<NodePressure> {
-    let memory_total_bytes: u64 = sysctl_value("hw.memsize")?;
-    let available_percent: u32 = sysctl_value("kern.memorystatus_level")?;
+    let memory_total_bytes = sysctl_u64("hw.memsize")?;
+    let pages = MacosPages {
+        free: sysctl_u64("vm.page_free_count")?,
+        file_backed: sysctl_u64("vm.page_pageable_external_count")?,
+        purgeable: sysctl_u64("vm.page_purgeable_count")?,
+        page_size: sysctl_u64("hw.pagesize")?,
+    };
     let mut load = [0f64; 1];
     if unsafe { libc::getloadavg(load.as_mut_ptr(), 1) } != 1 {
         return Err(std::io::Error::other(
@@ -433,7 +442,7 @@ fn sample_macos() -> std::io::Result<NodePressure> {
     }
     Ok(NodePressure {
         memory_total_bytes,
-        memory_available_bytes: memory_total_bytes / 100 * u64::from(available_percent.min(100)),
+        memory_available_bytes: pages.reclaimable_bytes().min(memory_total_bytes),
         logical_cpus: std::thread::available_parallelism()
             .map(usize::from)
             .unwrap_or(1),
@@ -443,15 +452,37 @@ fn sample_macos() -> std::io::Result<NodePressure> {
     })
 }
 
+/// macOS VM page counts, in pages of `page_size` bytes.
+#[cfg(any(test, target_os = "macos"))]
+struct MacosPages {
+    free: u64,
+    file_backed: u64,
+    purgeable: u64,
+    page_size: u64,
+}
+
+#[cfg(any(test, target_os = "macos"))]
+impl MacosPages {
+    fn reclaimable_bytes(&self) -> u64 {
+        self.free
+            .saturating_add(self.file_backed)
+            .saturating_add(self.purgeable)
+            .saturating_mul(self.page_size)
+    }
+}
+
+/// Read an unsigned integer sysctl. macOS reports these counters as 4 or 8
+/// bytes depending on the name; both fill the low bytes of a zeroed u64 on
+/// little-endian Apple hardware.
 #[cfg(target_os = "macos")]
-fn sysctl_value<T: Copy + Default>(name: &str) -> std::io::Result<T> {
+fn sysctl_u64(name: &str) -> std::io::Result<u64> {
     let c_name = std::ffi::CString::new(name)?;
-    let mut value = T::default();
-    let mut size = std::mem::size_of::<T>();
+    let mut value = 0u64;
+    let mut size = std::mem::size_of::<u64>();
     let status = unsafe {
         libc::sysctlbyname(
             c_name.as_ptr(),
-            (&mut value as *mut T).cast(),
+            (&mut value as *mut u64).cast(),
             &mut size,
             std::ptr::null_mut(),
             0,
@@ -460,12 +491,12 @@ fn sysctl_value<T: Copy + Default>(name: &str) -> std::io::Result<T> {
     if status != 0 {
         return Err(std::io::Error::last_os_error());
     }
-    if size != std::mem::size_of::<T>() {
-        return Err(std::io::Error::other(format!(
+    match size {
+        4 | 8 => Ok(value),
+        _ => Err(std::io::Error::other(format!(
             "sysctl {name} returned {size} bytes"
-        )));
+        ))),
     }
-    Ok(value)
 }
 
 #[cfg(any(test, not(target_os = "macos")))]
@@ -752,6 +783,31 @@ mod tests {
         assert!(matches!(
             admission_for(&review(), 0, WorkerReservation::default(), node),
             Admission::Defer(reason) if reason.contains("memory PSI")
+        ));
+    }
+
+    #[test]
+    fn macos_active_memory_does_not_count_as_headroom() {
+        // 32 GiB machine with nearly all memory in active anonymous working
+        // sets: only free, file-backed and purgeable pages are headroom.
+        let pages = MacosPages {
+            free: 1_000,
+            file_backed: 2_000,
+            purgeable: 100,
+            page_size: 16_384,
+        };
+        let node = NodePressure {
+            memory_total_bytes: 32 * GIB,
+            memory_available_bytes: pages.reclaimable_bytes(),
+            logical_cpus: 10,
+            load_one: 0.5,
+            memory_full_psi_avg10: None,
+            cpu_some_psi_avg10: None,
+        };
+        assert_eq!(node.memory_available_bytes, 3_100 * 16_384);
+        assert!(matches!(
+            admission_for(&review(), 0, WorkerReservation::default(), node),
+            Admission::Defer(_)
         ));
     }
 
