@@ -12,7 +12,7 @@ import { RegistryService, containsSecretWords, isSchemaCompatible, nodeVersionSt
 import { COORDINATOR_SCHEMA_DIGEST, getCoordinatorIdentity, resetCachedCoordinatorIdentity } from './coordinatorIdentity.js';
 import { authMiddleware, isLocalAddress } from './authMiddleware.js';
 import { ClaimsService } from './claimsService.js';
-import { COORDINATOR_VERSION, type RegisteredNode, type NodeSummary, type NodeHealthCheckResult } from '@git-agent-harness/contracts';
+import { COORDINATOR_VERSION, type RegisteredNode } from '@git-agent-harness/contracts';
 
 
 // Helper to set up temporary registry file

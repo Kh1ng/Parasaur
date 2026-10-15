@@ -1,6 +1,6 @@
 import { useGahStore } from '../store/gahStore.js';
 import { coordinatorWebSocketProtocols, TOKEN_CHANGED_EVENT } from '../api/coordinatorToken.js';
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from 'react';
 import { useUiStore } from '../store/uiStore.js';
 import type {
   ServerMessage,
