@@ -1031,12 +1031,14 @@ With bypass on, GAH still asks for these requests:
 
 - a push or other publish (`git push`, `gh`, `npm publish`, `docker push`, and
   similar commands), and any git subcommand that is not on the local list;
-- a location or path argument outside the chat session's worktree, including
-  through a symbolic link;
+- a location, path field, or command word that physically resolves outside
+  the chat session's worktree (symbolic links are followed before `..`);
 - a command with shell chaining, pipes, redirection, substitution, or globbing,
   or a command that runs another command (`env`, `xargs`, `sudo`, `npx`);
 - a tool kind that GAH cannot classify, a request without an "allow once"
-  option, or a chat without a session worktree (the default conversation).
+  option, a chat without its own session worktree (the default conversation,
+  or a session that runs in the shared checkout), or a request that arrives
+  after Stop.
 
 GAH records each automatic approval in the transcript as
 `[permission auto-approved: <option>]`. The check reads the request's tool

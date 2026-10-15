@@ -68,6 +68,28 @@ test('bypass still asks for anything outside the worktree', () => withWorktree((
   for (const fields of cases) assert.equal(autoApprovedOption('bypass', ask(fields), worktree), null, JSON.stringify(fields));
 }));
 
+// PR #1493 review: relative arguments are paths too, and `..` after a
+// symlink climbs from the link's physical target, not from the link name.
+test('bypass judges every path on the filesystem, not lexically', () => withWorktree((worktree, outside) => {
+  mkdirSync(join(outside, 'nested'));
+  writeFileSync(join(outside, 'secret.txt'), 'secret');
+  symlinkSync(outside, join(worktree, 'escape'));
+  symlinkSync(join(outside, 'nested'), join(worktree, 'link'));
+  const cases: Partial<PermissionAsk>[] = [
+    { kind: 'execute', rawInput: { command: 'cat escape/secret.txt' } },
+    { kind: 'execute', rawInput: { command: ['cat', 'escape/secret.txt'] } },
+    { kind: 'execute', rawInput: { command: 'cat link/../secret.txt' } },
+    { kind: 'execute', rawInput: { command: 'cp --target-directory=escape src/main.ts' } },
+    { kind: 'read', locations: ['link/../secret.txt'] },
+    { kind: 'edit', locations: [`${worktree}/link/../secret.txt`] },
+    { kind: 'edit', locations: ['src/main.ts'], rawInput: { file_path: 'link/../secret.txt' } },
+    { kind: 'edit', locations: ['missing/../../secret.txt'] }
+  ];
+  const approved = cases.filter((fields) => autoApprovedOption('bypass', ask(fields), worktree) !== null);
+  assert.deepEqual(approved, [], 'every case reaches outside the worktree');
+  assert.equal(autoApprovedOption('bypass', ask({ kind: 'read', locations: ['src/../src/main.ts'] }), worktree), 'allow-once', 'a real in-worktree `..` still approves');
+}));
+
 test('bypass asks for requests it cannot classify', () => withWorktree((worktree) => {
   const cases: Partial<PermissionAsk>[] = [
     { kind: null, locations: ['src/main.ts'] },

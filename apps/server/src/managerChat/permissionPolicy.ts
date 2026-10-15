@@ -1,33 +1,60 @@
-import { realpathSync } from 'node:fs';
+import { lstatSync, readlinkSync } from 'node:fs';
 import path from 'node:path';
 
 function isInside(child: string, parent: string): boolean {
   return child === parent || child.startsWith(parent + path.sep);
 }
 
-/** getcwd() may hand the backend child a symlink-resolved cwd (macOS
- * /var -> /private/var), and the emitted file_path is absolute, so
- * containment is judged on canonical paths. A target that does not exist
- * yet is canonicalized through its nearest existing ancestor, so a new file
- * under a symlinked directory cannot escape. A target that realpath-resolves
- * somewhere new (a symlink escape) is judged on its canonical form alone,
- * never its lexical one. */
-export function isInsideWorkingDirectory(resolved: string, cwd: string): boolean {
-  const canonical = (target: string): string => {
-    const tail: string[] = [];
-    for (let head = target; ; head = path.dirname(head)) {
+const MAX_SYMLINK_HOPS = 40;
+
+/** Where `target` physically lands, walked one component at a time from
+ * the physical directory `from` the way the kernel does: a symlink is
+ * followed before the next component, so `link/..` climbs from the link's
+ * target, not from the link's own directory. Past the first missing
+ * component the rest is new, so it is appended as-is; a `..` there, a
+ * symlink loop, or an unreadable component returns null. POSIX paths only. */
+function physicalPath(target: string, from: string, hops = { count: 0 }): string | null {
+  let current = path.isAbsolute(target) ? path.sep : from;
+  let missing = false;
+  for (const part of target.split(path.sep)) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') {
+      if (missing) return null;
+      current = path.dirname(current);
+      continue;
+    }
+    const next = path.join(current, part);
+    if (!missing) {
+      let stat;
       try {
-        return path.join(realpathSync(head), ...tail.reverse());
-      } catch {
-        if (path.dirname(head) === head) return target;
-        tail.push(path.basename(head));
+        stat = lstatSync(next);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT' && code !== 'ENOTDIR') return null;
+      }
+      if (!stat) {
+        missing = true;
+      } else if (stat.isSymbolicLink()) {
+        if (++hops.count > MAX_SYMLINK_HOPS) return null;
+        const linked = physicalPath(readlinkSync(next), current, hops);
+        if (linked === null) return null;
+        current = linked;
+        continue;
       }
     }
-  };
-  const realCwd = canonical(cwd);
-  const realResolved = canonical(resolved);
-  if (realResolved !== resolved) return isInside(realResolved, realCwd);
-  return isInside(resolved, cwd) || isInside(resolved, realCwd);
+    current = next;
+  }
+  return current;
+}
+
+/** Whether `target` (absolute, or relative to `cwd`) physically lands inside
+ * `cwd`. Both are walked on the filesystem, so a symlinked cwd (macOS
+ * /var -> /private/var) still matches, and neither a symlink nor a `..`
+ * after one can escape. Anything that cannot be walked is outside. */
+export function isInsideWorkingDirectory(target: string, cwd: string): boolean {
+  const realCwd = physicalPath(cwd, path.sep);
+  const realTarget = realCwd === null ? null : physicalPath(target, realCwd);
+  return realCwd !== null && realTarget !== null && isInside(realTarget, realCwd);
 }
 
 /** One backend permission request, as the adapters hand it to the manager. */
@@ -74,7 +101,7 @@ export function autoApprovedOption(mode: string, request: PermissionAsk, worktre
   if (mode !== 'bypass' || !worktree || !path.isAbsolute(worktree)) return null;
   const allow = request.options.find((option) => option.kind === 'allow_once');
   if (!allow) return null;
-  const inside = (target: string) => isInsideWorkingDirectory(path.resolve(worktree, target), worktree);
+  const inside = (target: string) => isInsideWorkingDirectory(target, worktree);
   if (!request.locations.every(inside)) return null;
   const input = request.rawInput && typeof request.rawInput === 'object' ? request.rawInput as Record<string, unknown> : {};
   for (const key of PATH_KEYS) {
@@ -134,8 +161,8 @@ function localCommand(argv: string[], inside: (target: string) => boolean): bool
   const program = path.basename(argv[0]);
   if (NOT_LOCAL.has(program) || argv.some((arg) => PUBLISH_WORDS.has(arg))) return false;
   if (program === 'git' && !LOCAL_GIT.has(argv[1] ?? '')) return false;
-  return argv.every((arg) => {
-    const value = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg;
-    return !(path.isAbsolute(value) || value.split('/').includes('..')) || inside(value);
-  });
+  // Any word may name a file (`cat escape/x`, `--dir=link/..`), so each
+  // one, and the value after an `=`, must land inside the worktree when
+  // read as a path. Text that is not a path lands inside trivially.
+  return argv.every((arg) => inside(arg) && (!arg.includes('=') || inside(arg.slice(arg.indexOf('=') + 1))));
 }
