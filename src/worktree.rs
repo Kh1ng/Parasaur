@@ -99,7 +99,11 @@ fn collect_pipe(
         .with_context(|| format!("reading {context} {stream}"))
 }
 
-fn wait_with_timeout_for(mut child: Child, context: &str, timeout: Duration) -> Result<Output> {
+pub(crate) fn wait_with_timeout_for(
+    mut child: Child,
+    context: &str,
+    timeout: Duration,
+) -> Result<Output> {
     // Read both pipes while the child runs. Waiting for exit before draining
     // deadlocks as soon as git emits more than the OS pipe capacity: git
     // blocks in write(2), cannot exit, and the parent waits until timeout.

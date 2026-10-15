@@ -298,6 +298,16 @@ fn only_finished_agent_work_can_be_picked_again_in_the_same_batch() {
         &review,
         "Deferred review because configured route capacity is busy; no backend launched"
     ));
+    // Another worker or loop holds the item: picking it again loses again.
+    assert!(!super::has_follow_up_in_batch(
+        &review,
+        "Skipped issue #64: held by Kh1ng"
+    ));
+    // Another worker or loop holds the item: picking it again loses again.
+    assert!(!super::has_follow_up_in_batch(
+        &review,
+        "Skipped issue #64: held by Kh1ng"
+    ));
     // A refused merge reports an ordinary outcome; releasing it would retry at once.
     assert!(!super::has_follow_up_in_batch(
         &merge,
@@ -449,4 +459,104 @@ default_target_branch = "main"
         })
         .collect::<std::collections::HashSet<_>>();
     assert_eq!(fingerprints.len(), 1);
+}
+
+/// Drives `run_moving_past_held_work` with the real selection: every item in
+/// `held` turns out to be held by another worker or loop when it runs.
+/// Returns `(work id, action kind)` in the order they ran, and the cycle's
+/// final action and outcome.
+fn run_cycle(
+    snapshot: &crate::status::StatusSnapshot,
+    held: &[&str],
+) -> (Vec<(String, &'static str)>, super::NextAction, String) {
+    let mut ran = Vec::new();
+    let (action, outcome) =
+        super::run_moving_past_held_work(snapshot, &HashSet::new(), |view, excluded| {
+            let action = super::decide_next_action(view);
+            assert!(action.work_id().is_none_or(|id| !excluded.contains(id)));
+            let outcome = match action.work_id() {
+                Some(id) if super::selects_work(&action) => {
+                    ran.push((id.to_string(), action.kind()));
+                    if held.contains(&id) {
+                        format!("Skipped issue {id}: held by Kh1ng")
+                    } else {
+                        format!("Dispatched {}", action.kind())
+                    }
+                }
+                _ => format!("No action: {}", action.reason()),
+            };
+            Ok((action, outcome))
+        })
+        .unwrap();
+    (ran, action, outcome)
+}
+
+/// A NEEDS_FIX PR whose current review asked for the repair: fix work.
+fn repair_mr(work_id: &str) -> crate::sync::SyncMrJson {
+    let mut mr = needs_fix_mr(work_id);
+    mr.review_generation = Some("generation-1".into());
+    mr
+}
+
+#[test]
+fn a_single_worker_moves_past_held_work_to_the_next_item_in_the_same_cycle() {
+    let mut snapshot = empty_snapshot();
+    snapshot.merge_requests = vec![needs_review_mr("#10"), repair_mr("#11")];
+    snapshot.available_tickets = vec![available_ticket("#12"), available_ticket("#13")];
+
+    let (ran, action, outcome) = run_cycle(&snapshot, &["#10", "#11", "#12"]);
+
+    // Review, fix and implement work all go through the same selection, and
+    // the cycle ends on the first item nobody else holds.
+    let mut tried = ran.clone();
+    tried.sort();
+    let expected = [
+        ("#10", "review_mr"),
+        ("#11", "fix_mr"),
+        ("#12", "dispatch_ticket"),
+        ("#13", "dispatch_ticket"),
+    ]
+    .map(|(id, kind)| (id.to_string(), kind));
+    assert_eq!(tried, expected);
+    assert_eq!(ran.last(), Some(&expected[3]));
+    assert_eq!(action.work_id(), Some("#13"));
+    assert_eq!(outcome, "Dispatched dispatch_ticket");
+}
+
+#[test]
+fn moving_past_held_work_never_reaches_work_a_safety_gate_blocks() {
+    let mut snapshot = empty_snapshot();
+    let mut human_required = available_ticket("#2");
+    human_required.human_required = true;
+    let mut held_at_intake = available_ticket("#3");
+    held_at_intake.has_active_claim = true;
+    let mut retry_capped = available_ticket("#4");
+    retry_capped.prior_attempt_count = 8;
+    retry_capped.genuine_agent_failure_count = 8;
+    retry_capped.last_failure_class = Some("agent_failure".into());
+    snapshot.available_tickets = vec![
+        available_ticket("#1"),
+        human_required,
+        held_at_intake,
+        retry_capped,
+    ];
+    let mut review_held = needs_fix_mr("#5");
+    review_held.classification = "READY_FOR_HUMAN".into();
+    review_held.review_verdict = Some("APPROVE".into());
+    review_held.ci_passed = true;
+    review_held.draft = false;
+    snapshot.review_held_work_ids.insert("#5".into());
+    let fix_capped = repair_mr("#6");
+    snapshot
+        .fix_attempt_counts
+        .insert(fix_capped.branch.clone(), 2);
+    snapshot.merge_requests = vec![review_held, fix_capped];
+
+    let (ran, action, outcome) = run_cycle(&snapshot, &["#1"]);
+
+    // Only the one ungated item ever reaches execution, where its claim is
+    // taken; once it is lost nothing else is eligible and the skip stands.
+    assert_eq!(ran, [("#1".to_string(), "dispatch_ticket")]);
+    assert_eq!(action.work_id(), Some("#1"));
+    assert!(outcome.starts_with("Skipped "), "{outcome}");
 }

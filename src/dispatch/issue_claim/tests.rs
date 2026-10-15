@@ -28,6 +28,12 @@ fn claim(id: u64, login: &str, minutes: i64) -> ClaimComment {
     }
 }
 
+fn won(expires_minutes: i64) -> ClaimOutcome {
+    ClaimOutcome::Won {
+        expires_at: at(expires_minutes),
+    }
+}
+
 fn view(assignees: &[&str], claims: Vec<ClaimComment>) -> IssueClaimView {
     IssueClaimView {
         assignees: assignees.iter().map(|l| l.to_string()).collect(),
@@ -145,7 +151,10 @@ fn the_earliest_claim_comment_wins_a_contested_claim() {
         standing(&contested, MICHAEL, &policy, at(1)),
         Standing::Theirs(COLTON.into())
     );
-    assert_eq!(standing(&contested, COLTON, &policy, at(1)), Standing::Mine);
+    assert_eq!(
+        standing(&contested, COLTON, &policy, at(1)),
+        Standing::Mine { expires_at: at(60) }
+    );
 }
 
 #[test]
@@ -158,7 +167,7 @@ fn a_priority_login_wins_over_an_earlier_claim_comment() {
 
     assert_eq!(
         standing(&contested, MICHAEL, &policy, at(1)),
-        Standing::Mine
+        Standing::Mine { expires_at: at(60) }
     );
     assert_eq!(
         standing(&contested, COLTON, &policy, at(1)),
@@ -245,7 +254,7 @@ fn two_loops_racing_for_one_issue_leave_exactly_one_holder() {
     );
     assert_eq!(
         settle(&colton, &policy, COLTON, "7", at(1)).unwrap(),
-        ClaimOutcome::Won
+        won(60)
     );
     assert_eq!(assignees(&issue), [COLTON]);
 }
@@ -264,7 +273,7 @@ fn the_priority_login_wins_the_race_whoever_commented_first() {
     );
     assert_eq!(
         settle(&michael, &policy, MICHAEL, "7", at(1)).unwrap(),
-        ClaimOutcome::Won
+        won(60)
     );
     assert_eq!(assignees(&issue), [MICHAEL]);
 }
@@ -299,7 +308,7 @@ fn an_expired_claim_is_taken_over_by_removing_the_stale_assignee() {
     assert_eq!(assignees(&issue), [MICHAEL]);
     assert_eq!(
         settle(&michael, &policy, MICHAEL, "7", at(62)).unwrap(),
-        ClaimOutcome::Won
+        won(121)
     );
     // The previous holder now sees a live claim that is not its own.
     assert_eq!(
@@ -333,9 +342,11 @@ fn a_live_claim_of_this_loop_is_reused_without_a_new_comment() {
     }));
     let (michael, _) = two_loops(&issue, 30);
 
+    // The reused claim keeps its own expiry, a TTL after it was posted, not
+    // a fresh TTL from now.
     assert_eq!(
         stake(&michael, &policy(&[]), MICHAEL, "7", at(30)).unwrap(),
-        Some(ClaimOutcome::Won)
+        Some(won(60))
     );
     assert_eq!(issue.borrow().view.claims.len(), 1);
 }
@@ -391,7 +402,10 @@ fn a_lease_taken_over_after_it_lapsed_is_reported_lost_and_not_renewed() {
 fn a_lost_lease_stops_the_dispatch_with_a_claim_lost_error() {
     let lease = IssueLease {
         issue: "7".into(),
-        lost: Arc::new(Mutex::new(Some(format!("lease taken over by {MICHAEL}")))),
+        state: Arc::new(Mutex::new(LeaseState {
+            lost: Some(format!("lease taken over by {MICHAEL}")),
+            deadline: Instant::now() + Duration::from_secs(3600),
+        })),
         stop: None,
         renewer: None,
     };
@@ -417,19 +431,306 @@ fn a_claim_whose_comment_cannot_be_posted_leaves_no_assignee_behind() {
 }
 
 #[test]
-fn a_local_profile_and_a_ticket_file_are_never_claimed_on_the_provider() {
-    // No `gh` is reachable here: any provider call would fail the claim.
+fn only_a_github_issue_target_is_claimed_on_the_provider() {
     let tmp = tempfile::tempdir().unwrap();
-    crate::provider::set_test_provider_path(&tmp.path().display().to_string());
     let mut prof = profile(tmp.path());
+    assert_eq!(provider_claimed_issue(&prof, "7"), None, "local claims");
 
-    let local = claim_issue(&prof, "7");
     prof.publishing.issue_claim.mode = IssueClaimMode::GithubAssignee;
-    let ticket_file = claim_issue(&prof, "docs/tickets/TICKET-007-example.md");
-    crate::provider::clear_test_provider_path();
+    // `gah dispatch` takes `#7` for the same issue the loop dispatches as `7`.
+    for target in ["7", "#7", " #7 "] {
+        assert_eq!(
+            provider_claimed_issue(&prof, target).as_deref(),
+            Some("7"),
+            "{target:?}"
+        );
+    }
+    // Work with no GitHub issue skips the provider claim; it is no error.
+    for target in [
+        "docs/tickets/TICKET-007-example.md",
+        "",
+        "#",
+        "fix the tests",
+    ] {
+        assert_eq!(provider_claimed_issue(&prof, target), None, "{target:?}");
+    }
+}
 
-    assert_eq!(local.unwrap(), ClaimOutcome::Won);
-    assert_eq!(ticket_file.unwrap(), ClaimOutcome::Won);
+#[test]
+fn a_person_assigned_next_to_an_expired_claim_keeps_every_loop_out() {
+    let issue = Rc::new(RefCell::new(Issue {
+        view: view(&[COLTON, "a-person"], vec![claim(1, COLTON, 0)]),
+        next_comment_id: 1,
+        ..Default::default()
+    }));
+    let (michael, _) = two_loops(&issue, 600);
+
+    let outcome = stake(&michael, &policy(&[MICHAEL]), MICHAEL, "7", at(600)).unwrap();
+
+    assert_eq!(outcome, Some(ClaimOutcome::Lost("held by a-person".into())));
+    // Nothing is removed, not even the other loop's expired assignee.
+    assert_eq!(assignees(&issue), [COLTON, "a-person"]);
+    assert_eq!(issue.borrow().view.claims.len(), 1);
+}
+
+#[test]
+fn a_person_assigned_while_a_loop_works_ends_its_lease_and_stays_assigned() {
+    let issue = Rc::new(RefCell::new(Issue {
+        view: view(&[MICHAEL, "a-person"], vec![claim(1, MICHAEL, 0)]),
+        ..Default::default()
+    }));
+    let (michael, _) = two_loops(&issue, 20);
+
+    let lost = renew(&michael, &policy(&[MICHAEL]), MICHAEL, "7", at(20)).unwrap();
+
+    assert_eq!(lost, Some("lease taken over by a-person".into()));
+    assert_eq!(assignees(&issue), [MICHAEL, "a-person"]);
+}
+
+#[test]
+fn an_old_claim_renewed_within_its_ttl_is_not_reclaimable() {
+    let mut renewed = claim(1, COLTON, 0);
+    renewed.renewed_at = at(170);
+    let issue = Rc::new(RefCell::new(Issue {
+        view: view(&[COLTON], vec![renewed]),
+        next_comment_id: 1,
+        ..Default::default()
+    }));
+    let (michael, _) = two_loops(&issue, 200);
+
+    // Posted 200 minutes ago, more than three TTLs, but renewed 30 minutes ago.
+    let outcome = stake(&michael, &policy(&[MICHAEL]), MICHAEL, "7", at(200)).unwrap();
+
+    assert_eq!(
+        outcome,
+        Some(ClaimOutcome::Lost(format!("held by {COLTON}")))
+    );
+    assert_eq!(assignees(&issue), [COLTON]);
+}
+
+#[test]
+fn a_contender_seen_only_after_the_verify_pause_wins_the_claim() {
+    let issue = Rc::new(RefCell::new(Issue::default()));
+    let (michael, colton) = two_loops(&issue, 0);
+    let policy = policy(&[COLTON]);
+
+    // Colton read the issue before Michael's assignment landed, and his own
+    // claim lands while Michael waits out the pause.
+    let outcome = run_claim(&michael, &policy, MICHAEL, "7", at(0), || {
+        let seen_by_michael = std::mem::take(&mut issue.borrow_mut().view.assignees);
+        assert_eq!(stake(&colton, &policy, COLTON, "7", at(0)).unwrap(), None);
+        issue
+            .borrow_mut()
+            .view
+            .assignees
+            .splice(0..0, seen_by_michael);
+        at(1)
+    })
+    .unwrap();
+
+    // Deciding before the pause, Michael would have kept the issue too.
+    assert_eq!(outcome, ClaimOutcome::Lost(format!("yielded to {COLTON}")));
+    assert_eq!(
+        settle(&colton, &policy, COLTON, "7", at(1)).unwrap(),
+        won(60)
+    );
+    assert_eq!(assignees(&issue), [COLTON]);
+}
+
+#[test]
+fn renewals_are_scheduled_from_the_confirmed_expiry() {
+    let minutes = |n: u64| Duration::from_secs(n * 60);
+    let ttl = minutes(60);
+
+    // A fresh claim renews once a third of its TTL has passed.
+    assert_eq!(next_renewal_wait(minutes(60), ttl, false), minutes(20));
+    // An inherited claim with one minute left renews at once, not 20 minutes on.
+    assert_eq!(next_renewal_wait(minutes(1), ttl, false), Duration::ZERO);
+    // After a failure, retry while the claim is still live.
+    assert_eq!(next_renewal_wait(minutes(10), ttl, true), minutes(5));
+    let last_moment = Duration::from_millis(400);
+    assert_eq!(next_renewal_wait(last_moment, ttl, true), last_moment);
+}
+
+#[test]
+fn a_renewal_confirmed_after_the_deadline_loses_the_lease_for_good() {
+    let start = Instant::now();
+    let deadline = start + Duration::from_millis(150);
+    let lease = IssueLease {
+        issue: "7".into(),
+        state: Arc::new(Mutex::new(LeaseState {
+            lost: None,
+            deadline,
+        })),
+        stop: None,
+        renewer: None,
+    };
+    let extended = start + Duration::from_secs(3600);
+
+    // The renewal call returned success, but only seen 10 ms after the old
+    // deadline, and nobody called `ensure_held` in between.
+    let held = confirm_renewal(&lease.state, extended, deadline + Duration::from_millis(10));
+
+    assert!(!held);
+    assert_eq!(lock(&lease.state).deadline, deadline, "not extended");
+    for _ in 0..2 {
+        let error = lease.ensure_held().unwrap_err();
+        assert!(issue_claim_lost(&error).is_some());
+        assert!(error.to_string().contains("expired"), "{error:#}");
+    }
+    // A later on-time success cannot revive it.
+    assert!(!confirm_renewal(&lease.state, extended, start));
+    assert!(lease.ensure_held().is_err());
+}
+
+#[test]
+fn a_renewal_confirmed_before_the_deadline_extends_the_lease() {
+    let start = Instant::now();
+    let state = Mutex::new(LeaseState {
+        lost: None,
+        deadline: start + Duration::from_millis(150),
+    });
+    let extended = start + Duration::from_secs(3600);
+
+    assert!(confirm_renewal(
+        &state,
+        extended,
+        start + Duration::from_millis(140)
+    ));
+    assert_eq!(lock(&state).deadline, extended);
+}
+
+#[test]
+fn the_lease_expires_at_its_deadline_without_the_renewer() {
+    // No renewer runs and nothing marked the lease lost: only the deadline.
+    let lease = IssueLease {
+        issue: "7".into(),
+        state: Arc::new(Mutex::new(LeaseState {
+            lost: None,
+            deadline: Instant::now() + Duration::from_millis(50),
+        })),
+        stop: None,
+        renewer: None,
+    };
+    assert!(lease.ensure_held().is_ok());
+
+    std::thread::sleep(Duration::from_millis(60));
+
+    let error = lease.ensure_held().unwrap_err();
+    assert!(issue_claim_lost(&error).is_some());
+    assert!(error.to_string().contains("expired"), "{error:#}");
+}
+
+/// A `gh` on `PATH` running `body` for every call, with `$marker` naming a
+/// file it may append to. Returns the marker path.
+fn install_renewal_gh(bin_dir: &std::path::Path, body: &str) -> std::path::PathBuf {
+    std::fs::create_dir_all(bin_dir).unwrap();
+    let marker = bin_dir.join("calls");
+    let gh_path = bin_dir.join("gh");
+    std::fs::write(
+        &gh_path,
+        format!("#!/bin/sh\nmarker='{}'\n{body}\n", marker.display()),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    marker
+}
+
+fn wait_for(condition: impl Fn() -> bool, limit: Duration) -> bool {
+    let started = Instant::now();
+    while started.elapsed() < limit {
+        if condition() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    condition()
+}
+
+#[test]
+fn a_hung_renewal_cannot_keep_a_lease_past_its_confirmed_expiry() {
+    let _exec_guard = ExecGuard::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let bin_dir = tmp.path().join("bin");
+    // Every provider call hangs far past the claim's expiry.
+    let marker = install_renewal_gh(&bin_dir, "echo call >> \"$marker\"\nexec sleep 30");
+    let _guard = PathGuard::set(&bin_dir);
+    let mut prof = profile(tmp.path());
+    prof.publishing.issue_claim = policy(&[]);
+
+    // An inherited claim with 3 seconds of its hour left.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let lease = IssueLease::start(
+        &prof,
+        "7",
+        "me".into(),
+        deadline,
+        claim_ttl(&prof.publishing.issue_claim),
+    );
+
+    assert!(
+        wait_for(|| marker.exists(), Duration::from_millis(2500)),
+        "the first renewal must start at once"
+    );
+    assert!(lease.ensure_held().is_ok());
+    std::thread::sleep(
+        deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(20),
+    );
+
+    // The renewal call is still blocked, yet the lease is over.
+    let error = lease.ensure_held().unwrap_err();
+    assert!(error.to_string().contains("expired"), "{error:#}");
+    // The hung call is cut off at the expiry, so stopping the lease does not
+    // wait for it to finish on its own.
+    let stopping = Instant::now();
+    drop(lease);
+    assert!(stopping.elapsed() < Duration::from_secs(10));
+}
+
+#[test]
+fn an_aging_claim_is_renewed_at_once_and_keeps_its_authority() {
+    let _exec_guard = ExecGuard::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let bin_dir = tmp.path().join("bin");
+    let posted = (OffsetDateTime::now_utc() - time::Duration::minutes(59))
+        .format(&Rfc3339)
+        .unwrap();
+    let claim =
+        serde_json::json!({"id": 21, "login": "me", "created_at": posted, "updated_at": posted});
+    let marker = install_renewal_gh(
+        &bin_dir,
+        &format!(
+            "case \"$*\" in\n  *PATCH*) echo renewed >> \"$marker\" ;;\n  *'/comments'*) echo '{claim}' ;;\n  *'issues/7 '*) echo me ;;\n  *) exit 2 ;;\nesac"
+        ),
+    );
+    let _guard = PathGuard::set(&bin_dir);
+    let mut prof = profile(tmp.path());
+    prof.publishing.issue_claim = policy(&[]);
+
+    // 59 of the claim's 60 minutes are used up; scaled here to 3 seconds left.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let lease = IssueLease::start(
+        &prof,
+        "7",
+        "me".into(),
+        deadline,
+        claim_ttl(&prof.publishing.issue_claim),
+    );
+
+    assert!(
+        wait_for(|| marker.exists(), Duration::from_millis(2900)),
+        "the claim must be renewed before it expires"
+    );
+    std::thread::sleep(
+        deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(100),
+    );
+
+    // The confirmed renewal moved the deadline a TTL on.
+    assert!(lease.ensure_held().is_ok());
 }
 
 /// A `gh` that answers the reads intake makes: the signed-in login, the
