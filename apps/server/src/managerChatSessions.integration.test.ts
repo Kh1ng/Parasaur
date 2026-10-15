@@ -12,6 +12,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import type { ClientMessage, ServerMessage } from '@git-agent-harness/contracts';
 import { createWebSocketHandler } from './wsServer.js';
 import { previewProxy } from './managerChat/previewProxy.js';
+import { delayPermissionWrite } from './permissionWriteHold.js';
 
 const fixtures = resolve(dirname(fileURLToPath(import.meta.url)), '../tests/fixtures');
 
@@ -414,7 +415,7 @@ test('a session pins its reasoning effort, serves turns on it, and switches it i
   }
 });
 
-test('tool calls stream as structured events and permissions round-trip through the client', { timeout: 30_000 }, async () => {
+test('tool calls stream as structured events and permissions round-trip through the client', { timeout: 30_000 }, async (t) => {
   const stateDir = mkdtempSync(join(tmpdir(), 'gah-chat-agent-surface-'));
 
   const checkout = join(stateDir, 'checkout');
@@ -428,6 +429,7 @@ test('tool calls stream as structured events and permissions round-trip through 
   execFileSync('git', ['commit', '--quiet', '-m', 'init'], { cwd: checkout });
 
   const profile = 'agent-surface-e2e';
+  const sharedProfile = 'agent-surface-shared';
   const profileListPath = join(stateDir, 'profile-list.json');
   writeFileSync(profileListPath, JSON.stringify([{
     name: profile,
@@ -437,6 +439,20 @@ test('tool calls stream as structured events and permissions round-trip through 
     repo_id: 'repo',
     local_path: checkout,
     worktree_base: worktreeBase,
+    web_url: 'https://github.com/owner/repo',
+    max_parallel_workers: null,
+    max_open_managed_mrs: 1,
+    manager_wake_autonomy: null,
+    validation_timeout_seconds: 300
+  }, {
+    // No worktree_base: its sessions run in the shared checkout (#1493).
+    name: sharedProfile,
+    display_name: 'Agent Surface Shared',
+    provider: 'github',
+    repo: 'owner/repo',
+    repo_id: 'repo',
+    local_path: checkout,
+    worktree_base: '',
     web_url: 'https://github.com/owner/repo',
     max_parallel_workers: null,
     max_open_managed_mrs: 1,
@@ -556,6 +572,54 @@ test('tool calls stream as structured events and permissions round-trip through 
     const audit = bypassHistory.turns.map((t) => t.text);
     assert.equal(audit.filter((text) => text === '[permission auto-approved: allow-once]').length, 1, 'the auto-approval is recorded once');
     assert.ok(audit.some((text) => /\[permission requested\] .*README\.md/.test(text)), 'the auto-approved action is named in the transcript');
+
+    // PR #1493 review: a named session without its own worktree runs in the
+    // shared checkout; an absolute cwd alone must never enable bypass.
+    const shared = await connect(wsUrl, sharedProfile);
+    const sharedSession = (await request(shared, 'manager.chat.sessionCreated', 'create-shared', {
+      type: 'manager.chat.sessionCreate', requestId: 'create-shared', profile: sharedProfile
+    } satisfies ClientMessage)).session;
+    assert.equal(sharedSession.worktreePath, null);
+    const sharedPrompts: string[] = [];
+    shared.on('message', (raw) => {
+      const message = JSON.parse(raw.toString()) as ServerMessage;
+      if (message.type !== 'manager.chat.permission') return;
+      sharedPrompts.push(message.title);
+      shared.send(JSON.stringify({
+        type: 'manager.chat.permission.respond', requestId: 'answer-shared', profile: sharedProfile, sessionId: sharedSession.id,
+        permissionId: message.permissionId, optionId: 'reject-once'
+      } satisfies ClientMessage));
+    });
+    const sharedReply = await request(shared, 'manager.chat.reply', 'turn-shared', {
+      type: 'manager.chat.send', requestId: 'turn-shared', profile: sharedProfile, sessionId: sharedSession.id,
+      message: 'ask permission {"kind":"edit","path":"README.md"}'
+    } satisfies ClientMessage);
+    assert.equal(sharedReply.reply, 'permission reject-once');
+    assert.deepEqual(sharedPrompts, ['README.md'], 'a worktree-less session asks even with bypass on');
+    shared.close();
+    await once(shared, 'close');
+
+    // PR #1493 review: Stop while the auto-approval is being journaled
+    // must cancel the request, not grant it once the write settles.
+    const writing = delayPermissionWrite(t);
+    const heldReply = request(client, 'manager.chat.reply', 'turn-held', {
+      type: 'manager.chat.send', requestId: 'turn-held', profile, sessionId,
+      message: 'ask permission {"kind":"edit","path":"README.md"}'
+    } satisfies ClientMessage);
+    await writing;
+    client.send(JSON.stringify({ type: 'manager.chat.cancel', requestId: 'cancel-held', profile, sessionId } satisfies ClientMessage));
+    assert.equal((await heldReply).cancelled, true);
+    const heldHistory = await request(client, 'manager.chat.history', 'history-held', {
+      type: 'manager.chat.historyRequest', requestId: 'history-held', profile, sessionId
+    } satisfies ClientMessage);
+    const heldAudit = heldHistory.turns.map((turn) => turn.text);
+    const heldRequest = heldAudit.lastIndexOf('[permission requested] README.md');
+    assert.ok(heldRequest > 0);
+    assert.deepEqual(
+      heldAudit.slice(heldRequest).filter((text) => text.startsWith('[permission')),
+      ['[permission requested] README.md', '[permission cancelled]'],
+      'the held request is recorded as cancelled, never auto-approved'
+    );
 
     client.close();
     await once(client, 'close');
