@@ -69,7 +69,6 @@ pub struct LoopOnceResult {
 /// Resolve the CLI parallel argument without consuming recurring mode's zero
 /// sentinel. A daemon must reload the profile limit each iteration; `--once`
 /// resolves it once for its bounded invocation.
-#[allow(dead_code)]
 pub(crate) fn loop_parallel_argument(
     once: bool,
     cli_parallel: usize,
