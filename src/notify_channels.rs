@@ -72,19 +72,7 @@ impl NotifyTransport for CurlNotifyTransport {
             .context("creating curl config for channel notification")?;
         writeln!(config, "url = \"{url}\"").context("writing curl config")?;
         let mut child = Command::new("curl")
-            .args([
-                "-sS",
-                "--max-time",
-                &timeout_secs.to_string(),
-                "-K",
-                config.path().to_string_lossy().as_ref(),
-                "-w",
-                "\n%{http_code}",
-                "--data-binary",
-                "@-",
-                "-o",
-                "-",
-            ])
+            .args(curl_args(&config.path().to_string_lossy(), timeout_secs))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -110,6 +98,29 @@ impl NotifyTransport for CurlNotifyTransport {
         })?;
         Ok((status, response_body.as_bytes().to_vec()))
     }
+}
+
+/// curl arguments for one channel POST. The URL is deliberately absent: it
+/// lives in the 0600 config file passed with `-K`. Telegram and Discord
+/// need the JSON content type; curl's `--data-binary` default is form data.
+fn curl_args(config_path: &str, timeout_secs: u32) -> Vec<String> {
+    [
+        "-sS",
+        "--max-time",
+        &timeout_secs.to_string(),
+        "-K",
+        config_path,
+        "-H",
+        "Content-Type: application/json",
+        "-w",
+        "\n%{http_code}",
+        "--data-binary",
+        "@-",
+        "-o",
+        "-",
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
 /// One delivery attempt through the configured channel. `Ok(())` means the
@@ -208,6 +219,17 @@ mod tests {
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn curl_args_send_json_content_type_and_keep_url_out_of_argv() {
+        let args = curl_args("/tmp/cfg", 7);
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["-H", "Content-Type: application/json"]));
+        assert!(args.windows(2).any(|pair| pair == ["--data-binary", "@-"]));
+        assert!(args.windows(2).any(|pair| pair == ["-K", "/tmp/cfg"]));
+        assert!(!args.iter().any(|arg| arg.contains("://")));
+    }
 
     struct RecordingTransport {
         requests: Mutex<Vec<(String, String)>>,
