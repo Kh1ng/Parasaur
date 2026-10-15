@@ -626,10 +626,13 @@ nobody). A loop that crashes or stops stops renewing, and `ttl_minutes` after
 the last renewal another loop may remove the stale assignee and claim the
 issue, unless an open pull request for the issue exists. A dispatch that finds
 its lease taken over stops before it publishes: it keeps its work on a local
-WIP commit and the loop reports the issue as skipped. One failed renewal is
-retried at the next interval. Two in a row count as a lost lease, while the
-claim is still live, so the dispatch stops before another loop could take the
-issue over.
+WIP commit and the loop reports the issue as skipped. The dispatch's authority
+ends at the claim's confirmed expiry: `ttl_minutes` after the claim was posted
+or last renewed, not after the dispatch started. Past that point the dispatch
+stops, even while a renewal call is still waiting on GitHub. A dispatch that
+reuses its own older claim renews it at once when less than two thirds of the
+TTL is left. Each renewal call is cut off at the expiry. A failed renewal is
+retried while the claim is still live.
 
 Every loop sharing the repository must use the same `ttl_minutes` and
 `priority_logins`, because each one decides a contested claim from its own

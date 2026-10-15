@@ -12,9 +12,9 @@
 //! - A claim is live for `ttl_minutes` after its comment was posted or last
 //!   renewed. A dispatch that won a claim renews it while it runs (see
 //!   [`IssueLease`]), so only an abandoned claim expires. A dispatch whose
-//!   lease is lost stops before it publishes. Renewal failing
-//!   [`MAX_MISSED_RENEWALS`] times in a row counts as lost, while the claim
-//!   is still live, so no other loop can have taken the issue meanwhile.
+//!   lease is lost stops before it publishes. The lease ends at the claim's
+//!   confirmed expiry unless a renewal is confirmed first, however long a
+//!   renewal call takes, and each renewal call is cut off at that expiry.
 //! - An assignee with no claim comment, other than this loop's own login,
 //!   was assigned by hand: a person, not a loop (this loop's own login
 //!   assigned by hand asks this loop to do the work). A person holds the
@@ -50,6 +50,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
@@ -60,8 +61,9 @@ const CLAIM_MARKER: &str = "<!-- gah-claim ";
 /// Result of trying to claim an issue for this loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ClaimOutcome {
-    /// This loop holds the issue and may dispatch it.
-    Won,
+    /// This loop holds the issue and may dispatch it until `expires_at`, the
+    /// expiry of its claim as the provider recorded it, unless it renews.
+    Won { expires_at: OffsetDateTime },
     /// Someone else holds the issue. The text says who and why.
     Lost(String),
 }
@@ -162,8 +164,24 @@ fn provider_claimed_issue(profile: &Profile, target: &str) -> Option<String> {
     super::issues::extract_issue_number(target)
 }
 
+/// Claim `issue` on the provider, waiting out the verify window, and start
+/// renewing the claim if this loop won it.
 fn claim_or_lose(profile: &Profile, issue: &str, ledger: &mut LedgerEntry) -> Result<IssueLease> {
-    match claim_issue(profile, issue)? {
+    let policy = &profile.publishing.issue_claim;
+    let board = GithubBoard::for_writing(profile)?;
+    let me = own_login()?;
+    let outcome = run_claim(
+        &board,
+        policy,
+        &me,
+        issue,
+        OffsetDateTime::now_utc(),
+        || {
+            std::thread::sleep(Duration::from_secs(policy.verify_seconds.into()));
+            OffsetDateTime::now_utc()
+        },
+    )?;
+    match outcome {
         ClaimOutcome::Lost(reason) => {
             ledger.validation_result = Some(crate::ledger::gates::CLAIM_LOST.into());
             Err(IssueClaimLost {
@@ -172,8 +190,24 @@ fn claim_or_lose(profile: &Profile, issue: &str, ledger: &mut LedgerEntry) -> Re
             }
             .into())
         }
-        ClaimOutcome::Won => Ok(IssueLease::start(profile, issue)),
+        ClaimOutcome::Won { expires_at } => Ok(IssueLease::start(
+            profile,
+            issue,
+            me,
+            instant_at(expires_at, OffsetDateTime::now_utc(), Instant::now()),
+            claim_ttl(policy),
+        )),
     }
+}
+
+fn claim_ttl(policy: &IssueClaimPolicy) -> Duration {
+    Duration::from_secs(u64::from(policy.ttl_minutes) * 60)
+}
+
+/// The monotonic instant of wall-clock time `at`, given that `now` is
+/// `now_instant`. A time already past maps to `now_instant`.
+fn instant_at(at: OffsetDateTime, now: OffsetDateTime, now_instant: Instant) -> Instant {
+    now_instant + Duration::try_from(at - now).unwrap_or_default()
 }
 
 /// A won claim, renewed in the background while the dispatch runs. Renewal
@@ -181,58 +215,104 @@ fn claim_or_lose(profile: &Profile, issue: &str, ledger: &mut LedgerEntry) -> Re
 /// its claim lapses `ttl_minutes` later. Dropping the lease stops renewal and
 /// leaves the claim in place to lapse on its own, unless a pull request for
 /// the issue is opened first.
+///
+/// The lease's authority ends at its deadline: the claim's confirmed expiry
+/// on the provider, on the monotonic clock. [`IssueLease::ensure_held`]
+/// enforces it by itself, so a renewal that hangs or fails cannot keep a
+/// dispatch authorized past the point where another loop may take the issue.
 #[derive(Debug)]
 pub(super) struct IssueLease {
     issue: String,
-    lost: Arc<Mutex<Option<String>>>,
+    state: Arc<Mutex<LeaseState>>,
     stop: Option<mpsc::Sender<()>>,
     renewer: Option<std::thread::JoinHandle<()>>,
 }
 
+#[derive(Debug)]
+struct LeaseState {
+    /// Why the lease is lost, once it is. Never cleared.
+    lost: Option<String>,
+    /// When the claim expires unless a renewal is confirmed first. A renewal
+    /// moves it to a TTL after the renewal began, which is no later than the
+    /// time the provider records for it.
+    deadline: Instant,
+}
+
 impl IssueLease {
-    fn start(profile: &Profile, issue: &str) -> Self {
-        let lost = Arc::new(Mutex::new(None));
+    fn start(profile: &Profile, issue: &str, me: String, deadline: Instant, ttl: Duration) -> Self {
+        let state = Arc::new(Mutex::new(LeaseState {
+            lost: None,
+            deadline,
+        }));
         let (stop, stopped) = mpsc::channel::<()>();
         let profile = profile.clone();
         let target = issue.to_string();
-        let thread_lost = Arc::clone(&lost);
+        let thread_state = Arc::clone(&state);
         let renewer = std::thread::spawn(move || {
             let policy = profile.publishing.issue_claim.clone();
-            let board = GithubBoard { profile: &profile };
-            // Read once, so a renewal costs two reads and one edit.
-            let mut me: Option<String> = None;
-            let mut missed = 0;
-            while let Err(RecvTimeoutError::Timeout) =
-                stopped.recv_timeout(renewal_interval(&policy))
-            {
-                let now = OffsetDateTime::now_utc();
-                let renewed = match me.as_deref() {
-                    Some(login) => renew(&board, &policy, login, &target, now),
-                    None => own_login().and_then(|login| {
-                        let renewed = renew(&board, &policy, &login, &target, now);
-                        me = Some(login);
-                        renewed
-                    }),
-                };
-                if let Some(reason) = renewal_verdict(renewed, &mut missed, &target) {
-                    *thread_lost.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason);
+            let mut failed = false;
+            loop {
+                let deadline = lock(&thread_state).deadline;
+                let wait = next_renewal_wait(
+                    deadline.saturating_duration_since(Instant::now()),
+                    ttl,
+                    failed,
+                );
+                if !matches!(stopped.recv_timeout(wait), Err(RecvTimeoutError::Timeout)) {
                     return;
+                }
+                let began = Instant::now();
+                if began >= deadline {
+                    lose(
+                        &thread_state,
+                        "the claim expired before a renewal was confirmed",
+                    );
+                    return;
+                }
+                // Every provider call of the renewal must finish before the
+                // claim it renews expires; past that, it proves nothing.
+                let board = GithubBoard {
+                    profile: &profile,
+                    deadline: Some(deadline),
+                };
+                match renew(&board, &policy, &me, &target, OffsetDateTime::now_utc()) {
+                    Ok(None) => {
+                        failed = false;
+                        lock(&thread_state).deadline = began + ttl;
+                    }
+                    Ok(Some(reason)) => {
+                        lose(&thread_state, &reason);
+                        return;
+                    }
+                    Err(error) => {
+                        failed = true;
+                        eprintln!(
+                            "warning: could not renew the claim on issue #{target}; \
+                             retrying before it expires: {error:#}"
+                        );
+                    }
                 }
             }
         });
         Self {
             issue: issue.to_string(),
-            lost,
+            state,
             stop: Some(stop),
             renewer: Some(renewer),
         }
     }
 
-    /// Fails with [`IssueClaimLost`] once another loop has taken the issue
-    /// or this loop's claim lapsed or was removed. The dispatch must stop:
-    /// its work is no longer the work of record for the issue.
+    /// Fails with [`IssueClaimLost`] once another loop has taken the issue,
+    /// this loop's claim was removed, or the claim's confirmed expiry has
+    /// passed without a confirmed renewal, whatever the renewer is doing.
+    /// The dispatch must stop: its work is no longer the work of record for
+    /// the issue.
     fn ensure_held(&self) -> Result<()> {
-        match self.lost.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        let mut state = lock(&self.state);
+        if state.lost.is_none() && Instant::now() >= state.deadline {
+            state.lost = Some("the claim expired before a renewal was confirmed".to_string());
+        }
+        match state.lost.clone() {
             Some(reason) => Err(IssueClaimLost {
                 issue: self.issue.clone(),
                 reason,
@@ -241,6 +321,14 @@ impl IssueLease {
             None => Ok(()),
         }
     }
+}
+
+fn lock(state: &Mutex<LeaseState>) -> std::sync::MutexGuard<'_, LeaseState> {
+    state.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn lose(state: &Mutex<LeaseState>, reason: &str) {
+    lock(state).lost.get_or_insert_with(|| reason.to_string());
 }
 
 impl Drop for IssueLease {
@@ -252,44 +340,17 @@ impl Drop for IssueLease {
     }
 }
 
-/// Renew three times per TTL, so two missed renewals in a row still leave
-/// the claim live.
-fn renewal_interval(policy: &IssueClaimPolicy) -> std::time::Duration {
-    std::time::Duration::from_secs((u64::from(policy.ttl_minutes) * 60 / 3).max(1))
-}
-
-/// Failed renewals in a row after which a dispatch counts its claim as lost.
-/// At three renewals per TTL the claim is still live on the provider after
-/// this many misses, so the dispatch stops before another loop could take
-/// the issue over, never after. Fewer misses are retried at the next
-/// interval: one failed or rate-limited read does not end a dispatch.
-const MAX_MISSED_RENEWALS: u32 = 2;
-
-/// Fold one renewal attempt into the run of misses. Returns why the claim
-/// is lost: another loop holds it, or renewal failed too often in a row.
-fn renewal_verdict(
-    renewed: Result<Option<String>>,
-    missed: &mut u32,
-    issue: &str,
-) -> Option<String> {
-    match renewed {
-        Ok(lost) => {
-            *missed = 0;
-            lost
-        }
-        Err(error) => {
-            *missed += 1;
-            eprintln!(
-                "warning: could not renew the claim on issue #{issue} \
-                 ({missed}/{MAX_MISSED_RENEWALS} in a row): {error:#}"
-            );
-            (*missed >= MAX_MISSED_RENEWALS).then(|| {
-                format!(
-                    "could not renew the claim {MAX_MISSED_RENEWALS} times in a row; \
-                     stopping before it can lapse"
-                )
-            })
-        }
+/// How long the renewer waits before its next attempt, given the authority
+/// `remaining` before the claim expires. A healthy lease renews once a third
+/// of its TTL has passed since the claim was last confirmed, so an inherited
+/// claim with little time left is renewed at once. After a failed attempt it
+/// retries once half the remaining time has passed (at least a second apart),
+/// so transient failures are retried while the claim is still live.
+fn next_renewal_wait(remaining: Duration, ttl: Duration, after_failure: bool) -> Duration {
+    if after_failure {
+        (remaining / 2).max(Duration::from_secs(1)).min(remaining)
+    } else {
+        remaining.saturating_sub(ttl * 2 / 3)
     }
 }
 
@@ -304,7 +365,7 @@ fn renew(
 ) -> Result<Option<String>> {
     let view = board.view(issue)?;
     match standing(&view, me, policy, now) {
-        Standing::Mine => {}
+        Standing::Mine { .. } => {}
         Standing::Theirs(login) => return Ok(Some(format!("lease taken over by {login}"))),
         Standing::Unclaimed | Standing::Stale(_) => {
             return Ok(Some(
@@ -320,24 +381,6 @@ fn renew(
         .context("a held claim has a claim comment")?;
     board.renew_claim(own.id, &claim_comment(me, policy, own.created_at, now))?;
     Ok(None)
-}
-
-/// Claim `issue` on the provider, waiting out the verify window.
-fn claim_issue(profile: &Profile, issue: &str) -> Result<ClaimOutcome> {
-    let policy = &profile.publishing.issue_claim;
-    let board = GithubBoard::for_writing(profile)?;
-    let me = own_login()?;
-    run_claim(
-        &board,
-        policy,
-        &me,
-        issue,
-        OffsetDateTime::now_utc(),
-        || {
-            std::thread::sleep(std::time::Duration::from_secs(policy.verify_seconds.into()));
-            OffsetDateTime::now_utc()
-        },
-    )
 }
 
 /// The claim protocol: [`stake`] at `now`, `pause` for the verify window,
@@ -421,8 +464,10 @@ struct IssueClaimView {
 enum Standing {
     /// Nobody holds it.
     Unclaimed,
-    /// This loop holds a live claim and wins against every other one.
-    Mine,
+    /// This loop holds a live claim and wins against every other one, until
+    /// `expires_at` unless it renews: a TTL after the claim's last renewal,
+    /// never a TTL from now.
+    Mine { expires_at: OffsetDateTime },
     /// This login holds it: assigned by hand, or with the winning live claim.
     Theirs(String),
     /// Only these other logins are assigned, and their claims have expired.
@@ -437,7 +482,7 @@ fn standing(
     now: OffsetDateTime,
 ) -> Standing {
     let ttl = time::Duration::minutes(policy.ttl_minutes.into());
-    let mut live: Vec<(&str, u64)> = Vec::new();
+    let mut live: Vec<(&str, &ClaimComment)> = Vec::new();
     let mut stale = Vec::new();
     for login in &view.assignees {
         let latest_claim = view
@@ -447,7 +492,7 @@ fn standing(
             .max_by_key(|claim| claim.id);
         let mine = same_login(login, me);
         match latest_claim {
-            Some(claim) if now - claim.renewed_at < ttl => live.push((login, claim.id)),
+            Some(claim) if now - claim.renewed_at < ttl => live.push((login, claim)),
             Some(_) if !mine => stale.push(login.clone()),
             None if !mine => return Standing::Theirs(login.clone()),
             // This loop's own expired claim or hand assignment holds nothing
@@ -459,9 +504,11 @@ fn standing(
         .priority_logins
         .iter()
         .find_map(|preferred| live.iter().find(|(login, _)| same_login(login, preferred)))
-        .or_else(|| live.iter().min_by_key(|(_, claim_id)| *claim_id));
+        .or_else(|| live.iter().min_by_key(|(_, claim)| claim.id));
     match winner {
-        Some((login, _)) if same_login(login, me) => Standing::Mine,
+        Some((login, claim)) if same_login(login, me) => Standing::Mine {
+            expires_at: claim.renewed_at + ttl,
+        },
         Some((login, _)) => Standing::Theirs(login.to_string()),
         None if stale.is_empty() => Standing::Unclaimed,
         None => Standing::Stale(stale),
@@ -490,7 +537,7 @@ fn stake(
     now: OffsetDateTime,
 ) -> Result<Option<ClaimOutcome>> {
     match standing(&board.view(issue)?, me, policy, now) {
-        Standing::Mine => return Ok(Some(ClaimOutcome::Won)),
+        Standing::Mine { expires_at } => return Ok(Some(ClaimOutcome::Won { expires_at })),
         Standing::Theirs(login) => {
             return Ok(Some(ClaimOutcome::Lost(format!("held by {login}"))));
         }
@@ -527,7 +574,7 @@ fn settle(
     now: OffsetDateTime,
 ) -> Result<ClaimOutcome> {
     let reason = match standing(&board.view(issue)?, me, policy, now) {
-        Standing::Mine => return Ok(ClaimOutcome::Won),
+        Standing::Mine { expires_at } => return Ok(ClaimOutcome::Won { expires_at }),
         Standing::Theirs(login) => format!("yielded to {login}"),
         Standing::Unclaimed | Standing::Stale(_) => {
             "this loop's claim was removed during the verify window".to_string()
@@ -582,10 +629,31 @@ fn own_login() -> Result<String> {
 }
 
 fn gh(operation: &str, args: &[&str]) -> Result<String> {
-    let out = provider_command("gh")
-        .args(args)
-        .output()
-        .with_context(|| format!("launching gh to {operation}"))?;
+    gh_until(operation, args, None)
+}
+
+/// Run `gh`, killed at `deadline` when one is given, so a hung call cannot
+/// outlast the authority it is meant to extend.
+fn gh_until(operation: &str, args: &[&str], deadline: Option<Instant>) -> Result<String> {
+    let mut command = provider_command("gh");
+    command.args(args);
+    let launching = || format!("launching gh to {operation}");
+    let out = match deadline {
+        None => command.output().with_context(launching)?,
+        Some(deadline) => {
+            let budget = deadline.saturating_duration_since(Instant::now());
+            if budget.is_zero() {
+                anyhow::bail!("could not {operation}: the claim's lease has no time left");
+            }
+            let child = command
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .with_context(launching)?;
+            crate::worktree::wait_with_timeout_for(child, &format!("gh to {operation}"), budget)?
+        }
+    };
     if !out.status.success() {
         anyhow::bail!(
             "could not {operation}: {}",
@@ -597,6 +665,8 @@ fn gh(operation: &str, args: &[&str]) -> Result<String> {
 
 struct GithubBoard<'a> {
     profile: &'a Profile,
+    /// When set, every `gh` call is killed at this instant.
+    deadline: Option<Instant>,
 }
 
 impl<'a> GithubBoard<'a> {
@@ -607,7 +677,10 @@ impl<'a> GithubBoard<'a> {
                 profile.provider
             );
         }
-        Ok(Self { profile })
+        Ok(Self {
+            profile,
+            deadline: None,
+        })
     }
 
     fn for_writing(profile: &'a Profile) -> Result<Self> {
@@ -618,6 +691,10 @@ impl<'a> GithubBoard<'a> {
             );
         }
         Self::for_reading(profile)
+    }
+
+    fn gh(&self, operation: &str, args: &[&str]) -> Result<String> {
+        gh_until(operation, args, self.deadline)
     }
 
     fn issue_endpoint(&self, issue: &str, suffix: &str) -> Result<String> {
@@ -637,7 +714,7 @@ impl<'a> GithubBoard<'a> {
             ".[] | select(.body | startswith(\"{CLAIM_MARKER}\")) \
              | {{id, login: (.user.login // \"\"), created_at, updated_at}}"
         );
-        let lines = gh(
+        let lines = self.gh(
             "read claim comments",
             &[
                 "api",
@@ -688,14 +765,14 @@ impl<'a> GithubBoard<'a> {
             args.extend(["-f", field.as_str()]);
         }
         args.extend(["--jq", ".assignees[].login"]);
-        gh("change issue assignees", &args)
+        self.gh("change issue assignees", &args)
     }
 }
 
 impl IssueBoard for GithubBoard<'_> {
     fn view(&self, issue: &str) -> Result<IssueClaimView> {
         let endpoint = self.issue_endpoint(issue, "")?;
-        let assignees = gh(
+        let assignees = self.gh(
             "read issue assignees",
             &[
                 "api",
@@ -736,7 +813,7 @@ impl IssueBoard for GithubBoard<'_> {
     fn renew_claim(&self, comment_id: u64, body: &str) -> Result<()> {
         let endpoint = format!("repos/{}/issues/comments/{comment_id}", self.profile.repo);
         let body = format!("body={body}");
-        gh(
+        self.gh(
             "renew claim comment",
             &[
                 "api", "--method", "PATCH", &endpoint, "-f", &body, "--silent",
