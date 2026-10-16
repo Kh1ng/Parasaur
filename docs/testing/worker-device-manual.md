@@ -186,7 +186,7 @@ Record permission checks as BLOCKED if the selected backend does not expose an i
 
 Use a real accessible repository in place of each example.
 Custom GitLab supports HTTPS root domains and explicit ports. An installation beneath a URL subpath is outside this test scope.
-For GitLab push operations, GAH reads `GITLAB_PAT2` before `GITLAB_PAT`.
+For GitLab push operations, Parasaur reads `GITLAB_PAT2` before `GITLAB_PAT`.
 
 For each provider:
 

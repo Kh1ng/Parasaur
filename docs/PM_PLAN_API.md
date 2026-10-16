@@ -29,7 +29,7 @@ TLS, unless the server explicitly permits authenticated plain HTTP.
 
 Rust checks the fingerprint while holding the existing profile lock. A changed artifact
 requires a new review. Approval does not override backend publication policy.
-Profile locks coordinate GAH writers; they do not sandbox local users with artifact-directory write access. The same
+Profile locks coordinate Parasaur writers; they do not sandbox local users with artifact-directory write access. The same
 publisher preserves native GitHub/GitLab issue markers, partial progress, and retry behavior.
 A failed publish can return HTTP 409 with `success: false`, a redacted error, and partial
 publication state. Clients must retain that response rather than display an empty plan.

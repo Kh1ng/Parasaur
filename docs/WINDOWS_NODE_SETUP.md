@@ -1,6 +1,6 @@
 # Windows desktop and WSL worker
 
-The native Tauri desktop manages a central GAH node. The headless worker runs inside WSL2.
+The native Tauri desktop manages a central Parasaur node. The headless worker runs inside WSL2.
 The desktop lists Windows and WSL tools separately. A listed executable does not prove authentication or dispatch compatibility.
 
 For an external test, use the [Windows tester guide](WINDOWS_TESTER_GUIDE.md).
@@ -35,7 +35,7 @@ The central server needs these settings:
 The command contains the central access token. Use it only on a trusted worker computer.
 The worker does not receive the central server's GitHub credential.
 
-GAH does not have account sign-in. The central token grants owner access.
+Parasaur does not have account sign-in. The central token grants owner access.
 Device pairing grants dashboard control, but it does not grant update or administration access.
 If an update requires owner access, reconnect with the central token from a trusted computer.
 
@@ -62,7 +62,7 @@ The installer does not change GitHub, GitLab, Claude, or Codex authentication.
 7. Register its profile name with the command below.
 8. Check profile readiness before dispatching work.
 
-The private worker environment adds the installed GAH binary to the shell's path:
+The private worker environment adds the installed Parasaur binary to the shell's path:
 
 ```bash
 source ~/.local/share/gah/worker/worker.env
@@ -143,7 +143,7 @@ This test does not prove the online release-download path. Run the normal Add a 
 Use a disposable repository for dispatch tests. Record the installer filename, Windows version, WSL version, and selected distribution.
 
 1. Build or download the NSIS installer and matching worker test bundle from the accepted revision.
-2. Install it on Windows without an existing GAH desktop configuration.
+2. Install it on Windows without an existing Parasaur desktop configuration.
 3. Open the app from the Start menu.
 4. Check that one app window opens without a console window.
 5. Enter the central address and open the dashboard.

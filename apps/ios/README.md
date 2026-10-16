@@ -1,8 +1,8 @@
-# GAH for iPhone
+# Parasaur for iPhone
 
-This app loads the central GAH dashboard in a persistent WKWebView. It has no worker, agent CLI, repository checkout, or local server. Node selection and work control use the central dashboard.
+This app loads the central Parasaur dashboard in a persistent WKWebView. It has no worker, agent CLI, repository checkout, or local server. Node selection and work control use the central dashboard.
 
-Open `GAH.xcodeproj` in Xcode. Select the GAH target, choose your development team under Signing & Capabilities, and select your connected iPhone. Enable Developer Mode on the phone, then build and run. The deployment target is iOS 17.
+Open `GAH.xcodeproj` in Xcode. Select the `GAH` target, choose your development team under Signing & Capabilities, and select your connected iPhone. Enable Developer Mode on the phone, then build and run. The deployment target is iOS 17.
 
 ## Connect
 
@@ -15,7 +15,7 @@ Open `GAH.xcodeproj` in Xcode. Select the GAH target, choose your development te
 
 Pairing controls live in dashboard Settings. The app has no separate globe button. If central cannot load, **Connection settings** opens a local recovery form. This form accepts a central address or pairing link and includes the scanner.
 
-The native scanner requires camera permission. If scanning is unavailable, paste the full pairing link in Settings. A QR code proposes a connection. The dashboard still requires confirmation. Safari and GAH have separate cookie stores. Pair inside GAH to retain its login after closing the app.
+The native scanner requires camera permission. If scanning is unavailable, paste the full pairing link in Settings. A QR code proposes a connection. The dashboard still requires confirmation. Safari and Parasaur have separate cookie stores. Pair inside Parasaur to retain its login after closing the app.
 
 The dashboard Activity page requests notification permission, registers the
 device with the central server, and keeps foreground alerts on the same durable
@@ -39,7 +39,7 @@ This Settings scanner requires the updated iPhone app. Older installed apps do n
 
 HTTPS certificates use the system trust policy. HTTP uses a WebKit-only App Transport Security exception for the existing Tailscale deployment. The native bridge accepts pairing scans, notification controls, sign-out, and bounded activity notifications only from the configured server's main frame. Pairing scans also require the main Settings page. It rejects iframe requests and provides no credential or general command access. Main-document navigation stays on the chosen server. Pairing links to another server require address confirmation. Other user-selected external HTTP(S) links open in the system browser.
 
-Only the server address and dashboard routing fields are saved in preferences. Pairing fragments and other query parameters are excluded. WebKit stores the device cookie. The owner can revoke that device in GAH.
+Only the server address and dashboard routing fields are saved in preferences. Pairing fragments and other query parameters are excluded. WebKit stores the device cookie. The owner can revoke that device in Parasaur.
 
 ## Project chat links
 

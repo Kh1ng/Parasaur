@@ -24,8 +24,8 @@ before-state.
 
 | Field | Meaning | Today's representation | Owner |
 |---|---|---|---|
-| `runner_kind` | The agent CLI family GAH knows how to invoke (`claude`, `codex`, `openhands`, `vibe`, `opencode`, `agy`). | Implicit in `runner::backend_command_name()`; not a distinct value today. | `src/runner/resolve.rs` |
-| `executable` | The resolved on-disk path GAH actually invokes for a `runner_kind` in a given profile. | `runner::resolve_backend_executable()` / `ExecutableResolution`. | `src/runner/resolve.rs` |
+| `runner_kind` | The agent CLI family Parasaur knows how to invoke (`claude`, `codex`, `openhands`, `vibe`, `opencode`, `agy`). | Implicit in `runner::backend_command_name()`; not a distinct value today. | `src/runner/resolve.rs` |
+| `executable` | The resolved on-disk path Parasaur actually invokes for a `runner_kind` in a given profile. | `runner::resolve_backend_executable()` / `ExecutableResolution`. | `src/runner/resolve.rs` |
 | `logical_backend` | The string used everywhere as "backend": `requested_backend`, `effective_backend`, `CandidateConfig.backend`, `AttemptRecord.backend`. May diverge from `runner_kind` for multi-account runners (`agy-second` shares the `agy` runner) or historical aliases (`cloud-coder` shares the `openhands` runner). | Plain `String` throughout config/routing/ledger. | `src/config.rs`, `src/routing/` |
 | `backend_instance` | Stable, operator-chosen identity of the concrete runner installation/account binding used for the attempt (for example `agy-primary`, `agy-second`, or `opencode-nous-key-2`). It distinguishes two instances even when runner, provider, model, and quota pool are identical. | Not explicit today. `LedgerUsage.backend_instance` is a compatibility projection composed from `logical_backend` and `quota_pool`. Part 5/5 introduces the authoritative config field. | Config declares; routing selects; ledger records. |
 | `account_label` | Optional secret-safe account or billing label. It is descriptive attribution, not the route identity and not a credential. | `LedgerUsage.account_label`, currently populated from `quota_pool`. | Config declares; usage/ledger record. |
@@ -302,7 +302,7 @@ and merged. Confirmed:
 - [x] Every field in §1 has an unambiguous owner and no two owners can write
       conflicting values for the same field.
 - [x] The auth/cost class taxonomy in §7 covers every `logical_backend`
-      GAH currently dispatches to (`claude`, `codex`, `openhands`, `vibe`,
+      Parasaur currently dispatches to (`claude`, `codex`, `openhands`, `vibe`,
       `opencode`, `agy`/`agy-main`/`agy-second`) without a credential ever
       appearing in a canonical field.
 - [x] The equality/keying transition in §6 preserves current routing during
@@ -310,7 +310,7 @@ and merged. Confirmed:
       routable without treating a shared quota pool as one instance.
 - [x] Profile, repository, run, work, and attempt identity are all present in
       the cross-system join key; issue numbers alone can never merge projects.
-- [x] The legacy compatibility table in §9 has no system GAH persists
+- [x] The legacy compatibility table in §9 has no system Parasaur persists
       identity/usage to that is left undocumented.
 - [x] `cargo test --test execution_identity`, `cargo test --test
       usage_telemetry_regression`, and `cargo test` all pass on this

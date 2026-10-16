@@ -1,13 +1,13 @@
 # Node Secret Rotation and Revocation
 
-This document describes how to rotate credentials and revoke registered nodes in the Git Agent Harness (GAH) coordinator-node network.
+This document describes how to rotate credentials and revoke registered nodes in the Parasaur coordinator-node network.
 
 ## Stable Node Identity
 Each node is registered under a stable, non-secret `node_id`. This ID is used as the primary lookup key for all node settings, secret rotation, and registry revocation operations.
 
 ## 1. Secret Rotation
 
-GAH implements a **secrets-by-reference** policy. Registry configuration files (`registry-config.json`) must store secret references (e.g. env variables or cert files) instead of raw secret values.
+Parasaur implements a **secrets-by-reference** policy. Registry configuration files (`registry-config.json`) must store secret references (e.g. env variables or cert files) instead of raw secret values.
 
 ### Supported Secret Reference Formats:
 1. **Environment Variables**: Prefix `env:`, followed by the environment variable name (e.g., `env:NODE_TOKEN_1`).

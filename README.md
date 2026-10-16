@@ -1,9 +1,15 @@
-# git-agent-harness
+# Parasaur
 
-`gah` is a CLI that runs coding agents against real repositories with guardrails around git worktrees, validation, pushing, draft MR/PR creation, PM ticket decomposition, session logging, and cleanup.
+Parallel automated routing of agents.
+
+The repository and packages are still named `git-agent-harness`. The CLI is
+`parasaur`; `gah` is the same program and stays a compatible alias, so existing
+scripts, services, and docs that call `gah` keep working.
+
+`parasaur` is a CLI that runs coding agents against real repositories with guardrails around git worktrees, validation, pushing, draft MR/PR creation, PM ticket decomposition, session logging, and cleanup.
 
 **New here? Start with [Getting started](docs/GETTING_STARTED.md).** One pasted
-line builds GAH and runs `gah setup`, which asks what the machine is for and
+line builds Parasaur and runs `parasaur setup`, which asks what the machine is for and
 installs only what that needs.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for coding and review standards.
@@ -26,7 +32,7 @@ Smoke test: GAH Worker appears in the system tray after install.
 For a managed worker, open **Settings → General → Add a Node** on the central node.
 Select the WSL worker, reveal the command, and run it in PowerShell as administrator.
 
-GAH does not have account sign-in. Remote access uses the central token or device pairing.
+Parasaur does not have account sign-in. Remote access uses the central token or device pairing.
 Provider CLIs use separate authentication inside WSL. See the [Windows tester guide](docs/WINDOWS_TESTER_GUIDE.md).
 
 ### Linux — desktop worker (AppImage)
@@ -41,21 +47,25 @@ Smoke test: GAH Worker appears in the system tray.
 
 ### Android — control surface (debug APK)
 
-The native Android app is a control-only WebView for a central GAH node. Build it with `gradle -p apps/android testDebugUnitTest assembleDebug`, or download `gah-android-debug-apk` from the Android workflow. See [Android controller](apps/android/README.md).
+The native Android app is a control-only WebView for a central Parasaur node. Build it with `gradle -p apps/android testDebugUnitTest assembleDebug`, or download `gah-android-debug-apk` from the Android workflow. See [Android controller](apps/android/README.md).
 
-### CLI binary (`gah`) — Linux or macOS
+### CLI binary (`parasaur`, alias `gah`) — Linux or macOS
 
 ```bash
 # Linux: gah-linux-x86_64 | macOS: gah-macos-universal
 gh release download --repo Kh1ng/git-agent-harness --pattern gah-linux-x86_64 --output gah
 sudo install -m 755 gah /usr/local/bin/gah
+sudo ln -sf gah /usr/local/bin/parasaur
 ```
+
+The installers, `gah setup`, and `gah update` create `parasaur` next to `gah`
+for you (a symlink on Linux and macOS, a copy `parasaur.exe` on Windows).
 
 Smoke test:
 
 ```bash
-gah --help
-gah doctor
+parasaur --help
+parasaur doctor
 ```
 
 ---
@@ -205,7 +215,7 @@ Provider-specific examples:
 - `config/gah-config.gitlab.example.toml`
 - `config/gah-config.gitlab-self-hosted.example.toml`
 
-## What GAH Creates
+## What Parasaur Creates
 
 - Per-run session directories under each profile `artifact_root/sessions/`
 - Worktrees under `defaults.worktree_base`
@@ -218,7 +228,7 @@ For shared agent memory, see [memory hook setup](docs/MEMORY_HOOK_SETUP.md).
 
 ## Config Basics
 
-GAH loads config from:
+Parasaur loads config from:
 
 1. `--config`
 2. `GAH_CONFIG`
@@ -280,7 +290,7 @@ improve_backend = "codex"
 max_fix_attempts_per_mr = 3
 ```
 
-Unless `max_review_cycles_per_ticket` is explicitly set too, GAH permits one
+Unless `max_review_cycles_per_ticket` is explicitly set too, Parasaur permits one
 additional review beyond that repair cap: initial review, up to the configured
 repairs, then a review of the final repair. This prevents a review budget from
 silently cutting short the repair budget. The cap bounds routine reviews; each
@@ -367,7 +377,7 @@ included_in_quota = true
 For a profile that should use several subscription-backed workers, configure
 explicit backend/model pairs in priority order. Higher `priority` wins; an
 unavailable backend is skipped and the next eligible candidate is selected.
-Candidates with the same priority form a balanced pool: GAH selects the pair
+Candidates with the same priority form a balanced pool: Parasaur selects the pair
 with the fewest executions in the last seven days (configuration order breaks
 ties). After a genuine capability failure, the same work item advances past
 backend/model pairs it already tried instead of selecting them again.
@@ -453,7 +463,7 @@ included_in_quota = false
 requires_approval = true
 ```
 
-When all eligible non-paid routes are exhausted, GAH stops that work item and
+When all eligible non-paid routes are exhausted, Parasaur stops that work item and
 prints the exact approval command. Grant or revoke the exact backend/model pair
 without editing credentials or rewriting ledger history:
 
@@ -475,7 +485,7 @@ model explicit.
 - GitLab: set `GITLAB_PAT` or `GITLAB_PAT2`
 - LLM proxy: set `LLM_API_KEY` if needed
 
-GAH keeps push auth in askpass; it does not embed tokens into remotes or push URLs.
+Parasaur keeps push auth in askpass; it does not embed tokens into remotes or push URLs.
 
 ## Setup
 
@@ -510,7 +520,7 @@ provider_project_id = "12345"
 ```
 
 Use the numeric GitLab project ID and set `repo` to the full namespace, such as
-`group/subgroup/project`. GAH derives project links and push hosts from that base.
+`group/subgroup/project`. Parasaur derives project links and push hosts from that base.
 Use a GitLab installation on an HTTPS root host; subpath installations are not supported.
 `glab` authenticates API operations on that host. Git pushes use `GITLAB_PAT2` or
 `GITLAB_PAT`, in that order, so a successful API readiness check does not verify push access.
@@ -645,7 +655,7 @@ has nothing to claim on GitHub and runs under the machine-local claim alone.
 
 ### Generated-artifact publication guard
 
-Before GAH creates or pushes a commit, it rejects newly tracked files matching
+Before Parasaur creates or pushes a commit, it rejects newly tracked files matching
 the profile's generated-artifact deny patterns. The default covers nested
 `node_modules`, Vite/Vitest caches, coverage, language caches, build targets,
 and TypeScript build-info files. Existing tracked files are not removed or
@@ -665,7 +675,7 @@ generated_artifact_deny_patterns = [
 
 The effective list is included in `gah status --json`, and `gah doctor` prints
 the active policy. A match fails before commit/push with the exact path,
-pattern, and policy source; GAH does not silently delete the worker's files.
+pattern, and policy source; Parasaur does not silently delete the worker's files.
 
 Start with a dry run:
 
@@ -698,13 +708,13 @@ gah pm publish --profile my-repo --plan artifacts/sessions/<run>/pm-plan-v1.json
 PM mode with a target now injects preflight context before the manager runs:
 
 - open trusted GitHub or GitLab issues
-- open native PRs/MRs, including non-GAH branches
+- open native PRs/MRs, including non-Parasaur branches
 - recently merged native PRs/MRs
 - existing `docs/tickets/*.md`
 - current branch, dirty state, recent commits
 - optional bounded project guidance
 
-Project guidance is optional. By default GAH uses the first existing file from
+Project guidance is optional. By default Parasaur uses the first existing file from
 `docs/PM_GUIDANCE.md`, `docs/project-guidance.md`,
 `docs/pm-guidance.md`, or `PM_GUIDANCE.md`. Override that ordered search per
 profile (or in routing defaults) when a repository uses another convention:
@@ -776,7 +786,7 @@ human_required = "exec:owner-decision"
 supervised = "exec:supervised"
 ```
 
-When `improve` or `fix` targets a ticket markdown file, GAH also reads ticket metadata such as difficulty, risk, recommended backend/model, affected files, and verification commands before routing the worker.
+When `improve` or `fix` targets a ticket markdown file, Parasaur also reads ticket metadata such as difficulty, risk, recommended backend/model, affected files, and verification commands before routing the worker.
 
 ## Retries
 
@@ -868,7 +878,7 @@ Verdicts are:
 
 Weak or fallback review always requires human review. No auto-merge is performed.
 
-When the provider can be reached, GAH also posts a concise MR/PR comment and best-effort labels such as:
+When the provider can be reached, Parasaur also posts a concise MR/PR comment and best-effort labels such as:
 
 - `gah-ready-for-human`
 - `gah-needs-fix`
@@ -898,7 +908,7 @@ Summary includes backend/mode counts, requested vs effective backend, fallback c
 ## Sync
 
 Use `gah sync --profile my-repo` for an explicit current and historical
-classification of GAH-created MRs/PRs without dispatching anything new.
+classification of Parasaur-created MRs/PRs without dispatching anything new.
 
 Current classifications include:
 
@@ -914,7 +924,7 @@ This pass only prints state and recommended next action. It does not auto-merge 
 
 ## Prune
 
-Remove old GAH-owned sessions and worktrees:
+Remove old Parasaur-owned sessions and worktrees:
 
 ```bash
 gah prune --dry-run --older-than 14
@@ -924,7 +934,7 @@ gah prune --profile my-repo --older-than 30
 Prune only touches:
 
 - `artifact_root/sessions/*`
-- worktrees under `defaults.worktree_base` with GAH-owned naming prefixes
+- worktrees under `defaults.worktree_base` with Parasaur-owned naming prefixes
 
 On a central node, the same daily `gah-prune.timer` also runs chat
 maintenance. Terminal provider branches settle, and live sessions with no
@@ -934,9 +944,9 @@ untracked work is saved as a patch and the local branch always survives. The
 Chat storage card previews per-session usage and the exact reclaim plan before
 an operator applies it.
 
-## Operating GAH Unattended
+## Operating Parasaur Unattended
 
-For running and repairing GAH as an unattended service (systemd units, token
+For running and repairing Parasaur as an unattended service (systemd units, token
 scopes, state-file repair commands, notification/manager-wake setup, failure
 triage, and the auto-merge safety model), see the operator runbook:
 [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
