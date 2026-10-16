@@ -40,6 +40,14 @@ fn unknown(info: &CredentialInfo, now: OffsetDateTime) -> QuotaObservationRecord
     }
 }
 
+/// Mistral reports only that the key's budget is spent, not its window or reset.
+fn exhausted(info: &CredentialInfo, now: OffsetDateTime) -> QuotaObservationRecord {
+    let mut record = unknown(info, now);
+    record.quota_remaining_percent = Some(0.0);
+    record.observed_at = record.checked_at.clone();
+    record
+}
+
 pub(crate) fn refresh(id: &str, path: &Path) -> Result<QuotaObservationRecord> {
     let root = super::root()?;
     refresh_selected_at(&root, id, path, |selected| {
@@ -58,6 +66,14 @@ pub(crate) fn refresh(id: &str, path: &Path) -> Result<QuotaObservationRecord> {
             (CredentialKind::ApiKey, "mistral", Some("MISTRAL_ADMIN_API_KEY")) => {
                 quota_store::refresh_vibe_admin_record(secret, None)
                     .map(|record| record.into_iter().collect())
+            }
+            // An available key has no readable balance, so it reports no
+            // data; that empty check also clears an earlier exhausted reading.
+            (CredentialKind::ApiKey, "mistral", _) => {
+                Ok(crate::usage::mistral_key::budget_exhausted(secret)?
+                    .then(|| exhausted(info, OffsetDateTime::now_utc()))
+                    .into_iter()
+                    .collect())
             }
             _ => Ok(Vec::new()),
         }
@@ -258,6 +274,32 @@ mod tests {
         assert!(windows.iter().all(|record| record.backend == "claude"
             && record.credential_id.as_deref() == Some("claude-sub")
             && record.quota_pool.is_none()));
+    }
+    #[test]
+    fn exhausted_mistral_key_blocks_its_bound_instance_until_available() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quota.jsonl");
+        let source = CredentialInfo {
+            id: "mistral-main-vibe".into(),
+            provider: "mistral".into(),
+            kind: CredentialKind::ApiKey,
+            account_label: "Vibe".into(),
+            env_var: Some("MISTRAL_API_KEY".into()),
+        };
+        let mut identity =
+            ExecutionIdentity::legacy_candidate("vibe", None::<String>, Some("mistral-main-vibe"));
+        identity.backend_instance = "mistral-main-vibe".into();
+        identity.credential_id = Some(source.id.clone());
+        let now = OffsetDateTime::now_utc() - time::Duration::minutes(2);
+        refresh_with(&source, &path, now, || Ok(Some(exhausted(&source, now)))).unwrap();
+        let records = quota_store::load(&path).unwrap();
+        let capacity =
+            crate::routing::subscription::capacity(&identity, &records, OffsetDateTime::now_utc());
+        assert!(capacity.exhausted);
+        let later = now + time::Duration::minutes(1);
+        refresh_with(&source, &path, later, || Ok(None)).unwrap();
+        let records = quota_store::load(&path).unwrap();
+        assert!(quota_store::latest_windows_for_identity(&records, &identity).is_empty());
     }
     fn info(id: &str) -> CredentialInfo {
         CredentialInfo {

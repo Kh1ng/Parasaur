@@ -947,3 +947,4 @@ mod tests {
 }
 
 pub mod mistral_dashboard;
+pub(crate) mod mistral_key;

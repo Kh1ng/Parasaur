@@ -30,26 +30,40 @@ fn timestamp(value: &Value, key: &str) -> Result<OffsetDateTime> {
     OffsetDateTime::parse(string(value, key)?, &Rfc3339).context("invalid Mistral dashboard period")
 }
 
+/// Mistral rounds the echoed `end` up to the next whole hour; anything else,
+/// including a filtered, partial, or untracked-only scope, is rejected.
 fn scope(
     value: &Value,
     start: OffsetDateTime,
     end: OffsetDateTime,
-    grouping: &[&str],
+    groupings: &[&[&str]],
     requests: bool,
 ) -> Result<String> {
     let metadata = &value["metadata"];
     let params = &metadata["queryParams"];
-    let expected = serde_json::json!(grouping);
+    let echoed_end = timestamp(params, "end")?;
+    let rounded_up = echoed_end > end
+        && echoed_end - end < time::Duration::HOUR
+        && echoed_end.minute() == 0
+        && echoed_end.second() == 0
+        && echoed_end.nanosecond() == 0;
     if metadata["hasMore"] != false
-        || params["groupBy"] != expected
+        || !groupings
+            .iter()
+            .any(|grouping| params["groupBy"] == serde_json::json!(grouping))
         || params["includeNbApiCalls"] != requests
         || params["offset"] != 0
         || params["workspaceIds"] != Value::Null
         || params.get("workspaceIds").is_none()
-        || params["untracked"] != false
-        || params["preferPeriodAggregate"] != false
+        // An unfiltered `untracked` is accepted only when rows are split by it.
+        || !(params["untracked"] == false
+            || params["untracked"].is_null()
+                && params["groupBy"]
+                    .as_array()
+                    .is_some_and(|keys| keys.iter().any(|key| key == "untracked")))
+        || !params["preferPeriodAggregate"].is_boolean()
         || timestamp(params, "start")? != start
-        || timestamp(params, "end")? != end
+        || (echoed_end != end && !rounded_up)
     {
         bail!("partial or mismatched Mistral dashboard scope");
     }
@@ -154,14 +168,14 @@ pub(super) fn parse(
         &costs,
         start,
         end,
-        &[
+        &[&[
             "billing_metric",
             "billing_display_name",
             "billing_group",
             "usage_type",
             "api_zone",
             "service_tier",
-        ],
+        ]],
         false,
     )?;
     if account
@@ -169,7 +183,10 @@ pub(super) fn parse(
             &requests,
             start,
             end,
-            &["billing_display_name", "usage_type"],
+            &[
+                &["billing_display_name", "usage_type"],
+                &["billing_display_name", "usage_type", "untracked"],
+            ],
             true,
         )?
         || prices["currency"] != "USD"
@@ -182,6 +199,10 @@ pub(super) fn parse(
         .context("invalid Mistral dashboard prices")?;
     let mut models = BTreeMap::new();
     for row in groups(&requests)? {
+        // Costs cover tracked usage only; untracked calls are not billed.
+        if row["untracked"] == true {
+            continue;
+        }
         let Some(kind) = usage_type(row)? else {
             continue;
         };

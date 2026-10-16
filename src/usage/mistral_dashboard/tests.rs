@@ -55,7 +55,7 @@ fn display_alias_does_not_change_billing_price_join() {
     let mut requests: Value = serde_json::from_slice(&fixture("breakdownByModel")).unwrap();
     costs["result"]["data"]["json"]["groups"][3]["billingDisplayName"] =
         json!("mistral-vibe-cli-latest");
-    requests["result"]["data"]["json"]["groups"][1]["billingDisplayName"] =
+    requests["result"]["data"]["json"]["groups"][2]["billingDisplayName"] =
         json!("mistral-vibe-cli-latest");
     let record = parsed(
         &serde_json::to_vec(&costs).unwrap(),
@@ -139,6 +139,27 @@ fn partial_scopes_duplicates_and_unknown_vibe_groups_fail_closed() {
             "{mutation}"
         );
     }
+}
+
+#[test]
+fn hour_rounded_end_is_accepted_but_other_periods_and_untracked_scopes_are_not() {
+    let (start, _) = period();
+    let at = |value| OffsetDateTime::parse(value, &Rfc3339).unwrap();
+    let run = |costs: &[u8], requests: &[u8], end| {
+        parse::parse(costs, requests, &fixture("prices"), None, start, end)
+    };
+    let (costs, requests) = (fixture("costBreakdown"), fixture("breakdownByModel"));
+    assert!(run(&costs, &requests, at("2026-10-02T23:52:17.448Z")).is_ok());
+    assert!(run(&costs, &requests, at("2026-10-02T22:52:00Z")).is_err());
+    assert!(run(&costs, &requests, at("2026-10-03T00:00:01Z")).is_err());
+    let mut value: Value = serde_json::from_slice(&costs).unwrap();
+    value["result"]["data"]["json"]["metadata"]["queryParams"]["untracked"] = Value::Null;
+    let untracked_costs = serde_json::to_vec(&value).unwrap();
+    assert!(run(&untracked_costs, &requests, period().1).is_err());
+    let mut value: Value = serde_json::from_slice(&requests).unwrap();
+    value["result"]["data"]["json"]["metadata"]["queryParams"]["untracked"] = json!(true);
+    let untracked_only = serde_json::to_vec(&value).unwrap();
+    assert!(run(&costs, &untracked_only, period().1).is_err());
 }
 
 #[test]
