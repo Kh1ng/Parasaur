@@ -143,10 +143,10 @@ esac
 
 [ "$role" != worker ] || disable_worker_transport
 
-repo="${3:?Install requires the GAH repository path}"
+repo="${3:?Install requires the Parasaur (git-agent-harness) repository path}"
 profile="${4:-}"
 repo="$(cd "$repo" && pwd -P)"
-[ -f "$repo/Cargo.toml" ] || { echo "ERROR: $repo is not a GAH checkout" >&2; exit 1; }
+[ -f "$repo/Cargo.toml" ] || { echo "ERROR: $repo is not a Parasaur (git-agent-harness) checkout" >&2; exit 1; }
 
 mkdir -p "$agents_dir" "$HOME/.local/state/gah" "$HOME/.cache/gah/tmp" "$HOME/.config/gah"
 node_path="${GAH_NODE_PATH:-$(command -v node || true)}"

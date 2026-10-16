@@ -278,7 +278,7 @@ jobs:
           gh release create edge "${assets[@]}" \
             --target "$HEAD_SHA" \
             --prerelease \
-            --title "GAH edge — ${version} ($(echo "$HEAD_SHA" | cut -c1-10))" \
+            --title "Parasaur edge — ${version} ($(echo "$HEAD_SHA" | cut -c1-10))" \
             --notes "Automatic edge-channel build of main at $HEAD_SHA.
 
           - edge-manifest.json lists every artifact with its SHA-256; this is what \`gah update --from-release\` installs from.

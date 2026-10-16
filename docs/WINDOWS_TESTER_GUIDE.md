@@ -1,6 +1,6 @@
 # Windows tester guide
 
-This guide installs one approved GAH test build on Windows. The worker runs inside WSL2 Ubuntu.
+This guide installs one approved Parasaur test build on Windows. The worker runs inside WSL2 Ubuntu.
 
 Use a disposable repository for the first edit test. Do not use a repository with uncommitted work.
 
@@ -13,7 +13,7 @@ For an unpublished revision, ask the maintainer for these items:
 
 - One test bundle from a successful Desktop workflow run.
 - The full source revision for that workflow run.
-- The central GAH URL.
+- The central Parasaur URL.
 - A temporary central access token.
 
 The unpublished bundle must contain these files from the same workflow run:
@@ -31,7 +31,7 @@ install-wsl.sh
 Do not mix files from different workflow runs. The installer rejects mixed revisions and changed files.
 
 The token gives owner access to the central node. Do not put it in a test report or screenshot.
-GAH does not have account sign-in. Device pairing does not grant update or administration access.
+Parasaur does not have account sign-in. Device pairing does not grant update or administration access.
 
 ## Test first-run WSL preparation
 
@@ -85,7 +85,7 @@ For a published release, run the Add a Node command instead of the local-bundle 
 
 The installer adds two components:
 
-- The GAH desktop application.
+- The Parasaur desktop application.
 - A worker service inside WSL2.
 
 The `GAH WSL Worker` task starts the worker after Windows sign-in. The desktop application does not own the worker process.
@@ -96,7 +96,7 @@ The `GAH WSL Worker` task starts the worker after Windows sign-in. The desktop a
 2. Install one supported agent CLI.
 3. Run `gh auth login` for a GitHub test repository.
 4. Open GAH from the Windows Start menu.
-5. Connect GAH to the central URL.
+5. Connect Parasaur to the central URL.
 6. Enter the central token, or pair this computer from an owner session.
 7. Open **Chat**, then select **Import from Git**.
 8. Select the Windows worker under **Import on**.
@@ -137,7 +137,7 @@ Run `command -v codex` before you select Codex. No output means that Codex is no
 4. Make sure that the path is inside WSL, not on the central node.
 5. Ask the agent to create one test file without a commit or push.
 6. Make sure that the file exists only in the worker checkout.
-7. Close the GAH desktop application.
+7. Close the Parasaur desktop application.
 8. Use another browser to make sure that the worker remains healthy.
 9. Restart Windows and sign in.
 10. Make sure that the worker becomes healthy again.

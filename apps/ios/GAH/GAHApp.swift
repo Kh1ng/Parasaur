@@ -419,7 +419,7 @@ private struct ControllerView: View {
                     Dashboard(controller: controller)
                 } else {
                     ContentUnavailableView {
-                        Label("Connect to GAH", systemImage: "network")
+                        Label("Connect to Parasaur", systemImage: "network")
                     } description: {
                         Text("Manage projects, chats, and worker nodes through your central server. Turn on Tailscale to reach your private network.")
                     } actions: {
@@ -453,7 +453,7 @@ private struct ControllerView: View {
                 do {
                     proposedAddress = try ServerAddress.fromDeepLink(url).url.absoluteString
                     showingConnection = true
-                } catch { controller.error = "This GAH link is invalid. Open connection settings and paste a central server or pairing link." }
+                } catch { controller.error = "This Parasaur link is invalid. Open connection settings and paste a central server or pairing link." }
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { controller.rememberLocation() }
@@ -484,7 +484,7 @@ private struct ConnectionView: View {
                         .accessibilityIdentifier("serverAddress")
                     Button("Scan pairing QR code", systemImage: "qrcode.viewfinder") { scanning = true }
                 } header: { Text("Connection & pairing") } footer: {
-                    Text("Paste a server address or a pairing link from GAH. Review the address before connecting. Your phone controls work on the server and its nodes.")
+                    Text("Paste a server address or a pairing link from Parasaur. Review the address before connecting. Your phone controls work on the server and its nodes.")
                 }
                 if let target = try? ServerAddress(text) {
                     Section("Connect to") {

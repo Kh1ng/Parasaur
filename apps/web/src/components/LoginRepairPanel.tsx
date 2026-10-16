@@ -65,7 +65,7 @@ export function LoginRepairPanel({ login }: { login: RepairableLogin }) {
   const tool = repositoryCli(login.backend);
   if (tool && (repair?.status === 'install_required' || !repair && login.installed === false)) {
     return <div className="space-y-2" aria-label="Repository CLI installation">
-      <p className="text-sm text-primary">Install {tool.label} ({login.backend}) on {where} before signing in. GAH uses it to read issues and open pull requests.</p>
+      <p className="text-sm text-primary">Install {tool.label} ({login.backend}) on {where} before signing in. Parasaur uses it to read issues and open pull requests.</p>
       <div className="flex flex-wrap gap-2">
         <ExternalAnchor href={tool.installUrl} className="btn-primary inline-flex min-h-11 items-center text-xs">Install {tool.label}</ExternalAnchor>
         <button type="button" className="btn-secondary min-h-11 text-xs" disabled={busy} onClick={() => void start()}>{busy ? 'Checking…' : 'Check and sign in'}</button>

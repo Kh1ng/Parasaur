@@ -1,11 +1,11 @@
-# GAH Operator Runbook
+# Parasaur Operator Runbook
 
-Operating and repairing GAH when it runs unattended (recurring `gah loop`,
+Operating and repairing Parasaur when it runs unattended (recurring `gah loop`,
 `gah server` systemd unit, auto-merge policy, manager wake). This is the
 operator-facing counterpart to `docs/MANAGER_MEMORY.md` (which is agent-facing
 state) and `README.md` (which covers CLI basics and first-run setup).
 
-Standing rule that governs everything below: **never hand-edit GAH state files**
+Standing rule that governs everything below: **never hand-edit Parasaur state files**
 (`availability.json`, `work_claims.json`, holds, the ledger,
 `validation_check.json`). Use a documented repair command where one exists.
 Editing JSON by hand races the running loop and can corrupt durable trust
@@ -118,7 +118,7 @@ For unattended first installs, run `GAH_INSTALL_CONFIRMED=1 scripts/install.sh`
 with the desired role and configuration environment variables. This accepts
 the installer confirmation before it writes configuration or installs services.
 For unattended updates, use `gah update --pull --yes --repo /path/to/git-agent-harness`.
-Updates refresh existing GAH OpenCode agent files and quota-refresh units even
+Updates refresh existing Parasaur OpenCode agent files and quota-refresh units even
 when `--agent` is omitted; use `--agent` to install additional integrations.
 
 With `--pull`, it refuses a dirty or non-default-branch checkout and pulls
@@ -240,7 +240,7 @@ of the prebuild gate issue.
   start`/`restart`/`enable`, `gah loop`, or calls any HTTP endpoint. **Only
   the operator or the dashboard may start a loop**
   (`systemctl --user start gah-loop@<profile>`, or the dashboard's equivalent
-  button) — nothing else in GAH's packaging is allowed to. This replaces an
+  button) — nothing else in Parasaur's packaging is allowed to. This replaces an
   earlier host-local, untracked script that silently restarted a stopped loop
   by calling the dashboard's start endpoint, resuming concurrent work during
   a blocker repair; that incident is exactly what this contract prevents. The
@@ -324,7 +324,7 @@ app. Test the system resolver with `ping hermesagent`, a browser, or
 `tailscale dns query hermesagent`; `host` and `nslookup` can bypass the macOS
 system resolver.
 
-The preferred HTTPS setup keeps GAH on loopback and uses Tailscale Serve:
+The preferred HTTPS setup keeps Parasaur on loopback and uses Tailscale Serve:
 
 ```bash
 GAH_SERVER_HOST=127.0.0.1 scripts/install.sh
@@ -360,7 +360,7 @@ to connect to bus":
 sudo loginctl enable-linger <user>
 ```
 
-Install the loop template once for the user that runs GAH, then the dashboard
+Install the loop template once for the user that runs Parasaur, then the dashboard
 Start/Stop buttons manage `gah-loop@<profile>` rather than creating a detached
 process:
 
@@ -434,7 +434,7 @@ the worker count when it changes; `gah status --json` reports the result and
 the reason for each grant or refusal as `worker_limits`.
 
 Set `max_open_managed_mrs` per profile to bound implementation intake. It
-defaults to `max_parallel_workers`; at the limit GAH keeps reviewing, fixing,
+defaults to `max_parallel_workers`; at the limit Parasaur keeps reviewing, fixing,
 and merging existing work but does not start another PR-producing dispatch.
 Use `gah profile set <name> --max-open-managed-mrs <count>` to change it.
 
@@ -969,7 +969,7 @@ implementation.
 
 ## 2. Required credentials & scopes
 
-GAH never embeds tokens into git remotes or push URLs; push auth goes through
+Parasaur never embeds tokens into git remotes or push URLs; push auth goes through
 askpass. Secrets do not go in `config.toml`.
 
 ### GitHub
@@ -998,7 +998,7 @@ gh auth status
   `glab auth login --hostname <host>`.
 - PAT scope: `api` (covers push, MR create/merge, and MR preflight via `glab`).
 - Self-hosted: set `provider_api_base` in the profile
-  (`https://gitlab.example.com/api/v4`); GAH derives pushes from that base.
+  (`https://gitlab.example.com/api/v4`); Parasaur derives pushes from that base.
 
 ### LLM proxy
 
@@ -1007,7 +1007,7 @@ gh auth status
 
 ### Backend auth locations
 
-Each backend authenticates through its own CLI, not through GAH:
+Each backend authenticates through its own CLI, not through Parasaur:
 
 - **codex** — ChatGPT-subscription auth via the `codex` CLI; verify with
   `codex doctor` (websocket connect + auth). Account-level quota is subscription,
@@ -1032,7 +1032,7 @@ An unattended run without the flag keeps the stored value. The value is
 `GAH_MANAGER_CHAT_SETTINGS_PATH`). A missing or unknown value means `ask`. The
 setting applies only to chats that this machine runs.
 
-With bypass on, GAH still asks for these requests:
+With bypass on, Parasaur still asks for these requests:
 
 - a push or other publish (`git push`, `gh`, `npm publish`, `docker push`, and
   similar commands), and any git subcommand that is not on the local list;
@@ -1040,26 +1040,26 @@ With bypass on, GAH still asks for these requests:
   the chat session's worktree (symbolic links are followed before `..`);
 - a command with shell chaining, pipes, redirection, substitution, or globbing,
   or a command that runs another command (`env`, `xargs`, `sudo`, `npx`);
-- a tool kind that GAH cannot classify, a request without an "allow once"
+- a tool kind that Parasaur cannot classify, a request without an "allow once"
   option, a chat without its own session worktree (the default conversation,
   or a session that runs in the shared checkout), or a request that arrives
   after Stop.
 
-GAH records each automatic approval in the transcript as
+Parasaur records each automatic approval in the transcript as
 `[permission auto-approved: <option>]`. The check reads the request's tool
 kind, locations, and command. It does not inspect what a build or test script
 does after it starts.
 
 ### Runner permissions
 
-By default, `gah` injects necessary flags so implementation dispatches (`improve`, `experiment`), which run in a GAH worktree, can make progress. Read-only dispatches (`research`, `audit`, `estimate`, `pm`) run in the profile's real checkout and, like review dispatches, receive none of these flags: they keep the backend CLI's own default permissions plus whatever the profile's `codex_args`/`claude_args` set.
+By default, `gah` injects necessary flags so implementation dispatches (`improve`, `experiment`), which run in a Parasaur worktree, can make progress. Read-only dispatches (`research`, `audit`, `estimate`, `pm`) run in the profile's real checkout and, like review dispatches, receive none of these flags: they keep the backend CLI's own default permissions plus whatever the profile's `codex_args`/`claude_args` set.
 
-- **codex** — Implementation dispatches run with `--sandbox workspace-write --add-dir <CARGO_TARGET_DIR>`: the worktree plus that dispatch's own build target directory, and nothing above it. A profile `codex_args` that chooses its own sandbox (`--sandbox`/`-s`, `--full-auto`, `--dangerously-bypass-approvals-and-sandbox`) replaces the default sandbox mode. On a host with `sccache` on PATH, GAH sets `RUSTC_WRAPPER=sccache` for builds, but not for a sandboxed Codex run: `sccache` keeps its cache outside the target directory and talks to a local server over TCP (127.0.0.1:4226), which `workspace-write` (including `--full-auto`, unless an explicit sandbox mode overrides it) and `read-only` block, so such a run compiles cold instead. Runs under `danger-full-access` or `--dangerously-bypass-approvals-and-sandbox`, read-only dispatches, and other backends keep the wrapper. A `rustc-wrapper` set in `~/.cargo/config.toml` or a worktree `.cargo/config.toml` is outside GAH's control and will still fail inside the sandbox.
+- **codex** — Implementation dispatches run with `--sandbox workspace-write --add-dir <CARGO_TARGET_DIR>`: the worktree plus that dispatch's own build target directory, and nothing above it. A profile `codex_args` that chooses its own sandbox (`--sandbox`/`-s`, `--full-auto`, `--dangerously-bypass-approvals-and-sandbox`) replaces the default sandbox mode. On a host with `sccache` on PATH, Parasaur sets `RUSTC_WRAPPER=sccache` for builds, but not for a sandboxed Codex run: `sccache` keeps its cache outside the target directory and talks to a local server over TCP (127.0.0.1:4226), which `workspace-write` (including `--full-auto`, unless an explicit sandbox mode overrides it) and `read-only` block, so such a run compiles cold instead. Runs under `danger-full-access` or `--dangerously-bypass-approvals-and-sandbox`, read-only dispatches, and other backends keep the wrapper. A `rustc-wrapper` set in `~/.cargo/config.toml` or a worktree `.cargo/config.toml` is outside Parasaur's control and will still fail inside the sandbox.
 - **claude** — Implementation dispatches run with `--permission-mode acceptEdits` and an `--allowedTools` list of the edit tools (`Edit,Write,MultiEdit,NotebookEdit`) plus a fixed set of shell commands: `git`, `cargo`, `npm`, `npx`, `node`, `pnpm`, `yarn`, `make`, `python`, `python3`, `pytest`, `go`, and the read-only `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, plus `mkdir`. Each is passed as `Bash(<command>:*)`. Unrestricted `Bash` is not the default, because Claude Code has no sandbox: it would let an unattended job run any command as the node user, network included. The list is a reduction, not a sandbox — a build script or a test can still run arbitrary code. A project that needs another command (its own validation command, for example) sets `claude_args = ["--allowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash(git:*),Bash(<command>:*)"]`, or plain `Bash` to accept unrestricted shell. A profile `claude_args` that sets `--permission-mode` (or `--dangerously-skip-permissions`) or `--allowedTools` replaces the matching default.
 - **Other runners** — Depend on their own CLI defaults.
 
 If the backend CLI still refuses an implementation run's writes and the attempt
-changes nothing, GAH appends a `GAH: backend writes refused (configuration error): …`
+changes nothing, Parasaur appends a `GAH: backend writes refused (configuration error): …`
 line to `backend-output.log` naming the setting to fix, records the attempt as
 `environment_error`, and ends the dispatch without spending the remaining
 retries.
@@ -1079,7 +1079,7 @@ paths writable, backend executables present, and validation commands resolve.
 
 ## 3. State files & repair commands
 
-Most GAH durable control state lives under `$XDG_STATE_HOME/gah/` (fallback
+Most Parasaur durable control state lives under `$XDG_STATE_HOME/gah/` (fallback
 `~/.local/state/gah/`). The append-only ledger, reconciliation log, event
 stream, and manager-wake logs instead follow `GAH_*_PATH` overrides or
 `defaults.artifact_root` (falling back to `~/.config/gah/`). **Do not edit any
@@ -1088,7 +1088,7 @@ of these by hand** — use the command listed.
 ### Availability — `$XDG_STATE_HOME/gah/availability.json`
 
 Durable backend/model/quota-pool availability (quota exhaustion, auth failure,
-manual disable). A stale entry keeps GAH skipping a backend that is actually
+manual disable). A stale entry keeps Parasaur skipping a backend that is actually
 healthy again.
 
 ```bash
@@ -1117,9 +1117,9 @@ hand-edit the file.
 
 ### Review holds
 
-Manager-session review hold: tells GAH's own auto-merge loop to leave a
+Manager-session review hold: tells Parasaur's own auto-merge loop to leave a
 work_id's PR alone while a human or supervising agent reviews it out of band.
-GAH's own loop never sets a hold; only a manager session does. A hold
+Parasaur's own loop never sets a hold; only a manager session does. A hold
 self-expires after `REVIEW_HOLD_STALE_AFTER_HOURS`, or clear it explicitly:
 
 ```bash
@@ -1165,9 +1165,9 @@ acknowledging the failure, never as routine practice.
 
 ### Stale worktrees / sessions
 
-Old GAH-owned worktrees and session dirs accumulate (a real incident hit 59GB).
+Old Parasaur-owned worktrees and session dirs accumulate (a real incident hit 59GB).
 Prune touches only `artifact_root/sessions/*` and worktrees under
-`defaults.worktree_base` with GAH-owned naming prefixes:
+`defaults.worktree_base` with Parasaur-owned naming prefixes:
 
 ```bash
 gah prune --dry-run --older-than 14
@@ -1176,7 +1176,7 @@ gah prune --profile <profile> --older-than 30
 
 ### Concurrent Rust workers and disk capacity
 
-GAH gives every dispatch session its own writable `CARGO_TARGET_DIR` under
+Parasaur gives every dispatch session its own writable `CARGO_TARGET_DIR` under
 `<profile.artifact_root>/build-cache/cargo-targets/`. All attempts in one
 session reuse that directory, but concurrent worktrees never share it. Cargo's
 registry/source cache remains shared normally; only compiled outputs are
@@ -1189,7 +1189,7 @@ the directory at dispatch completion. Automatic pruning removes any unlocked
 target left by SIGKILL, a host crash, or an older binary, so isolation does not
 reintroduce the stale multi-gigabyte artifact leak.
 
-Before creating a worktree, GAH also requires at least 10 GiB free on both the
+Before creating a worktree, Parasaur also requires at least 10 GiB free on both the
 worktree filesystem and the temporary filesystem. It fails before spending an
 agent attempt when that floor is not met; reclaim terminal worktrees with
 `gah prune` and inspect temporary files before retrying.
@@ -1197,7 +1197,7 @@ agent attempt when that floor is not met; reclaim terminal worktrees with
 ### Torn final ledger record
 
 If an abrupt stop or full filesystem leaves `ledger.jsonl` with an incomplete
-final line, GAH fails closed rather than treating the missing data as zero.
+final line, Parasaur fails closed rather than treating the missing data as zero.
 Repair only that specific physical failure with the guarded command below:
 
 ```bash
@@ -1214,7 +1214,7 @@ mid-file corruption is never altered automatically and requires investigation.
 
 ## 4. Notification & manager-wake setup
 
-GAH can notify an operator (and optionally wake a manager agent) on high-signal
+Parasaur can notify an operator (and optionally wake a manager agent) on high-signal
 events, without any external wrapper.
 
 ### Notification delivery methods
@@ -1368,7 +1368,7 @@ The save command reads the secret from stdin. Its `--id`, `--provider`,
 
 ### Claude subscription token
 
-GAH runs Claude under isolated per-attempt state, so the interactive OAuth
+Parasaur runs Claude under isolated per-attempt state, so the interactive OAuth
 login in `~/.claude` is invisible to dispatched runs. `claude setup-token`
 prints one long-lived token for the subscription; save it once per account
 and bind it to a Claude instance (issue #1352). The runner receives it only
@@ -1411,9 +1411,9 @@ stored owner-only and never appears in argv, logs, ledger, or telemetry.
 ### Mistral dashboard usage
 
 In the desktop app, open **Quota → Connect Mistral**, then choose
-**Connect Mistral** in local Settings. Sign in in the Mistral window. GAH verifies
+**Connect Mistral** in local Settings. Sign in in the Mistral window. Parasaur verifies
 usage access and saves the session privately on this device. The device needs
-an installed GAH collector to refresh usage.
+an installed Parasaur collector to refresh usage.
 
 For another Mistral account, choose **Connect another Mistral account** in Provider
 connections. Give the account a separate name and sign in in its isolated
@@ -1449,11 +1449,11 @@ unset MISTRAL_EMAIL MISTRAL_PASSWORD
 ```
 
 The connection is stored in the owner-only credential directory and is never
-passed to a runner. GAH keeps the resulting dashboard session in the same
+passed to a runner. Parasaur keeps the resulting dashboard session in the same
 private record. It signs in again only when Mistral rejects that session. A
 wrong password or a second-factor prompt is reported as `auth_required`, and
-GAH stops signing in with that login until it is saved again, so a bad
-password is not retried on every refresh. GAH
+Parasaur stops signing in with that login until it is saved again, so a bad
+password is not retried on every refresh. Parasaur
 stores only the email and password, so an account with an authenticator app
 needs a reconnect through the desktop window instead.
 
@@ -1560,7 +1560,7 @@ starts the manager turn or answers an action twice.
 
 ### `notify_command` (per profile)
 
-Set `notify_command` on a profile; GAH pipes a single one-line message to that
+Set `notify_command` on a profile; Parasaur pipes a single one-line message to that
 command's stdin (shell-executed, like `validation_commands`) on:
 
 - `HumanRequired` decided (reason + reference)
@@ -1581,7 +1581,7 @@ notify_command = "/home/you/bin/telegram-notify"
 
 ### Agent wake (opt-in autonomy)
 
-A Telegram ping still needs a human to act. GAH can instead queue an
+A Telegram ping still needs a human to act. Parasaur can instead queue an
 instruction on the profile's durable manager chat when a review requests fixes,
 a dispatch fails, or a backend stalls. Resuming the originating worker session
 is parked in #1235. Set two things:
@@ -1613,13 +1613,13 @@ be unobservable. `MrMerged` never wakes (nothing left to act on).
 
 ## 5. Failure triage
 
-GAH tags each failed attempt with a `failure_class` (visible via
+Parasaur tags each failed attempt with a `failure_class` (visible via
 `gah ledger work <id>` / `gah ledger summary` / `gah events`). What each means
 and what to do:
 
 | failure_class        | Meaning                                                        | Operator action |
 |----------------------|---------------------------------------------------------------|-----------------|
-| `harness_error`      | GAH/config bug: a validation command couldn't run, bad config | Stops work. Fix config / validation command; `gah doctor --validate`. Not the model's fault — do not escalate. |
+| `harness_error`      | Parasaur/config bug: a validation command couldn't run, bad config | Stops work. Fix config / validation command; `gah doctor --validate`. Not the model's fault — do not escalate. |
 | `environment_error`  | Baseline already red; failure identical to baseline           | Stops work. Fix the environment (missing tool, broken dep). Do not escalate the model. |
 | `backend_error`      | Backend runtime failure (nonzero exit, empty output, quota/auth) | Reroute, not escalate. Check `gah availability`; if a quota/auth block is stale, `gah availability clear`. Never treat empty output as success. |
 | `config_error`       | The runner itself rejected the configured model before the agent ran | Stops work as human-required; never retried or rerouted. Fix the candidate's model in config and confirm with `gah doctor --validate`. |
@@ -1681,13 +1681,13 @@ Autonomous merge happens only when the profile's `merge_policy` allows it and
 
 `merge_policy` values (profile or `defaults`):
 
-- `auto` (default) — GAH merges when all conditions above pass.
-- `stop_for_human` — GAH never auto-merges; every ready PR waits for a human.
-- `gitlab_mwps` — GitLab only: after strong approval GAH sets "merge when
+- `auto` (default) — Parasaur merges when all conditions above pass.
+- `stop_for_human` — Parasaur never auto-merges; every ready PR waits for a human.
+- `gitlab_mwps` — GitLab only: after strong approval Parasaur sets "merge when
   pipeline succeeds" and lets GitLab enforce the CI gate; other providers fall
   back to `auto`.
 
-Reviewer tier (`strong` / `standard` / `weak`) is assigned by GAH config, never
+Reviewer tier (`strong` / `standard` / `weak`) is assigned by Parasaur config, never
 self-declared by the reviewer, and is separate from verdict confidence. A weak
 or fallback review always requires a human; no auto-merge on a weak review.
 
@@ -1708,7 +1708,7 @@ profile) rather than editing state or stopping all work.
 
 ## 7. Rust source-size ratchet guard
 
-GAH enforces a hard ceiling for large Rust files in the `source_structure`
+Parasaur enforces a hard ceiling for large Rust files in the `source_structure`
 integration test. The baseline lives in
 `config/rust-source-size-baseline.toml` and sets:
 

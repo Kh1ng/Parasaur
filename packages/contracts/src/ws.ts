@@ -1,5 +1,5 @@
 /**
- * WebSocket contract types for Git Agent Harness
+ * WebSocket contract types for Parasaur
  * Inspired by t3code architecture but adapted for GAH needs
  */
 

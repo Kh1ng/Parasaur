@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-Install the native GAH desktop, a WSL2 headless worker, or both.
+Install the native Parasaur desktop, a WSL2 headless worker, or both.
 .DESCRIPTION
 Settings > Add a Node supplies CentralUrl and CoordinatorToken. Worker setup
 requires an elevated PowerShell session and an initialized Ubuntu WSL2 user.
@@ -210,7 +210,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Cannot start gah-worker.service.' }
         Write-Host "Open $WslDistribution and run: ~/.local/share/gah/worker/register.sh PROFILE_NAME"
         Write-Host 'Use a stable LAN/VPN address. Rerun setup if the Windows address changes.'
     }
-    if ($Role -ne 'worker') { Write-Host 'GAH desktop installed. Open GAH Worker from the Start menu.' }
+    if ($Role -ne 'worker') { Write-Host 'Parasaur desktop installed. Open GAH Worker from the Start menu.' }
 } finally {
     Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
 }

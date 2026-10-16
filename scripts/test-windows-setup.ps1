@@ -74,7 +74,7 @@ try {
     # A failed native setup keeps the pending request, so the next app click can retry.
     [IO.File]::WriteAllText($pending, ($saved | ConvertTo-Json))
     $script:setupExit = 7
-    Assert-Rejected { Invoke-GahWindowsSetup 'Ubuntu' '' '' $true } 'GAH setup failed'
+    Assert-Rejected { Invoke-GahWindowsSetup 'Ubuntu' '' '' $true } 'Parasaur setup failed'
     if (-not (Test-Path $pending)) { throw 'Failure erased the pending setup.' }
     $script:setupExit = 0
     $script:uid = '0'

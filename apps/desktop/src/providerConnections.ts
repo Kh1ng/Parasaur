@@ -190,7 +190,7 @@ export function bindProviderConnections(section: HTMLElement, invoke: Invoke) {
     if (results[0].status === 'rejected') throw results[0].reason;
     entries = results[0].value;
     instances = results[1].status === 'fulfilled' ? results[1].value : [];
-    if (results[1].status === 'rejected') status.textContent = 'Saved connections are available, but local instances could not be checked. Update GAH and retry.';
+    if (results[1].status === 'rejected') status.textContent = 'Saved connections are available, but local instances could not be checked. Update Parasaur and retry.';
     else status.textContent = entries.length ? `${entries.length} named connections saved on this computer.` : 'No named connections saved yet. Your existing default Mistral connection stays above.';
     render();
   }
@@ -200,7 +200,7 @@ export function bindProviderConnections(section: HTMLElement, invoke: Invoke) {
     busy = true;
     section.querySelectorAll('button').forEach(button => { button.disabled = true; });
     try { await action(); } catch {
-      status.textContent = 'The connection could not be updated. Check the fields and update GAH on this computer.';
+      status.textContent = 'The connection could not be updated. Check the fields and update Parasaur on this computer.';
     } finally {
       busy = false;
       section.querySelectorAll('button').forEach(button => { button.disabled = !(enabled.get(button)?.() ?? true); });

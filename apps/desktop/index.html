@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GAH — Settings</title>
+    <title>Parasaur — Settings</title>
     <style>
       :root { color-scheme: dark; font: 16px/1.6 system-ui, sans-serif; background: #0b0e14; color: #e6e9ef; scrollbar-color: #536078 #11151f; }
       ::selection { background: #354e73; color: #fff; }
@@ -40,7 +40,7 @@
       <p>Change this computer’s connection, app presence, and worker. Pair devices and manage central from the dashboard’s Settings page.</p>
       <section id="repository-tools">
         <h2>Repository tools</h2>
-        <p>The full local workflow needs a repository CLI package and a login. Standalone mode does not require Tailscale or another GAH node.</p>
+        <p>The full local workflow needs a repository CLI package and a login. Standalone mode does not require Tailscale or another Parasaur node.</p>
         <label for="repository-provider">Repository host</label>
         <select id="repository-provider"><option value="gh">GitHub</option><option value="glab">GitLab</option></select>
         <p id="repository-tool-status" role="status"></p>
@@ -51,9 +51,9 @@
       </section>
       <section id="mistral-section" aria-labelledby="mistral-heading">
         <h2 id="mistral-heading">Mistral account usage</h2>
-        <p>Sign in to Mistral in the app window, then check the connection. GAH saves the connection on this computer. A registered worker shares usage readings with central.</p>
+        <p>Sign in to Mistral in the app window, then check the connection. Parasaur saves the connection on this computer. A registered worker shares usage readings with central.</p>
         <p id="mistral-status" role="status">Connect your account to collect its usage and included Vibe allowance.</p>
-        <p id="mistral-installation" hidden>GAH CLI is unavailable on this computer. Complete setup below before collecting account usage.</p>
+        <p id="mistral-installation" hidden>Parasaur CLI is unavailable on this computer. Complete setup below before collecting account usage.</p>
         <div class="actions">
           <button id="mistral-connect" type="button">Connect Mistral</button>
           <button id="mistral-finish" type="button" hidden>Check connection</button>
@@ -95,7 +95,7 @@
         <p id="factory-state" role="status">Factory automation is optional; fresh standalone installs default to off.</p>
         <button id="factory-save" type="button" hidden>Save factory module</button>
         <label class="preference"><input id="notifications-enabled" type="checkbox" />Send notifications to Telegram or Discord</label>
-        <p>Optional. GAH messages you when work fails, a review is ready, or a node goes offline. Turning it on opens Terminal for one guided step: choose the app, paste the bot token or webhook URL, and GAH sends a test message.</p>
+        <p>Optional. Parasaur messages you when work fails, a review is ready, or a node goes offline. Turning it on opens Terminal for one guided step: choose the app, paste the bot token or webhook URL, and Parasaur sends a test message.</p>
         <p id="notifications-state" role="status">Notifications are optional and off by default; nothing asks for a token while they are off.</p>
         <button id="notifications-save" type="button" hidden>Save notifications</button>
         <p id="standalone-note" hidden>Standalone runs the dashboard and agents on this computer only. It accepts every setup default and connects this app when setup finishes.</p>
@@ -123,7 +123,7 @@
       <p id="error" role="alert"></p>
       <section aria-labelledby="owner-heading">
         <h2 id="owner-heading">Owner access</h2>
-        <p>Save the central token in this computer's credential vault. GAH sends it only to the exact central origin above. This is token access, not an account sign-in.</p>
+        <p>Save the central token in this computer's credential vault. Parasaur sends it only to the exact central origin above. This is token access, not an account sign-in.</p>
         <p id="owner-state" role="status">Checking saved owner access...</p>
         <form id="owner-credential">
           <label for="owner-token">Central owner token</label>
@@ -140,7 +140,7 @@
           <label class="preference" id="dock-label" hidden><input id="show-dock" type="checkbox" />Show Dock icon</label>
           <label class="preference"><input id="show-tray" type="checkbox" />Show tray icon</label>
           <label class="preference"><input id="launch-window" type="checkbox" aria-describedby="presence-recovery" />Open a window on launch</label>
-          <p id="presence-recovery" hidden>A window is required when both icons are off. Closing the app window quits GAH; open the app again to return.</p>
+          <p id="presence-recovery" hidden>A window is required when both icons are off. Closing the app window quits Parasaur; open the app again to return.</p>
           <button type="submit">Save app presence</button>
           <p id="presence-status" role="status"></p>
         </form>

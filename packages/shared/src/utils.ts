@@ -1,5 +1,5 @@
 /**
- * Shared utilities for Git Agent Harness
+ * Shared utilities for Parasaur
  */
 
 import { ProviderKind, SessionId, ProviderInstanceId } from "@git-agent-harness/contracts";

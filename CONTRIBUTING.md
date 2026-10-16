@@ -57,7 +57,7 @@ npm run test:server
 
 Run the platform build when a change affects the desktop or mobile application.
 
-### When a GAH profile works on this repository
+### When a Parasaur profile works on this repository
 
 A dispatch validates its work with the profile's `validation_commands`, which
 live in the operator's `config.toml`, not in this repository, and are empty in

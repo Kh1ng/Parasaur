@@ -1,5 +1,5 @@
 /**
- * GAH backend integration
+ * Parasaur backend integration
  * 
  * After TICKET-113: The broken stdin/stdout child-process bridge has been removed.
  * The server now shells out to the real `gah` CLI per action via gahCli.ts.
@@ -65,12 +65,12 @@ export async function startRustBackendProxy(): Promise<void> {
   try {
     const success = await rustBackend.start();
     if (success) {
-      console.log('GAH backend integration ready (using gahCli.ts)');
+      console.log('Parasaur backend integration ready (using gahCli.ts)');
     } else {
-      console.warn('GAH backend integration failed');
+      console.warn('Parasaur backend integration failed');
     }
   } catch (error) {
-    console.warn('Failed to initialize GAH backend:', error);
+    console.warn('Failed to initialize Parasaur backend:', error);
     markReadinessCheck('rustBackend', true, 'Running in limited mode');
   }
 }

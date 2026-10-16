@@ -58,7 +58,7 @@ Revocation retains the original scope and consumption in inspection. An external
 
 ## Automatic pause and notification
 
-GAH pauses one work item before backend launch when its credential scope has no active grant.
+Parasaur pauses one work item before backend launch when its credential scope has no active grant.
 
 The notification includes the project, work link, credential label, bounds, expiry, reason, and exact grant and deny commands.
 

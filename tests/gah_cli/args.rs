@@ -38,14 +38,31 @@ fn native_mistral_refresh_arguments_match_the_real_cli_parser() {
     assert_eq!(store_path.as_deref(), Some(store));
 }
 
-/// The top-level help text advertises the tool's identity unchanged.
+/// The top-level help text names the product and the `gah` alias (#1364).
 #[test]
 fn help_works() {
     super::bin()
         .arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("git agent harness"));
+        .stdout(predicate::str::contains("Parasaur"))
+        .stdout(predicate::str::contains("`gah` is the same program"))
+        .stdout(predicate::str::contains("Usage: gah"));
+}
+
+/// The installed `parasaur` command is a link to `gah`; usage follows the
+/// name it was invoked by (#1364).
+#[cfg(unix)]
+#[test]
+fn parasaur_link_runs_the_same_cli_under_its_own_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let parasaur = dir.path().join("parasaur");
+    std::os::unix::fs::symlink(assert_cmd::cargo::cargo_bin!("gah"), &parasaur).unwrap();
+    assert_cmd::Command::new(&parasaur)
+        .args(["dispatch", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Usage: parasaur dispatch"));
 }
 
 /// The top-level version flag resolves and advertises the built version.

@@ -222,7 +222,7 @@ export function Navbar({ currentPage, sideView, onPageChange, activityUnreadCoun
   return (
     <>
       <header className="mobile-app-header z-30 flex shrink-0 items-center gap-2 border-b border-subtle bg-card px-4 lg:min-h-0 lg:gap-4 lg:px-3">
-        <h1 className="sr-only">Git Agent Harness</h1>
+        <h1 className="sr-only">Parasaur</h1>
         <ProjectSwitcher onImport={onImportProject} onCreate={onCreateProject} />
         <nav className="hidden min-w-0 shrink items-stretch gap-0.5 overflow-x-auto lg:flex" aria-label="Primary">
           {items.map((item) => {
@@ -281,7 +281,7 @@ export function Navbar({ currentPage, sideView, onPageChange, activityUnreadCoun
       >
         <div className="flex items-center justify-between px-2 py-3 mb-2">
           <div>
-            <h1 className="text-sm font-semibold text-primary">Git Agent Harness</h1>
+            <h1 className="text-sm font-semibold text-primary">Parasaur</h1>
             <p className="text-[10px] text-muted font-mono" data-testid="frontend-build">{FRONTEND_BUILD}</p>
           </div>
           <button

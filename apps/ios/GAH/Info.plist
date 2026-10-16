@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>GAH</string>
+	<string>Parasaur</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -37,9 +37,9 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Scan a GAH pairing code to connect this phone to your central server.</string>
+	<string>Scan a Parasaur pairing code to connect this phone to your central server.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Connect to your GAH central server on your local network.</string>
+	<string>Connect to your Parasaur central server on your local network.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>

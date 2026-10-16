@@ -394,7 +394,7 @@ pub fn requirements(selection: &Selection, host: &dyn Host) -> Vec<Requirement> 
     list.push(Requirement {
         id: "agent",
         label: agent.label().into(),
-        why: "The coding agent GAH runs for you.",
+        why: "The coding agent Parasaur runs for you.",
         feature: Feature::Core,
         optional: false,
         status: agent_status,
@@ -476,7 +476,7 @@ pub fn requirements(selection: &Selection, host: &dyn Host) -> Vec<Requirement> 
     list.push(Requirement {
         id: "provider_login",
         label: format!("{cli} login"),
-        why: "Lets GAH read issues and push branches as you.",
+        why: "Lets Parasaur read issues and push branches as you.",
         feature: Feature::Core,
         optional: false,
         status: if provider_installed {
@@ -517,7 +517,7 @@ pub fn requirements(selection: &Selection, host: &dyn Host) -> Vec<Requirement> 
             } else {
                 "systemd".into()
             },
-            why: "Keeps the GAH server running and restarts it after a reboot.",
+            why: "Keeps the Parasaur server running and restarts it after a reboot.",
             feature,
             optional: false,
             status: match os {
@@ -527,7 +527,8 @@ pub fn requirements(selection: &Selection, host: &dyn Host) -> Vec<Requirement> 
                         found: probe.stdout.lines().next().map(str::to_string),
                     },
                     _ => Status::Unsupported {
-                        reason: "This Linux machine has no systemd; GAH's service needs it.".into(),
+                        reason: "This Linux machine has no systemd; Parasaur's service needs it."
+                            .into(),
                     },
                 },
                 Os::Other => Status::Unsupported {
@@ -614,7 +615,7 @@ fn user_lingering(host: &dyn Host, feature: Feature) -> Requirement {
                         .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
             })
             // Same charset units::render accepts for the service user.
-            .ok_or("id -un named no account GAH can run its units as.")
+            .ok_or("id -un named no account Parasaur can run its units as.")
     } else {
         Err("Lingering needs systemd running.")
     };

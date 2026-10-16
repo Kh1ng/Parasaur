@@ -17,6 +17,7 @@ pub mod capabilities;
 pub mod commands;
 
 pub fn run() -> Result<()> {
+    crate::update::heal_parasaur_alias();
     let cli = Cli::parse();
     match cli.command {
         Commands::Memory(args) => commands::memory::run(args)?,

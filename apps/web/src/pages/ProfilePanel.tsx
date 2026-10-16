@@ -65,7 +65,7 @@ export function ProfilePanel() {
     <div className="space-y-6">
       <PageHeader
         title="Profile"
-        description="The repository GAH works in, and how it dispatches work there"
+        description="The repository Parasaur works in, and how it dispatches work there"
         onRefresh={refreshAll}
         refreshing={profiles.loading || profileConfig.loading}
         lastUpdated={lastUpdated}
@@ -80,7 +80,7 @@ export function ProfilePanel() {
           ) : profiles.error ? (
             <p className="text-xs text-critical">Failed to load profiles: {profiles.error}</p>
           ) : !selected ? (
-            <p className="text-xs text-muted">{configuredProfiles.length === 0 ? 'No profiles found in the GAH config.' : 'No project selected.'}</p>
+            <p className="text-xs text-muted">{configuredProfiles.length === 0 ? 'No profiles found in the Parasaur config.' : 'No project selected.'}</p>
           ) : (
             <p className="text-sm text-primary">{selected.display_name} <span className="text-xs text-muted">({selected.name})</span></p>
           )}

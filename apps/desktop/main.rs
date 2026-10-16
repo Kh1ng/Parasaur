@@ -159,8 +159,9 @@ fn save_presence(
     let mut settings = read_settings();
     settings.presence = presence.recoverable();
     write_settings(&settings)?;
-    apply_presence(&app, settings.presence)
-        .map_err(|e| format!("Preferences saved, but could not apply them. Restart GAH: {e}"))?;
+    apply_presence(&app, settings.presence).map_err(|e| {
+        format!("Preferences saved, but could not apply them. Restart Parasaur: {e}")
+    })?;
     Ok(settings.presence)
 }
 
@@ -478,7 +479,8 @@ fn installed_gah() -> Result<PathBuf, String> {
         .map(|home| home.join(".cargo/bin/gah"))
         .filter(|path| path.is_file())
         .ok_or_else(|| {
-            "GAH is not installed. Run scripts/install-macos.sh from a clean checkout first.".into()
+            "Parasaur is not installed. Run scripts/install-macos.sh from a clean checkout first."
+                .into()
         })
 }
 
@@ -486,7 +488,7 @@ fn installed_gah() -> Result<PathBuf, String> {
 fn macos_service(settings: &DesktopSettings, action: &str, role: &str) -> Result<(), String> {
     let script = PathBuf::from(&settings.repository_path).join("scripts/macos-launchd.sh");
     if !script.is_file() {
-        return Err("The saved GAH checkout is unavailable. Run scripts/install-macos.sh from the checkout again.".into());
+        return Err("The saved Parasaur checkout is unavailable. Run scripts/install-macos.sh from the checkout again.".into());
     }
     let profile = first_profile().unwrap_or_default();
     let status = command("bash")
@@ -534,7 +536,7 @@ fn launchd_running(role: &str) -> bool {
 fn set_tray_status(app: &tauri::AppHandle, role: &str, running: bool) {
     if let Some(tray) = app.tray_by_id("gah-tray") {
         let state = if running { "running" } else { "stopped" };
-        let _ = tray.set_tooltip(Some(format!("GAH — {role} {state}")));
+        let _ = tray.set_tooltip(Some(format!("Parasaur — {role} {state}")));
     }
 }
 
@@ -573,7 +575,8 @@ async fn set_node_role(
     let mut settings = read_settings();
     if settings.repository_path.is_empty() {
         return Err(
-            "Run scripts/install-macos.sh from a clean GAH checkout before changing roles.".into(),
+            "Run scripts/install-macos.sh from a clean Parasaur checkout before changing roles."
+                .into(),
         );
     }
     if role == "worker" && first_profile().is_none() {
@@ -595,7 +598,9 @@ async fn set_node_role(
         .status()
         .map_err(|error| format!("Cannot update the node role: {error}"))?;
     if !configured.success() {
-        return Err(format!("GAH rejected the node role change ({configured})."));
+        return Err(format!(
+            "Parasaur rejected the node role change ({configured})."
+        ));
     }
     let updated = command(gah.to_string_lossy().as_ref())
         .args([
@@ -947,7 +952,7 @@ fn main() {
                 "dashboard",
                 tauri::WebviewUrl::App("index.html".into()),
             )
-            .title("GAH")
+            .title("Parasaur")
             .inner_size(1400.0, 900.0)
             .min_inner_size(900.0, 600.0)
             // An inert UI marker; remote pages still have no IPC permissions.
@@ -1010,7 +1015,7 @@ fn main() {
             let connection = MenuItem::with_id(app, "connection", "Settings", true, None::<&str>)?;
             let dashboard =
                 MenuItem::with_id(app, "dashboard", "Open Dashboard", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit GAH", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit Parasaur", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&connection, &dashboard, &quit])?;
 
             // Issue #1416: check the signed release feed at launch and every
@@ -1034,7 +1039,7 @@ fn main() {
             TrayIconBuilder::with_id("gah-tray")
                 .icon(app.default_window_icon().unwrap().clone())
                 .icon_as_template(true)
-                .tooltip("GAH")
+                .tooltip("Parasaur")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_tray_icon_event(|tray, event| {
@@ -1059,7 +1064,7 @@ fn main() {
                 let native_menu = Menu::default(app.handle())?;
                 native_menu.append(&tauri::menu::Submenu::with_items(
                     app,
-                    "GAH Controls",
+                    "Parasaur Controls",
                     true,
                     &[&connection, &dashboard],
                 )?)?;
@@ -1091,7 +1096,7 @@ fn main() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("error building GAH desktop")
+        .expect("error building Parasaur desktop")
         .run(|_app, _event| {
             #[cfg(all(not(windows), not(target_os = "macos")))]
             if let tauri::RunEvent::Exit = _event {

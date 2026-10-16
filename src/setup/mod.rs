@@ -211,7 +211,7 @@ impl wizard::Effects for SystemEffects {
         crate::notify_channels::send_activity(
             &cfg,
             "Test notification",
-            "GAH notifications reach you here.",
+            "Parasaur notifications reach you here.",
             None,
         )
         .1

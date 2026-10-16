@@ -3,7 +3,7 @@
 # opt in explicitly:
 #   systemctl --user enable --now gah-watchdog.timer
 [Unit]
-Description=Run the GAH loop health check every ten minutes (alert-only)
+Description=Run the Parasaur loop health check every ten minutes (alert-only)
 
 [Timer]
 OnBootSec=2min

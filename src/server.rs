@@ -1,5 +1,5 @@
 /**
- * Rust WebSocket server for Git Agent Harness
+ * Rust WebSocket server for Parasaur
  * This provides a native WebSocket server that the TypeScript server can use
  * or can be used standalone
  */

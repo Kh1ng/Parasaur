@@ -1600,7 +1600,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
                     ? 'Preview is unavailable for a chat running on another node.'
                     : preview
                       ? `Preview live: dev server on :${preview.devPort} → ${preview.url}`
-                      : 'Open the preview panel — set the dev-server port, or let GAH auto-detect it from tool output'}
+                      : 'Open the preview panel — set the dev-server port, or let Parasaur auto-detect it from tool output'}
                 >
                   <MonitorPlay size={14} aria-hidden="true" />
                   Preview{preview ? ` :${preview.devPort}` : ''}
@@ -1846,7 +1846,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
               <MonitorPlay size={24} className="opacity-50" aria-hidden="true" />
               <p className="text-xs leading-relaxed">
                 No preview yet. Ask the agent to start a dev server in this session
-                (e.g. <span className="font-mono">npm run dev</span>) — GAH auto-detects
+                (e.g. <span className="font-mono">npm run dev</span>) — Parasaur auto-detects
                 the port from the tool output. Or set it manually:
               </p>
               <form

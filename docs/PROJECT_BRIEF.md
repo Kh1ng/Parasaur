@@ -1,6 +1,6 @@
-# Git Agent Harness project brief
+# Parasaur project brief
 
-GAH is a Rust control plane for dispatching repository work to multiple AI
+Parasaur is a Rust control plane for dispatching repository work to multiple AI
 backends, recording execution telemetry, and presenting that state in a web
 dashboard. Prefer correctness, observability, and safe failure over throughput.
 
@@ -23,7 +23,7 @@ dashboard. Prefer correctness, observability, and safe failure over throughput.
 ## Working rules
 
 - Work in the assigned worktree and branch only. Do not push or create pull
-  requests; GAH owns those lifecycle steps.
+  requests; Parasaur owns those lifecycle steps.
 - Make the smallest coherent change that satisfies the assigned ticket. Do not
   absorb unrelated cleanup or other backlog items.
 - Preserve unknown telemetry as unknown; never turn unavailable usage, cost,

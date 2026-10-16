@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deterministic first install for a GAH central or worker host on macOS.
+# Deterministic first install for a Parasaur central or worker host on macOS.
 #
 # macOS has no systemd, so this is a genuinely separate script from
 # scripts/install-linux.sh, not that script with the systemd calls patched
@@ -27,10 +27,10 @@ cd "$repo_root"
 # Confirm the entire installer before persisting role, credentials, or gateway
 # settings. The update below reuses this approval rather than prompting again.
 if [ -z "${GAH_INSTALL_CONFIRMED:-}" ]; then
-  echo "Install GAH for role '$role' from $repo_root; configure node settings, credentials, and role services."
+  echo "Install Parasaur for role '$role' from $repo_root; configure node settings, credentials, and role services."
   echo "Gateway mode: ${GAH_GATEWAY_MODE:-none}; agent assets: ${GAH_INSTALL_AGENT:-none}."
-  echo '  - Persist node role and optional central URL in GAH configuration; write worker coordinator credentials to ~/.config/gah/gah-loop.env when supplied.'
-  echo '  - Install only gah into $CARGO_HOME/bin (default ~/.cargo/bin); build dependencies and outputs in the checkout.'
+  echo '  - Persist node role and optional central URL in Parasaur configuration; write worker coordinator credentials to ~/.config/gah/gah-loop.env when supplied.'
+  echo '  - Install only gah (and its parasaur alias) into $CARGO_HOME/bin (default ~/.cargo/bin); build dependencies and outputs in the checkout.'
   echo '  - Install npm dependencies and build the role server; install the desktop app under ~/Applications and role LaunchAgents under ~/Library/LaunchAgents (replace old role agents).'
   if [ "$role" = central ]; then
     echo '  - Build MCP and web UI in the checkout; start the central server LaunchAgent.'
@@ -168,7 +168,7 @@ fi
 
 gateway_env_file="$HOME/.config/gah/gah-loop.env"
 
-echo "GAH installed. Update with: gah update --pull --repo $repo_root --role $role"
+echo "Parasaur installed; run it as parasaur (gah still works). Update with: gah update --pull --repo $repo_root --role $role"
 if [ "$role" = worker ] && [ -f "$gateway_env_file" ]; then
   echo "Worker credentials are in $gateway_env_file; launchd loads them when the desktop starts the worker."
 fi

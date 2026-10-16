@@ -13,7 +13,7 @@
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now gah-quota-refresh.timer
 [Unit]
-Description=Refresh GAH account-level quota every 15 minutes (issue #761)
+Description=Refresh Parasaur account-level quota every 15 minutes (issue #761)
 
 [Timer]
 OnBootSec=5min

@@ -725,7 +725,7 @@ fn a_clionly_machine_installs_with_locked() {
     let (command, _env) = &effects.commands[0];
     assert_eq!(
         command,
-        "cargo metadata --locked --format-version 1 >/dev/null && cargo install --path . --bin gah --force --locked"
+        "cargo metadata --locked --format-version 1 >/dev/null && cargo install --path . --bin gah --force --locked && ln -sf gah \"${CARGO_HOME:-$HOME/.cargo}/bin/parasaur\""
     );
 }
 

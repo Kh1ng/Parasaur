@@ -1,8 +1,8 @@
 use super::HostRole;
 use super::{copy_opencode_agent_configs, install_quota_refresh_unit_template};
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// `npm ci` arguments shared by the source build path and the release
 /// path's dependency-drift reinstall (issue #1416): the release bundle
@@ -17,6 +17,49 @@ pub(super) const NPM_CI_ARGS: &[&str] = &[
     "--no-fund",
 ];
 
+/// Put the `parasaur` command next to an installed `gah` (#1364). Both names
+/// run the same program; `gah` stays the installed binary so services,
+/// overrides and release assets keep their paths. A relative symlink on Unix
+/// follows every later replacement of `gah`; Windows gets a copy, refreshed
+/// on each install. The swap goes through a temporary name, so an existing
+/// `parasaur` is replaced atomically.
+pub(super) fn install_parasaur_alias(gah: &Path) -> Result<PathBuf> {
+    let alias = gah.with_file_name(format!("parasaur{}", env::consts::EXE_SUFFIX));
+    let staged = gah.with_file_name(format!("parasaur{}.new", env::consts::EXE_SUFFIX));
+    let _ = std::fs::remove_file(&staged);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        gah.file_name().context("gah path has no file name")?,
+        &staged,
+    )
+    .with_context(|| format!("linking {}", staged.display()))?;
+    #[cfg(not(unix))]
+    std::fs::copy(gah, &staged).with_context(|| format!("copying {}", staged.display()))?;
+    std::fs::rename(&staged, &alias)
+        .with_context(|| format!("installing the parasaur command at {}", alias.display()))?;
+    Ok(alias)
+}
+
+/// An installed `gah` adds a missing `parasaur` next to itself on any run
+/// (#1364). A release upgrade from an older `gah` runs that older updater,
+/// which knows nothing about the alias, so the new binary heals its first run.
+/// Only the managed install path is touched, and failures are ignored.
+pub fn heal_parasaur_alias() {
+    if let (Ok(installed), Ok(exe)) = (super::installed_binary_path(), env::current_exe()) {
+        heal_parasaur_alias_for(&installed, &exe);
+    }
+}
+
+fn heal_parasaur_alias_for(installed: &Path, exe: &Path) {
+    let alias = installed.with_file_name(format!("parasaur{}", env::consts::EXE_SUFFIX));
+    let canonical = |path: &Path| std::fs::canonicalize(path).ok();
+    if alias.symlink_metadata().is_err()
+        && canonical(exe).is_some_and(|exe| canonical(installed) == Some(exe))
+    {
+        let _ = install_parasaur_alias(installed);
+    }
+}
+
 /// Enumerate installation effects before confirmation, shared with setup.
 pub fn installation_plan(role: HostRole, agents: &[String]) -> Result<Vec<String>> {
     for agent in agents {
@@ -25,7 +68,7 @@ pub fn installation_plan(role: HostRole, agents: &[String]) -> Result<Vec<String
         }
     }
     let mut plan = vec![
-        "Install only gah into $CARGO_HOME/bin (default ~/.cargo/bin); build dependencies and outputs in the checkout".into(),
+        "Install only gah (and its parasaur alias) into $CARGO_HOME/bin (default ~/.cargo/bin); build dependencies and outputs in the checkout".into(),
         "Install gah-loop@.service and gah-watchdog.service/timer in the user systemd directory; enable user lingering via loginctl/sudo".into(),
     ];
     if matches!(role, HostRole::Central | HostRole::Standalone) {
@@ -129,9 +172,25 @@ pub(super) fn confirm(plan: &[String], args: &super::UpdateArgs, repo: &Path) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{agents_to_refresh, install_selected_agent_assets};
+    use super::{agents_to_refresh, install_parasaur_alias, install_selected_agent_assets};
     use std::path::Path;
     use tempfile::TempDir;
+
+    #[cfg(unix)]
+    #[test]
+    fn parasaur_alias_follows_gah_and_replaces_a_stale_alias() {
+        let bin = TempDir::new().unwrap();
+        let gah = bin.path().join("gah");
+        std::fs::write(&gah, "new gah").unwrap();
+        std::fs::write(bin.path().join("parasaur"), "stale copy").unwrap();
+        let alias = install_parasaur_alias(&gah).unwrap();
+        assert_eq!(alias, bin.path().join("parasaur"));
+        assert_eq!(std::fs::read_link(&alias).unwrap(), Path::new("gah"));
+        // Idempotent: a second install over the existing link succeeds.
+        install_parasaur_alias(&gah).unwrap();
+        assert_eq!(std::fs::read_to_string(&alias).unwrap(), "new gah");
+        assert!(!bin.path().join("parasaur.new").exists());
+    }
 
     #[test]
     fn explicit_agents_do_not_refresh_unselected_existing_integrations() {
@@ -167,6 +226,30 @@ mod tests {
         assert_eq!(
             agents_to_refresh(config.path(), &[]),
             vec!["opencode".to_string(), "codex".to_string()]
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod heal_alias_tests {
+    use super::heal_parasaur_alias_for;
+
+    #[test]
+    fn installed_gah_adds_a_missing_parasaur_only_for_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let gah = dir.path().join("gah");
+        let other = dir.path().join("other");
+        std::fs::write(&gah, "").unwrap();
+        std::fs::write(&other, "").unwrap();
+        let alias = dir.path().join("parasaur");
+
+        heal_parasaur_alias_for(&gah, &other);
+        assert!(alias.symlink_metadata().is_err());
+
+        heal_parasaur_alias_for(&gah, &gah);
+        assert_eq!(
+            std::fs::read_link(&alias).unwrap(),
+            std::path::Path::new("gah")
         );
     }
 }

@@ -98,7 +98,7 @@ export function channelDelivery(baseUrl: string, gahBinary: () => string = findG
 export async function sendTestNotification(gahBinary: () => string = findGahBinary): Promise<DeliveryReceipt | null> {
   const [receipt] = await sendThroughChannel(gahBinary(), [
     '--title', 'Test notification',
-    '--message', 'Sent from GAH Settings. Notifications reach you here.'
+    '--message', 'Sent from Parasaur Settings. Notifications reach you here.'
   ], 'the test notification');
   return receipt ?? null;
 }

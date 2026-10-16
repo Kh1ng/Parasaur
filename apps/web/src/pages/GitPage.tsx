@@ -162,7 +162,7 @@ export function GitPage() {
       {tab === 'worktrees' && worktrees && (
         <div className="space-y-4">
           <p className="text-xs text-muted">
-            Each agent job and chat works in its own copy of the repository. GAH removes the worktrees it created once they are clean and their pull request is merged or closed; worktrees you added yourself stay.
+            Each agent job and chat works in its own copy of the repository. Parasaur removes the worktrees it created once they are clean and their pull request is merged or closed; worktrees you added yourself stay.
           </p>
           {worktrees.length === 0 ? (
             <EmptyState icon={FolderGit2} title="No worktrees" description="No agent job or chat has a worktree right now." />

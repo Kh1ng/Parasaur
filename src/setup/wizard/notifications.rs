@@ -69,7 +69,7 @@ impl Setup<'_> {
             _ => {}
         }
         self.prompter.say("");
-        self.prompter.say("Notifications (optional). GAH can message you on Telegram or Discord when work fails, a review is ready, or a node goes offline. Change this any time in Settings → Notifications.");
+        self.prompter.say("Notifications (optional). Parasaur can message you on Telegram or Discord when work fails, a review is ready, or a node goes offline. Change this any time in Settings → Notifications.");
         let default = if current.enabled {
             CHANNELS
                 .iter()

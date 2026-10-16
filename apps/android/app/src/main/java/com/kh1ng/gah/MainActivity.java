@@ -44,7 +44,7 @@ public final class MainActivity extends Activity {
         bar.setGravity(Gravity.CENTER_VERTICAL);
         bar.setPadding(dp(16), dp(8), dp(8), dp(8));
         TextView title = new TextView(this);
-        title.setText("GAH");
+        title.setText("Parasaur");
         title.setTextSize(20);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         bar.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));

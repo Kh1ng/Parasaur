@@ -1,9 +1,13 @@
 # Getting started
 
-GAH runs coding agents (Claude Code, Codex, opencode) against your GitHub or
+Parasaur runs coding agents (Claude Code, Codex, opencode) against your GitHub or
 GitLab repositories. You decide what a machine is for, and setup installs only
 what that choice needs. A command-line-only machine never gets a server; a
 worker never gets the dashboard; shared memory is off unless you turn it on.
+
+The CLI is `parasaur`. `gah` is the same program and stays a compatible
+alias, so commands, scripts, and services that use `gah` keep working. The
+repository is still named `git-agent-harness`.
 
 ## Install
 
@@ -22,10 +26,11 @@ curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
 ```
 
 The script needs git and curl. It asks before installing Rust, clones the
-repository to `~/git-agent-harness`, builds `gah` (a few minutes the first
-time), and hands the terminal to `gah setup`.
+repository to `~/git-agent-harness`, builds the CLI (a few minutes the first
+time), and hands the terminal to `gah setup`. Setup installs `parasaur`
+next to `gah`.
 
-`gah setup` then:
+`parasaur setup` then:
 
 1. Asks what this machine is for: the central node with the dashboard, a
    worker for a central node you already run, or the command line only.
@@ -36,11 +41,11 @@ time), and hands the terminal to `gah setup`.
    runs. Nothing is installed without a yes.
 4. Stops before building if anything required is still missing, and prints
    the exact command for each item.
-5. Builds GAH and installs its service (systemd on Linux, launchd on macOS),
+5. Builds Parasaur and installs its service (systemd on Linux, launchd on macOS),
    adds the project, and prints what was set up, what was skipped, and how
    to add it later.
 
-Run `gah setup` again at any time. It checks everything and only does what is
+Run `parasaur setup` again at any time. It checks everything and only does what is
 missing, so it also resumes a setup that stopped.
 
 ### Build from source
@@ -66,9 +71,9 @@ which ones you need.
 
 ### The desktop app (macOS)
 
-The GAH app from the releases page opens on **Set up this computer**: the
-same checklist `gah setup --check` prints. **Install GAH in Terminal** (or
-**Finish setup in Terminal** once GAH is installed) runs the paste line or
+The Parasaur app from the releases page opens on **Set up this computer**: the
+same checklist `gah setup --check` prints. **Install Parasaur in Terminal** (or
+**Finish setup in Terminal** once Parasaur is installed) runs the paste line or
 `gah setup` in Terminal, where it can ask questions and request your
 password. **Check again** refreshes the list afterwards. With a GitHub
 login in `gh`, the app's paste line also works while the repository is
@@ -94,7 +99,7 @@ See [Tauri's signing instructions](https://v2.tauri.app/distribute/sign/macos/) 
 Install the desktop app from the releases page. In **Set up this computer**, select the terminal setup button.
 The app opens a PowerShell console and offers to enable WSL2 and install Ubuntu.
 Approve the Windows elevation prompt. If requested, restart Windows and sign in. The setup console reopens automatically.
-Create your Linux user when prompted, then type `exit`. GAH setup continues inside WSL as that user.
+Create your Linux user when prompted, then type `exit`. Parasaur setup continues inside WSL as that user.
 If setup fails, select the terminal setup button again. Existing WSL1 distributions require conversion to WSL2 before setup.
 
 For a worker connected to another central node, use the [Windows tester guide](WINDOWS_TESTER_GUIDE.md).
@@ -111,18 +116,18 @@ code, so it cannot fall out of date.
 | git | Everything | Checks out your repositories and the work branches agents create. |
 | Rust toolchain (cargo) | Everything | Builds gah itself, and rebuilds it on every `gah update`. |
 | Node.js 22 or newer | Everything | Installs your agent CLI through npm, and runs the dashboard server and memory gateway. |
-| Your coding agent (Claude Code, Codex, or opencode) | Everything | The coding agent GAH runs for you. |
+| Your coding agent (Claude Code, Codex, or opencode) | Everything | The coding agent Parasaur runs for you. |
 | Your coding agent's login | Everything | The agent needs its own account to do any work. |
 | `gh` (GitHub) or `glab` (GitLab) | Everything | Reads issues and opens pull requests on your repositories. |
-| `gh` or `glab` login | Everything | Lets GAH read issues and push branches as you. |
+| `gh` or `glab` login | Everything | Lets Parasaur read issues and push branches as you. |
 | curl | Dashboard, Worker | The installer uses it to check that services came up. |
-| systemd (Linux) or launchd (macOS) | Dashboard, Worker | Keeps the GAH server running and restarts it after a reboot. |
+| systemd (Linux) or launchd (macOS) | Dashboard, Worker | Keeps the Parasaur server running and restarts it after a reboot. |
 | user lingering | Dashboard, Worker (recommended) | Keeps the user's systemd manager and timers running after they log out. |
 | Tailscale | Dashboard, Worker (recommended) | Reach the dashboard from your phone and other machines over HTTPS, privately. |
 | openssl | Shared memory | Generates the memory gateway's access key. |
 <!-- requirements:end -->
 
-For the standalone desktop app, open **Settings > This computer > Repository tools**. Select GitHub or GitLab. If its CLI package is missing, open the official installation guide, install the package, and select **Check installation**. GitHub uses [GitHub CLI](https://cli.github.com/); GitLab uses [GitLab CLI](https://gitlab.com/gitlab-org/cli#installation). Sign-in starts only after the CLI is available. Standalone runs the local workflow without Tailscale or another GAH node.
+For the standalone desktop app, open **Settings > This computer > Repository tools**. Select GitHub or GitLab. If its CLI package is missing, open the official installation guide, install the package, and select **Check installation**. GitHub uses [GitHub CLI](https://cli.github.com/); GitLab uses [GitLab CLI](https://gitlab.com/gitlab-org/cli#installation). Sign-in starts only after the CLI is available. Standalone runs the local workflow without Tailscale or another Parasaur node.
 
 ### Shared memory
 

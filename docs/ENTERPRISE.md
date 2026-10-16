@@ -1,6 +1,6 @@
 # Optional enterprise integration
 
-The public GAH core runs without the private enterprise repository. Use a normal clone and the existing build commands for local operation.
+The public Parasaur core runs without the private enterprise repository. Use a normal clone and the existing build commands for local operation.
 
 The optional `enterprise/` submodule references [Kh1ng/git-agent-harness-enterprise](https://github.com/Kh1ng/git-agent-harness-enterprise). Authorized developers can fetch it with:
 

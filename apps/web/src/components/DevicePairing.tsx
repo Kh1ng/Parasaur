@@ -131,7 +131,7 @@ export function DevicePairing({ requestOwnerAccess }: { requestOwnerAccess: () =
           <p className="break-all text-secondary">Server ID: {offer.server.id}</p>
           <p className="text-secondary">{offer.access}</p>
           <QRCodeSVG value={url} size={192} marginSize={4} title="Scan to pair with this central server" />
-          <p className="text-secondary">In the GAH iPhone app, open Settings → Connection &amp; pairing → Scan pairing QR code.</p>
+          <p className="text-secondary">In the Parasaur iPhone app, open Settings → Connection &amp; pairing → Scan pairing QR code.</p>
           <p className="text-secondary">To pair a browser, open the pairing link there. The iPhone Camera app opens Safari; pairing there signs in Safari only.</p>
           <p className="text-secondary">Expires {new Date(offer.expires_at).toLocaleTimeString()}.</p>
           <label className="block space-y-1">Pairing link<input className="input w-full" readOnly value={url} onFocus={event => event.target.select()} /></label>

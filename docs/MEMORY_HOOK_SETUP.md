@@ -34,13 +34,13 @@ The URL is stored in `~/.config/gah/memory-hooks.json`. `TDAI_GATEWAY_URL` overr
 
 Keep credentials out of the command line. Hooks, the Rust CLI, and the server read `TDAI_GATEWAY_API_KEY` from the process environment first, then from `~/.config/gah/tdai-gateway.env`. The file supports bare, single-quoted, and installer-escaped double-quoted values. Setup requires a key when you pass `--gateway-url` and writes it to this file with mode `0600`. It preserves other entries, including the gateway's LLM key. Existing installations with this file retain their default gateway URL, `http://127.0.0.1:8420`.
 
-When you pass `--gateway-url`, `gah setup memory-hooks` makes one authenticated `POST /recall` check after installation. An HTTP 401 fails the check and names the key file to repair. Setup never reads agent transcripts. A runtime gateway failure logs a diagnostic and skips memory for that event. Failed captures increment a private local counter shown in GAH's gateway health. Requests time out after eight seconds; errors do not fail the agent session.
+When you pass `--gateway-url`, `gah setup memory-hooks` makes one authenticated `POST /recall` check after installation. An HTTP 401 fails the check and names the key file to repair. Setup never reads agent transcripts. A runtime gateway failure logs a diagnostic and skips memory for that event. Failed captures increment a private local counter shown in Parasaur's gateway health. Requests time out after eight seconds; errors do not fail the agent session.
 
 ## Repeat, recover, and verify
 
-Re-running the same command does not duplicate GAH hooks or create backups for unchanged files. Before changing an existing file, setup saves a private sibling backup named `<filename>.gah-backup-*` and prints its path. Invalid selected configurations fail before any configuration is replaced. A write failure rolls back files written by that invocation, provided another process has not changed them.
+Re-running the same command does not duplicate Parasaur hooks or create backups for unchanged files. Before changing an existing file, setup saves a private sibling backup named `<filename>.gah-backup-*` and prints its path. Invalid selected configurations fail before any configuration is replaced. A write failure rolls back files written by that invocation, provided another process has not changed them.
 
-To undo setup, close the affected agent tools and restore the printed backups. On a fresh installation, remove only the GAH hook entries and the installed script. Do not delete a configuration file that now contains other settings. Setup refuses to replace symlinked files; update the managed source of a symlink instead.
+To undo setup, close the affected agent tools and restore the printed backups. On a fresh installation, remove only the Parasaur hook entries and the installed script. Do not delete a configuration file that now contains other settings. Setup refuses to replace symlinked files; update the managed source of a symlink instead.
 
 For an isolated installation check, use a temporary directory:
 

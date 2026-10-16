@@ -29,7 +29,7 @@
 #   mkdir -p ~/.config/gah && printf 'GITHUB_TOKEN=...\n' > ~/.config/gah/gah-loop.env
 #   chmod 600 ~/.config/gah/gah-loop.env
 [Unit]
-Description=GAH recurring controller (%i)
+Description=Parasaur recurring controller (%i)
 After=network-online.target
 Wants=network-online.target
 

@@ -13,7 +13,7 @@
 # account and enables gah-prune.timer. This is a user unit, so it runs as
 # that account without User=/Group=.
 [Unit]
-Description=GAH prune — remove stale worktrees and sessions for all profiles
+Description=Parasaur prune — remove stale worktrees and sessions for all profiles
 After=network-online.target
 Wants=network-online.target
 

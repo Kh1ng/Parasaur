@@ -316,7 +316,7 @@ export async function createChatSession(profile: string, backend?: string, model
     // A worker older than this protocol ignores `worktree` and branches a
     // worktree from its current HEAD, which would not hold the PR's code.
     if (workspace?.worktree === false && session.worktreePath !== null) {
-      throw new Error(`${route.nodeName ?? 'The worker'} runs an older GAH that cannot open pull request chats. Update it with \`gah update --role worker\`, then archive the chat it created.`);
+      throw new Error(`${route.nodeName ?? 'The worker'} runs an older Parasaur that cannot open pull request chats. Update it with \`gah update --role worker\`, then archive the chat it created.`);
     }
     return storeSession(rememberWorkspace({ ...session, profile }, route), chatSessionStoreOptions);
   }

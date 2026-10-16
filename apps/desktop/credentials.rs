@@ -54,7 +54,7 @@ struct ConfiguredInstance {
 }
 
 const FAILURE: &str =
-    "Provider connection could not be updated. Check the fields and update GAH on this computer.";
+    "Provider connection could not be updated. Check the fields and update Parasaur on this computer.";
 
 #[tauri::command]
 pub async fn credential_list(window: tauri::WebviewWindow) -> Result<Vec<CredentialInfo>, String> {

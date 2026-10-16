@@ -14,7 +14,7 @@
 # `gah setup`, which asks what this machine is for, checks and offers
 # everything else, installs the service, and adds a first project.
 #
-# The commands GAH's own Settings page generates pass their choices as
+# The commands Parasaur's own Settings page generates pass their choices as
 # environment variables on the `bash` side of the pipe; they become
 # `gah setup` flags below, so setup asks only what they left open:
 #   GAH_NODE_ROLE=central|standalone|worker   GAH_CENTRAL_URL=<url>
@@ -33,7 +33,7 @@ os="$(uname -s)"
 case "$os" in
   Linux|Darwin) ;;
   *)
-    echo "ERROR: this installer supports Linux and macOS. On Windows, use the GAH installer from the releases page." >&2
+    echo "ERROR: this installer supports Linux and macOS. On Windows, use the Parasaur Windows installer from the releases page." >&2
     exit 1
     ;;
 esac
@@ -68,7 +68,7 @@ if ! command -v cargo >/dev/null 2>&1; then
   [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 fi
 if ! command -v cargo >/dev/null 2>&1; then
-  echo "GAH is built from source with Rust, which is not installed."
+  echo "Parasaur is built from source with Rust, which is not installed."
   if ! ask "Install Rust for your user with rustup (no administrator password)?"; then
     echo "Install Rust from https://rustup.rs, then run this installer again." >&2
     exit 1

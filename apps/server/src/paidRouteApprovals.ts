@@ -14,7 +14,7 @@ export function paidRouteApprovalsRouter(mutation: ReturnType<typeof mutationSaf
   router.get('/', async (req, res) => {
     if (Object.keys(req.query).some(key => key !== 'profile') || !text(req.query.profile, 128)) return res.status(400).json({ error: 'invalid_profile', message: 'Choose a configured profile.' });
     try { return res.json(await read(req.query.profile)); }
-    catch { return res.status(502).json({ error: 'approvals_unavailable', message: 'Cannot load paid-route approvals. Check that this node has an up-to-date GAH CLI.' }); }
+    catch { return res.status(502).json({ error: 'approvals_unavailable', message: 'Cannot load paid-route approvals. Check that this node has an up-to-date Parasaur CLI.' }); }
   });
   for (const action of ['grant', 'revoke'] as const) {
     router.post(`/${action}`, mutation(`route_approval.${action}`), async (req, res) => {

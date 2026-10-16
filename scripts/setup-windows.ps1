@@ -57,7 +57,7 @@ function Assert-GahWslReady([string]$Name, [string]$Address) {
 function Enable-GahWslSystemd([string]$Name) {
     & wsl.exe --distribution $Name --exec systemctl --user show-environment *> $null
     if ($LASTEXITCODE -eq 0) { return }
-    Write-Host "GAH needs systemd. Enabling it requires your Linux sudo password and restarts $Name."
+    Write-Host "Parasaur needs systemd. Enabling it requires your Linux sudo password and restarts $Name."
     if ((Read-Host 'Stop this distribution and enable systemd? [y/N]') -notmatch '^[yY]$') { throw 'Systemd preparation cancelled.' }
     $enable = @'
 sudo sh -c '
@@ -99,7 +99,7 @@ function Invoke-GahWindowsSetup([string]$Name, [string]$Command, [string]$Addres
     }
     if ($Name -cnotmatch '^[a-zA-Z0-9][a-zA-Z0-9._-]*$' -or -not $Command) { throw 'Invalid or missing desktop setup request.' }
     if ($Name -notin @(Get-GahWslDistributions)) {
-        Write-Host "GAH needs WSL2 and $Name. Windows may request a restart."
+        Write-Host "Parasaur needs WSL2 and $Name. Windows may request a restart."
         if (-not $Continue -and (Read-Host 'Enable WSL and continue setup? [y/N]') -notmatch '^[yY]$') { return }
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
         [IO.File]::WriteAllText($pending, (@{ distribution = $Name; command = $Command; central_url = $Address } | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
@@ -111,14 +111,14 @@ function Invoke-GahWindowsSetup([string]$Name, [string]$Command, [string]$Addres
             # different UAC administrator would register it to the wrong user.
             $enabled = Start-Process -FilePath 'wsl.exe' -ArgumentList @('--install', '--no-distribution', '--no-launch') -Verb RunAs -Wait -PassThru
             if ($enabled.ExitCode -notin @(0, 3010)) { throw "WSL preparation failed (exit $($enabled.ExitCode)). Select setup again to retry." }
-            Write-Host 'Restart Windows, then sign in. GAH setup will reopen automatically.'
+            Write-Host 'Restart Windows, then sign in. Parasaur setup will reopen automatically.'
             return
         }
         & wsl.exe --set-default-version 2
         Assert-WslSuccess 'WSL2 default'
         & wsl.exe --install --distribution $Name --no-launch
         if ($LASTEXITCODE -eq 3010) {
-            Write-Host 'Restart Windows, then sign in. GAH setup will reopen automatically.'
+            Write-Host 'Restart Windows, then sign in. Parasaur setup will reopen automatically.'
             return
         }
         Assert-WslSuccess 'Distribution installation'
@@ -126,17 +126,17 @@ function Invoke-GahWindowsSetup([string]$Name, [string]$Command, [string]$Addres
         $initializeUser = $true
     }
     if ($initializeUser) {
-        Write-Host "Open $Name, create your Linux user when prompted, then type exit to continue GAH setup."
+        Write-Host "Open $Name, create your Linux user when prompted, then type exit to continue Parasaur setup."
         & wsl.exe --distribution $Name
         Assert-WslSuccess 'Linux user initialization'
     }
     Assert-GahWslReady $Name $Address
     Enable-GahWslSystemd $Name
     Invoke-GahWslScript $Name $Command
-    Assert-WslSuccess 'GAH setup'
+    Assert-WslSuccess 'Parasaur setup'
     Remove-Item -LiteralPath $pending -Force -ErrorAction SilentlyContinue
     Remove-ItemProperty -Path $runOnce -Name '!GAHSetup' -ErrorAction SilentlyContinue
-    Write-Host 'GAH setup finished. Return to the app and check setup again.'
+    Write-Host 'Parasaur setup finished. Return to the app and check setup again.'
 }
 
 try {

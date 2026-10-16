@@ -1,6 +1,6 @@
 # Android controller
 
-This app is a small native host for the shared GAH web control surface. It stores the central server address and WebView session on the device. It does not contain a worker, backend, or local control-plane server.
+This app is a small native host for the shared Parasaur web control surface. It stores the central server address and WebView session on the device. It does not contain a worker, backend, or local control-plane server.
 
 Build and test:
 
