@@ -23,7 +23,7 @@
 # delivery fails the run. The credential comes from ~/.config/gah/notify.env
 # or, as for gah-prune.service, the optional environment file below.
 [Unit]
-Description=GAH loop health check (alert-only, never starts a loop)
+Description=Parasaur loop health check (alert-only, never starts a loop)
 After=network-online.target
 Wants=network-online.target
 

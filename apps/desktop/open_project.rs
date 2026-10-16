@@ -107,7 +107,7 @@ fn parse_profiles(
     environment: Environment,
 ) -> Result<Vec<LocalProject>, String> {
     let profiles: Vec<Profile> = serde_json::from_slice(output)
-        .map_err(|_| "GAH returned an invalid local profile list.")?;
+        .map_err(|_| "Parasaur returned an invalid local profile list.")?;
     if profiles.len() > PROFILE_LIMIT {
         return Err("The local profile list is too large.".into());
     }
@@ -127,9 +127,9 @@ fn local_projects(settings: &DesktopSettings) -> Result<Vec<LocalProject>, Strin
     let output = command(gah.to_string_lossy().as_ref())
         .args(["profile", "list", "--json"])
         .output()
-        .map_err(|error| format!("Cannot read local GAH profiles: {error}"))?;
+        .map_err(|error| format!("Cannot read local Parasaur profiles: {error}"))?;
     if !output.status.success() {
-        return Err("GAH could not read local profiles.".into());
+        return Err("Parasaur could not read local profiles.".into());
     }
     parse_profiles(
         &output.stdout,
@@ -194,7 +194,7 @@ fn local_projects(settings: &DesktopSettings) -> Result<Vec<LocalProject>, Strin
         }
     }
     if projects.is_empty() {
-        return Err("No local GAH profiles are available on this computer.".into());
+        return Err("No local Parasaur profiles are available on this computer.".into());
     }
     Ok(projects)
 }

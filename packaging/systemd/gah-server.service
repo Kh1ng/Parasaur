@@ -28,7 +28,7 @@
 # Install: `gah update --role central` renders and installs this unit, then
 #   sudo systemctl enable --now gah-server.service
 [Unit]
-Description=Git Agent Harness API and WebSocket server
+Description=Parasaur API and WebSocket server
 After=network-online.target
 Wants=network-online.target
 

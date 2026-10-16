@@ -76,7 +76,7 @@ struct ServerAddress: Equatable {
         var errorDescription: String? {
             switch self {
             case .invalid: "Enter an HTTP or HTTPS server address without an embedded username or password."
-            case .invalidPairing: "Scan a GAH pairing QR code, or paste its complete pairing link in Settings."
+            case .invalidPairing: "Scan a Parasaur pairing QR code, or paste its complete pairing link in Settings."
             }
         }
     }

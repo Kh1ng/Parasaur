@@ -54,7 +54,7 @@ async function main() {
     throw error;
   }
 
-  logLifecycle('Starting Git Agent Harness server...');
+  logLifecycle('Starting Parasaur server...');
   // Previews must never point back at the control plane, whatever port it
   // ends up on; the proxy's own PORT parse is only a fallback.
   previewProxy.configure({ protectedPorts: [PORT] });
@@ -146,9 +146,9 @@ async function main() {
   // not cached at startup).
   const cliAvailable = await isGahCliAvailable();
   if (cliAvailable) {
-    console.log('GAH CLI is available - using real CLI integration');
+    console.log('Parasaur CLI is available - using real CLI integration');
   } else {
-    console.log('GAH CLI not found - running in limited mode');
+    console.log('Parasaur CLI not found - running in limited mode');
   }
   markReadinessCheck(
     'rustBackend',
@@ -213,7 +213,7 @@ async function main() {
   let stopQuotaRefresh: (() => Promise<void>) | undefined;
   // Start HTTP server
   server.listen(PORT, HOST, () => {
-    logLifecycle(`Git Agent Harness server listening on ${HOST}:${PORT}`);
+    logLifecycle(`Parasaur server listening on ${HOST}:${PORT}`);
     // Model prices: checked a few seconds after start when a day old, then daily.
     if (process.env.GAH_DISABLE_PRICE_REFRESH !== '1') startModelPriceRefresh(helperPriceExtractor('gah'), logLifecycle);
     console.log(`WebSocket server available on ws://${HOST}:${PORT}`);

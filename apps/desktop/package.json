@@ -21,7 +21,7 @@
     "typescript": "^5.0.0",
     "vite": "^6.4.3"
   },
-  "productName": "Git Agent Harness Desktop",
+  "productName": "Parasaur Desktop",
   "engines": {
     "node": ">=18.0.0"
   }

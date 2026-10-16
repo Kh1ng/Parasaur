@@ -446,7 +446,7 @@ function RegisterWorker({ profile }: { profile: string }) {
     } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
   }}>
     <h3 className="text-base font-semibold text-primary">Register an existing worker</h3>
-    <p className="text-sm text-secondary">Run this from the GAH checkout on macOS, Linux, or WSL with its node server running. Set COORDINATOR_TOKEN in that shell to the central access token. The worker identity must advertise an address reachable from central.</p>
+    <p className="text-sm text-secondary">Run this from the Parasaur checkout on macOS, Linux, or WSL with its node server running. Set COORDINATOR_TOKEN in that shell to the central access token. The worker identity must advertise an address reachable from central.</p>
     <label className="block text-sm text-secondary">Central address<input required type="url" className={fieldClass} value={central} onChange={(event) => setCentral(event.target.value)} /></label>
     <label className="block text-sm text-secondary">Worker’s local server address<input required type="url" className={fieldClass} value={self} onChange={(event) => setSelf(event.target.value)} /></label>
     <label className="block text-sm text-secondary">Profiles (comma-separated)<input required className={fieldClass} value={profiles} onChange={(event) => setProfiles(event.target.value)} /></label>

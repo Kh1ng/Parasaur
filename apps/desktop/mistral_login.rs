@@ -71,7 +71,7 @@ fn start(app: &tauri::AppHandle, target: &LoginTarget) -> Result<LoginStatus, St
         return Ok(status(
             "unavailable",
             false,
-            "Install GAH on this computer before connecting Mistral.",
+            "Install Parasaur on this computer before connecting Mistral.",
         ));
     }
     if !target.isolated()
@@ -95,7 +95,7 @@ fn start(app: &tauri::AppHandle, target: &LoginTarget) -> Result<LoginStatus, St
             &label,
             tauri::WebviewUrl::External(URL.parse().expect("fixed URL")),
         )
-        .title("Connect Mistral to GAH")
+        .title("Connect Mistral to Parasaur")
         .inner_size(1000.0, 760.0)
         .on_page_load(move |login, payload| {
             if payload.event() != tauri::webview::PageLoadEvent::Finished
@@ -132,7 +132,7 @@ fn start(app: &tauri::AppHandle, target: &LoginTarget) -> Result<LoginStatus, St
             .build()
             .map_err(|_| "Cannot create the Mistral sign-in window.")?;
     }
-    Ok(status("pending",true,"Sign in to Mistral in the new window. GAH checks the connection when the usage page opens."))
+    Ok(status("pending",true,"Sign in to Mistral in the new window. Parasaur checks the connection when the usage page opens."))
 }
 
 #[tauri::command]
@@ -179,7 +179,7 @@ fn finish(login: &tauri::WebviewWindow, target: &LoginTarget) -> LoginStatus {
         return status(
             "unavailable",
             false,
-            "Install GAH on this computer before connecting Mistral.",
+            "Install Parasaur on this computer before connecting Mistral.",
         );
     };
     if !login.url().is_ok_and(|url| authenticated_page(&url)) {
@@ -321,7 +321,7 @@ fn verify_and_save_for(gah: &Path, root: &Path, cookie: &str, target: &LoginTarg
             status(
                 "unavailable",
                 true,
-                "Mistral usage could not be verified. Check the connection again or update GAH.",
+                "Mistral usage could not be verified. Check the connection again or update Parasaur.",
             )
         };
     }
@@ -333,7 +333,7 @@ fn verify_and_save_for(gah: &Path, root: &Path, cookie: &str, target: &LoginTarg
         return status(
             "unavailable",
             true,
-            "Update GAH on this computer to finish connecting Mistral.",
+            "Update Parasaur on this computer to finish connecting Mistral.",
         );
     }
     if let Some(id) = &target.credential_id {
@@ -351,7 +351,7 @@ fn verify_and_save_for(gah: &Path, root: &Path, cookie: &str, target: &LoginTarg
             return status(
                 "unavailable",
                 true,
-                "The verified Mistral session could not be saved. Update GAH and try again.",
+                "The verified Mistral session could not be saved. Update Parasaur and try again.",
             );
         }
         let mut command = super::command(gah.to_string_lossy().as_ref());

@@ -1,7 +1,7 @@
 {
-  "name": "Git Agent Harness",
-  "short_name": "GAH",
-  "description": "Self-hosted control surface for the Git Agent Harness dispatch fleet.",
+  "name": "Parasaur",
+  "short_name": "Parasaur",
+  "description": "Parasaur: parallel automated routing of agents. Self-hosted control surface for your agent dispatch fleet.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

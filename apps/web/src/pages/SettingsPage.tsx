@@ -35,7 +35,7 @@ const SETTINGS_INDEX: { heading: string; section: SettingsSectionId | null; keyw
   { heading: 'Machine capacity', section: 'general', keywords: 'node capacity memory cpu cores ceiling reservation floor admission workers' },
   { heading: 'Telegram and Discord notifications', section: 'general', keywords: 'notifications alerts telegram discord channel' },
   { heading: 'Chat', section: 'general', keywords: 'manager chat backend model helper routing' },
-  { heading: 'Update GAH', section: 'general', keywords: 'version upgrade release' },
+  { heading: 'Update Parasaur', section: 'general', keywords: 'version upgrade release' },
   { heading: 'Agent backends', section: 'general', keywords: 'providers eligibility availability quota' },
   { heading: 'Central skill bank', section: 'skills', keywords: 'skills versions' },
   { heading: 'TDAI memory gateway', section: 'memory', keywords: 'memory recall context policy credentials' },
@@ -524,7 +524,7 @@ export function NotificationChannelSection({ config, reloadConfig, notificationA
     <section className="card-padded max-w-md" aria-labelledby={`${fieldId}-title`}>
       <h3 id={`${fieldId}-title`} className="text-sm font-semibold text-primary mb-1">Telegram and Discord notifications</h3>
       <p className="text-xs text-muted mb-3">
-        Optional. GAH can message you when work fails, a review is ready, or a node goes offline. Each delivery, and each failure, is recorded in notification history.
+        Optional. Parasaur can message you when work fails, a review is ready, or a node goes offline. Each delivery, and each failure, is recorded in notification history.
       </p>
 
       <label className="flex items-start gap-2 text-sm text-primary">
@@ -843,7 +843,7 @@ export function ManagerChatSettingsSection({ configuredProfiles }: { configuredP
         <option value="bypass">Skip prompts for ordinary actions in the chat's worktree</option>
       </select>
       <p id={`${permissionModeId}-help`} className="text-xs text-muted mb-4">
-        Applies to chats on this machine. Pushes, actions outside the chat's worktree, and anything GAH
+        Applies to chats on this machine. Pushes, actions outside the chat's worktree, and anything Parasaur
         cannot classify still ask. Each skipped prompt is recorded in the chat transcript. Owner only.
       </p>
 
@@ -1312,7 +1312,7 @@ export function AddNodeSection() {
         )}
       </>}
       {os === 'windows' ? <p className="text-xs text-muted mb-3">For remote access, save your token in Central access token above first. The generated command contains that token; use it only on a computer you trust.</p>
-        : <p className="text-xs text-muted mb-3">Run in Terminal. The command installs from GitHub and prompts privately for any required token. First installation compiles GAH and can take several minutes.</p>}
+        : <p className="text-xs text-muted mb-3">Run in Terminal. The command installs from GitHub and prompts privately for any required token. First installation compiles Parasaur and can take several minutes.</p>}
       {os === 'macos' && <p className="text-xs text-muted mb-3">macOS installs the worker CLI. Run its loop in Terminal; automatic startup and central server installation are not available yet.</p>}
       {os === 'windows' && role !== 'desktop' && <p className="text-xs text-muted mb-3">Run PowerShell as administrator. First-time WSL setup may require a restart and a Linux user login before you rerun the command. Worker networking currently requires trusted LAN/VPN transport enabled on the central server.</p>}
       <button type="button" onClick={reveal} disabled={busy} className="btn-secondary text-xs px-3 py-1.5 min-h-11 disabled:opacity-50">{busy ? 'Preparing…' : `Reveal ${osName} install command`}</button>
@@ -1515,7 +1515,7 @@ export function AdminUpdateSection() {
   return (
     <section className="card-padded max-w-2xl space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-primary">Update GAH</h3>
+        <h3 className="text-sm font-semibold text-primary">Update Parasaur</h3>
         <div className="flex items-center gap-2">
           <button onClick={() => void runUpdate('source')} disabled={running} className="btn-secondary text-xs px-3 py-1.5 disabled:opacity-50">
             Rebuild from source

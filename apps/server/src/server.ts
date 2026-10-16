@@ -724,9 +724,9 @@ export function createServer(
   app.get('/api/info', (req, res) => {
     const identity = getCoordinatorIdentity(undefined, coordinatorPort);
     res.json({
-      name: 'Git Agent Harness',
+      name: 'Parasaur',
       version: SERVER_VERSION,
-      description: 'A WebSocket server for managing Git Agent Harness sessions and providers',
+      description: 'Parasaur: parallel automated routing of agents. WebSocket server for managing sessions and providers',
       identity: {
         node_id: identity.node_id,
         display_name: identity.display_name,
@@ -910,7 +910,7 @@ export function createServer(
         return res.status(400).json({ error: 'invalid_login', message: 'Name the node, backend, and provider of the login.' });
       }
       const known = configDeps.authHealthMonitor?.rows().some((row) => row.node_id === nodeId && row.backend === backend && row.provider === provider && row.backend_instance == null);
-      if (!known) return res.status(404).json({ error: 'unknown_login', message: 'GAH has not seen this login on that node.' });
+      if (!known) return res.status(404).json({ error: 'unknown_login', message: 'Parasaur has not seen this login on that node.' });
       res.status(201).json(await broker.start(who, nodeId, { backend, provider }));
     }));
     app.get('/api/auth-health/repairs/:id', repairRoute(async (req, res, who) => {

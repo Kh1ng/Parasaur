@@ -589,7 +589,7 @@ printf '${reply}'
     };
     await assert.rejects(
       runWithReply('rm_rf죰{}'),
-      /requested tool "rm_rf", which GAH cannot execute .*Executable tools: read_file/
+      /requested tool "rm_rf", which Parasaur cannot execute .*Executable tools: read_file/
     );
     await assert.rejects(
       runWithReply('read_file죰{"file_path": }'),

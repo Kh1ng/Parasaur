@@ -9,7 +9,7 @@ test('native quota entry uses the existing local Settings bridge; browser offers
   await native.unmount();
   await page.evaluate(() => { delete window.__GAH_DESKTOP_MISTRAL_LOGIN__; });
   const browser = await mount(<MistralConnectionPanel />);
-  await expect(browser.getByText(/Open GAH’s desktop app/)).toBeVisible();
+  await expect(browser.getByText(/Open the Parasaur desktop app/)).toBeVisible();
   await expect(browser.getByRole('link')).toHaveCount(0);
   await expect(browser.getByRole('textbox')).toHaveCount(0);
 });
@@ -50,7 +50,7 @@ test('cancelled, missing CLI, and native errors remain actionable without report
   await expect(component.getByRole('status')).toHaveText('The Mistral sign-in window was closed.');
   await expect(component.getByRole('button', { name: 'Check connection' })).toBeHidden();
   await start.click();
-  await expect(component.getByText(/GAH CLI is unavailable on this computer/)).toBeVisible();
+  await expect(component.getByText(/Parasaur CLI is unavailable on this computer/)).toBeVisible();
   await expect(component.getByRole('button', { name: 'Check connection' })).toBeHidden();
   await start.click();
   await expect(component.getByRole('status')).toHaveText(/Could not connect Mistral/);

@@ -20,7 +20,7 @@
 # codex backend CLI may live in a rustup/nvm-managed bin dir that a systemd
 # unit's default PATH doesn't include. `gah update` renders @PATH@.
 [Unit]
-Description=GAH account-level quota refresh (issue #761)
+Description=Parasaur account-level quota refresh (issue #761)
 After=network-online.target
 Wants=network-online.target
 

@@ -83,7 +83,7 @@ test('QR/manual pairing confirms the server, persists an HttpOnly session, and r
     expect(link).not.toBe(expiredLink);
     expect(link).not.toContain('browser-owner-secret');
     await expect(owner.getByRole('img', { name: 'Scan to pair with this central server' })).toBeVisible();
-    await expect(owner.getByText('In the GAH iPhone app, open Settings → Connection & pairing → Scan pairing QR code.')).toBeVisible();
+    await expect(owner.getByText('In the Parasaur iPhone app, open Settings → Connection & pairing → Scan pairing QR code.')).toBeVisible();
     await expect(owner.getByText('To pair a browser, open the pairing link there. The iPhone Camera app opens Safari; pairing there signs in Safari only.')).toBeVisible();
     // The native scanner is available in Settings before pairing, without opening the manual form.
     await phone.goto(`${origin}/?page=settings`);

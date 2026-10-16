@@ -156,7 +156,7 @@ pub fn open_setup_terminal(window: tauri::WebviewWindow, standalone: Option<bool
 #[tauri::command]
 pub async fn set_factory_enabled(window: tauri::WebviewWindow, enabled: bool) -> Result<(), String> {
     local_only(&window)?;
-    let gah = installed_gah().ok_or("Install GAH before changing the factory module.")?;
+    let gah = installed_gah().ok_or("Install Parasaur before changing the factory module.")?;
     let output = shell(&format!("exec {gah} \"$@\""))
         .args(["config", "set", "--factory-enabled", if enabled { "true" } else { "false" }])
         .output().map_err(|error| format!("Cannot change factory module: {error}"))?;
@@ -171,7 +171,7 @@ pub async fn set_factory_enabled(window: tauri::WebviewWindow, enabled: bool) ->
 #[tauri::command]
 pub async fn set_notifications_enabled(window: tauri::WebviewWindow, enabled: bool) -> Result<(), String> {
     local_only(&window)?;
-    let gah = installed_gah().ok_or("Install GAH before changing notifications.")?;
+    let gah = installed_gah().ok_or("Install Parasaur before changing notifications.")?;
     if enabled {
         let line = format!("{gah} setup --notifications-only");
         return if open_terminal(&line) { Ok(()) } else { Err(format!("No terminal opened. Run this in a terminal: {line}")) };

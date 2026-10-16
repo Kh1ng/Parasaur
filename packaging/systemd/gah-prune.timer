@@ -8,7 +8,7 @@
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now gah-prune.timer
 [Unit]
-Description=Daily GAH prune of stale worktrees and sessions
+Description=Daily Parasaur prune of stale worktrees and sessions
 
 [Timer]
 OnBootSec=5min

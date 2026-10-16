@@ -152,8 +152,8 @@ async function refreshSetup(): Promise<boolean> {
       : 'Notifications off · nothing is sent and nothing asks for a token.';
   }
   if (!result.installed) {
-    state.textContent = 'GAH is not installed on this computer yet. Setup builds it, asks whether this computer is the central node, a worker, or command line only, and offers each missing tool before installing it.';
-    button.textContent = 'Install GAH in Terminal';
+    state.textContent = 'Parasaur is not installed on this computer yet. Setup builds it, asks whether this computer is the central node, a worker, or command line only, and offers each missing tool before installing it.';
+    button.textContent = 'Install Parasaur in Terminal';
   } else if (result.error || !result.report) {
     state.textContent = result.error ?? 'Setup could not check this computer.';
     button.textContent = 'Finish setup in Terminal';
@@ -271,7 +271,7 @@ document.querySelector('#presence')!.addEventListener('submit', (event) => {
       presence: { dock: dock.checked, launch_window: launchWindow.checked, tray: tray.checked },
     });
     showPresence(presence);
-    document.querySelector('#presence-status')!.textContent = 'Saved. Icon changes apply now; the launch preference applies next time you open GAH.';
+    document.querySelector('#presence-status')!.textContent = 'Saved. Icon changes apply now; the launch preference applies next time you open Parasaur.';
   });
 });
 dock.addEventListener('change', constrainPresence);
@@ -309,7 +309,7 @@ document.querySelector('#notifications-save')!.addEventListener('click', () => {
     notificationsLoaded = false;
     await refreshSetup();
     // Turning on finishes in Terminal (the credential is typed there, hidden).
-    if (enabled) document.querySelector('#notifications-state')!.textContent = 'Finish in Terminal: choose Telegram or Discord, paste the token, and GAH sends a test message. Select Check again when it is done.';
+    if (enabled) document.querySelector('#notifications-state')!.textContent = 'Finish in Terminal: choose Telegram or Discord, paste the token, and Parasaur sends a test message. Select Check again when it is done.';
   });
 });
 document.querySelector('#setup-terminal')!.addEventListener('click', () => {

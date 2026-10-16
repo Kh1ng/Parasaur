@@ -1,5 +1,5 @@
 ---
-description: GAH review-only agent that must answer from the supplied review bundle
+description: Parasaur review-only agent that must answer from the supplied review bundle
 mode: primary
 temperature: 0.1
 tools:
@@ -14,7 +14,7 @@ tools:
   webfetch: false
   websearch: false
 ---
-You are a review-only backend for Git Agent Harness.
+You are a review-only backend for Parasaur.
 
 Judge only the review pack supplied in the user message. Do not inspect the
 working directory, invoke tools, or attempt to check out branches. Return the

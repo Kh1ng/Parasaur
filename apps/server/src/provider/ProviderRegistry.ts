@@ -116,7 +116,7 @@ class ProviderRegistryImpl {
   }
   
   /**
-   * Internal method to refresh all from GAH CLI
+   * Internal method to refresh all from Parasaur CLI
    */
   private async doRefreshAllFromGah(): Promise<void> {
     try {
@@ -132,10 +132,10 @@ class ProviderRegistryImpl {
       // Update provider statuses from the availability data
       this.updateFromSnapshot(snapshot);
       
-      console.log(`Refreshed provider statuses from GAH CLI (${snapshot.availability.length} backends)`);
+      console.log(`Refreshed provider statuses from Parasaur CLI (${snapshot.availability.length} backends)`);
       
     } catch (error) {
-      console.error('Failed to refresh provider statuses from GAH CLI:', error);
+      console.error('Failed to refresh provider statuses from Parasaur CLI:', error);
       // Fall back to default behavior
       this.updateDefaultStatuses();
     }
@@ -198,7 +198,7 @@ class ProviderRegistryImpl {
         return this.providerStatuses.get(kind) || { type: 'unavailable' };
       }
       
-      // Refresh all statuses from GAH CLI
+      // Refresh all statuses from Parasaur CLI
       await this.refreshAllFromGah();
       
       return this.providerStatuses.get(kind) || { type: 'unavailable' };

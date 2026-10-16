@@ -523,7 +523,7 @@ interface HeadlessToolPlan {
  * already runs in. */
 function planHeadlessTool(displayName: string, name: string, args: Record<string, unknown>, cwd: string): HeadlessToolPlan {
   if (name !== 'read_file') {
-    throw new Error(`${displayName} requested tool "${name}", which GAH cannot execute on the backend's behalf. Executable tools: read_file.`);
+    throw new Error(`${displayName} requested tool "${name}", which Parasaur cannot execute on the backend's behalf. Executable tools: read_file.`);
   }
   const requested = args.file_path;
   if (typeof requested !== 'string' || requested.trim().length === 0) {
