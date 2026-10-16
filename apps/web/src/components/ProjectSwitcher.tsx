@@ -45,11 +45,11 @@ export function ProjectSwitcher({ onImport, onCreate }: { onImport: () => void; 
   };
 
   return (
-    <div className="relative shrink-0" ref={menu}>
+    <div className="relative min-w-0 shrink lg:shrink-0" ref={menu}>
       <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="menu"
-        className="flex max-w-[16rem] items-center gap-1.5 rounded-md px-2 py-1.5 text-sm hover:bg-overlay/5" title={selected?.repo ?? label}>
+        className="flex max-w-full items-center gap-1.5 lg:max-w-[16rem] rounded-md px-2 py-1.5 text-sm hover:bg-overlay/5" title={selected?.repo ?? label}>
         <FolderGit2 size={15} className="shrink-0 text-accent" aria-hidden="true" />
-        <span className="truncate"><span className="text-muted">Project: </span><span className="font-semibold text-primary">{label}</span></span>
+        <span className="truncate"><span className="hidden text-muted sm:inline">Project: </span><span className="font-semibold text-primary">{label}</span></span>
         <ChevronDown size={14} className="shrink-0 text-muted" aria-hidden="true" />
       </button>
       {open && (
