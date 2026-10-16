@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install a private CLIProxyAPI sidecar and bind it to GAH's OpenCode runner."""
+"""Install a private CLIProxyAPI sidecar and bind it to Parasaur's OpenCode runner."""
 import argparse
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -215,7 +215,7 @@ try:
     os.environ["OPENCODE_CONFIG"] = {str(config_path)!r}
     os.environ["OPENCODE_DISABLE_SHARE"] = "true"
 except Exception:
-    sys.exit("CLI router is unavailable. Check its connection and subscription accounts in GAH Quota.")
+    sys.exit("CLI router is unavailable. Check its connection and subscription accounts in Parasaur Quota.")
 os.execv({executable!r}, [{executable!r}, *sys.argv[1:]])
 ''', 0o700)
     return wrapper
@@ -226,7 +226,7 @@ def register_instance(path, profile, directory, wrapper):
     original = path.read_text()
     config = tomllib.loads(original)
     if profile not in config.get("profiles", {}):
-        raise ValueError("Choose an existing GAH profile.")
+        raise ValueError("Choose an existing Parasaur profile.")
     instance = config["profiles"][profile].get("routing", {}).get("backend_instances", {}).get("cli-router")
     if instance is not None:
         if instance.get("executable") != str(wrapper) or instance.get("runner_kind") != "opencode":
@@ -253,7 +253,7 @@ def install_service(directory, binary):
         # systemd's quoted words do not use shell quoting. Percent is a unit specifier.
         quote = lambda p: json.dumps(str(p).replace("%", "%%"))
         atomic_write(unit, f'''[Unit]
-Description=GAH CLI subscription router
+Description=Parasaur CLI subscription router
 After=network-online.target
 [Service]
 ExecStart={quote(binary)} -config {quote(directory / "router.yaml")}

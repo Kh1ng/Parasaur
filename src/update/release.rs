@@ -455,6 +455,8 @@ fn install_release_artifacts(
         binary.display(),
         manifest.version
     );
+    let alias = super::installation::install_parasaur_alias(&binary)?;
+    println!("Installed CLI alias: {}", alias.display());
     // Central and standalone serve MCP, like the source path (#1436).
     if matches!(role, HostRole::Central | HostRole::Standalone) {
         let mcp = install_binary(
@@ -524,7 +526,7 @@ pub fn run_release(args: ReleaseArgs) -> Result<()> {
             manifest.version, current
         ),
         Ordering::Greater => println!(
-            "Updating GAH from {current} to release {} ({} channel{})",
+            "Updating Parasaur from {current} to release {} ({} channel{})",
             manifest.version,
             manifest.channel,
             manifest
@@ -586,7 +588,7 @@ pub fn run_release(args: ReleaseArgs) -> Result<()> {
     }
 
     println!(
-        "GAH {} installed from the {} channel{}.{}",
+        "Parasaur {} installed from the {} channel{}.{}",
         manifest.version,
         manifest.channel,
         manifest
@@ -1022,6 +1024,7 @@ mod tests {
         assert!(staging.is_some());
         assert!(cargo_home.join("bin/gah").is_file());
         assert!(cargo_home.join("bin/gah-mcp-server").is_file());
+        assert!(cargo_home.join("bin/parasaur").exists());
         assert!(repo.join("apps/server/dist/bin.js").is_file());
         assert!(repo.join("apps/web/dist/index.html").is_file());
     }

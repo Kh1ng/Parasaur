@@ -473,7 +473,7 @@ pub fn format_wake_instruction(event: &NotifyEvent, autonomy: WakeAutonomy) -> O
             model,
             duration_seconds,
         } => format!(
-            "Backend stalled for work_id={work_id} on {} after {duration_seconds:.0}s; GAH is rerouting.",
+            "Backend stalled for work_id={work_id} on {} after {duration_seconds:.0}s; Parasaur is rerouting.",
             route_label(backend, model)
         ),
         // Already resolved -- nothing for a woken agent to act on.

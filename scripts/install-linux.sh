@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deterministic first install for a GAH CLI/control-plane host on Linux.
+# Deterministic first install for a Parasaur CLI/control-plane host on Linux.
 # Uses systemd throughout (gah-loop@.service, gah-server.service, the TDAI
 # gateway unit) -- there is no macOS equivalent of any of this. See
 # scripts/install-macos.sh for that host, and scripts/install.sh for the
@@ -25,10 +25,10 @@ esac
 # Confirm the entire installer before persisting role, credentials, or gateway
 # settings. The update below reuses this approval rather than prompting again.
 if [ -z "${GAH_INSTALL_CONFIRMED:-}" ]; then
-  echo "Install GAH for role '$role' from $repo_root; configure node settings, credentials, and role services."
+  echo "Install Parasaur for role '$role' from $repo_root; configure node settings, credentials, and role services."
   echo "Gateway mode: ${GAH_GATEWAY_MODE:-none}; agent assets: ${GAH_INSTALL_AGENT:-none}."
-  echo '  - Persist node role and optional central URL in GAH configuration; write worker coordinator credentials to ~/.config/gah/gah-loop.env when supplied.'
-  echo '  - Install only gah into $CARGO_HOME/bin (default ~/.cargo/bin); build dependencies and outputs in the checkout.'
+  echo '  - Persist node role and optional central URL in Parasaur configuration; write worker coordinator credentials to ~/.config/gah/gah-loop.env when supplied.'
+  echo '  - Install only gah (and its parasaur alias) into $CARGO_HOME/bin (default ~/.cargo/bin); build dependencies and outputs in the checkout.'
   echo '  - Install gah-loop@.service and gah-watchdog.service/timer in the user systemd directory; enable user lingering via loginctl/sudo.'
   if [ "$role" != worker ]; then
     echo '  - Build server/MCP; use sudo to write /etc/systemd/system/gah-server.service; install and enable user gah-prune.service/timer.'
@@ -392,7 +392,7 @@ if [ -n "${GAH_IMPORT_REPO:-}" ]; then
 fi
 
 if [ "$role" = "central" ] || [ "$role" = "standalone" ]; then
-  echo "GAH installed. Update with: gah update --pull --repo $repo_root --role $role --restart-server"
+  echo "Parasaur installed; run it as parasaur (gah still works). Update with: gah update --pull --repo $repo_root --role $role --restart-server"
 else
-  echo "GAH installed. Update with: gah update --pull --repo $repo_root --role worker"
+  echo "Parasaur installed; run it as parasaur (gah still works). Update with: gah update --pull --repo $repo_root --role worker"
 fi

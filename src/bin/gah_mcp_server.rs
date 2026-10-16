@@ -15,7 +15,7 @@ use git_agent_harness::mcp::McpConfig;
 #[command(
     name = "gah-mcp-server",
     version,
-    about = "MCP server for the GAH control plane"
+    about = "MCP server for the Parasaur control plane"
 )]
 struct Args {
     /// Serve MCP over streamable HTTP instead of stdio. Requires

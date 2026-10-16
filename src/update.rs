@@ -86,7 +86,10 @@ pub fn run(args: UpdateArgs) -> Result<()> {
         ensure_no_running_loop_before_server_restart()?;
     }
 
-    println!("Updating GAH CLI/control plane from {}", repo.display());
+    println!(
+        "Updating Parasaur CLI/control plane from {}",
+        repo.display()
+    );
     if args.pull && !resumed {
         run_command(&repo, "git", &["fetch", "origin", "--prune"])?;
         run_command(&repo, "git", &["pull", "--ff-only"])?;
@@ -122,6 +125,8 @@ pub fn run(args: UpdateArgs) -> Result<()> {
     }
     run_command(&repo, binary.to_string_lossy().as_ref(), &["--help"])?;
     println!("Installed CLI: {}", binary.display());
+    let alias = installation::install_parasaur_alias(&binary)?;
+    println!("Installed CLI alias: {}", alias.display());
     // Everything after this point (unit rendering, installers) is code that
     // the pull may have changed. Finish with the binary just installed, not
     // this older one: an old binary once installed an unrendered

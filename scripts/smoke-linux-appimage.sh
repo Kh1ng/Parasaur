@@ -40,7 +40,7 @@ onboarding() {
 import sys
 import pyatspi
 
-ACTIONS = {"Set up standalone", "Install GAH in Terminal", "Finish setup in Terminal"}
+ACTIONS = {"Set up standalone", "Install Parasaur in Terminal", "Finish setup in Terminal"}
 
 
 def text(node):
@@ -63,7 +63,7 @@ pid = int(sys.argv[1])
 app = next((a for a in pyatspi.Registry.getDesktop(0)
             if a is not None and a.get_process_id() == pid), None)
 nodes = list(walk(app)) if app is not None else []
-settings = any(n.name == "GAH — Settings" for n in nodes)
+settings = any(n.name == "Parasaur — Settings" for n in nodes)
 section = next((n for n in nodes if n.name == "Set up this computer" and n.childCount), None)
 inside = list(walk(section)) if section is not None else []
 status = next((text(n) for n in inside if n.getRoleName() == "status bar"), "")
@@ -76,7 +76,7 @@ sys.exit(0 if settings and checked and action else 1)
 PY
 }
 
-result="no GAH window yet"
+result="no Parasaur window yet"
 colors=0
 for _ in $(seq 90); do
   sleep 1
@@ -86,7 +86,7 @@ for _ in $(seq 90); do
     exit 1
   fi
   app=$(pgrep -P "$pid" -x gah-desktop | head -n 1) || true
-  window=$(xdotool search --onlyvisible --name '^GAH$' 2>/dev/null | head -n 1) || true
+  window=$(xdotool search --onlyvisible --name '^Parasaur$' 2>/dev/null | head -n 1) || true
   [ -n "$app" ] && [ -n "$window" ] || continue
   ok=0
   result=$(onboarding "$app" 2>/dev/null) && ok=1

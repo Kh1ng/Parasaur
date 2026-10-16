@@ -88,8 +88,8 @@ jobs:
             tag="release-$(date -u +%Y%m%d-%H%M)-cli"
           fi
           gh release create "$tag" "${{ matrix.artifact_name }}" "${{ matrix.mcp_artifact_name }}" \
-            --title "GAH CLI — $tag" \
-            --notes "GAH CLI and MCP server binaries for macOS (universal arm64+x86_64) and Linux (x86_64). Built from ${{ github.ref }}." \
+            --title "Parasaur CLI — $tag" \
+            --notes "Parasaur CLI and MCP server binaries for macOS (universal arm64+x86_64) and Linux (x86_64). The CLI installs as gah; gah update and the installers add the parasaur command next to it. Built from ${{ github.ref }}." \
             --repo "${{ github.repository }}" || \
           gh release upload "$tag" "${{ matrix.artifact_name }}" "${{ matrix.mcp_artifact_name }}" --clobber \
             --repo "${{ github.repository }}"

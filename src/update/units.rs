@@ -24,7 +24,7 @@ impl UnitValues {
         // SAFETY: geteuid has no preconditions and cannot fail.
         if unsafe { libc::geteuid() } == 0 {
             bail!(
-                "run gah update without sudo; GAH requests sudo only for system unit installation"
+                "run gah update without sudo; Parasaur requests sudo only for system unit installation"
             );
         }
         Ok(())

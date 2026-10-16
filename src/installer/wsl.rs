@@ -137,7 +137,7 @@ pub fn install(args: &Args, home: &Path) -> Result<()> {
     replace(&args.root.join("register.sh"), register.as_bytes(), 0o700)?;
 
     let unit = format!(
-        "[Unit]\nDescription=GAH headless WSL worker\nAfter=network-online.target\n\n[Service]\nExecStart=/bin/bash --login {}\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=Parasaur headless WSL worker\nAfter=network-online.target\n\n[Service]\nExecStart=/bin/bash --login {}\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
         systemd_quote(&start)
     );
     replace(

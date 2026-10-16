@@ -150,7 +150,7 @@ impl<'a> Setup<'a> {
         let say = |this: &mut Self, line: &str| this.prompter.say(line);
         say(
             &mut self,
-            "GAH setup. Nothing is installed without asking you first.",
+            "Parasaur setup. Nothing is installed without asking you first.",
         );
         say(&mut self, "");
 
@@ -331,7 +331,7 @@ impl<'a> Setup<'a> {
             None if self.options.yes => None,
             None => {
                 let answer = self.prompter.text(
-                    "Path to a repository checkout for GAH to work on (leave empty to add one later)",
+                    "Path to a repository checkout for Parasaur to work on (leave empty to add one later)",
                     None,
                 )?;
                 (!answer.trim().is_empty()).then(|| expand_home(answer.trim()))
@@ -720,7 +720,7 @@ impl<'a> Setup<'a> {
                 &requirement.status
             {
                 self.prompter.say(&format!(
-                    "! {}: {reason} The login may still be valid, so setup continues. If GAH later reports a login error, run `{}` again to re-check it.",
+                    "! {}: {reason} The login may still be valid, so setup continues. If Parasaur later reports a login error, run `{}` again to re-check it.",
                     requirement.label,
                     self.again()
                 ));
@@ -762,12 +762,12 @@ impl<'a> Setup<'a> {
             Role::CliOnly => (
                 // `cargo install --locked` re-resolves a stale Cargo.lock;
                 // `cargo metadata --locked` fails on one, so it runs first.
-                "cargo metadata --locked --format-version 1 >/dev/null && cargo install --path . --bin gah --force --locked".to_string(),
-                "Build and install the gah command",
+                "cargo metadata --locked --format-version 1 >/dev/null && cargo install --path . --bin gah --force --locked && ln -sf gah \"${CARGO_HOME:-$HOME/.cargo}/bin/parasaur\"".to_string(),
+                "Build and install the parasaur command (gah stays as an alias)",
             ),
             Role::Central | Role::Standalone | Role::Worker => (
                 "scripts/install.sh".to_string(),
-                "Build GAH and install its background service",
+                "Build Parasaur and install its background service",
             ),
         };
         if selection.role != Role::CliOnly {
@@ -781,7 +781,7 @@ impl<'a> Setup<'a> {
             {
                 self.prompter.say(&format!("  - {change}"));
             }
-            self.prompter.say("  - Persist the selected node role and optional central URL in GAH configuration; write worker coordinator credentials to ~/.config/gah/gah-loop.env when supplied");
+            self.prompter.say("  - Persist the selected node role and optional central URL in Parasaur configuration; write worker coordinator credentials to ~/.config/gah/gah-loop.env when supplied");
             if self.host.os() == Os::Linux {
                 if matches!(selection.role, Role::Central | Role::Standalone) {
                     self.prompter.say("  - Use sudo to create /etc/gah/server.env if absent; enable and start gah-server.service");

@@ -17,7 +17,12 @@ pub use routing_candidates::RoutingCandidateCommands;
 pub use update::UpdateArgs;
 
 #[derive(Parser)]
-#[command(name = "gah", version, about = "git agent harness")]
+#[command(
+    name = "parasaur",
+    version,
+    about = "Parasaur: parallel automated routing of agents",
+    long_about = "Parasaur: parallel automated routing of agents.\n\n`gah` is the same program and stays a fully working alias of `parasaur`."
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -112,7 +117,7 @@ pub enum Commands {
     /// that can start now. Without --epic, lists the issues that can be mapped.
     Map(crate::planning::Args),
     /// Guided install: choose what this machine is for, provide its
-    /// prerequisites, install GAH, and add a first project. Safe to re-run.
+    /// prerequisites, install Parasaur, and add a first project. Safe to re-run.
     #[command(args_conflicts_with_subcommands = true)]
     Setup {
         #[command(subcommand)]
@@ -120,7 +125,7 @@ pub enum Commands {
         #[command(flatten)]
         args: crate::setup::Args,
     },
-    /// Inspect or set global GAH config defaults (cross-profile facts such as
+    /// Inspect or set global Parasaur config defaults (cross-profile facts such as
     /// `current_manager`). Per-profile settings live under `profile set`.
     Config {
         #[command(subcommand)]
@@ -193,7 +198,7 @@ pub enum Commands {
     },
     /// Update the installed CLI and control-plane server deterministically.
     Update(UpdateArgs),
-    /// Create or print a starter GAH config/profile
+    /// Create or print a starter Parasaur config/profile
     Init {
         #[arg(long)]
         profile: String,
@@ -222,7 +227,7 @@ pub enum Commands {
         #[arg(long, default_value_t = false)]
         print: bool,
     },
-    /// Delete old GAH-owned sessions and worktrees
+    /// Delete old Parasaur-owned sessions and worktrees
     Prune {
         #[arg(long, default_value_t = false)]
         dry_run: bool,
@@ -344,7 +349,7 @@ pub enum Commands {
         #[arg(long, name = "config")]
         config_path: Option<String>,
     },
-    /// Classify open GAH-created merge requests / pull requests
+    /// Classify open Parasaur-created merge requests / pull requests
     Sync {
         #[arg(long)]
         profile: String,
@@ -495,7 +500,7 @@ pub enum Commands {
         command: CredentialCommands,
     },
     /// Query and reconcile per-backend-instance skill inventory (issue
-    /// #966, #863 gap 2): what GAH intends bound vs. what a backend
+    /// #966, #863 gap 2): what Parasaur intends bound vs. what a backend
     /// self-reports having.
     Skills {
         #[command(subcommand)]
