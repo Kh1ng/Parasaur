@@ -1,9 +1,10 @@
 use super::super::attempts::{
     apply_execution_identity_env, apply_route_to_ledger, decide_route, mark_shutdown_cancelled,
     record_external_approval_consumption_for_last_attempt, record_route_attempt,
-    reserve_backend_attempt, review_preflight_for_identity, review_usage,
-    route_after_backend_unavailable, route_identity, route_label,
+    review_preflight_for_identity, review_usage, route_after_backend_unavailable, route_identity,
+    route_label,
 };
+use super::super::issue_claim::IssueClaimSlot;
 use super::super::prompts::enforce_context_budget;
 use super::super::publish::{render_review_comment, review_labels};
 use super::super::review::context::{
@@ -210,6 +211,7 @@ pub(in crate::dispatch) fn review(
         .or_else(|| args.mr.as_deref().map(|mr| format!("mr:{mr}")));
     let repo = Path::new(&profile.local_path);
     let mut target = resolve_review_target(cfg, profile, args)?;
+    let mut pr_claim = IssueClaimSlot::for_review(profile, target.mr_id.as_deref())?;
     canonicalize_review_ledger_identity(
         ledger,
         &target.source_branch,
@@ -574,14 +576,8 @@ pub(in crate::dispatch) fn review(
             attempt_index += 1;
             let attempt_session = session_dir.join(format!("review-attempt-{attempt_index}"));
             fs::create_dir_all(&attempt_session)?;
-            let review_slot =
-                reserve_backend_attempt(profile, &route.identity, args.route_admission.as_ref())
-                    .map_err(|error| {
-                        super::super::contextualize_capacity_deferral(
-                            error,
-                            attempt_index.saturating_sub(1),
-                        )
-                    })?;
+            let attempt = (attempt_index - 1) as u32;
+            let review_slot = pr_claim.admit(profile, &route.identity, args, attempt, ledger)?;
             record_route_attempt(ledger, &route)?;
             let mut attempt_env_vars =
                 review_attempt_environment(profile, &route.identity, &env_vars)?;
@@ -898,6 +894,8 @@ pub(in crate::dispatch) fn review(
 
     match result.outcome {
         runner::ReviewProcessOutcome::Success => {
+            // A verdict reached after the claim lapsed is not this loop's.
+            pr_claim.ensure_held()?;
             let review_usage = ledger
                 .attempts
                 .last()
@@ -919,6 +917,7 @@ pub(in crate::dispatch) fn review(
                 }
                 Err(err) => {
                     return record_review_output_invalid(
+                        &pr_claim,
                         cfg,
                         profile,
                         args,
@@ -1058,6 +1057,7 @@ pub(in crate::dispatch) fn review(
                     verdict.verdict, verdict.confidence
                 );
             } else {
+                pr_claim.ensure_held()?;
                 provider::post_review_comment(profile, &target.source_branch, &mr_body, &labels)
                     .context("publishing review comment and labels")?;
             }
@@ -1245,6 +1245,7 @@ fn review_attempt_environment(
 
 #[allow(clippy::too_many_arguments)]
 fn record_review_output_invalid(
+    pr_claim: &IssueClaimSlot,
     cfg: &GahConfig,
     profile: &Profile,
     args: &DispatchArgs,
@@ -1358,6 +1359,7 @@ fn record_review_output_invalid(
             "GAH rejected this reviewer response as unsafe repair context: `{reason}`. No FixMr was dispatched. The next configured reviewer will be tried within the bounded review budget.\n\nSession: `{}`",
             session_dir.file_name().and_then(|name| name.to_str()).unwrap_or("unknown")
         );
+        pr_claim.ensure_held()?;
         provider::post_review_comment(
             profile,
             &target.source_branch,

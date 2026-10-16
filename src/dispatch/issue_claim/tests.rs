@@ -28,6 +28,16 @@ fn claim(id: u64, login: &str, minutes: i64) -> ClaimComment {
     }
 }
 
+/// Issue 7, the item most tests claim.
+fn issue_7() -> ClaimTarget {
+    ClaimTarget::Issue("7".into())
+}
+
+/// Pull request 12, the item of review and fix work.
+fn pull_request_12() -> ClaimTarget {
+    ClaimTarget::PullRequest("12".into())
+}
+
 fn won(expires_minutes: i64) -> ClaimOutcome {
     ClaimOutcome::Won {
         expires_at: at(expires_minutes),
@@ -129,9 +139,15 @@ fn stake_both_at_once(
     colton: &LoopBoard,
     policy: &IssueClaimPolicy,
 ) {
-    assert_eq!(stake(colton, policy, COLTON, "7", at(0)).unwrap(), None);
+    assert_eq!(
+        stake(colton, policy, COLTON, &issue_7(), at(0)).unwrap(),
+        None
+    );
     issue.borrow_mut().view.assignees.clear();
-    assert_eq!(stake(michael, policy, MICHAEL, "7", at(0)).unwrap(), None);
+    assert_eq!(
+        stake(michael, policy, MICHAEL, &issue_7(), at(0)).unwrap(),
+        None
+    );
     issue.borrow_mut().view.assignees.push(COLTON.into());
 }
 
@@ -249,11 +265,11 @@ fn two_loops_racing_for_one_issue_leave_exactly_one_holder() {
     stake_both_at_once(&issue, &michael, &colton, &policy);
 
     assert_eq!(
-        settle(&michael, &policy, MICHAEL, "7", at(1)).unwrap(),
+        settle(&michael, &policy, MICHAEL, &issue_7(), at(1)).unwrap(),
         ClaimOutcome::Lost(format!("yielded to {COLTON}"))
     );
     assert_eq!(
-        settle(&colton, &policy, COLTON, "7", at(1)).unwrap(),
+        settle(&colton, &policy, COLTON, &issue_7(), at(1)).unwrap(),
         won(60)
     );
     assert_eq!(assignees(&issue), [COLTON]);
@@ -268,11 +284,11 @@ fn the_priority_login_wins_the_race_whoever_commented_first() {
     stake_both_at_once(&issue, &michael, &colton, &policy);
 
     assert_eq!(
-        settle(&colton, &policy, COLTON, "7", at(1)).unwrap(),
+        settle(&colton, &policy, COLTON, &issue_7(), at(1)).unwrap(),
         ClaimOutcome::Lost(format!("yielded to {MICHAEL}"))
     );
     assert_eq!(
-        settle(&michael, &policy, MICHAEL, "7", at(1)).unwrap(),
+        settle(&michael, &policy, MICHAEL, &issue_7(), at(1)).unwrap(),
         won(60)
     );
     assert_eq!(assignees(&issue), [MICHAEL]);
@@ -283,10 +299,13 @@ fn a_held_issue_is_left_untouched() {
     let issue = Rc::new(RefCell::new(Issue::default()));
     let (michael, colton) = two_loops(&issue, 0);
     let policy = policy(&[MICHAEL]);
-    assert_eq!(stake(&colton, &policy, COLTON, "7", at(0)).unwrap(), None);
+    assert_eq!(
+        stake(&colton, &policy, COLTON, &issue_7(), at(0)).unwrap(),
+        None
+    );
 
     assert_eq!(
-        stake(&michael, &policy, MICHAEL, "7", at(5)).unwrap(),
+        stake(&michael, &policy, MICHAEL, &issue_7(), at(5)).unwrap(),
         Some(ClaimOutcome::Lost(format!("held by {COLTON}")))
     );
     assert_eq!(assignees(&issue), [COLTON]);
@@ -302,17 +321,17 @@ fn an_expired_claim_is_taken_over_by_removing_the_stale_assignee() {
     issue.borrow_mut().next_comment_id = 1;
 
     assert_eq!(
-        stake(&michael, &policy, MICHAEL, "7", at(61)).unwrap(),
+        stake(&michael, &policy, MICHAEL, &issue_7(), at(61)).unwrap(),
         None
     );
     assert_eq!(assignees(&issue), [MICHAEL]);
     assert_eq!(
-        settle(&michael, &policy, MICHAEL, "7", at(62)).unwrap(),
+        settle(&michael, &policy, MICHAEL, &issue_7(), at(62)).unwrap(),
         won(121)
     );
     // The previous holder now sees a live claim that is not its own.
     assert_eq!(
-        stake(&colton, &policy, COLTON, "7", at(62)).unwrap(),
+        stake(&colton, &policy, COLTON, &issue_7(), at(62)).unwrap(),
         Some(ClaimOutcome::Lost(format!("held by {MICHAEL}")))
     );
 }
@@ -326,7 +345,7 @@ fn an_open_pull_request_keeps_an_expired_claim() {
     }));
     let (michael, _) = two_loops(&issue, 600);
 
-    let outcome = stake(&michael, &policy(&[MICHAEL]), MICHAEL, "7", at(600)).unwrap();
+    let outcome = stake(&michael, &policy(&[MICHAEL]), MICHAEL, &issue_7(), at(600)).unwrap();
 
     assert!(
         matches!(outcome, Some(ClaimOutcome::Lost(reason)) if reason.contains("open pull request"))
@@ -345,7 +364,7 @@ fn a_live_claim_of_this_loop_is_reused_without_a_new_comment() {
     // The reused claim keeps its own expiry, a TTL after it was posted, not
     // a fresh TTL from now.
     assert_eq!(
-        stake(&michael, &policy(&[]), MICHAEL, "7", at(30)).unwrap(),
+        stake(&michael, &policy(&[]), MICHAEL, &issue_7(), at(30)).unwrap(),
         Some(won(60))
     );
     assert_eq!(issue.borrow().view.claims.len(), 1);
@@ -360,7 +379,10 @@ fn a_renewed_claim_outlives_its_ttl_and_lapses_a_ttl_after_its_last_renewal() {
     let policy = policy(&[]);
     let (_, colton) = two_loops(&issue, 40);
 
-    assert_eq!(renew(&colton, &policy, COLTON, "7", at(40)).unwrap(), None);
+    assert_eq!(
+        renew(&colton, &policy, COLTON, &issue_7(), at(40)).unwrap(),
+        None
+    );
 
     let seen = issue.borrow().view.clone();
     assert_eq!(
@@ -380,17 +402,20 @@ fn a_lease_taken_over_after_it_lapsed_is_reported_lost_and_not_renewed() {
     let issue = Rc::new(RefCell::new(Issue::default()));
     let policy = policy(&[]);
     let (michael, colton) = two_loops(&issue, 0);
-    assert_eq!(stake(&colton, &policy, COLTON, "7", at(0)).unwrap(), None);
+    assert_eq!(
+        stake(&colton, &policy, COLTON, &issue_7(), at(0)).unwrap(),
+        None
+    );
 
     // Colton's renewals stopped; Michael takes the lapsed claim over.
     let (michael_later, colton_later) = two_loops(&issue, 61);
     drop((michael, colton));
     assert_eq!(
-        stake(&michael_later, &policy, MICHAEL, "7", at(61)).unwrap(),
+        stake(&michael_later, &policy, MICHAEL, &issue_7(), at(61)).unwrap(),
         None
     );
 
-    let lost = renew(&colton_later, &policy, COLTON, "7", at(62)).unwrap();
+    let lost = renew(&colton_later, &policy, COLTON, &issue_7(), at(62)).unwrap();
 
     assert_eq!(lost, Some(format!("lease taken over by {MICHAEL}")));
     assert_eq!(assignees(&issue), [MICHAEL]);
@@ -401,7 +426,7 @@ fn a_lease_taken_over_after_it_lapsed_is_reported_lost_and_not_renewed() {
 #[test]
 fn a_lost_lease_stops_the_dispatch_with_a_claim_lost_error() {
     let lease = IssueLease {
-        issue: "7".into(),
+        target: issue_7(),
         state: Arc::new(Mutex::new(LeaseState {
             lost: Some(format!("lease taken over by {MICHAEL}")),
             deadline: Instant::now() + Duration::from_secs(3600),
@@ -426,7 +451,7 @@ fn a_claim_whose_comment_cannot_be_posted_leaves_no_assignee_behind() {
     }));
     let (michael, _) = two_loops(&issue, 0);
 
-    assert!(stake(&michael, &policy(&[]), MICHAEL, "7", at(0)).is_err());
+    assert!(stake(&michael, &policy(&[]), MICHAEL, &issue_7(), at(0)).is_err());
     assert!(assignees(&issue).is_empty());
 }
 
@@ -465,7 +490,7 @@ fn a_person_assigned_next_to_an_expired_claim_keeps_every_loop_out() {
     }));
     let (michael, _) = two_loops(&issue, 600);
 
-    let outcome = stake(&michael, &policy(&[MICHAEL]), MICHAEL, "7", at(600)).unwrap();
+    let outcome = stake(&michael, &policy(&[MICHAEL]), MICHAEL, &issue_7(), at(600)).unwrap();
 
     assert_eq!(outcome, Some(ClaimOutcome::Lost("held by a-person".into())));
     // Nothing is removed, not even the other loop's expired assignee.
@@ -481,7 +506,7 @@ fn a_person_assigned_while_a_loop_works_ends_its_lease_and_stays_assigned() {
     }));
     let (michael, _) = two_loops(&issue, 20);
 
-    let lost = renew(&michael, &policy(&[MICHAEL]), MICHAEL, "7", at(20)).unwrap();
+    let lost = renew(&michael, &policy(&[MICHAEL]), MICHAEL, &issue_7(), at(20)).unwrap();
 
     assert_eq!(lost, Some("lease taken over by a-person".into()));
     assert_eq!(assignees(&issue), [MICHAEL, "a-person"]);
@@ -499,7 +524,7 @@ fn an_old_claim_renewed_within_its_ttl_is_not_reclaimable() {
     let (michael, _) = two_loops(&issue, 200);
 
     // Posted 200 minutes ago, more than three TTLs, but renewed 30 minutes ago.
-    let outcome = stake(&michael, &policy(&[MICHAEL]), MICHAEL, "7", at(200)).unwrap();
+    let outcome = stake(&michael, &policy(&[MICHAEL]), MICHAEL, &issue_7(), at(200)).unwrap();
 
     assert_eq!(
         outcome,
@@ -510,31 +535,98 @@ fn an_old_claim_renewed_within_its_ttl_is_not_reclaimable() {
 
 #[test]
 fn a_contender_seen_only_after_the_verify_pause_wins_the_claim() {
-    let issue = Rc::new(RefCell::new(Issue::default()));
-    let (michael, colton) = two_loops(&issue, 0);
-    let policy = policy(&[COLTON]);
+    // Issues and pull requests share the protocol, pause included.
+    for target in [issue_7(), pull_request_12()] {
+        let issue = Rc::new(RefCell::new(Issue::default()));
+        let (michael, colton) = two_loops(&issue, 0);
+        let policy = policy(&[COLTON]);
 
-    // Colton read the issue before Michael's assignment landed, and his own
-    // claim lands while Michael waits out the pause.
-    let outcome = run_claim(&michael, &policy, MICHAEL, "7", at(0), || {
-        let seen_by_michael = std::mem::take(&mut issue.borrow_mut().view.assignees);
-        assert_eq!(stake(&colton, &policy, COLTON, "7", at(0)).unwrap(), None);
-        issue
-            .borrow_mut()
-            .view
-            .assignees
-            .splice(0..0, seen_by_michael);
-        at(1)
-    })
-    .unwrap();
+        // Colton read the item before Michael's assignment landed, and his
+        // own claim lands while Michael waits out the pause.
+        let outcome = run_claim(&michael, &policy, MICHAEL, &target, at(0), || {
+            let seen_by_michael = std::mem::take(&mut issue.borrow_mut().view.assignees);
+            assert_eq!(
+                stake(&colton, &policy, COLTON, &target, at(0)).unwrap(),
+                None
+            );
+            issue
+                .borrow_mut()
+                .view
+                .assignees
+                .splice(0..0, seen_by_michael);
+            at(1)
+        })
+        .unwrap();
 
-    // Deciding before the pause, Michael would have kept the issue too.
-    assert_eq!(outcome, ClaimOutcome::Lost(format!("yielded to {COLTON}")));
+        // Deciding before the pause, Michael would have kept the item too.
+        assert_eq!(
+            outcome,
+            ClaimOutcome::Lost(format!("yielded to {COLTON}")),
+            "{target}"
+        );
+        assert_eq!(
+            settle(&colton, &policy, COLTON, &target, at(1)).unwrap(),
+            won(60)
+        );
+        assert_eq!(assignees(&issue), [COLTON]);
+    }
+}
+
+#[test]
+fn an_expired_pull_request_claim_is_free_although_the_pull_request_is_open() {
+    let issue = Rc::new(RefCell::new(Issue {
+        view: view(&[COLTON], vec![claim(1, COLTON, 0)]),
+        next_comment_id: 1,
+        open_pull_request: true,
+        ..Default::default()
+    }));
+    let policy = policy(&[]);
+
+    // Within its TTL the claim holds the pull request like any other.
+    let (michael, _) = two_loops(&issue, 59);
     assert_eq!(
-        settle(&colton, &policy, COLTON, "7", at(1)).unwrap(),
-        won(60)
+        stake(&michael, &policy, MICHAEL, &pull_request_12(), at(59)).unwrap(),
+        Some(ClaimOutcome::Lost(format!("held by {COLTON}")))
     );
-    assert_eq!(assignees(&issue), [COLTON]);
+    // Lapsed, it holds nothing: the open pull request is the item itself,
+    // not work that carries the claim on (compare the issue rule in
+    // `an_open_pull_request_keeps_an_expired_claim`).
+    let (michael, _) = two_loops(&issue, 60);
+    assert_eq!(
+        stake(&michael, &policy, MICHAEL, &pull_request_12(), at(60)).unwrap(),
+        None
+    );
+    assert_eq!(assignees(&issue), [MICHAEL]);
+    assert_eq!(
+        settle(&michael, &policy, MICHAEL, &pull_request_12(), at(61)).unwrap(),
+        won(120)
+    );
+}
+
+#[test]
+fn a_person_assigned_to_a_pull_request_keeps_every_loop_out() {
+    let issue = Rc::new(RefCell::new(Issue {
+        view: view(&[COLTON, "a-person"], vec![claim(1, COLTON, 0)]),
+        next_comment_id: 1,
+        ..Default::default()
+    }));
+    let (michael, _) = two_loops(&issue, 600);
+
+    let outcome = stake(
+        &michael,
+        &policy(&[MICHAEL]),
+        MICHAEL,
+        &pull_request_12(),
+        at(600),
+    );
+
+    assert_eq!(
+        outcome.unwrap(),
+        Some(ClaimOutcome::Lost("held by a-person".into()))
+    );
+    // Nothing is removed or added, not even the other loop's expired claim.
+    assert_eq!(assignees(&issue), [COLTON, "a-person"]);
+    assert_eq!(issue.borrow().view.claims.len(), 1);
 }
 
 #[test]
@@ -557,7 +649,7 @@ fn a_renewal_confirmed_after_the_deadline_loses_the_lease_for_good() {
     let start = Instant::now();
     let deadline = start + Duration::from_millis(150);
     let lease = IssueLease {
-        issue: "7".into(),
+        target: issue_7(),
         state: Arc::new(Mutex::new(LeaseState {
             lost: None,
             deadline,
@@ -604,7 +696,7 @@ fn a_renewal_confirmed_before_the_deadline_extends_the_lease() {
 fn the_lease_expires_at_its_deadline_without_the_renewer() {
     // No renewer runs and nothing marked the lease lost: only the deadline.
     let lease = IssueLease {
-        issue: "7".into(),
+        target: issue_7(),
         state: Arc::new(Mutex::new(LeaseState {
             lost: None,
             deadline: Instant::now() + Duration::from_millis(50),
@@ -666,7 +758,7 @@ fn a_hung_renewal_cannot_keep_a_lease_past_its_confirmed_expiry() {
     let deadline = Instant::now() + Duration::from_secs(3);
     let lease = IssueLease::start(
         &prof,
-        "7",
+        &issue_7(),
         "me".into(),
         deadline,
         claim_ttl(&prof.publishing.issue_claim),
@@ -715,7 +807,7 @@ fn an_aging_claim_is_renewed_at_once_and_keeps_its_authority() {
     let deadline = Instant::now() + Duration::from_secs(3);
     let lease = IssueLease::start(
         &prof,
-        "7",
+        &issue_7(),
         "me".into(),
         deadline,
         claim_ttl(&prof.publishing.issue_claim),
@@ -871,11 +963,12 @@ fn a_dispatch_that_loses_its_claim_ends_as_a_skip_not_a_failure() {
     let tmp = tempfile::tempdir().unwrap();
     let bin_dir = tmp.path().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
-    // Issue 7 is assigned to someone else by hand: no claim comments exist.
+    // Issue 7 and pull request 12 are assigned to someone else by hand: no
+    // claim comments exist.
     let gh_path = bin_dir.join("gh");
     std::fs::write(
         &gh_path,
-        "#!/bin/sh\ncase \"$*\" in\n  'api user '*) echo me ;;\n  *'/comments'*) ;;\n  *'issues/7 '*) echo someone-else ;;\n  *) exit 2 ;;\nesac\n",
+        "#!/bin/sh\ncase \"$*\" in\n  'api user '*) echo me ;;\n  *'/comments'*) ;;\n  *'issues/7 '*|*'issues/12 '*) echo someone-else ;;\n  *) exit 2 ;;\nesac\n",
     )
     .unwrap();
     #[cfg(unix)]
@@ -886,18 +979,96 @@ fn a_dispatch_that_loses_its_claim_ends_as_a_skip_not_a_failure() {
     let _guard = PathGuard::set(&bin_dir);
     let mut prof = profile(tmp.path());
     prof.publishing.issue_claim = policy(&[]);
-    let mut ledger = ledger_entry(&prof);
 
-    let error = claim_or_lose(&prof, "7", &mut ledger).unwrap_err();
+    // GitHub answers for pull request 12 on the issue endpoints as well.
+    for (target, lost) in [
+        (issue_7(), "issue #7: held by someone-else"),
+        (pull_request_12(), "pull request #12: held by someone-else"),
+    ] {
+        let mut ledger = ledger_entry(&prof);
 
+        let error = claim_or_lose(&prof, &target, &mut ledger).unwrap_err();
+
+        assert_eq!(
+            issue_claim_lost(&error).map(ToString::to_string).as_deref(),
+            Some(lost)
+        );
+        assert!(crate::ledger::gates::launched_no_backend(&ledger));
+        assert!(!crate::dispatch::terminal::should_notify_dispatch_failure(
+            &error
+        ));
+    }
+}
+
+/// A `gh` that knows one pull request, 12, on branch `gah/fix-12`.
+fn install_pull_request_gh(bin_dir: &std::path::Path) {
+    let gh_path = bin_dir.join("gh");
+    std::fs::write(
+        &gh_path,
+        "#!/bin/sh
+case \"$*\" in
+  *'repos/owner/repo/pulls '*'head=owner:gah/fix-12'*) echo '[{\"number\":12}]' ;;
+  *) echo \"unexpected gh call: $*\" >&2; exit 2 ;;
+esac
+",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+#[test]
+fn review_and_fix_work_claims_its_pull_request_and_fails_closed_without_one() {
+    let _exec_guard = ExecGuard::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    install_pull_request_gh(&bin_dir);
+    let _guard = PathGuard::set(&bin_dir);
+    let mut prof = profile(tmp.path());
+    let claims = |slot: Result<IssueClaimSlot>| slot.unwrap().target;
+
+    // Local claims: nothing to claim, and no provider call to find it.
+    assert_eq!(claims(IssueClaimSlot::for_review(&prof, None)), None);
     assert_eq!(
-        issue_claim_lost(&error).map(ToString::to_string).as_deref(),
-        Some("issue #7: held by someone-else")
+        claims(IssueClaimSlot::for_improve(&prof, "gah/x", Some("gah/x"))),
+        None
     );
-    assert!(crate::ledger::gates::launched_no_backend(&ledger));
-    assert!(!crate::dispatch::terminal::should_notify_dispatch_failure(
-        &error
-    ));
+
+    prof.publishing.issue_claim = policy(&[]);
+    assert_eq!(
+        claims(IssueClaimSlot::for_review(&prof, Some("12"))),
+        Some(pull_request_12())
+    );
+    // A fix of an existing branch claims the branch's pull request, not the
+    // issue its target names.
+    assert_eq!(
+        claims(IssueClaimSlot::for_improve(&prof, "7", Some("gah/fix-12"))),
+        Some(pull_request_12())
+    );
+    assert_eq!(
+        claims(IssueClaimSlot::for_improve(&prof, "7", None)),
+        Some(issue_7())
+    );
+    // A pull request that cannot be found or named is not claimed by
+    // running unclaimed: the dispatch fails before any work.
+    assert!(IssueClaimSlot::for_review(&prof, None).is_err());
+    assert!(IssueClaimSlot::for_review(&prof, Some("https://github.com/o/r/pull/12")).is_err());
+    assert!(IssueClaimSlot::for_improve(&prof, "7", Some("gah/unknown")).is_err());
+}
+
+#[test]
+fn a_pull_request_claim_comment_does_not_promise_an_open_pull_request_hold() {
+    let policy = policy(&[]);
+    let issue = claim_comment(MICHAEL, &policy, &issue_7(), at(0), at(0));
+    let pull_request = claim_comment(MICHAEL, &policy, &pull_request_12(), at(0), at(0));
+
+    assert!(issue.contains("take this issue over, unless an open pull request references it"));
+    assert!(pull_request.contains("another loop may take this pull request over."));
+    assert!(pull_request.starts_with(CLAIM_MARKER));
 }
 
 #[test]

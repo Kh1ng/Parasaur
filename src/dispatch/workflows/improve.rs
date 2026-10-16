@@ -83,6 +83,8 @@ pub(crate) fn improve(
         args.existing_branch.clone(),
         args.mr.as_deref(),
     )?;
+    let mut issue_claim =
+        IssueClaimSlot::for_improve(profile, &args.target, manual_fix.existing_branch.as_deref())?;
     let target = resolve_target(args, profile, &manual_fix)?;
     // Resolve target as an issue number, propagating real fetch errors.
     let issue_details =
@@ -364,7 +366,6 @@ pub(crate) fn improve(
     let mut prev_failure: Option<String> = None;
     let mut prior_phase_context: Option<String> = None;
     let mut backend_summary = String::new();
-    let mut issue_claim = IssueClaimSlot::default();
     // Retry checkpoints are temporary recovery refs. They are deliberately
     // retained on any terminal failure, then removed only after a successful
     // publish so real partial work is never silently discarded.
@@ -437,7 +438,8 @@ pub(crate) fn improve(
             }
         };
         task = context;
-        let admission_guard = issue_claim.admit(profile, &route.identity, args, attempt, ledger)?;
+        let admission_guard =
+            issue_claim.admit_in(&wt, repo, profile, &route.identity, args, attempt, ledger)?;
         record_route_attempt(ledger, &route)?;
         let result = run_backend_with_reserved_route(
             &route.identity,
@@ -989,6 +991,7 @@ pub(crate) fn improve(
                 ledger,
             );
             shutdown_ctx.checkpoint_after_result(ledger, shutdown_after_result)?;
+            issue_claim.ensure_held_before_publish(profile, &args.mode, &wt, repo)?;
             if already_satisfied.reconcile(
                 ledger,
                 &backend_summary,

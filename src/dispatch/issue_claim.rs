@@ -1,13 +1,19 @@
-//! Issue claims that every loop working a repository can see.
+//! Issue and pull request claims that every loop working a repository can
+//! see.
 //!
-//! With `issue_claim.mode = "github_assignee"` a loop claims an issue by
-//! assigning its own GitHub login and posting a claim comment. A login holds
-//! an issue only while both are present: the assignee proves the login may
-//! work in the repository, and the comment gives the claim a time and an
-//! order. Author and time are read from the comment's own metadata, never
-//! from its text, so a comment cannot claim on behalf of someone else.
+//! With `issue_claim.mode = "github_assignee"` a loop claims an item by
+//! assigning its own GitHub login and posting a claim comment. Implement work
+//! claims its issue; review and fix work claim the pull request they publish
+//! to (see [`ClaimTarget`]). GitHub keeps the assignees and comments of a
+//! pull request on the issue of the same number, so both kinds use the same
+//! calls and the same rules. A login holds an item only while both are
+//! present: the assignee proves the login may work in the repository, and
+//! the comment gives the claim a time and an order. Author and time are read
+//! from the comment's own metadata, never from its text, so a comment cannot
+//! claim on behalf of someone else.
 //!
-//! The rules, all decided by [`standing`]:
+//! The rules, all decided by [`standing`] ("issue" below means either kind,
+//! except where a rule names one):
 //!
 //! - A claim is live for `ttl_minutes` after its comment was posted or last
 //!   renewed. A dispatch that won a claim renews it while it runs (see
@@ -24,13 +30,20 @@
 //!   or another loop's expired one.
 //! - When two loops hold live claims, the first login in `priority_logins`
 //!   wins, otherwise the earliest claim comment.
-//! - An expired claim keeps holding the issue while an open pull request
-//!   references it. Otherwise another loop may remove the stale assignee and
-//!   claim the issue itself.
+//! - An expired claim on an issue keeps holding the issue while an open pull
+//!   request references it. Otherwise another loop may remove the stale
+//!   assignee and claim the issue itself.
+//! - An expired claim on a pull request holds nothing. An open pull request
+//!   is the normal state of one under review or repair, so it cannot be what
+//!   keeps a lapsed claim: only renewal, the holder's proof of life, can.
+//!   Another loop may remove the stale assignee and claim it at once.
 //!
 //! Work with no GitHub issue (a ticket file, a candidates file, a target
 //! that is not an issue number) has nothing to claim on the provider and
 //! runs under the machine-local claim alone; see [`provider_claimed_issue`].
+//! Review and fix work publishes to a pull request; when that pull request
+//! is unknown it fails closed instead (see [`IssueClaimSlot::for_review`]
+//! and [`IssueClaimSlot::for_improve`]).
 //!
 //! The machine-local claim store still guards against two workers on one
 //! machine; this module only arbitrates between logins.
@@ -68,18 +81,44 @@ enum ClaimOutcome {
     Lost(String),
 }
 
-/// A dispatch ended because another login holds its issue. Not a failure:
-/// the controller reports it as a skip and the ledger does not count it as
-/// an attempt.
+/// The provider item a dispatch claims, by its number as bare digits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ClaimTarget {
+    /// The issue implement work is for.
+    Issue(String),
+    /// The pull request review or fix work publishes to.
+    PullRequest(String),
+}
+
+impl ClaimTarget {
+    fn number(&self) -> &str {
+        match self {
+            Self::Issue(number) | Self::PullRequest(number) => number,
+        }
+    }
+}
+
+impl std::fmt::Display for ClaimTarget {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Issue(number) => write!(formatter, "issue #{number}"),
+            Self::PullRequest(number) => write!(formatter, "pull request #{number}"),
+        }
+    }
+}
+
+/// A dispatch ended because another login holds its issue or pull request.
+/// Not a failure: the controller reports it as a skip and the ledger does not
+/// count it as an attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct IssueClaimLost {
-    issue: String,
+    target: ClaimTarget,
     reason: String,
 }
 
 impl std::fmt::Display for IssueClaimLost {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "issue #{}: {}", self.issue, self.reason)
+        write!(formatter, "{}: {}", self.target, self.reason)
     }
 }
 
@@ -89,19 +128,65 @@ pub(crate) fn issue_claim_lost(error: &anyhow::Error) -> Option<&IssueClaimLost>
     error.chain().find_map(|cause| cause.downcast_ref())
 }
 
-/// One dispatch's provider claim on its issue, from its first attempt until
-/// the workflow returns. Empty for a profile that keeps claims local.
+/// One dispatch's provider claim on its issue or pull request, from its
+/// first admitted attempt until the workflow returns. Claims nothing for a
+/// profile that keeps claims local.
 #[derive(Debug, Default)]
 pub(super) struct IssueClaimSlot {
+    /// What the dispatch claims once it is admitted; `None` claims nothing.
+    target: Option<ClaimTarget>,
     lease: Option<IssueLease>,
 }
 
 impl IssueClaimSlot {
+    /// The slot of an implement or fix dispatch of `target`. Work on an
+    /// existing branch publishes to that branch's pull request, so it claims
+    /// the pull request, and fails if the pull request cannot be found. Other
+    /// work claims `target`'s issue when it names one.
+    pub(super) fn for_improve(
+        profile: &Profile,
+        target: &str,
+        existing_branch: Option<&str>,
+    ) -> Result<Self> {
+        if profile.publishing.issue_claim.mode == IssueClaimMode::Local {
+            return Ok(Self::default());
+        }
+        let Some(branch) = existing_branch else {
+            return Ok(Self {
+                target: provider_claimed_issue(profile, target).map(ClaimTarget::Issue),
+                lease: None,
+            });
+        };
+        GithubBoard::for_reading(profile)?;
+        let number = crate::provider::github_find_pr_number_by_branch(profile, branch)
+            .with_context(|| format!("finding the pull request of {branch} to claim"))?;
+        Self::for_review(profile, Some(&number))
+    }
+
+    /// The slot of a review of `pull_request`. A review publishes on its pull
+    /// request, so without one there is nothing to claim and it fails closed
+    /// instead of running unclaimed.
+    pub(super) fn for_review(profile: &Profile, pull_request: Option<&str>) -> Result<Self> {
+        if profile.publishing.issue_claim.mode == IssueClaimMode::Local {
+            return Ok(Self::default());
+        }
+        let Some(number) = pull_request.filter(|number| is_issue_number(number)) else {
+            anyhow::bail!(
+                "issue_claim.mode = \"github_assignee\" claims the pull request this work \
+                 publishes to, and none is known ({pull_request:?})"
+            );
+        };
+        Ok(Self {
+            target: Some(ClaimTarget::PullRequest(number.to_string())),
+            lease: None,
+        })
+    }
+
     /// Reserve the backend and node slot for one attempt and, on a dispatch's
-    /// first attempt, claim its issue and start renewing the claim. Later
-    /// attempts first confirm the lease is still held. A refused slot fails
-    /// as a capacity deferral. Another login holding the issue fails with
-    /// [`IssueClaimLost`]; the slot is released as that error returns.
+    /// first admitted attempt, claim its item and start renewing the claim.
+    /// Later attempts first confirm the lease is still held. A refused slot
+    /// fails as a capacity deferral. Another login holding the item fails
+    /// with [`IssueClaimLost`]; the slot is released as that error returns.
     pub(super) fn admit(
         &mut self,
         profile: &Profile,
@@ -113,16 +198,38 @@ impl IssueClaimSlot {
         self.ensure_held()?;
         let guard = reserve_backend_attempt(profile, identity, args.route_admission.as_ref())
             .map_err(|error| super::contextualize_capacity_deferral(error, attempt as usize))?;
-        if attempt == 0 {
-            if let Some(issue) = provider_claimed_issue(profile, &args.target) {
-                self.lease = Some(claim_or_lose(profile, &issue, ledger)?);
-            }
+        if let (None, Some(target)) = (&self.lease, &self.target) {
+            self.lease = Some(claim_or_lose(profile, target, ledger)?);
         }
         Ok(guard)
     }
 
+    /// [`Self::admit`] for a dispatch working in `worktree`. A lost claim
+    /// keeps the work so far on a local WIP commit and removes the worktree,
+    /// as [`Self::ensure_held_before_publish`] does, so the worktree does not
+    /// hold the branch against the loop's next dispatch of it.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn admit_in(
+        &mut self,
+        worktree: &Path,
+        repo: &Path,
+        profile: &Profile,
+        identity: &ExecutionIdentity,
+        args: &DispatchArgs,
+        attempt: u32,
+        ledger: &mut LedgerEntry,
+    ) -> Result<BackendAdmissionGuard> {
+        let admitted = self.admit(profile, identity, args, attempt, ledger);
+        match admitted {
+            Err(lost) if issue_claim_lost(&lost).is_some() => {
+                Err(keep_lost_work(lost, profile, &args.mode, worktree, repo))
+            }
+            admitted => admitted,
+        }
+    }
+
     /// The last check before a dispatch publishes. If another loop took the
-    /// issue over while this one worked, keep the work on a local WIP commit,
+    /// item over while this one worked, keep the work on a local WIP commit,
     /// remove the worktree, and fail with [`IssueClaimLost`]: nothing is
     /// published.
     pub(super) fn ensure_held_before_publish(
@@ -132,21 +239,37 @@ impl IssueClaimSlot {
         worktree: &Path,
         repo: &Path,
     ) -> Result<()> {
-        if let Err(lost) = self.ensure_held() {
-            crate::worktree::preserve_wip(
-                worktree,
-                &profile.default_target_branch,
-                &format!("gah: WIP claim lost {mode}"),
-            )?;
-            crate::worktree::cleanup(worktree, repo);
-            return Err(lost);
-        }
-        Ok(())
+        self.ensure_held()
+            .map_err(|lost| keep_lost_work(lost, profile, mode, worktree, repo))
     }
 
-    fn ensure_held(&self) -> Result<()> {
+    /// Fails with [`IssueClaimLost`] once the dispatch's claim is lost or
+    /// lapsed. The last check before a publish that has no worktree to keep,
+    /// such as a review comment.
+    pub(super) fn ensure_held(&self) -> Result<()> {
         self.lease.as_ref().map_or(Ok(()), IssueLease::ensure_held)
     }
+}
+
+/// Keep a dispatch's work on a local WIP commit and remove its worktree,
+/// because its claim was `lost`. Returns `lost`, or the error that kept the
+/// work from being saved.
+fn keep_lost_work(
+    lost: anyhow::Error,
+    profile: &Profile,
+    mode: &str,
+    worktree: &Path,
+    repo: &Path,
+) -> anyhow::Error {
+    if let Err(error) = crate::worktree::preserve_wip(
+        worktree,
+        &profile.default_target_branch,
+        &format!("gah: WIP claim lost {mode}"),
+    ) {
+        return error;
+    }
+    crate::worktree::cleanup(worktree, repo);
+    lost
 }
 
 /// The provider issue a dispatch of `target` must claim, as bare digits.
@@ -164,9 +287,13 @@ fn provider_claimed_issue(profile: &Profile, target: &str) -> Option<String> {
     super::issues::extract_issue_number(target)
 }
 
-/// Claim `issue` on the provider, waiting out the verify window, and start
+/// Claim `target` on the provider, waiting out the verify window, and start
 /// renewing the claim if this loop won it.
-fn claim_or_lose(profile: &Profile, issue: &str, ledger: &mut LedgerEntry) -> Result<IssueLease> {
+fn claim_or_lose(
+    profile: &Profile,
+    target: &ClaimTarget,
+    ledger: &mut LedgerEntry,
+) -> Result<IssueLease> {
     let policy = &profile.publishing.issue_claim;
     let board = GithubBoard::for_writing(profile)?;
     let me = own_login()?;
@@ -174,7 +301,7 @@ fn claim_or_lose(profile: &Profile, issue: &str, ledger: &mut LedgerEntry) -> Re
         &board,
         policy,
         &me,
-        issue,
+        target,
         OffsetDateTime::now_utc(),
         || {
             std::thread::sleep(Duration::from_secs(policy.verify_seconds.into()));
@@ -185,14 +312,14 @@ fn claim_or_lose(profile: &Profile, issue: &str, ledger: &mut LedgerEntry) -> Re
         ClaimOutcome::Lost(reason) => {
             ledger.validation_result = Some(crate::ledger::gates::CLAIM_LOST.into());
             Err(IssueClaimLost {
-                issue: issue.to_string(),
+                target: target.clone(),
                 reason,
             }
             .into())
         }
         ClaimOutcome::Won { expires_at } => Ok(IssueLease::start(
             profile,
-            issue,
+            target,
             me,
             instant_at(expires_at, OffsetDateTime::now_utc(), Instant::now()),
             claim_ttl(policy),
@@ -213,8 +340,8 @@ fn instant_at(at: OffsetDateTime, now: OffsetDateTime, now_instant: Instant) -> 
 /// A won claim, renewed in the background while the dispatch runs. Renewal
 /// is the dispatch's proof of life: a loop that crashes stops renewing, and
 /// its claim lapses `ttl_minutes` later. Dropping the lease stops renewal and
-/// leaves the claim in place to lapse on its own, unless a pull request for
-/// the issue is opened first.
+/// leaves the claim in place to lapse on its own (an issue's claim stays
+/// held once a pull request for the issue is open).
 ///
 /// The lease's authority ends at its deadline: the claim's confirmed expiry
 /// on the provider, on the monotonic clock. [`IssueLease::ensure_held`]
@@ -222,7 +349,7 @@ fn instant_at(at: OffsetDateTime, now: OffsetDateTime, now_instant: Instant) -> 
 /// dispatch authorized past the point where another loop may take the issue.
 #[derive(Debug)]
 pub(super) struct IssueLease {
-    issue: String,
+    target: ClaimTarget,
     state: Arc<Mutex<LeaseState>>,
     stop: Option<mpsc::Sender<()>>,
     renewer: Option<std::thread::JoinHandle<()>>,
@@ -239,14 +366,20 @@ struct LeaseState {
 }
 
 impl IssueLease {
-    fn start(profile: &Profile, issue: &str, me: String, deadline: Instant, ttl: Duration) -> Self {
+    fn start(
+        profile: &Profile,
+        target: &ClaimTarget,
+        me: String,
+        deadline: Instant,
+        ttl: Duration,
+    ) -> Self {
         let state = Arc::new(Mutex::new(LeaseState {
             lost: None,
             deadline,
         }));
         let (stop, stopped) = mpsc::channel::<()>();
         let profile = profile.clone();
-        let target = issue.to_string();
+        let claimed = target.clone();
         let thread_state = Arc::clone(&state);
         let renewer = std::thread::spawn(move || {
             let policy = profile.publishing.issue_claim.clone();
@@ -275,7 +408,7 @@ impl IssueLease {
                     profile: &profile,
                     deadline: Some(deadline),
                 };
-                match renew(&board, &policy, &me, &target, OffsetDateTime::now_utc()) {
+                match renew(&board, &policy, &me, &claimed, OffsetDateTime::now_utc()) {
                     Ok(None) => {
                         failed = false;
                         if !confirm_renewal(&thread_state, began + ttl, Instant::now()) {
@@ -289,7 +422,7 @@ impl IssueLease {
                     Err(error) => {
                         failed = true;
                         eprintln!(
-                            "warning: could not renew the claim on issue #{target}; \
+                            "warning: could not renew the claim on {claimed}; \
                              retrying before it expires: {error:#}"
                         );
                     }
@@ -297,18 +430,18 @@ impl IssueLease {
             }
         });
         Self {
-            issue: issue.to_string(),
+            target: target.clone(),
             state,
             stop: Some(stop),
             renewer: Some(renewer),
         }
     }
 
-    /// Fails with [`IssueClaimLost`] once another loop has taken the issue,
+    /// Fails with [`IssueClaimLost`] once another loop has taken the item,
     /// this loop's claim was removed, or the claim's confirmed expiry has
     /// passed without a confirmed renewal, whatever the renewer is doing.
     /// The dispatch must stop: its work is no longer the work of record for
-    /// the issue.
+    /// the item.
     fn ensure_held(&self) -> Result<()> {
         let mut state = lock(&self.state);
         if state.lost.is_none() && Instant::now() >= state.deadline {
@@ -316,7 +449,7 @@ impl IssueLease {
         }
         match state.lost.clone() {
             Some(reason) => Err(IssueClaimLost {
-                issue: self.issue.clone(),
+                target: self.target.clone(),
                 reason,
             }
             .into()),
@@ -374,16 +507,16 @@ fn next_renewal_wait(remaining: Duration, ttl: Duration, after_failure: bool) ->
     }
 }
 
-/// Extend this loop's live claim on `issue`. Returns why the claim is lost
-/// when this loop no longer holds the issue, and renews nothing then.
+/// Extend this loop's live claim on `target`. Returns why the claim is lost
+/// when this loop no longer holds the item, and renews nothing then.
 fn renew(
     board: &impl IssueBoard,
     policy: &IssueClaimPolicy,
     me: &str,
-    issue: &str,
+    target: &ClaimTarget,
     now: OffsetDateTime,
 ) -> Result<Option<String>> {
-    let view = board.view(issue)?;
+    let view = board.view(target.number())?;
     match standing(&view, me, policy, now) {
         Standing::Mine { .. } => {}
         Standing::Theirs(login) => return Ok(Some(format!("lease taken over by {login}"))),
@@ -399,7 +532,10 @@ fn renew(
         .filter(|claim| same_login(&claim.login, me))
         .max_by_key(|claim| claim.id)
         .context("a held claim has a claim comment")?;
-    board.renew_claim(own.id, &claim_comment(me, policy, own.created_at, now))?;
+    board.renew_claim(
+        own.id,
+        &claim_comment(me, policy, target, own.created_at, now),
+    )?;
     Ok(None)
 }
 
@@ -411,14 +547,14 @@ fn run_claim(
     board: &impl IssueBoard,
     policy: &IssueClaimPolicy,
     me: &str,
-    issue: &str,
+    target: &ClaimTarget,
     now: OffsetDateTime,
     pause: impl FnOnce() -> OffsetDateTime,
 ) -> Result<ClaimOutcome> {
-    if let Some(outcome) = stake(board, policy, me, issue, now)? {
+    if let Some(outcome) = stake(board, policy, me, target, now)? {
         return Ok(outcome);
     }
-    settle(board, policy, me, issue, pause())
+    settle(board, policy, me, target, pause())
 }
 
 /// Numbers of the issues another login holds, out of `issues` given as
@@ -546,23 +682,26 @@ trait IssueBoard {
     fn has_open_pull_request(&self, issue: &str) -> Result<bool>;
 }
 
-/// First half of a claim: decide from the issue as it stands, and if it is
+/// First half of a claim: decide from the item as it stands, and if it is
 /// free, assign this loop and post its claim comment. `None` means the claim
 /// was posted and must be confirmed by [`settle`] after the verify window.
 fn stake(
     board: &impl IssueBoard,
     policy: &IssueClaimPolicy,
     me: &str,
-    issue: &str,
+    target: &ClaimTarget,
     now: OffsetDateTime,
 ) -> Result<Option<ClaimOutcome>> {
+    let issue = target.number();
     match standing(&board.view(issue)?, me, policy, now) {
         Standing::Mine { expires_at } => return Ok(Some(ClaimOutcome::Won { expires_at })),
         Standing::Theirs(login) => {
             return Ok(Some(ClaimOutcome::Lost(format!("held by {login}"))));
         }
         Standing::Stale(logins) => {
-            if board.has_open_pull_request(issue)? {
+            // Only an issue's expired claim can still hold: its open pull
+            // request carries the work on. A pull request's is simply free.
+            if matches!(target, ClaimTarget::Issue(_)) && board.has_open_pull_request(issue)? {
                 return Ok(Some(ClaimOutcome::Lost(format!(
                     "the expired claim of {} still has an open pull request",
                     logins.join(", ")
@@ -573,26 +712,27 @@ fn stake(
         Standing::Unclaimed => {}
     }
     board.assign(issue, me)?;
-    if let Err(error) = board.post_claim(issue, &claim_comment(me, policy, now, now)) {
+    if let Err(error) = board.post_claim(issue, &claim_comment(me, policy, target, now, now)) {
         // An assignee without a claim comment reads as a hand assignment and
         // would hold the issue against every loop indefinitely.
         if let Err(cleanup) = board.unassign(issue, &[me.to_string()]) {
-            eprintln!("warning: could not remove {me} from issue #{issue}: {cleanup:#}");
+            eprintln!("warning: could not remove {me} from {target}: {cleanup:#}");
         }
         return Err(error);
     }
     Ok(None)
 }
 
-/// Second half of a claim: re-read the issue after the verify window. A loop
+/// Second half of a claim: re-read the item after the verify window. A loop
 /// that did not win removes its own assignee and posts nothing further.
 fn settle(
     board: &impl IssueBoard,
     policy: &IssueClaimPolicy,
     me: &str,
-    issue: &str,
+    target: &ClaimTarget,
     now: OffsetDateTime,
 ) -> Result<ClaimOutcome> {
+    let issue = target.number();
     let reason = match standing(&board.view(issue)?, me, policy, now) {
         Standing::Mine { expires_at } => return Ok(ClaimOutcome::Won { expires_at }),
         Standing::Theirs(login) => format!("yielded to {login}"),
@@ -607,6 +747,7 @@ fn settle(
 fn claim_comment(
     me: &str,
     policy: &IssueClaimPolicy,
+    target: &ClaimTarget,
     claimed_at: OffsetDateTime,
     now: OffsetDateTime,
 ) -> String {
@@ -618,13 +759,18 @@ fn claim_comment(
     let node = hostname::get()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "unknown".to_string());
+    let after_lapse = match target {
+        ClaimTarget::Issue(_) => {
+            "another loop may take this issue over, unless an open pull request references it"
+        }
+        ClaimTarget::PullRequest(_) => "another loop may take this pull request over",
+    };
     // The timestamps also make each claim's text distinct, which
     // `post_issue_comment` needs: it never repeats an identical comment.
     format!(
         "{CLAIM_MARKER}login={me} node={node} claimed_at={claimed} expires_at={expires} -->\n\
          Claimed by the GAH loop of {me} on `{node}` until {expires}; the loop renews this \
-         claim while it works. If it lapses, another loop may take this issue over, unless an \
-         open pull request references it.",
+         claim while it works. If it lapses, {after_lapse}.",
         claimed = stamp(claimed_at),
         expires = stamp(expires),
     )

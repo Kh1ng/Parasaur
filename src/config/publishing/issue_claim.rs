@@ -12,7 +12,8 @@ pub enum IssueClaimMode {
     GithubAssignee,
 }
 
-/// Per-profile settings for provider-visible issue claims.
+/// Per-profile settings for provider-visible claims: on the issue of
+/// implementation work and on the pull request of review and repair work.
 ///
 /// Loops that share a repository must agree on `ttl_minutes` and
 /// `priority_logins`: each loop decides a contested claim from its own copy,
@@ -23,8 +24,9 @@ pub struct IssueClaimPolicy {
     pub mode: IssueClaimMode,
     /// Minutes a claim holds an issue without renewal. A running dispatch
     /// renews its claim every third of this, so the claim lapses only when
-    /// its loop stops working. An open pull request for the issue keeps a
-    /// lapsed claim held.
+    /// its loop stops working. An open pull request for an issue keeps the
+    /// issue's lapsed claim held; a pull request's own lapsed claim holds
+    /// nothing.
     #[serde(default = "default_ttl_minutes")]
     pub ttl_minutes: u32,
     /// Seconds to wait between posting a claim and re-reading the issue to

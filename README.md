@@ -595,10 +595,10 @@ trust. GitLab project access-token users are recognized from the project-scoped
 `project_<project-id>_bot_*` username and must still be listed exactly in
 `trusted_issue_bot_authors`. Explicit empty lists deny that author class.
 
-### Issue claims across loops
+### Issue and pull request claims across loops
 
 When several loops work one GitHub repository under different logins, let each
-claim an issue on GitHub before it starts work:
+claim its issue or pull request on GitHub before it starts work:
 
 ```toml
 [profiles.my_profile.publishing.issue_claim]
@@ -608,9 +608,11 @@ verify_seconds = 60
 priority_logins = ["first-choice-login"]
 ```
 
-A dispatch that has been granted a backend and node slot assigns the login
-`gh` is signed in as, posts a claim comment, waits `verify_seconds`, and
-re-reads the issue. A dispatch refused a slot claims nothing. If another loop
+Implementation claims its issue. Review and repair claim the pull request they
+publish to; GitHub keeps a pull request's assignees and comments on the issue
+of the same number, so the same rules apply to both. A dispatch that has been
+granted a backend and node slot assigns the login `gh` is signed in as, posts
+a claim comment, waits `verify_seconds`, and re-reads the issue. A dispatch refused a slot claims nothing. If another loop
 claimed it at the same moment, the first login in `priority_logins` keeps it,
 otherwise the earliest claim comment; the other loop removes its own assignee
 and moves on. Intake leaves alone every issue that another login holds,
@@ -624,9 +626,12 @@ A claim is a lease of `ttl_minutes`. While the dispatch runs it renews the
 lease every third of that by editing its claim comment (an edit notifies
 nobody). A loop that crashes or stops stops renewing, and `ttl_minutes` after
 the last renewal another loop may remove the stale assignee and claim the
-issue, unless an open pull request for the issue exists. A dispatch that finds
-its lease taken over stops before it publishes: it keeps its work on a local
-WIP commit and the loop reports the issue as skipped. The dispatch's authority
+issue, unless an open pull request for the issue exists. An expired claim on a
+pull request is free at once: the pull request is open while it waits for
+review or repair, so only renewal keeps it held. A dispatch that finds its
+lease taken over stops before it publishes a commit, a review verdict, or a
+comment: it keeps its work on a local WIP commit and the loop reports the item
+as skipped. The dispatch's authority
 ends at the claim's confirmed expiry: `ttl_minutes` after the claim was posted
 or last renewed, not after the dispatch started. Past that point the dispatch
 stops, even while a renewal call is still waiting on GitHub. A dispatch that
@@ -639,9 +644,14 @@ Every loop sharing the repository must use the same `ttl_minutes` and
 copy. The mode is independent of `issue_intake_mode`: it adds no label
 requirement and removes none. It applies whenever an issue is dispatched for
 implementation, by the loop or by hand (`--target 7` and `--target "#7"` both
-claim issue 7), and not to planning decomposition or pull request review or
-repair. Work with no GitHub issue, such as a ticket file or a candidates file,
-has nothing to claim on GitHub and runs under the machine-local claim alone.
+claim issue 7), and whenever a pull request is reviewed or repaired, but not
+to planning decomposition. Every selection gate (a review hold, a retry cap, a
+human-required blocker, the intake policy) applies first, so a gated item is
+never claimed. Merging, marking a pull request ready, and the human handoff
+posted when every reviewer is exhausted claim nothing yet. Work with no GitHub
+issue, such as a ticket file or a candidates file, has nothing to claim on
+GitHub and runs under the machine-local claim alone. A review or repair whose
+pull request cannot be found fails instead of running unclaimed.
 
 ### Generated-artifact publication guard
 
