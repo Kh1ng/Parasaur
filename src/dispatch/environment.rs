@@ -14,11 +14,7 @@ use crate::runner;
 /// review dispatch failed 3 layers downstream with a git refspec error
 /// because GITLAB_PAT was never actually in this process's environment.
 pub(in crate::dispatch) fn export_profile_env(profile: &Profile, prod: bool) {
-    let resolved_env = if prod {
-        profile.env_file_prod.as_deref().unwrap_or("")
-    } else {
-        profile.env_file.as_deref().unwrap_or("")
-    };
+    let resolved_env = profile_env_file(profile, prod);
     if resolved_env.is_empty() {
         return;
     }
@@ -28,6 +24,17 @@ pub(in crate::dispatch) fn export_profile_env(profile: &Profile, prod: bool) {
         }
         std::env::set_var(key, value);
     }
+}
+
+/// The env file a dispatch loads: `env_file_prod` with `--prod`, otherwise
+/// `env_file`. Empty when the profile sets none.
+pub(in crate::dispatch) fn profile_env_file(profile: &Profile, prod: bool) -> &str {
+    let file = if prod {
+        &profile.env_file_prod
+    } else {
+        &profile.env_file
+    };
+    file.as_deref().unwrap_or("")
 }
 
 /// Keys a profile env file may not set. `GAH_ENFORCE_JOB_FILE` carries the

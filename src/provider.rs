@@ -1086,7 +1086,7 @@ fn normalize_gitlab_ci_status(status: &str) -> String {
     }
 }
 
-fn github_find_pr_number_by_branch(profile: &Profile, branch: &str) -> Result<String> {
+pub(crate) fn github_find_pr_number_by_branch(profile: &Profile, branch: &str) -> Result<String> {
     let (owner, _) = profile.repo.split_once('/').ok_or_else(|| {
         anyhow::anyhow!(
             "invalid GitHub repo '{}': expected owner/repository",
