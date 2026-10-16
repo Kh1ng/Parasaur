@@ -859,25 +859,7 @@ fn ensure_clean(repo: &Path) -> Result<()> {
     Ok(())
 }
 
-/// An installed `gah` adds a missing `parasaur` next to itself on any run
-/// (#1364). A release upgrade from an older `gah` runs that older updater,
-/// which knows nothing about the alias, so the new binary heals its first run.
-/// Only the managed install path is touched, and failures are ignored.
-pub fn heal_parasaur_alias() {
-    if let (Ok(installed), Ok(exe)) = (installed_binary_path(), env::current_exe()) {
-        heal_parasaur_alias_for(&installed, &exe);
-    }
-}
-
-fn heal_parasaur_alias_for(installed: &Path, exe: &Path) {
-    let alias = installed.with_file_name(format!("parasaur{}", env::consts::EXE_SUFFIX));
-    let canonical = |path: &Path| std::fs::canonicalize(path).ok();
-    if alias.symlink_metadata().is_err()
-        && canonical(exe).is_some_and(|exe| canonical(installed) == Some(exe))
-    {
-        let _ = installation::install_parasaur_alias(installed);
-    }
-}
+pub use installation::heal_parasaur_alias;
 
 fn installed_binary_path() -> Result<PathBuf> {
     let cargo_home = match env::var_os("CARGO_HOME") {
@@ -1511,29 +1493,5 @@ mod tests {
         let bin = linger_shims(1, 1);
         let _path_guard = PathGuard::set(bin.path().to_str().unwrap());
         assert!(!try_enable_linger(repo, "testuser", false));
-    }
-}
-
-#[cfg(all(test, unix))]
-mod heal_alias_tests {
-    use super::heal_parasaur_alias_for;
-
-    #[test]
-    fn installed_gah_adds_a_missing_parasaur_only_for_itself() {
-        let dir = tempfile::tempdir().unwrap();
-        let gah = dir.path().join("gah");
-        let other = dir.path().join("other");
-        std::fs::write(&gah, "").unwrap();
-        std::fs::write(&other, "").unwrap();
-        let alias = dir.path().join("parasaur");
-
-        heal_parasaur_alias_for(&gah, &other);
-        assert!(alias.symlink_metadata().is_err());
-
-        heal_parasaur_alias_for(&gah, &gah);
-        assert_eq!(
-            std::fs::read_link(&alias).unwrap(),
-            std::path::Path::new("gah")
-        );
     }
 }
