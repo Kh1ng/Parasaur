@@ -60,6 +60,9 @@ sudo ln -sf gah /usr/local/bin/parasaur
 
 The installers, `gah setup`, and `gah update` create `parasaur` next to `gah`
 for you (a symlink on Linux and macOS, a copy `parasaur.exe` on Windows).
+Upgrading from a release without `parasaur` runs the older updater, which does
+not create it; the new `gah` adds it the first time it runs, so `gah --version`
+once after the upgrade is enough. On Windows, run `gah update` a second time.
 
 Smoke test:
 
