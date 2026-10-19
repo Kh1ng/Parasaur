@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import WebSocket from 'ws';
@@ -12,6 +11,7 @@ import type {
   Session
 } from '@git-agent-harness/contracts';
 import { COORDINATOR_VERSION } from '@git-agent-harness/contracts';
+import { preserveCorruptFile, writeFileAtomic } from './atomicFile.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { getSessionManager, type SessionOptions } from './sessions/SessionManager.js';
 import { resolveSecret, type RegistryService } from './registryService.js';
@@ -151,6 +151,7 @@ function deriveLeaseWorkKey(lease: Pick<LeaseRecord, 'profile' | 'session'>): st
 class LeaseStore {
   private leases = new Map<string, LeaseRecord>();
   private leasesByWorkKey = new Map<string, LeaseRecord>();
+  private unreadable = false;
 
   constructor(private readonly path: string) {
     this.load();
@@ -177,21 +178,46 @@ class LeaseStore {
             this.leasesByWorkKey.set(normalizedLease.workKey, normalizedLease);
           }
         }
+      } else {
+        throw new Error('no leases array');
       }
     } catch (error) {
-      console.warn(`warning: failed to load dispatch lease store ${this.path}:`, error);
+      this.leases.clear();
+      this.leasesByWorkKey.clear();
+      this.markUnreadable(error);
+    }
+  }
+
+  /** Without its leases the coordinator cannot tell which work is already
+   * running, so it stops dispatching rather than start duplicates. Corrupt
+   * contents are moved aside for inspection, so the next server start begins
+   * with no leases; a file that could not be read is left in place. */
+  private markUnreadable(error: unknown): void {
+    const code = (error as NodeJS.ErrnoException).code;
+    const preservedPath = code ? null : preserveCorruptFile(this.path);
+    this.unreadable = true;
+    // Parser messages quote file contents, so log only the kind of failure.
+    const reason = code ?? (error instanceof SyntaxError ? 'invalid JSON' : 'unexpected contents');
+    const recovery = preservedPath
+      ? `Moved it to ${preservedPath}. Check the fleet nodes for sessions this coordinator started and stop any duplicates, then restart the server to resume dispatch.`
+      : `Left it in place. Check the fleet nodes for sessions this coordinator started and stop any duplicates, then repair or move ${this.path} aside and restart the server.`;
+    console.error(`error: dispatch lease store ${this.path} is unreadable (${reason}); new dispatches are refused. ${recovery}`);
+  }
+
+  assertReadable(): void {
+    if (this.unreadable) {
+      throw new GAHError(
+        'Dispatch leases could not be read, so new dispatches are refused to avoid duplicate work. An operator must reconcile the lease store; the server log names the preserved file and the recovery steps.',
+        'DISPATCH_LEASES_UNREADABLE'
+      );
     }
   }
 
   private save(): void {
-    const dir = dirname(this.path);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
     const payload = {
       leases: Array.from(this.leases.values())
     };
-    writeFileSync(this.path, JSON.stringify(payload, null, 2));
+    writeFileAtomic(this.path, JSON.stringify(payload, null, 2));
   }
 
   getByRequestId(requestId: string): LeaseRecord | undefined {
@@ -616,6 +642,7 @@ export class FleetDispatchCoordinator {
   }
 
   private async startSessionFresh(options: RoutedSessionOptions, requestId: string, workKey: string): Promise<Session> {
+    this.leaseStore.assertReadable();
     await this.reconcileLeases(options.profile);
 
     const existingByRequest = this.leaseStore.getByRequestId(requestId);

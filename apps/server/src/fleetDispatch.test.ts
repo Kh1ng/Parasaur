@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
-import { mkdtempSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, truncateSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
@@ -707,6 +707,63 @@ test('fleet dispatch deduplicates concurrent starts for the same work identity a
     } catch {
       // ignore cleanup failures
     }
+  }
+});
+
+test('fleet dispatch refuses new work when the lease file is torn and preserves it', async (t) => {
+  const leaseDir = mkdtempSync(resolve(tmpdir(), 'gah-fleet-torn-'));
+  const leaseStorePath = resolve(leaseDir, 'dispatch-leases.json');
+  const published: PublishedMessage[] = [];
+  const registryService = {
+    getNode: () => undefined,
+    async getNodeObservations() {
+      return [
+        makeSnapshot('coordinator-1', 'http://127.0.0.1:9999', 90, 4, 2),
+        makeSnapshot('worker-1', 'http://127.0.0.1:9998', 10, 0, 0)
+      ];
+    }
+  } as unknown as RegistryService;
+  const options = {
+    requestId: 'dispatch-torn',
+    profile: 'gah',
+    providerKind: 'codex',
+    instanceId: 'codex-0',
+    repo: 'owner/repo',
+    mode: 'fix'
+  } as const;
+  const harness = (transportMap: Map<string, FakeTransport>) => createCoordinatorHarness({
+    leaseStorePath,
+    registryService,
+    coordinatorNodeId: 'coordinator-1',
+    coordinatorUrl: 'http://127.0.0.1:9999',
+    transportMap,
+    published
+  });
+  try {
+    const first = await harness(new Map()).startSession(options);
+    assert.equal(first.nodeId, 'worker-1');
+    const leaseBytes = readFileSync(leaseStorePath, 'utf8');
+    truncateSync(leaseStorePath, Math.floor(leaseBytes.length / 2));
+    const torn = readFileSync(leaseStorePath, 'utf8');
+
+    const logged = t.mock.method(console, 'error', () => {});
+    const restartedTransports = new Map<string, FakeTransport>();
+    const restarted = harness(restartedTransports);
+    assert.equal(logged.mock.callCount(), 1, 'an unreadable lease store is reported once at load');
+
+    for (const retry of [{ ...options, requestId: 'dispatch-torn-retry' }, { ...options, repo: 'owner/other' }]) {
+      await assert.rejects(
+        restarted.startSession(retry),
+        (error: unknown) => (error as { code?: string }).code === 'DISPATCH_LEASES_UNREADABLE'
+      );
+    }
+    assert.equal(restartedTransports.size, 0, 'no node may be asked to start work');
+    assert.equal(existsSync(leaseStorePath), false, 'no partial lease file is written in its place');
+    const preserved = readdirSync(leaseDir).filter((name) => name.startsWith('dispatch-leases.json.corrupt-'));
+    assert.equal(preserved.length, 1);
+    assert.equal(readFileSync(resolve(leaseDir, preserved[0]!), 'utf8'), torn, 'the torn file is kept for inspection');
+  } finally {
+    rmSync(leaseDir, { recursive: true, force: true });
   }
 });
 
