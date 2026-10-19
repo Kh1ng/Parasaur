@@ -265,7 +265,7 @@ test('a preview without its access secret is refused before upstream is contacte
   }
 });
 
-test('the URL secret is exchanged for a listener-scoped cookie and stripped before proxying', async () => {
+test('the URL secret is exchanged for a listener-scoped cookie that does not store it', async () => {
   previewProxy.configure({ basePort: TEST_BASE_PORT, maxPort: TEST_MAX_PORT, advertiseHost: '127.0.0.1', bindHost: '127.0.0.1', protectedPorts: [] });
   const seen: { url: string | undefined; cookie: string | undefined }[] = [];
   const dev = await fakeDevServer((req, res) => {
@@ -279,15 +279,15 @@ test('the URL secret is exchanged for a listener-scoped cookie and stripped befo
 
     const exchange = await fetchUrl(`${origin}/page?a=1&${PREVIEW_SECRET_PARAM}=${secret}`);
     assert.equal(exchange.status, 302);
-    assert.equal(exchange.headers.location, '/page?a=1', 'the secret is stripped, other params kept');
+    assert.equal(exchange.headers.location, '/', 'the exchange always redirects to the fixed root');
     const setCookie = exchange.headers['set-cookie']?.[0] ?? '';
-    assert.match(setCookie, new RegExp(`^__gah_preview_${preview.listenPort}=${secret}; `));
+    assert.match(setCookie, new RegExp(`^__gah_preview_${preview.listenPort}=[A-Za-z0-9_-]{43}; `));
+    assert.ok(!setCookie.includes(String(secret)), 'the cookie holds a derived token, not the URL secret');
     assert.match(setCookie, /HttpOnly/);
     assert.match(setCookie, /SameSite=Lax/);
     assert.equal(seen.length, 0, 'the exchange itself is not proxied');
-
-    const protocolRelative = await fetchUrl(`${origin}//elsewhere.invalid/x?${PREVIEW_SECRET_PARAM}=${secret}`);
-    assert.equal(protocolRelative.headers.location, '/', 'never a protocol-relative redirect');
+    // The URL secret itself is not a valid cookie value.
+    assert.equal((await fetchUrl(`${origin}/`, { cookie: `__gah_preview_${preview.listenPort}=${secret}` })).status, 403);
 
     const accessCookie = setCookie.split(';')[0];
     const served = await fetchUrl(`${origin}/page?a=1`, { cookie: `theme=dark; ${accessCookie}; __gah_preview_1=x` });

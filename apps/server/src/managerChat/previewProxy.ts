@@ -19,15 +19,15 @@
  *
  * Every listener requires its own random access secret. The advertised URL
  * carries it once as a query parameter; the proxy exchanges it for an
- * HttpOnly cookie scoped by name to that listener and redirects to the
- * clean URL. Requests and upgrades without a valid secret are refused
+ * HttpOnly cookie scoped by name to that listener, holding a token derived
+ * from the secret rather than the secret itself, and redirects to `/`. Requests and upgrades without a valid secret are refused
  * before any upstream connection is made, so only clients that received
  * the URL from the authenticated control plane can reach the dev server.
  */
 
 import http from 'node:http';
 import net from 'node:net';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { detectTailscaleIPv4 } from '../tailscaleDetect.js';
 import { isIP } from 'node:net';
 import { resolveBindHost } from '../bindHost.js';
@@ -49,6 +49,8 @@ interface PreviewEntry extends PreviewInfo {
   server: http.Server;
   /** Access secret for this listener; stable across re-points. */
   secret: string;
+  /** Cookie value derived from the secret, so the cookie never stores it. */
+  cookieToken: string;
 }
 
 /** Query parameter that carries a preview's access secret on first visit. */
@@ -117,7 +119,8 @@ function upstreamCookie(header: string | undefined): string | undefined {
 
 type PreviewAccess =
   | { kind: 'cookie'; path: string }
-  /** A valid secret in the query; `path` is the request path without it. */
+  /** A valid secret in the query; `path` is the request path without it
+   * (forwarded on upgrades; an HTTP exchange always redirects to `/`). */
   | { kind: 'query'; path: string }
   | { kind: 'denied' };
 
@@ -137,7 +140,7 @@ function previewAccess(req: http.IncomingMessage, entry: PreviewEntry): PreviewA
     return { kind: 'query', path: rest ? `${safePath}?${rest}` : safePath };
   }
   const cookie = cookieValue(req.headers.cookie, previewCookieName(entry.listenPort));
-  return secretMatches(cookie, entry.secret) ? { kind: 'cookie', path: raw } : { kind: 'denied' };
+  return secretMatches(cookie, entry.cookieToken) ? { kind: 'cookie', path: raw } : { kind: 'denied' };
 }
 
 /** The memory gateway's port: a product service, never a dev server. */
@@ -168,7 +171,7 @@ export async function loopbackPortListening(port: number, timeoutMs = 500): Prom
 }
 
 function toInfo(entry: PreviewEntry): PreviewInfo {
-  const { server: _server, secret: _secret, ...info } = entry;
+  const { server: _server, secret: _secret, cookieToken: _cookieToken, ...info } = entry;
   return info;
 }
 
@@ -274,8 +277,10 @@ class PreviewProxy {
       listenPort: 0,
       url: '',
       server: undefined as unknown as http.Server,
-      secret: randomBytes(32).toString('base64url')
+      secret: randomBytes(32).toString('base64url'),
+      cookieToken: ''
     } as PreviewEntry;
+    entry.cookieToken = createHmac('sha256', entry.secret).update('preview-cookie').digest('base64url');
     entry.server = this.createProxyServer(entry);
     // Set before any further await: the access cookie's name depends on it.
     entry.listenPort = await this.listenOnFreePort(entry.server);
@@ -324,11 +329,12 @@ class PreviewProxy {
       }
       if (access.kind === 'query') {
         // Exchange the URL secret for a cookie and drop it from the address,
-        // so it stays out of history and Referer headers.
+        // so it stays out of history and Referer headers. The advertised
+        // URL is always `/?<param>=...`, so the redirect target is fixed.
         req.resume();
         res.writeHead(302, {
-          location: access.path,
-          'set-cookie': `${previewCookieName(entry.listenPort)}=${entry.secret}; Path=/; HttpOnly; SameSite=Lax`,
+          location: '/',
+          'set-cookie': `${previewCookieName(entry.listenPort)}=${entry.cookieToken}; Path=/; HttpOnly; SameSite=Lax`,
           'cache-control': 'no-store',
           'referrer-policy': 'no-referrer'
         });
