@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import type { NodeRoleStatus, ProjectImportData, ProjectImportResult } from '@git-agent-harness/contracts';
+import { requireOwner } from './authMiddleware.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { runProfileAdd, runProfileList } from './gahCli.js';
-import { addProject, addRemoteProject, importGitProject, listProjects, parseGitUrl, projectProfile, removeProject } from './projectCatalog.js';
+import { addProject, addRemoteProject, CheckoutHasLocalWork, importGitProject, listProjects, parseGitUrl, projectProfile, removeProject } from './projectCatalog.js';
 import { nodeHeaders, type RegistryService } from './registryService.js';
 
 function importInput(value: Record<string, unknown>): ProjectImportData {
@@ -87,7 +88,9 @@ export function projectRoutes(options: {
   const importGit = options.importGit ?? importGitProject;
   const errorResult = (error: unknown) => ({ error: 'Project operation failed', message: error instanceof Error ? error.message : String(error) });
   router.use(['/projects/import', '/worker/projects/import'], rateLimit({ windowMs: 60_000, limit: 10, standardHeaders: true, legacyHeaders: false }));
-  router.post(['/projects/import', '/worker/projects/import'], async (req, res) => {
+  // Import writes node configuration (a profile, the catalog, and on central a worker
+  // registration) and can replace a checkout, so it is owner-only like /api/profiles.
+  router.post(['/projects/import', '/worker/projects/import'], requireOwner, async (req, res) => {
     const workerOperation = req.path === '/worker/projects/import';
     if (workerOperation !== (options.node.role === 'worker')) return res.status(409).json({ error: 'Use the project import endpoint for this node role.' });
     let input: ProjectImportData;
@@ -107,6 +110,7 @@ export function projectRoutes(options: {
       const { profileName: _, ...result } = imported;
       return res.status(201).json({ project, ...result } satisfies ProjectImportResult);
     } catch (error) {
+      if (error instanceof CheckoutHasLocalWork) return res.status(409).json({ error: error.code, message: error.message });
       const result = errorResult(error);
       const conflict = ['uncommitted changes', 'checkout origin', 'managed checkouts'].some((text) => result.message.includes(text));
       return res.status(conflict ? 409 : 502).json(result);

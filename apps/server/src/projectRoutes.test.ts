@@ -127,3 +127,32 @@ test('central import clones and adds the profile only on its authenticated worke
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('paired devices cannot import projects on central or worker routes', async () => {
+  let imports = 0;
+  let profileWrites = 0;
+  const servers: Server[] = [];
+  try {
+    for (const node of [{ role: 'central', central_url: null }, { role: 'worker', central_url: 'https://central.test' }] as const) {
+      const app = express();
+      app.use(express.json());
+      app.use((_req, res, next) => { res.locals.authPrincipal = { kind: 'device', id: 'phone' }; next(); });
+      app.use('/api', projectRoutes({ node, registry: new RegistryService(null), localNodeId: 'local',
+        listProfiles: async () => [], addProfile: async () => { profileWrites += 1; },
+        importGit: async () => { imports += 1; throw new Error('import must not run'); } }));
+      const server = createServer(app);
+      servers.push(server);
+      const url = await listen(server);
+      const path = node.role === 'worker' ? '/api/worker/projects/import' : '/api/projects/import';
+      for (const reclone of [false, true]) {
+        const response = await post(`${url}${path}`, { gitUrl: 'https://github.com/owner/repository.git', nodeId: 'local', reclone });
+        assert.equal(response.status, 403);
+        assert.match(await response.text(), /requires owner access/);
+      }
+    }
+    assert.equal(imports, 0);
+    assert.equal(profileWrites, 0);
+  } finally {
+    for (const server of servers) await close(server);
+  }
+});

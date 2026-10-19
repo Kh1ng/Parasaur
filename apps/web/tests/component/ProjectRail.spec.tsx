@@ -11,6 +11,19 @@ const local: ProjectSummary = {
 };
 const remote: ProjectSummary = { ...local, node_id: 'worker', chat_profile: 'gah-node:worker:repo', local_path: '/worker/repo' };
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/pairing/session', (route) => route.fulfill({ json: { principal: { kind: 'owner' }, can_approve_pairing: true } }));
+});
+
+test('paired devices see that import requires owner access instead of the form', async ({ mount, page }) => {
+  await page.route('**/api/manager-chat/nodes', (route) => route.fulfill({ json: { nodes: [] } }));
+  await page.route('**/api/pairing/session', (route) => route.fulfill({ json: { principal: { kind: 'device', id: 'phone' }, can_approve_pairing: false } }));
+  const component = await mount(<ProjectRail profiles={[local]} currentProfile="repo" sessions={[]} selectedSessionId={null}
+    onSelect={() => {}} onSessionSelect={() => {}} sessionsError={false} onRetrySessions={() => {}} onProjectAdded={() => {}} />);
+  await expect(component.getByText('Owner access is required to import repositories.', { exact: false })).toBeVisible();
+  await expect(component.getByText('Import from Git', { exact: true })).toHaveCount(0);
+});
+
 test('groups equal project names by node, selects the remote conversation, and imports with explicit GitLab settings', async ({ mount, page }, testInfo) => {
   await page.route('**/api/manager-chat/nodes', (route) => route.fulfill({ json: { nodes: [
     { nodeId: 'central', displayName: 'Control computer', role: 'central', chatCapable: true, lastSeenAt: null },

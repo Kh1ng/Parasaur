@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import type { ProfileSummary } from '@git-agent-harness/contracts';
 import type { ProfileAddOptions } from './gahCli.js';
-import { addProject, addRemoteProject, importGitProject, listProjects, parseGitUrl, removeProject, resolveChatProject } from './projectCatalog.js';
+import { addProject, addRemoteProject, CheckoutHasLocalWork, importGitProject, listProjects, parseGitUrl, removeProject, resolveChatProject } from './projectCatalog.js';
 
 const savedCatalogPath = process.env.GAH_PROJECT_CATALOG_PATH;
 const savedEnvironment = new Map(
@@ -126,6 +126,29 @@ test('git import clones, derives a profile, re-clones clean checkouts, and guard
     importGitProject({ gitUrl: remoteUrl, reclone: true }, dependencies),
     /uncommitted changes/
   );
+  rmSync(join(projectsRoot, 'owner-repo', 'dirty.txt'));
+
+  // Re-clone deletes the old checkout, so unpublished local work refuses it without touching the checkout.
+  const checkout = join(projectsRoot, 'owner-repo');
+  const inCheckout = (...args: string[]) => execFileSync('git', ['-C', checkout, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args], { encoding: 'utf8' }).trim();
+  const refuses = async (code: string) => {
+    const head = inCheckout('rev-parse', 'HEAD');
+    await assert.rejects(importGitProject({ gitUrl: remoteUrl, reclone: true }, dependencies), (error: unknown) => error instanceof CheckoutHasLocalWork && error.code === code);
+    assert.equal(inCheckout('rev-parse', 'HEAD'), head);
+    assert.deepEqual(readdirSync(projectsRoot), ['owner-repo'], 'no backup or replacement checkout is left behind');
+  };
+  inCheckout('commit', '--allow-empty', '-m', 'local only');
+  await refuses('checkout_unpushed_commits');
+  inCheckout('reset', '--hard', 'origin/main');
+  writeFileSync(join(checkout, 'package.json'), '{}');
+  inCheckout('stash', 'push', '-m', 'local stash');
+  await refuses('checkout_has_stash');
+  assert.match(inCheckout('stash', 'list'), /local stash/);
+  inCheckout('stash', 'drop');
+  inCheckout('worktree', 'add', '--detach', join(root, 'linked'));
+  await refuses('checkout_has_linked_worktrees');
+  inCheckout('worktree', 'remove', join(root, 'linked'));
+  assert.equal((await importGitProject({ gitUrl: remoteUrl, reclone: true }, dependencies)).checkoutStatus, 'recloned');
 });
 
 test('git import accepts hosted Git URLs only', () => {
