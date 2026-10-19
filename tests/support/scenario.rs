@@ -10,11 +10,12 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 use tempfile::TempDir;
 
 use super::fake_ledger::TestLedger;
-use super::{ExecGuard, FakeBackend, Scenario};
+use super::{write_idle_node_pressure, ExecGuard, FakeBackend, Scenario, BACKTRACE_ENV_VARS};
 
 /// Result of a single subprocess invocation.
 #[derive(Debug)]
@@ -53,6 +54,9 @@ pub struct ScenarioHarness {
     pub provider: String,
     worktree_base_override: Option<PathBuf>,
     temp_dir_override: Option<PathBuf>,
+    /// Node pressure every `gah` child reads instead of the live host.
+    /// Defaults to an idle node; tests that exercise admission replace it.
+    /// `None` makes children sample the real host.
     pub node_pressure_fixture: Option<PathBuf>,
     fake_gh: Option<FakeBackend>,
     fake_glab: Option<FakeBackend>,
@@ -60,12 +64,6 @@ pub struct ScenarioHarness {
     ledger: TestLedger,
     gah_bin: PathBuf,
     config_append: String,
-    // Environment capture/restore
-    saved_path: Option<String>,
-    saved_gah_config: Option<String>,
-    saved_gah_ledger: Option<String>,
-    saved_gah_events: Option<String>,
-    saved_xdg_state_home: Option<String>,
 }
 
 impl ScenarioHarness {
@@ -130,16 +128,8 @@ impl ScenarioHarness {
         fs::write(&ledger_path, "").unwrap();
         fs::write(&events_path, "").unwrap();
 
-        // Capture environment state at construction time so Drop can
-        // always restore correctly — even if setup_env panics before
-        // running its capture block.  Otherwise, a partial-harness panic
-        // leaves saved_* at None, and restore_var(None) → remove_var,
-        // which strips PATH from the process and poisons subsequent tests.
-        let saved_path = env::var("PATH").ok();
-        let saved_gah_config = env::var("GAH_CONFIG").ok();
-        let saved_gah_ledger = env::var("GAH_LEDGER_PATH").ok();
-        let saved_gah_events = env::var("GAH_EVENTS_PATH").ok();
-        let saved_xdg_state_home = env::var("XDG_STATE_HOME").ok();
+        let node_pressure = root.join("node-pressure.json");
+        write_idle_node_pressure(&node_pressure);
 
         let gah_bin = env::var("CARGO_BIN_EXE_gah")
             .map(PathBuf::from)
@@ -158,18 +148,13 @@ impl ScenarioHarness {
             provider: provider.to_string(),
             worktree_base_override: None,
             temp_dir_override: None,
-            node_pressure_fixture: None,
+            node_pressure_fixture: Some(node_pressure),
             fake_gh: None,
             fake_glab: None,
             fake_workers: HashMap::new(),
             ledger: TestLedger::new(),
             gah_bin,
             config_append: String::new(),
-            saved_path,
-            saved_gah_config,
-            saved_gah_ledger,
-            saved_gah_events,
-            saved_xdg_state_home,
         }
     }
 
@@ -318,21 +303,42 @@ impl ScenarioHarness {
             .output();
     }
 
+    /// Every `gah` child gets the harness environment on its own `Command`.
+    /// The test process's environment is never changed: tests in one binary
+    /// run on parallel threads and would otherwise see each other's fake bin
+    /// dirs and state paths.
     fn gah_command(&self) -> Command {
         let mut command = Command::new(&self.gah_bin);
         fs::create_dir_all(self._temp.path().join("home")).unwrap();
-        command.env("HOME", self._temp.path().join("home")).env(
-            "GAH_CANONICAL_CONFIG",
-            self._temp.path().join("canonical.toml"),
-        );
+        command
+            .env("HOME", self._temp.path().join("home"))
+            .env(
+                "GAH_CANONICAL_CONFIG",
+                self._temp.path().join("canonical.toml"),
+            )
+            .env("XDG_STATE_HOME", self._temp.path().join("xdg-state"))
+            .env("GAH_CONFIG", &self.config_path)
+            .env("GAH_LEDGER_PATH", &self.ledger_path)
+            .env("GAH_EVENTS_PATH", &self.events_path)
+            .env(
+                "PATH",
+                format!("{}:{}", self.bin_dir.display(), original_path()),
+            );
+        match &self.node_pressure_fixture {
+            Some(path) => command.env("GAH_TEST_NODE_PRESSURE_FILE", path),
+            None => command.env_remove("GAH_TEST_NODE_PRESSURE_FILE"),
+        };
+        for key in BACKTRACE_ENV_VARS {
+            command.env_remove(key);
+        }
         command
     }
 
     fn setup_env(&mut self) {
         // Reject partial fixtures that would silently disappear in
-        // production deserialization before any side-effects (config
-        // write, env capture, env mutation).  This catches the root
-        // cause at harness-setup time and leaves no residual state.
+        // production deserialization before any side-effects (config or
+        // ledger write).  This catches the root cause at harness-setup
+        // time and leaves no residual state.
         if let Err(e) = self.ledger.validate_production_schema() {
             panic!("{e}");
         }
@@ -341,25 +347,11 @@ impl ScenarioHarness {
 
         let _ = self.ledger.write_to(&self.ledger_path);
 
-        // Host-state isolation: point XDG_STATE_HOME into the harness
-        // temp dir so availability, validation, and work-claim state
-        // reads go to a per-harness empty directory, not the host's
+        // Host-state isolation: `gah_command` points XDG_STATE_HOME into
+        // the harness temp dir so availability, validation, and work-claim
+        // state reads go to a per-harness empty directory, not the host's
         // real ~/.local/state/gah/.
-        let state_dir = self._temp.path().join("xdg-state");
-        fs::create_dir_all(&state_dir).ok();
-        env::set_var("XDG_STATE_HOME", state_dir.to_str().unwrap());
-
-        env::set_var("GAH_CONFIG", self.config_path.to_str().unwrap());
-        env::set_var("GAH_LEDGER_PATH", self.ledger_path.to_str().unwrap());
-        env::set_var("GAH_EVENTS_PATH", self.events_path.to_str().unwrap());
-
-        // PATH: only prepend bin_dir once (not repeatedly on every call).
-        let path_env = env::var("PATH");
-        let base_path = self.saved_path.as_deref().unwrap_or(match path_env {
-            Ok(ref p) => p.as_str(),
-            Err(_) => "",
-        });
-        env::set_var("PATH", format!("{}:{}", self.bin_dir.display(), base_path));
+        fs::create_dir_all(self._temp.path().join("xdg-state")).ok();
     }
 
     /// Run one loop iteration by spawning the `gah` binary.
@@ -384,26 +376,8 @@ impl ScenarioHarness {
         if json {
             command.arg("--json");
         }
-        if let Some(path) = &self.node_pressure_fixture {
-            command.env("GAH_TEST_NODE_PRESSURE_FILE", path);
-        }
         let out = command
             .env("XDG_RUNTIME_DIR", self._temp.path().join("runtime"))
-            .env(
-                "XDG_STATE_HOME",
-                self._temp.path().join("xdg-state").to_str().unwrap(),
-            )
-            .env("GAH_CONFIG", self.config_path.to_str().unwrap())
-            .env("GAH_LEDGER_PATH", self.ledger_path.to_str().unwrap())
-            .env("GAH_EVENTS_PATH", self.events_path.to_str().unwrap())
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    self.bin_dir.display(),
-                    env::var("PATH").unwrap_or_default()
-                ),
-            )
             .output()
             .map_err(|e| format!("spawn failed: {e}"))?;
 
@@ -467,21 +441,6 @@ impl ScenarioHarness {
         let out = self
             .gah_command()
             .args(["status", "--profile", &self.profile_name, "--json"])
-            .env(
-                "XDG_STATE_HOME",
-                self._temp.path().join("xdg-state").to_str().unwrap(),
-            )
-            .env("GAH_CONFIG", self.config_path.to_str().unwrap())
-            .env("GAH_LEDGER_PATH", self.ledger_path.to_str().unwrap())
-            .env("GAH_EVENTS_PATH", self.events_path.to_str().unwrap())
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    self.bin_dir.display(),
-                    env::var("PATH").unwrap_or_default()
-                ),
-            )
             .output()
             .map_err(|e| format!("status spawn failed: {e}"))?;
         if !out.status.success() {
@@ -523,21 +482,6 @@ impl ScenarioHarness {
                 "--store-path",
                 store_path.to_str().unwrap(),
             ])
-            .env(
-                "XDG_STATE_HOME",
-                self._temp.path().join("xdg-state").to_str().unwrap(),
-            )
-            .env("GAH_CONFIG", self.config_path.to_str().unwrap())
-            .env("GAH_LEDGER_PATH", self.ledger_path.to_str().unwrap())
-            .env("GAH_EVENTS_PATH", self.events_path.to_str().unwrap())
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    self.bin_dir.display(),
-                    env::var("PATH").unwrap_or_default()
-                ),
-            )
             .output()
             .map_err(|e| format!("quota list spawn failed: {e}"))?;
         if !out.status.success() {
@@ -567,26 +511,8 @@ impl ScenarioHarness {
         let mut cmd = self.gah_command();
         cmd.args(["dispatch", "--profile", &self.profile_name]);
         cmd.args(args);
-        if let Some(path) = &self.node_pressure_fixture {
-            cmd.env("GAH_TEST_NODE_PRESSURE_FILE", path);
-        }
         let out = cmd
-            .env(
-                "XDG_STATE_HOME",
-                self._temp.path().join("xdg-state").to_str().unwrap(),
-            )
-            .env("GAH_CONFIG", self.config_path.to_str().unwrap())
-            .env("GAH_LEDGER_PATH", self.ledger_path.to_str().unwrap())
-            .env("GAH_EVENTS_PATH", self.events_path.to_str().unwrap())
             .env("TMPDIR", temp_dir)
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    self.bin_dir.display(),
-                    env::var("PATH").unwrap_or_default()
-                ),
-            )
             .output()
             .map_err(|e| format!("dispatch spawn failed: {e}"))?;
         Ok(CommandResult {
@@ -616,21 +542,6 @@ impl ScenarioHarness {
             cmd.arg("--dry-run");
         }
         let out = cmd
-            .env(
-                "XDG_STATE_HOME",
-                self._temp.path().join("xdg-state").to_str().unwrap(),
-            )
-            .env("GAH_CONFIG", self.config_path.to_str().unwrap())
-            .env("GAH_LEDGER_PATH", self.ledger_path.to_str().unwrap())
-            .env("GAH_EVENTS_PATH", self.events_path.to_str().unwrap())
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    self.bin_dir.display(),
-                    env::var("PATH").unwrap_or_default()
-                ),
-            )
             .output()
             .map_err(|e| format!("reconcile spawn failed: {e}"))?;
         if !out.status.success() {
@@ -681,21 +592,6 @@ impl ScenarioHarness {
                 "--since",
                 "365d",
             ])
-            .env(
-                "XDG_STATE_HOME",
-                self._temp.path().join("xdg-state").to_str().unwrap(),
-            )
-            .env("GAH_CONFIG", self.config_path.to_str().unwrap())
-            .env("GAH_LEDGER_PATH", self.ledger_path.to_str().unwrap())
-            .env("GAH_EVENTS_PATH", self.events_path.to_str().unwrap())
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    self.bin_dir.display(),
-                    env::var("PATH").unwrap_or_default()
-                ),
-            )
             .output()
             .map_err(|e| format!("report spawn failed: {e}"))?;
         if !out.status.success() {
@@ -714,16 +610,6 @@ impl ScenarioHarness {
         let out = self
             .gah_command()
             .args(["sync", "--profile", &self.profile_name, "--json"])
-            .env("GAH_CONFIG", &self.config_path)
-            .env("GAH_LEDGER_PATH", &self.ledger_path)
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    self.bin_dir.display(),
-                    env::var("PATH").unwrap_or_default()
-                ),
-            )
             .output()
             .map_err(|e| format!("sync spawn failed: {e}"))?;
         if !out.status.success() {
@@ -803,25 +689,14 @@ default_target_branch = "main"
     }
 }
 
-impl Drop for ScenarioHarness {
-    fn drop(&mut self) {
-        // Restore exact original environment (not just remove).
-        restore_var("GAH_CONFIG", &self.saved_gah_config);
-        restore_var("GAH_LEDGER_PATH", &self.saved_gah_ledger);
-        restore_var("GAH_EVENTS_PATH", &self.saved_gah_events);
-        restore_var("XDG_STATE_HOME", &self.saved_xdg_state_home);
-        restore_var("PATH", &self.saved_path);
-    }
-}
-
-fn restore_var(name: &str, saved: &Option<String>) {
-    match saved {
-        Some(val) => env::set_var(name, val),
-        None => env::remove_var(name),
-    }
-}
-
 // --- helpers ---
+
+/// The test process's `PATH`, read once at first use. Harness children run
+/// with `<bin_dir>:<this>`, whatever else changes the process environment.
+fn original_path() -> &'static str {
+    static ORIGINAL_PATH: OnceLock<String> = OnceLock::new();
+    ORIGINAL_PATH.get_or_init(|| env::var("PATH").unwrap_or_default())
+}
 
 fn copy_script_to(fb: &FakeBackend, bin_dir: &Path, name: &str) {
     let src = fb.bin_dir().join(name);
