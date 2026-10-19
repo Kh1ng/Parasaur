@@ -576,11 +576,11 @@ fn run_selected_action(
                 )),
             ) {
                 Ok(outcome) => {
-                    crate::work_claim::release_work(claim_scope, &work_id)?;
+                    crate::work_claim::release_owned_work(claim_scope, &work_id)?;
                     outcome
                 }
                 Err(error) => {
-                    crate::work_claim::release_work(claim_scope, &work_id)?;
+                    crate::work_claim::release_owned_work(claim_scope, &work_id)?;
                     return Err(error);
                 }
             }
@@ -950,7 +950,7 @@ fn run_parallel_once(
                                 }
                             };
                             if let Some(work_id) = work_id_for_thread.as_deref() {
-                                let _ = crate::work_claim::release_work(
+                                let _ = crate::work_claim::release_owned_work(
                                     &claim_scope_for_thread,
                                     work_id,
                                 );

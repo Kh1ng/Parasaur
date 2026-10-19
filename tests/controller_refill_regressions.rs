@@ -1321,3 +1321,115 @@ fn parallel_loop_remains_prompt_on_shutdown_while_node_capacity_is_deferred() {
     );
     assert_eq!(read_u32_file(&calls.with_extension("count")), 1);
 }
+
+#[test]
+fn parallel_loop_reclaims_a_dead_owners_claim_and_releases_only_its_own() {
+    let _lock = serial();
+    let tmp = test_tempdir();
+    let (repo, home, cfg) = setup_fix_dispatch_repo(&tmp, "validation_commands = [\"true\"]\n");
+    fs::create_dir_all(repo.join("docs/tickets")).unwrap();
+    for (ticket_id, title) in [
+        ("421", "Left by a dead loop"),
+        ("422", "Held by a live owner"),
+    ] {
+        fs::write(
+            repo.join(format!("docs/tickets/TICKET-{ticket_id}-claims.md")),
+            format!(
+                "# TICKET-{ticket_id}: {title}\n\nGoal: exercise claim recovery.\nRecommended backend: codex\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    // #421 was claimed by a loop that has since died on this host; #422 is
+    // held by a live process (this test).
+    let dead_pid = {
+        let mut child = ProcessCommand::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        pid
+    };
+    let host = hostname::get().unwrap().to_string_lossy().into_owned();
+    let claims = tmp.path().join("claims.json");
+    fs::write(
+        &claims,
+        serde_json::json!({
+            "version": 2u32,
+            "claims": { "real@real": [
+                { "work_id": "#421", "pid": dead_pid, "hostname": host,
+                  "claimed_at": chrono::Utc::now().to_rfc3339() },
+                { "work_id": "#422", "pid": std::process::id(), "hostname": host,
+                  "claimed_at": "2026-07-14T00:00:00Z" }
+            ]}
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let fake_bin = tmp.path().join("bin");
+    let calls = tmp.path().join("calls");
+    fs::create_dir_all(&fake_bin).unwrap();
+    make_fake_bin_with_body(
+        &fake_bin,
+        "gh",
+        "#!/bin/sh\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"list\" ]; then echo '[]'; exit 0; fi\nif [ \"$1\" = \"api\" ]; then echo '[]'; exit 0; fi\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"create\" ]; then printf 'https://github.com/owner/real/pull/1\\n'; exit 0; fi\nexit 0\n",
+    );
+    make_fake_bin_with_body(
+        &fake_bin,
+        "codex",
+        &format!(
+            "#!/bin/sh\nprintf 'call\\n' >> '{calls}'\nprintf 'agent edit\\n' > reclaimed.txt\nexit 0\n",
+            calls = calls.display(),
+        ),
+    );
+
+    let output = spawn_bin(tmp.path())
+        .args([
+            "loop",
+            "--profile",
+            "real",
+            "--config-path",
+            cfg.to_str().unwrap(),
+            "--once",
+            "--parallel",
+            "2",
+        ])
+        .env(
+            "PATH",
+            format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap()),
+        )
+        .env("HOME", &home)
+        .env("GITHUB_TOKEN", "token")
+        .env("GAH_CLAIM_STATE_PATH", &claims)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Only the dead owner's item was dispatched.
+    assert_eq!(
+        fs::read_to_string(&calls).unwrap_or_default(),
+        "call\n",
+        "stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    // The loop released its own claim on #421 and left the live owner's.
+    let state: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&claims).unwrap()).unwrap();
+    let left: Vec<_> = state["claims"]["real@real"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|claim| (claim["work_id"].clone(), claim["pid"].clone()))
+        .collect();
+    assert_eq!(
+        left,
+        [(
+            serde_json::json!("#422"),
+            serde_json::json!(std::process::id())
+        )]
+    );
+}
