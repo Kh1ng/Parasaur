@@ -9,26 +9,48 @@ name: Release — Edge channel
 
 on:
   workflow_dispatch:
-  workflow_run:
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- every job is gated on trusted-source below
     workflows: ["CI"]
     types: [completed]
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-edge
   cancel-in-progress: true
 
 jobs:
+  # Only this repository's own main branch may publish. A workflow_run event
+  # fires for every completed CI run whose head branch is named `main`,
+  # including runs for pull requests, so the event that started CI, the
+  # repository it ran on and the branch are all checked here. Every build job
+  # needs this gate, so nothing is checked out or built when it is skipped.
+  trusted-source:
+    if: >-
+      ${{
+        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'workflow_run' &&
+         github.event.workflow_run.conclusion == 'success' &&
+         github.event.workflow_run.event == 'push' &&
+         github.event.workflow_run.head_branch == 'main' &&
+         github.event.workflow_run.head_repository.full_name == github.repository)
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: echo "Publishing edge from $HEAD_SHA"
+
   cli-linux:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    needs: trusted-source
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
       - name: Check release version
         run: node scripts/check-release-version.mjs
       - name: Install Rust (stable)
@@ -50,12 +72,13 @@ jobs:
           if-no-files-found: error
 
   cli-macos:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    needs: trusted-source
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
       - name: Check release version
         run: node scripts/check-release-version.mjs
       - name: Install Rust (stable)
@@ -84,12 +107,13 @@ jobs:
           if-no-files-found: error
 
   server-bundle:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    needs: trusted-source
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
       - name: Check release version
         run: node scripts/check-release-version.mjs
       - name: Install Node.js
@@ -117,7 +141,7 @@ jobs:
   # desktop app reports "updater not configured" and the edge release still
   # ships CLI + server artifacts.
   updater-key-gate:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    needs: trusted-source
     runs-on: ubuntu-latest
     outputs:
       has_key: ${{ steps.gate.outputs.has_key }}
@@ -154,6 +178,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
       - name: Check release version
         run: node scripts/check-release-version.mjs
         working-directory: .
@@ -237,10 +262,13 @@ jobs:
     # core artifacts still publish.
     if: ${{ !cancelled() && needs.cli-linux.result == 'success' && needs.cli-macos.result == 'success' && needs.server-bundle.result == 'success' && (needs.desktop-updater.result == 'success' || needs.desktop-updater.result == 'skipped') }}
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
       - name: Check release version
         run: node scripts/check-release-version.mjs
       - name: Test the compose script
