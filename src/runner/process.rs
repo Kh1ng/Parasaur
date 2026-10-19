@@ -839,14 +839,17 @@ fn spawn_with_idle_watch_with_shutdown(
             crate::runner::resources::finish_resource_sampler_none()
         }
     };
-    // A surviving descendant may still own the inherited pipe descriptors.
-    // Never turn a bounded cleanup failure into an unbounded thread join.
-    if cleanup_error.is_none() {
-        if let Some(handle) = stdout_thread {
-            let _ = handle.join();
-        }
-        if let Some(handle) = stderr_thread {
-            let _ = handle.join();
+    // The attempt is over, so whatever the backend left in its process group
+    // ends with it. A surviving descendant may still own the inherited pipe
+    // descriptors (one outside the group is not reachable here); wait for the
+    // log copiers only for a bounded grace, never an unbounded join.
+    crate::runner::kill_process_group_id(process_group);
+    if !crate::runner::pipes::readers_finish_within_grace(&[&stdout_thread, &stderr_thread]) {
+        if let Ok(mut file) = fs::OpenOptions::new().append(true).open(log_path) {
+            let _ = writeln!(
+                file,
+                "GAH: backend output was still held open by a process outside its process group; log may be incomplete."
+            );
         }
     }
     if let Some(error) = cleanup_error {
@@ -991,6 +994,32 @@ mod tests {
         let log = fs::read_to_string(log_path).unwrap();
         assert!(!log.contains("leaked"));
         assert!(log.contains("configured 1s hard wall-clock timeout"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normal_exit_reaps_a_background_child_holding_the_log_pipes() {
+        let _exec_guard = ExecGuard::new();
+        let f = fixture();
+        let pid_path = f.session_dir.join("sleeper.pid");
+        let body = format!(
+            "#!/bin/sh\nsleep 30 &\necho $! > '{}'\necho done\n",
+            pid_path.display()
+        );
+        make_fake_bin(&f.bin_dir, "backend", &body);
+        let log_path = f.session_dir.join("backend-output.log");
+        let started = Instant::now();
+        let command = Command::new(f.bin_dir.join("backend"));
+        let result = spawn_with_idle_watch(command, &log_path, &f.worktree, 60, "test").unwrap();
+
+        assert_eq!(result.0, 0);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(fs::read_to_string(log_path).unwrap().contains("done"));
+        let pid = crate::runner::pipes::read_pid(&pid_path);
+        assert!(crate::runner::pipes::process_exits_within(
+            pid,
+            Duration::from_secs(2)
+        ));
     }
 
     #[cfg(target_os = "linux")]

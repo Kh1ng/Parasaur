@@ -6,6 +6,7 @@ pub(crate) mod backend_runner;
 mod backend_runner_contract_tests;
 pub(crate) mod backends;
 pub(crate) mod output;
+pub(crate) mod pipes;
 pub(crate) mod process;
 pub(crate) mod resolve;
 pub(crate) mod resources;
@@ -20,6 +21,9 @@ pub use crate::runner::backend_runner::{
 #[allow(unused_imports)]
 pub(crate) use crate::runner::backends::agy::log_delta;
 pub use crate::runner::backends::openhands::{list_oh_profiles, load_oh_profile};
+pub(crate) use crate::runner::pipes::{
+    kill_process_group_id, wait_until, PipeCapture, PIPE_DRAIN_GRACE,
+};
 #[allow(unused_imports)]
 pub(crate) use crate::runner::process::{
     arm_child_pdeathsig, copy_stream_to_file, kill_process_group, prepare_process_group,
