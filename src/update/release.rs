@@ -336,9 +336,12 @@ fn is_text_file_busy(_err: &std::io::Error) -> bool {
 /// MCP server, the web dashboard, and the OpenCode agent configs, plus the
 /// lockfiles for dependency-drift detection. `dist/` output is gitignored,
 /// so replacing it never dirties the checkout for a later source update.
+///
+/// This only extracts and validates the bundle in a staging directory; it
+/// changes nothing in the checkout (`install_server_bundle` does that).
 fn extract_server_bundle(bundle: &Path, repo: &Path, central: bool) -> Result<tempfile::TempDir> {
-    // Stage inside the repo's parent so the moves below stay on one
-    // filesystem: rename(2) across devices fails.
+    // Stage inside the repo's parent so the later moves into the checkout
+    // stay on one filesystem: rename(2) across devices fails.
     let staging = tempfile::tempdir_in(repo.parent().unwrap_or_else(|| Path::new(".")))
         .context("staging server bundle extraction")?;
     let status = Command::new("tar")
@@ -356,17 +359,22 @@ fn extract_server_bundle(bundle: &Path, repo: &Path, central: bool) -> Result<te
     if !server_bin.is_file() {
         bail!("release server bundle has no apps/server/dist/bin.js");
     }
-    let mut moves = vec![("apps/server/dist", true)];
-    if central {
-        if !staging.path().join("apps/web/dist/index.html").is_file() {
-            bail!("release server bundle has no apps/web/dist/index.html");
-        }
-        moves.push(("apps/web/dist", true));
+    if central && !staging.path().join("apps/web/dist/index.html").is_file() {
+        bail!("release server bundle has no apps/web/dist/index.html");
     }
-    for (relative, needed) in moves {
-        if !needed {
-            continue;
-        }
+    Ok(staging)
+}
+
+/// Move a validated bundle's outputs from its extraction staging directory
+/// into the checkout. The caller runs this last, after every release
+/// artifact has been verified, so a bad bundle never leaves new binaries
+/// beside the old `dist/` output (#1554).
+fn install_server_bundle(staging: &Path, repo: &Path, central: bool) -> Result<()> {
+    let mut moves = vec!["apps/server/dist"];
+    if central {
+        moves.push("apps/web/dist");
+    }
+    for relative in moves {
         let destination = repo.join(relative);
         if let Some(parent) = destination.parent() {
             std::fs::create_dir_all(parent)
@@ -376,14 +384,14 @@ fn extract_server_bundle(bundle: &Path, repo: &Path, central: bool) -> Result<te
             std::fs::remove_dir_all(&destination)
                 .with_context(|| format!("removing old {}", destination.display()))?;
         }
-        std::fs::rename(staging.path().join(relative), &destination).with_context(|| {
+        std::fs::rename(staging.join(relative), &destination).with_context(|| {
             format!(
                 "installing release output {relative} into {}",
                 destination.display()
             )
         })?;
     }
-    Ok(staging)
+    Ok(())
 }
 
 /// True when the bundle's lockfile differs from the checkout's: the prebuilt
@@ -454,28 +462,98 @@ fn asset_for_current_platform(
         })
 }
 
+/// Require a downloaded binary to pass `--version` where it was fetched,
+/// before any artifact is installed. `install_binary` probes its own staged
+/// copy again right before the rename.
+fn probe_downloaded_binary(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(path)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions)?;
+    }
+    let probe = version_probe(path)
+        .with_context(|| format!("running {} --version sanity check", path.display()))?;
+    if !probe.status.success() {
+        bail!(
+            "downloaded {} failed its --version sanity check: {}",
+            path.display(),
+            String::from_utf8_lossy(&probe.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
 /// Download and install the release artifacts (CLI binary and, when this
 /// role needs it, the server bundle) into the checkout. Returns the bundle
 /// staging directory while it is still needed for the agent configs.
+///
+/// Every artifact the role needs is fetched, checksum-verified, extracted or
+/// probed before the first one is installed (#1554): a bad download fails
+/// the update with the previous CLI, MCP server, and `dist/` output intact.
 fn install_release_artifacts(
     manifest: &ReleaseManifest,
     locator: &AssetLocator,
     repo: &Path,
     role: HostRole,
 ) -> Result<Option<tempfile::TempDir>> {
-    let download_dir = tempfile::tempdir().context("staging release downloads")?;
-
-    let fetch = |kind| -> Result<PathBuf> {
-        let asset = asset_for_current_platform(&manifest.assets, kind)?;
+    let cli_target = super::installed_binary_path()?;
+    let bin_dir = cli_target.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(bin_dir)
+        .with_context(|| format!("creating CLI install directory {}", bin_dir.display()))?;
+    // Download next to the install target, where `install_binary` probes
+    // too, so the early `--version` probe runs on the same filesystem.
+    let download_dir = tempfile::Builder::new()
+        .prefix(".gah-release-")
+        .tempdir_in(bin_dir)
+        .context("staging release downloads")?;
+    let fetch = |asset: &ReleaseAsset| -> Result<PathBuf> {
         let path = download_dir.path().join(&asset.name);
         fetch_asset(locator, asset, &path)?;
         verify_asset(asset, &path)?;
         Ok(path)
     };
-    let binary = install_binary(
-        &fetch(ReleaseAssetKind::Cli)?,
-        super::installed_binary_path()?,
-    )?;
+    let fetch_binary = |kind| fetch(asset_for_current_platform(&manifest.assets, kind)?);
+
+    // Central and standalone serve MCP, like the source path (#1436).
+    let serves_control_plane = matches!(role, HostRole::Central | HostRole::Standalone);
+    let cli = fetch_binary(ReleaseAssetKind::Cli)?;
+    let mcp = if serves_control_plane {
+        Some(fetch_binary(ReleaseAssetKind::McpServer)?)
+    } else {
+        None
+    };
+
+    // Role parity with the source path: central always installs the server
+    // bundle; a macOS worker serves the same execution API (its server
+    // build step); a Linux worker is dispatch-only and needs no bundle.
+    let needs_bundle =
+        serves_control_plane || (role == HostRole::Worker && cfg!(target_os = "macos"));
+    let bundle = if needs_bundle {
+        let asset = manifest
+            .assets
+            .iter()
+            .find(|asset| asset.kind == ReleaseAssetKind::ServerBundle)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "release manifest has no server bundle; the {} channel release is incomplete",
+                    manifest.channel
+                )
+            })?;
+        let staging = extract_server_bundle(&fetch(asset)?, repo, serves_control_plane)?;
+        Some((asset, staging))
+    } else {
+        None
+    };
+
+    probe_downloaded_binary(&cli)?;
+    if let Some(mcp) = &mcp {
+        probe_downloaded_binary(mcp)?;
+    }
+
+    // Everything verified: swap the binaries in, then the bundle outputs.
+    let binary = install_binary(&cli, cli_target)?;
     println!(
         "Installed CLI {} (release {})",
         binary.display(),
@@ -483,41 +561,15 @@ fn install_release_artifacts(
     );
     let alias = super::installation::install_parasaur_alias(&binary)?;
     println!("Installed CLI alias: {}", alias.display());
-    // Central and standalone serve MCP, like the source path (#1436).
-    if matches!(role, HostRole::Central | HostRole::Standalone) {
-        let mcp = install_binary(
-            &fetch(ReleaseAssetKind::McpServer)?,
-            binary.with_file_name("gah-mcp-server"),
-        )?;
+    if let Some(mcp) = &mcp {
+        let mcp = install_binary(mcp, binary.with_file_name("gah-mcp-server"))?;
         println!("Installed MCP server: {}", mcp.display());
     }
 
-    // Role parity with the source path: central always installs the server
-    // bundle; a macOS worker serves the same execution API (its server
-    // build step); a Linux worker is dispatch-only and needs no bundle.
-    let needs_bundle = matches!(role, HostRole::Central | HostRole::Standalone)
-        || (role == HostRole::Worker && cfg!(target_os = "macos"));
-    if !needs_bundle {
+    let Some((bundle, staging)) = bundle else {
         return Ok(None);
-    }
-    let bundle = manifest
-        .assets
-        .iter()
-        .find(|asset| asset.kind == ReleaseAssetKind::ServerBundle)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "release manifest has no server bundle; the {} channel release is incomplete",
-                manifest.channel
-            )
-        })?;
-    let bundle_path = download_dir.path().join(&bundle.name);
-    fetch_asset(locator, bundle, &bundle_path)?;
-    verify_asset(bundle, &bundle_path)?;
-    let staging = extract_server_bundle(
-        &bundle_path,
-        repo,
-        matches!(role, HostRole::Central | HostRole::Standalone),
-    )?;
+    };
+    install_server_bundle(staging.path(), repo, serves_control_plane)?;
     if server_bundle_needs_dependency_refresh(staging.path(), repo) {
         println!(
             "Release bundle ships different dependencies; refreshing node_modules with npm ci \
@@ -929,6 +981,9 @@ mod tests {
 
         let bundle = write_bundle(outer.path(), "gah-server-bundle.tar.gz", true);
         let staging = extract_server_bundle(&bundle, &repo, true).unwrap();
+        // Extraction alone leaves the checkout untouched.
+        assert!(!repo.join("apps/server/dist").exists());
+        install_server_bundle(staging.path(), &repo, true).unwrap();
 
         assert!(repo.join("apps/server/dist/bin.js").is_file());
         assert!(repo.join("apps/web/dist/index.html").is_file());
@@ -960,7 +1015,8 @@ mod tests {
         fs::create_dir_all(&repo).unwrap();
 
         let bundle = write_bundle(outer.path(), "gah-server-bundle.tar.gz", true);
-        extract_server_bundle(&bundle, &repo, false).unwrap();
+        let staging = extract_server_bundle(&bundle, &repo, false).unwrap();
+        install_server_bundle(staging.path(), &repo, false).unwrap();
 
         assert!(repo.join("apps/server/dist/bin.js").is_file());
         assert!(!repo.join("apps/web/dist").exists());
@@ -1080,5 +1136,123 @@ mod tests {
         closer.join().unwrap();
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "gah 9.9.9");
+    }
+
+    fn write_fake_binary(path: &Path, script: &str) {
+        fs::write(path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    /// Run a central install from a local manifest that `tamper` breaks,
+    /// over an existing install (old CLI, old server dist), and require the
+    /// failure to leave that install exactly as it was (#1554).
+    fn assert_failed_release_leaves_install_intact(
+        tamper: impl FnOnce(&Path, &mut serde_json::Value),
+        expected_error: &str,
+    ) {
+        let outer = tempfile::tempdir().unwrap();
+        let repo = outer.path().join("repo");
+        fs::create_dir_all(repo.join("apps/server/dist")).unwrap();
+        fs::write(repo.join("apps/server/dist/bin.js"), "old server").unwrap();
+        fs::write(repo.join("package-lock.json"), "{\"lock\":\"new\"}").unwrap();
+
+        let cli_name = if cfg!(target_os = "macos") {
+            "gah-macos-universal"
+        } else if cfg!(target_arch = "x86_64") {
+            "gah-linux-x86_64"
+        } else {
+            "gah-linux-aarch64"
+        };
+        let mcp_name = cli_name.replacen("gah-", "gah-mcp-server-", 1);
+        let cli = outer.path().join(cli_name);
+        let mcp = outer.path().join(&mcp_name);
+        write_fake_binary(&cli, "#!/bin/sh\necho 'gah 9.9.9'\n");
+        write_fake_binary(&mcp, "#!/bin/sh\necho 'gah-mcp-server 9.9.9'\n");
+        let bundle = write_bundle(outer.path(), "gah-server-bundle.tar.gz", true);
+        let mut manifest = serde_json::json!({
+            "schema": 1,
+            "version": "9.9.9",
+            "channel": "edge",
+            "assets": [
+                { "name": cli_name, "kind": "cli", "sha256": sha256_of(&cli).unwrap() },
+                { "name": mcp_name, "kind": "mcp-server", "sha256": sha256_of(&mcp).unwrap() },
+                { "name": "gah-server-bundle.tar.gz", "kind": "server-bundle",
+                  "sha256": sha256_of(&bundle).unwrap() },
+            ]
+        });
+        tamper(outer.path(), &mut manifest);
+
+        let cargo_home = outer.path().join("cargo-home");
+        let bin = cargo_home.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join("gah"), "old cli").unwrap();
+        let _guard = CargoHomeGuard::set(&cargo_home);
+
+        let manifest_path = outer.path().join("edge-manifest.json");
+        fs::write(&manifest_path, manifest.to_string()).unwrap();
+        let location =
+            resolve_manifest_location(&repo, Some(manifest_path.to_str().unwrap())).unwrap();
+        let manifest: ReleaseManifest =
+            serde_json::from_slice(&read_manifest(&location).unwrap()).unwrap();
+        let locator = AssetLocator::new(location);
+
+        let error =
+            install_release_artifacts(&manifest, &locator, &repo, HostRole::Central).unwrap_err();
+        assert!(
+            format!("{error:#}").contains(expected_error),
+            "unexpected error: {error:#}"
+        );
+        assert_eq!(fs::read_to_string(bin.join("gah")).unwrap(), "old cli");
+        // No MCP server, alias, staged binary, or download directory either.
+        let left: Vec<_> = fs::read_dir(&bin)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(left, vec![std::ffi::OsString::from("gah")]);
+        assert_eq!(
+            fs::read_to_string(repo.join("apps/server/dist/bin.js")).unwrap(),
+            "old server"
+        );
+        assert!(!repo.join("apps/web/dist").exists());
+    }
+
+    #[test]
+    fn release_with_bundle_checksum_mismatch_installs_nothing() {
+        assert_failed_release_leaves_install_intact(
+            |_, manifest| manifest["assets"][2]["sha256"] = "deadbeef".into(),
+            "checksum mismatch for gah-server-bundle.tar.gz",
+        );
+    }
+
+    #[test]
+    fn release_with_truncated_bundle_installs_nothing() {
+        assert_failed_release_leaves_install_intact(
+            |dir, manifest| {
+                // The manifest matches the truncated bytes, so only the
+                // extraction can catch it.
+                let bundle = dir.join("gah-server-bundle.tar.gz");
+                let bytes = fs::read(&bundle).unwrap();
+                fs::write(&bundle, &bytes[..bytes.len() / 2]).unwrap();
+                manifest["assets"][2]["sha256"] = sha256_of(&bundle).unwrap().into();
+            },
+            "tar extraction of the release server bundle",
+        );
+    }
+
+    #[test]
+    fn release_with_broken_mcp_server_installs_nothing() {
+        assert_failed_release_leaves_install_intact(
+            |dir, manifest| {
+                let name = manifest["assets"][1]["name"].as_str().unwrap().to_string();
+                let mcp = dir.join(name);
+                write_fake_binary(&mcp, "#!/bin/sh\nexit 3\n");
+                manifest["assets"][1]["sha256"] = sha256_of(&mcp).unwrap().into();
+            },
+            "failed its --version sanity check",
+        );
     }
 }
