@@ -1867,6 +1867,10 @@ export interface ManagerModelsSummary {
    * that doesn't, so the UI hides the indicator rather than showing a
    * fake 0/0. */
   contextUsage: { size: number; used: number } | null;
+  /** True when the backend runs its bundled SDK binary because the node has
+   * no installed CLI (only Claude today, #1507), so the list may not match
+   * the CLI's own. Absent means false. */
+  bundledRuntime?: boolean;
 }
 
 // ---------------------------------------------------------------------------

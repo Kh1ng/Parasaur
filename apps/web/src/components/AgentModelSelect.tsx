@@ -8,7 +8,7 @@ export interface AgentModelOption {
 }
 
 /** Native keyboard/touch selection, with an explicit escape hatch for unlisted models. */
-export function AgentModelSelect({ value, options, label, onChange, loading, failed, currentLabel }: {
+export function AgentModelSelect({ value, options, label, onChange, loading, failed, currentLabel, bundledRuntime }: {
   value: string;
   options: AgentModelOption[];
   label: string;
@@ -16,6 +16,8 @@ export function AgentModelSelect({ value, options, label, onChange, loading, fai
   loading?: boolean;
   failed?: boolean;
   currentLabel?: string;
+  /** The list came from the backend's bundled SDK, not an installed CLI. */
+  bundledRuntime?: boolean;
 }) {
   const [custom, setCustom] = useState(false);
   const selected = options.find((option) => option.value === value || option.variants?.some((variant) => variant.value === value));
@@ -47,5 +49,6 @@ export function AgentModelSelect({ value, options, label, onChange, loading, fai
       onChange={(event) => onChange(event.target.value)} placeholder="Exact model name or ID" className={inputClass} />}
     {loading && <p role="status" className="text-xs text-muted">Loading available models…</p>}
     {failed && <p role="status" className="text-xs text-warning">Couldn’t load models. Keep the current model or enter another one.</p>}
+    {bundledRuntime && !loading && !failed && <p role="status" className="text-xs text-warning">Using the bundled SDK because this node has no installed CLI, so this list may not match the CLI’s models. Install the CLI to see your models.</p>}
   </div>;
 }

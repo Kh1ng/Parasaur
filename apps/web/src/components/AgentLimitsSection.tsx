@@ -34,8 +34,8 @@ function count(text: string): number | undefined {
  * passes to it: Antigravity is addressed by display name, the others by id.
  * A backend that lists nothing just gets no suggestions.
  */
-export function useBackendModels(profile: string, backends: string[]): Record<string, { options: AgentModelOption[]; efforts?: { id: string; name: string }[]; loading: boolean; failed: boolean }> {
-  const [models, setModels] = useState<Record<string, { options: AgentModelOption[]; efforts?: { id: string; name: string }[]; loading: boolean; failed: boolean }>>({});
+export function useBackendModels(profile: string, backends: string[]): Record<string, { options: AgentModelOption[]; efforts?: { id: string; name: string }[]; bundledRuntime?: boolean; loading: boolean; failed: boolean }> {
+  const [models, setModels] = useState<Record<string, { options: AgentModelOption[]; efforts?: { id: string; name: string }[]; bundledRuntime?: boolean; loading: boolean; failed: boolean }>>({});
   const wanted = backends.join(',');
   useEffect(() => {
     let cancelled = false;
@@ -47,7 +47,7 @@ export function useBackendModels(profile: string, backends: string[]): Record<st
       Promise.all([gahApi.getManagerChatModelsForBackend(profile, backend), aliases])
         .then(([summary, resolvedAliases]) => {
           const options = agentModelOptions(backend, summary.models, resolvedAliases);
-          if (!cancelled) setModels((current) => ({ ...current, [backend]: { options, efforts: summary.reasoningEfforts, loading: false, failed: false } }));
+          if (!cancelled) setModels((current) => ({ ...current, [backend]: { options, efforts: summary.reasoningEfforts, bundledRuntime: summary.bundledRuntime ?? false, loading: false, failed: false } }));
         })
         .catch(() => { if (!cancelled) setModels((current) => ({ ...current, [backend]: { options: [], loading: false, failed: true } })); });
     }
@@ -166,7 +166,7 @@ export function AgentLimitsSection({ selectedName, selected, agents, onSaved }: 
                   <label className="min-w-0 space-y-1 text-xs text-secondary">Model
                   <AgentModelSelect label={`Model for ${agentLabel(key)}`} value={models[key] ?? model} options={suggestions[backend]?.options ?? []}
                     currentLabel={currentAgentModelLabel(backend, models[key] ?? model, suggestions[backend]?.options ?? [])}
-                    loading={suggestions[backend]?.loading} failed={suggestions[backend]?.failed}
+                    loading={suggestions[backend]?.loading} failed={suggestions[backend]?.failed} bundledRuntime={suggestions[backend]?.bundledRuntime}
                     onChange={(value) => setModels((current) => ({ ...current, [key]: value }))} />
                   </label>
                 ) : (

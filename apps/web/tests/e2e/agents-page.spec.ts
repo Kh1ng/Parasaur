@@ -105,10 +105,10 @@ test('Claude models show versions and context variants while saving exact model 
     models: [
       { id: 'opus[1m]', name: 'Opus (1M context)', description: 'Opus 5 with 1M context · Best for complex tasks' },
       { id: 'claude-opus-4-6', name: 'Opus', description: 'A pinned version' },
-      { id: 'sonnet', name: 'Sonnet', description: 'Sonnet 5 · Efficient for routine tasks' },
+      { id: 'sonnet', name: 'Sonnet', description: 'Sonnet 9 · Efficient for routine tasks' },
       { id: 'haiku', name: 'Haiku', description: 'Haiku 4.5 · Fastest for quick answers' },
       { id: 'claude-fable-5[1m]', name: 'Fable', description: 'Fable 5' },
-    ], reasoningEfforts: [],
+    ], reasoningEfforts: [], bundledRuntime: true,
   } }));
   await page.route('**/api/report/roles**', (route) => route.fulfill({ json: {
     model_aliases: [
@@ -123,10 +123,11 @@ test('Claude models show versions and context variants while saving exact model 
   const picker = page.getByRole('combobox', { name: /^Model for Claude/ });
   await expect(picker.getByRole('option', { name: 'Opus 5.5 (1M context)', exact: true })).toBeAttached();
   await expect(picker.getByRole('option', { name: 'Opus 4.6', exact: true })).toBeAttached();
-  await expect(picker.getByRole('option', { name: 'Sonnet 5', exact: true })).toBeAttached();
+  await expect(picker.getByRole('option', { name: 'Sonnet 9', exact: true })).toBeAttached();
   await expect(picker.getByRole('option', { name: 'Haiku 4.5', exact: true })).toBeAttached();
   await expect(picker.getByRole('option', { name: 'Fable 5.1 (1M context)', exact: true })).toBeAttached();
   await expect(picker.getByRole('option', { selected: true })).toHaveText('Opus 5.5 (provider default)');
+  await expect(page.getByText('Using the bundled SDK because this node has no installed CLI', { exact: false }).first()).toBeVisible();
   await expect(page.getByRole('combobox', { name: 'Worker reasoning level' }).getByRole('option')).toHaveText(['Provider default', 'Low', 'Medium', 'High', 'Extra high', 'Maximum']);
   await page.getByRole('combobox', { name: 'Worker reasoning level' }).selectOption('high');
   await page.getByRole('combobox', { name: /^Reasoning for Claude/ }).selectOption('high');

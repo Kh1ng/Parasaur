@@ -15,13 +15,15 @@ import {
   opencodeSpawnSpec,
   type ManagerCommandInfo,
   type ManagerModelInfo,
-  type ManagerReasoningEffortInfo
+  type ManagerReasoningEffortInfo,
+  type SpawnSpec
 } from './acpAdapter.js';
 import { createHeadlessBackend, vibeBackendSpec, agyBackendSpec, openhandsBackendSpec } from './headlessAdapter.js';
 import type { ChatTranscriptTurn, ChatUsage } from '@git-agent-harness/contracts';
 import type { PermissionAsk } from './permissionPolicy.js';
 import { runBackendInstanceRuntime } from '../gahCli.js';
 import { bindOpenCodeModels, instanceAcpSpawn, instanceHeadlessSpec } from './instanceLaunch.js';
+import { findInstalledExecutable } from './installedExecutable.js';
 
 export type { ManagerCommandInfo, ManagerModelInfo, ManagerReasoningEffortInfo };
 
@@ -71,6 +73,10 @@ export interface ManagerAdapter extends ManagerBackendInfo {
     /** Context-window occupancy (issue #865); null for backends that don't
      * advertise it (only Hermes does today, via ACP's usage_update). */
     contextUsage: { size: number; used: number } | null;
+    /** True when the backend runs its bundled SDK binary because no CLI is
+     * installed, so its model list may differ from the CLI's. Absent means
+     * false (older workers and backends without a bundled fallback). */
+    bundledRuntime?: boolean;
   }>;
   setModel(gahProfile: string, modelId: string): Promise<void>;
   setReasoningEffort(gahProfile: string, effortId: string): Promise<void>;
@@ -90,10 +96,38 @@ function acpManagerAdapter(
   return { id, displayName, implemented: true, ...backend };
 }
 
+/** Default Claude Manager Chat runs the `claude` that dispatch resolves, so
+ * its model list is that CLI's own (#1507). With none installed, the ACP
+ * bridge falls back to the SDK binary pinned in package-lock.json. */
+export function defaultClaudeSpawn(searchPath?: string): { spec: SpawnSpec; bundledRuntime: boolean } {
+  const executable = findInstalledExecutable('claude', searchPath);
+  return {
+    spec: claudeSpawnSpec(executable ? { executable, state_root: null } : undefined),
+    bundledRuntime: executable === null
+  };
+}
+
+function defaultClaudeAdapter(): ManagerAdapter {
+  // Each connection resolves again, so installing `claude` takes effect on
+  // the next spawn; the flag describes the most recent one.
+  let bundledRuntime = false;
+  const adapter = acpManagerAdapter('claude', 'Claude', () => {
+    const resolved = defaultClaudeSpawn();
+    bundledRuntime = resolved.bundledRuntime;
+    return resolved.spec;
+  });
+  return {
+    ...adapter,
+    async listModels(gahProfile, cwd) {
+      return { ...(await adapter.listModels(gahProfile, cwd)), bundledRuntime };
+    }
+  };
+}
+
 const REGISTRY: Record<string, ManagerAdapter> = {
   hermes: acpManagerAdapter('hermes', 'Hermes', hermesSpawnSpec),
   codex: acpManagerAdapter('codex', 'Codex', codexSpawnSpec, { consecutiveFailureReconnectThreshold: 2 }),
-  claude: acpManagerAdapter('claude', 'Claude', claudeSpawnSpec),
+  claude: defaultClaudeAdapter(),
   opencode: acpManagerAdapter('opencode', 'OpenCode', opencodeSpawnSpec),
   vibe: { ...createHeadlessBackend(vibeBackendSpec()) } as ManagerAdapter,
   agy: { ...createHeadlessBackend(agyBackendSpec()) } as ManagerAdapter,

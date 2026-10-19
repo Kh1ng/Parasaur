@@ -546,6 +546,7 @@ export async function listModelsForProfile(
   reasoningEfforts: ManagerReasoningEffortInfo[];
   currentReasoningEffortId: string | null;
   contextUsage: { size: number; used: number } | null;
+  bundledRuntime?: boolean;
 }> {
   const backendId = backendForProfile(profile);
   const route = await chatRoute(profile, nodeId, backendId, false);
