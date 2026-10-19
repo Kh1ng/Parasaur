@@ -700,6 +700,35 @@ export function createServer(
       legacyHeaders: false
     })
   );
+  // These authenticated writes start processes (dispatch, git worktree, gh,
+  // helper-model turns, the loop) or rewrite session files. Every caller is
+  // one click or one agent tool call, so 30/min per client address never
+  // throttles the UI. Registered per method, ahead of the handlers, so
+  // sibling GETs stay unlimited.
+  const processLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'rate_limited', message: 'Too many requests that start work. Retry in a minute.' }
+  });
+  app.post([
+    '/api/dispatch', '/api/git/suggest', '/api/git/pr', '/api/loop/start',
+    '/api/manager-chat/sessions', '/api/manager-chat/sessions/archive', '/api/manager-chat/sessions/restore',
+    '/api/manager-chat/issues/start', '/api/manager-chat/prs/start'
+  ], processLimiter);
+  // Preview and skill-binding edits only rewrite small settings files and
+  // follow quick toggles in the chat UI, so they get a roomier bucket.
+  const settingsWriteLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'rate_limited', message: 'Too many setting changes. Retry in a minute.' }
+  });
+  app.post('/api/manager-chat/preview/set', settingsWriteLimiter);
+  app.put('/api/skills/bindings', settingsWriteLimiter);
+  app.delete('/api/skills/bindings', settingsWriteLimiter);
 
   // Health check endpoint
   app.get('/health', (req, res) => {

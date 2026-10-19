@@ -49,6 +49,23 @@ test('all API routes require remote authentication while health and trusted loca
   }
 });
 
+// #1549: routes that start processes share one per-client limiter; the
+// unknown profile makes each counted request fail before any worktree work.
+test('process-starting routes are rate-limited while sibling reads are not', async () => {
+  await withFixtureServer(async base => {
+    const create = () => fetch(`${base}/api/manager-chat/sessions`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile: 'missing-profile' })
+    });
+    for (let request = 0; request < 30; request++) assert.notEqual((await create()).status, 429, `request ${request + 1}`);
+    const limited = await create();
+    assert.equal(limited.status, 429);
+    assert.equal((await limited.json() as { error: string }).error, 'rate_limited');
+    assert.equal((await fetch(`${base}/api/dispatch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 429, 'the bucket is shared across process routes');
+    assert.notEqual((await fetch(`${base}/api/manager-chat/sessions?profile=missing-profile`)).status, 429, 'GET on the same path is not limited');
+    assert.notEqual((await fetch(`${base}/api/manager-chat/sessions/all`)).status, 429, 'GET on a sibling path is not limited');
+  });
+});
+
 function profilePayload(profile: string): ConfigProfileSummary {
   return {
     profile,
