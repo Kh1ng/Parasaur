@@ -17,7 +17,7 @@
  */
 
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -143,6 +143,14 @@ export function sessionBranchName(repoId: string, sessionId: string, title?: str
 
 function git(repoPath: string, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
   return execFileAsync('git', args, { cwd: repoPath, maxBuffer: 32 * 1024 * 1024 });
+}
+
+/** Stable code for an archive refused because its dirty work could not be
+ * saved as a patch that restores to the same tree. */
+export const CHAT_ARCHIVE_UNVERIFIED = 'chat_archive_unverified';
+
+export class ChatArchiveError extends Error {
+  readonly code = CHAT_ARCHIVE_UNVERIFIED;
 }
 
 async function isDirty(worktreePath: string): Promise<boolean> {
@@ -382,15 +390,8 @@ export async function archiveSession(
 
   if (session.worktreePath && existsSync(session.worktreePath)) {
     if (await isDirty(session.worktreePath)) {
-      // Stage everything so the patch includes untracked files; the worktree
-      // is discarded immediately after, so mutating its index is harmless.
-      await git(session.worktreePath, 'add', '-A');
-      const { stdout } = await git(session.worktreePath, 'diff', '--cached');
-      if (stdout.trim().length > 0) {
-        const dir = join(profileDir(profile, opts), `session-${encodeURIComponent(sessionId)}`);
-        mkdirSync(dir, { recursive: true });
-        writeFileSync(join(dir, `archive-${Date.now()}.patch`), stdout);
-      }
+      const dir = join(profileDir(profile, opts), `session-${encodeURIComponent(sessionId)}`);
+      await saveArchivePatch(session.worktreePath, session.branch, dir, sessionId);
     }
     await git(profileInfo.local_path, 'worktree', 'remove', '--force', session.worktreePath);
   }
@@ -420,6 +421,52 @@ export async function archiveSession(
     }], logOpts);
   }
   return session;
+}
+
+/**
+ * Saves a dirty worktree's work as `archive-<ts>.patch` (mode 0600, in a 0700
+ * directory) and proves it restores: applying it to the session branch tip,
+ * as restoreSession does, must reproduce exactly the staged tree. Throws a
+ * ChatArchiveError, leaving the worktree in place, when it does not.
+ */
+async function saveArchivePatch(worktreePath: string, branch: string, dir: string, sessionId: string): Promise<void> {
+  // Stage everything so the patch includes untracked files. The worktree is
+  // discarded right after; a refused archive keeps it with its work staged.
+  await git(worktreePath, 'add', '-A');
+  const stagedTree = (await git(worktreePath, 'write-tree')).stdout.trim();
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+  const finalPath = join(dir, `archive-${Date.now()}.patch`);
+  const nonce = `${process.pid}.${randomBytes(4).toString('hex')}`;
+  const temporaryPath = join(dir, `.archive.${nonce}.tmp`);
+  const indexPath = join(dir, `.archive.${nonce}.index`);
+  try {
+    // Created private first; git truncates and fills it without changing the
+    // mode, and writes the bytes itself so no output decoding can alter them.
+    writeFileSync(temporaryPath, '', { mode: 0o600, flag: 'wx' });
+    await git(
+      worktreePath, 'diff', '--cached', '--binary', '--full-index', '--no-ext-diff', '--no-textconv',
+      '--no-color', '--src-prefix=a/', '--dst-prefix=b/', `--output=${temporaryPath}`
+    );
+    const hasPatch = statSync(temporaryPath).size > 0;
+    // Replay the restore against a scratch index so the worktree's own index
+    // and the branch are untouched.
+    const env = { ...process.env, GIT_INDEX_FILE: indexPath };
+    const scratch = (...args: string[]) => execFileAsync('git', args, { cwd: worktreePath, env });
+    const restoredTree = await scratch('read-tree', `refs/heads/${branch}`)
+      .then(() => hasPatch ? scratch('apply', '--cached', temporaryPath) : undefined)
+      .then(() => scratch('write-tree'))
+      .then(({ stdout }) => stdout.trim(), () => null);
+    if (restoredTree !== stagedTree) {
+      throw new ChatArchiveError(
+        `Chat session '${sessionId}' was not archived: its uncommitted work does not restore cleanly onto its branch, so the worktree was kept (${CHAT_ARCHIVE_UNVERIFIED})`
+      );
+    }
+    if (hasPatch) renameSync(temporaryPath, finalPath);
+  } finally {
+    rmSync(temporaryPath, { force: true });
+    rmSync(indexPath, { force: true });
+  }
 }
 
 /** Restores an operator-archived session from its surviving branch and the
