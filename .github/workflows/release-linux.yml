@@ -29,10 +29,12 @@ jobs:
           cache: npm
 
       - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: apps/desktop
 
@@ -94,18 +96,19 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUTS_VERSION: ${{ inputs.version }}
         run: |
           appimage=$(ls apps/desktop/target/release/bundle/appimage/*.AppImage | head -1)
-          tag="${{ inputs.version }}"
-          if [ -z "$tag" ] && [ "${{ github.ref_type }}" = tag ]; then
-            tag="${{ github.ref_name }}"
+          tag="${INPUTS_VERSION}"
+          if [ -z "$tag" ] && [ "${GITHUB_REF_TYPE}" = tag ]; then
+            tag="${GITHUB_REF_NAME}"
           fi
           if [ -z "$tag" ]; then
             tag="release-$(date -u +%Y%m%d-%H%M)-linux"
           fi
           gh release create "$tag" "$appimage" \
             --title "GAH Worker — $tag" \
-            --notes "Linux AppImage (portable, no install needed — chmod +x and run). Built from ${{ github.ref }}." \
+            --notes "Linux AppImage (portable, no install needed — chmod +x and run). Built from ${GITHUB_REF}." \
             --repo "${{ github.repository }}" || \
           gh release upload "$tag" "$appimage" --clobber \
             --repo "${{ github.repository }}"
