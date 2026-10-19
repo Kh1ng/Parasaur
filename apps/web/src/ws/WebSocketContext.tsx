@@ -2,11 +2,11 @@ import { useGahStore } from '../store/gahStore.js';
 import { coordinatorWebSocketProtocols, TOKEN_CHANGED_EVENT } from '../api/coordinatorToken.js';
 import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from 'react';
 import { useUiStore } from '../store/uiStore.js';
+import { useSessionOutputStore } from './sessionOutputStore.js';
 import type {
   ServerMessage,
   ClientMessage,
   Session,
-  SessionId,
   ProviderInstance,
   ServerProviderCatalog,
   ProviderStatus,
@@ -24,11 +24,6 @@ import { notifiableActivity } from '@git-agent-harness/contracts';
 import { gahApi } from '../api/client.js';
 import { deliverSystemNotification, mergeActivityEvents } from '../lib/activityNotifications.js';
 
-export interface SessionOutput {
-  stdout: string;
-  stderr: string;
-}
-
 export interface WebSocketInboxEntry {
   /** Monotonic for this provider lifetime, including across reconnects. */
   id: number;
@@ -44,10 +39,6 @@ type WebSocketContextType = {
    * because older entries are evicted from the front. */
   messages: WebSocketInboxEntry[];
   sessions: Session[];
-  /** Real per-line stdout/stderr streamed from the server, keyed by
-   * session id -- see SessionManager.ts's getServerPushBus().publish()
-   * calls, which this actually consumes now instead of discarding. */
-  sessionOutput: Record<SessionId, SessionOutput>;
   providers: ProviderInstance[];
   providerStatuses: Record<ProviderInstanceId, ProviderStatus>;
   serverProviderCatalog: ServerProviderCatalog | null;
@@ -107,7 +98,6 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<WebSocketInboxEntry[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [sessionOutput, setSessionOutput] = useState<Record<SessionId, SessionOutput>>({});
   const [providers, setProviders] = useState<ProviderInstance[]>([]);
   const [providerStatuses, setProviderStatuses] = useState<Record<ProviderInstanceId, ProviderStatus>>({});
   const [serverProviderCatalog, setServerProviderCatalog] = useState<ServerProviderCatalog | null>(null);
@@ -222,6 +212,15 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         try {
           const message = JSON.parse(event.data) as ServerMessage;
 
+          // Per-line session output goes to its own bounded store (see
+          // sessionOutputStore.ts); routing it through the inbox would
+          // re-render every consumer per line and push out the messages
+          // the inbox exists for.
+          if (message.type === 'session.stdout' || message.type === 'session.stderr') {
+            useSessionOutputStore.getState().append(message.sessionId, message.type === 'session.stdout' ? 'stdout' : 'stderr', message.data);
+            return;
+          }
+
           const entry = { id: ++nextMessageIdRef.current, message };
           setMessages(prev => [...prev.slice(-(MAX_INBOX_MESSAGES - 1)), entry]);
 
@@ -268,6 +267,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
               setTrustedLanMode(message.trustedLanMode === true);
               setServerProviderCatalog(message.serverProviderCatalog);
               setSessions(message.sessions);
+              useSessionOutputStore.getState().sessionsReplaced(message.sessions);
               setProviderStatuses(message.providers);
 
               if (message.serverProviderCatalog?.providers) {
@@ -299,26 +299,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
                 }
                 return [...prev, message.session];
               });
-              break;
-
-            case 'session.stdout':
-              setSessionOutput(prev => {
-                const existing = prev[message.sessionId] ?? { stdout: '', stderr: '' };
-                return {
-                  ...prev,
-                  [message.sessionId]: { ...existing, stdout: existing.stdout + message.data + '\n' }
-                };
-              });
-              break;
-
-            case 'session.stderr':
-              setSessionOutput(prev => {
-                const existing = prev[message.sessionId] ?? { stdout: '', stderr: '' };
-                return {
-                  ...prev,
-                  [message.sessionId]: { ...existing, stderr: existing.stderr + message.data + '\n' }
-                };
-              });
+              useSessionOutputStore.getState().sessionChanged(message.session);
               break;
 
             case 'provider.statusChanged':
@@ -411,6 +392,9 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener(TOKEN_CHANGED_EVENT, credentialChanged);
   }, [reconnect]);
 
+  // Output belongs to this provider's lifetime, as its other state does.
+  useEffect(() => () => useSessionOutputStore.getState().clear(), []);
+
   useEffect(() => {
     connect();
     return () => {
@@ -436,7 +420,6 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     error,
     messages,
     sessions,
-    sessionOutput,
     providers,
     providerStatuses,
     serverProviderCatalog,
