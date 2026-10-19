@@ -118,20 +118,35 @@ function MarkdownMessage({ text }: { text: string }) {
   );
 }
 
+/** Query parameter carrying the preview listener's access secret. */
+const PREVIEW_SECRET_PARAM = '__gah_preview';
+
 /** WP3: the preview URL comes from the server (node address + allocated
- * port), but the client never trusts it blindly -- validate the exact
- * shape (plain http, host, numeric port) before it reaches an href or an
- * iframe src, so a tampered value can't redirect elsewhere. */
+ * port + access secret), but the client never trusts it blindly --
+ * validate the exact shape (plain http, host, numeric port, at most the
+ * access-secret query) before it reaches an href or an iframe src, so a
+ * tampered value can't redirect elsewhere. */
 function safePreviewUrl(url: string): string | null {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'http:') return null;
     if (!/^\d+$/.test(parsed.port) || parsed.port === '') return null;
-    if (parsed.username || parsed.password || parsed.search || parsed.hash) return null;
-    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+    if (parsed.username || parsed.password || parsed.hash) return null;
+    const keys = [...parsed.searchParams.keys()];
+    const secret = parsed.searchParams.get(PREVIEW_SECRET_PARAM) ?? '';
+    if (parsed.search && !(keys.length === 1 && keys[0] === PREVIEW_SECRET_PARAM && /^[A-Za-z0-9_-]+$/.test(secret))) return null;
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}${parsed.search}`;
   } catch {
     return null;
   }
+}
+
+/** The preview URL as shown on screen: without the access secret. */
+function previewDisplayUrl(url: string): string | null {
+  const safe = safePreviewUrl(url);
+  if (safe === null) return null;
+  const parsed = new URL(safe);
+  return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
 }
 
 /** Slice 3: one agent activity card -- what the agent is doing, which files
@@ -1599,7 +1614,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
                   title={remoteSession
                     ? 'Preview is unavailable for a chat running on another node.'
                     : preview
-                      ? `Preview live: dev server on :${preview.devPort} → ${preview.url}`
+                      ? `Preview live: dev server on :${preview.devPort} → ${previewDisplayUrl(preview.url) ?? 'blocked URL'}`
                       : 'Open the preview panel — set the dev-server port, or let Parasaur auto-detect it from tool output'}
                 >
                   <MonitorPlay size={14} aria-hidden="true" />
@@ -1808,7 +1823,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
           ) : preview ? (
             <>
               <p className="text-[11px] text-muted pb-2">
-                dev server <span className="font-mono">:{preview.devPort}</span> → <span className="font-mono">{safePreviewUrl(preview.url)}</span>
+                dev server <span className="font-mono">:{preview.devPort}</span> → <span className="font-mono">{previewDisplayUrl(preview.url)}</span>
               </p>
               <div className="relative flex-1 min-h-0">
                 <iframe

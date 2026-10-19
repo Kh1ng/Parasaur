@@ -51,7 +51,7 @@ import {
   type SettleDetails,
   type ChatSessionStoreOptions
 } from './chatSessions.js';
-import { previewProxy, detectDevPort } from './previewProxy.js';
+import { previewProxy, detectDevPort, loopbackPortListening } from './previewProxy.js';
 import { runProfileList, runSubscriptionRoutes, runQuotaFailure, type SubscriptionRoute, type QuotaFailure } from '../gahCli.js';
 import { randomUUID } from 'node:crypto';
 import type { ChatSessionEvent, ChatTranscriptTurn, ChatUsage, Skill } from '@git-agent-harness/contracts';
@@ -1289,15 +1289,17 @@ export function sendManagerChatMessage(
       // on resume) and pushed live. Status transitions append new events;
       // the fold keeps the latest per toolCallId.
       // WP3: watch agent tool output for a dev-server port; when one shows
-      // up in a session turn, point the session's preview at it and push.
+      // up in a session turn and something listens on it, point the
+      // session's preview at it and push.
       const detectPreview = (text: string): void => {
         if (sessionContext.route.remote) return;
         if (!sessionId || sessionId === 'default') return;
         const devPort = detectDevPort(text);
         if (devPort === null) return;
-        const setPromise = previewProxy
-          .set(profile, sessionId, devPort)
+        const setPromise = loopbackPortListening(devPort)
+          .then((listening) => (listening ? previewProxy.set(profile, sessionId, devPort) : null))
           .then((info) => {
+            if (!info) return;
             previewPublisher?.({
               type: 'manager.chat.preview',
               requestId: requestId ?? '',

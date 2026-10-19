@@ -16,13 +16,22 @@
  * the operator can firewall exactly the preview surface. The advertised URL
  * uses the node's Tailscale IPv4 when present (WireGuard-encrypted in
  * transit), else the loopback for local dev.
+ *
+ * Every listener requires its own random access secret. The advertised URL
+ * carries it once as a query parameter; the proxy exchanges it for an
+ * HttpOnly cookie scoped by name to that listener and redirects to the
+ * clean URL. Requests and upgrades without a valid secret are refused
+ * before any upstream connection is made, so only clients that received
+ * the URL from the authenticated control plane can reach the dev server.
  */
 
 import http from 'node:http';
 import net from 'node:net';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { detectTailscaleIPv4 } from '../tailscaleDetect.js';
 import { isIP } from 'node:net';
 import { resolveBindHost } from '../bindHost.js';
+import { effectiveGatewayUrl } from '../gatewaySettingsStore.js';
 
 export interface PreviewInfo {
   profile: string;
@@ -31,13 +40,20 @@ export interface PreviewInfo {
   devPort: number;
   /** Dedicated port this proxy listens on for the session. */
   listenPort: number;
-  /** Browser-facing URL (tailscale IP when available). */
+  /** Browser-facing URL (tailscale IP when available), including the
+   * listener's access secret as the PREVIEW_SECRET_PARAM query parameter. */
   url: string;
 }
 
 interface PreviewEntry extends PreviewInfo {
   server: http.Server;
+  /** Access secret for this listener; stable across re-points. */
+  secret: string;
 }
+
+/** Query parameter that carries a preview's access secret on first visit. */
+export const PREVIEW_SECRET_PARAM = '__gah_preview';
+const PREVIEW_COOKIE_PREFIX = '__gah_preview_';
 
 export interface PreviewProxyOptions {
   /** First port of the listen range (tests override). */
@@ -67,6 +83,94 @@ function forwardedFor(req: http.IncomingMessage): string {
 
 const DEFAULT_BASE_PORT = 41_000;
 const DEFAULT_MAX_PORT = 41_099;
+const DEFAULT_GATEWAY_PORT = 8420;
+
+/** Browsers do not separate cookies by port, so each listener gets its own
+ * cookie name. */
+function previewCookieName(listenPort: number): string {
+  return `${PREVIEW_COOKIE_PREFIX}${listenPort}`;
+}
+
+function secretMatches(candidate: string | undefined, secret: string): boolean {
+  if (candidate === undefined) return false;
+  const a = Buffer.from(candidate);
+  const b = Buffer.from(secret);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function cookieValue(header: string | undefined, name: string): string | undefined {
+  for (const part of (header ?? '').split(';')) {
+    const eq = part.indexOf('=');
+    if (eq >= 0 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+  }
+  return undefined;
+}
+
+/** The Cookie header forwarded upstream, without any preview access cookie:
+ * the dev server never needs one, and the browser sends every listener's
+ * cookie to every port on the same host. */
+function upstreamCookie(header: string | undefined): string | undefined {
+  const kept = (header ?? '').split(';').map((part) => part.trim())
+    .filter((part) => part && !part.startsWith(PREVIEW_COOKIE_PREFIX));
+  return kept.length > 0 ? kept.join('; ') : undefined;
+}
+
+type PreviewAccess =
+  | { kind: 'cookie'; path: string }
+  /** A valid secret in the query; `path` is the request path without it. */
+  | { kind: 'query'; path: string }
+  | { kind: 'denied' };
+
+/** Decides whether a request to a preview listener may reach upstream. */
+function previewAccess(req: http.IncomingMessage, entry: PreviewEntry): PreviewAccess {
+  const raw = req.url ?? '/';
+  const queryAt = raw.indexOf('?');
+  const pathname = queryAt < 0 ? raw : raw.slice(0, queryAt);
+  const params = new URLSearchParams(queryAt < 0 ? '' : raw.slice(queryAt + 1));
+  const offered = params.getAll(PREVIEW_SECRET_PARAM);
+  if (offered.length > 0) {
+    if (offered.length !== 1 || !secretMatches(offered[0], entry.secret)) return { kind: 'denied' };
+    params.delete(PREVIEW_SECRET_PARAM);
+    // Only a same-origin absolute path, never a protocol-relative one.
+    const safePath = /^\/(?![/\\])/.test(pathname) ? pathname : '/';
+    const rest = params.toString();
+    return { kind: 'query', path: rest ? `${safePath}?${rest}` : safePath };
+  }
+  const cookie = cookieValue(req.headers.cookie, previewCookieName(entry.listenPort));
+  return secretMatches(cookie, entry.secret) ? { kind: 'cookie', path: raw } : { kind: 'denied' };
+}
+
+/** The memory gateway's port: a product service, never a dev server. */
+function gatewayPort(): number {
+  try {
+    const port = Number.parseInt(new URL(effectiveGatewayUrl()).port, 10);
+    return Number.isInteger(port) && port > 0 ? port : DEFAULT_GATEWAY_PORT;
+  } catch {
+    return DEFAULT_GATEWAY_PORT;
+  }
+}
+
+/** True when something accepts TCP connections on the loopback at `port`.
+ * Auto-detection only adopts a port that is listening, not every port
+ * number that appears in tool output. */
+export async function loopbackPortListening(port: number, timeoutMs = 500): Promise<boolean> {
+  const probe = (host: string): Promise<boolean> => new Promise((resolve) => {
+    const socket = net.connect({ port, host });
+    const finish = (listening: boolean): void => {
+      socket.destroy();
+      resolve(listening);
+    };
+    socket.setTimeout(timeoutMs, () => finish(false));
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+  });
+  return (await probe('127.0.0.1')) || (await probe('::1'));
+}
+
+function toInfo(entry: PreviewEntry): PreviewInfo {
+  const { server: _server, secret: _secret, ...info } = entry;
+  return info;
+}
 
 class PreviewProxy {
   private byKey = new Map<string, PreviewEntry>();
@@ -103,6 +207,9 @@ class PreviewProxy {
     if (devPort >= this.options.basePort && devPort <= this.options.maxPort) {
       throw new PreviewTargetRefusedError(`Port ${devPort} is in the preview listener range and cannot be previewed.`);
     }
+    if (devPort === gatewayPort()) {
+      throw new PreviewTargetRefusedError(`Port ${devPort} is the memory gateway and cannot be previewed.`);
+    }
   }
 
   private bindHost(): string {
@@ -122,14 +229,12 @@ class PreviewProxy {
 
   get(profile: string, sessionId: string): PreviewInfo | null {
     const entry = this.byKey.get(`${profile}#${sessionId}`);
-    if (!entry) return null;
-    const { server: _server, ...info } = entry;
-    return info;
+    return entry ? toInfo(entry) : null;
   }
 
   /** Lists all live previews (dashboard/debug). */
   list(): PreviewInfo[] {
-    return [...this.byKey.values()].map(({ server: _s, ...info }) => info);
+    return [...this.byKey.values()].map(toInfo);
   }
 
   /** Points (or re-points) a session's preview at a dev port. The listen
@@ -147,8 +252,7 @@ class PreviewProxy {
     const existing = this.byKey.get(key);
     if (existing) {
       existing.devPort = devPort;
-      const { server: _server, ...info } = existing;
-      return info;
+      return toInfo(existing);
     }
 
     const op = this.createEntry(key, profile, sessionId, devPort);
@@ -169,16 +273,16 @@ class PreviewProxy {
       devPort,
       listenPort: 0,
       url: '',
-      server: undefined as unknown as http.Server
+      server: undefined as unknown as http.Server,
+      secret: randomBytes(32).toString('base64url')
     } as PreviewEntry;
-    entry.server = this.createProxyServer(() => entry.devPort);
-    const listenPort = await this.listenOnFreePort(entry.server);
+    entry.server = this.createProxyServer(entry);
+    // Set before any further await: the access cookie's name depends on it.
+    entry.listenPort = await this.listenOnFreePort(entry.server);
     const host = this.options.advertiseHost ?? (await this.defaultAdvertiseHost());
-    entry.listenPort = listenPort;
-    entry.url = `http://${host}:${listenPort}`;
+    entry.url = `http://${host}:${entry.listenPort}/?${PREVIEW_SECRET_PARAM}=${entry.secret}`;
     this.byKey.set(key, entry);
-    const { server: _server, ...info } = entry;
-    return info;
+    return toInfo(entry);
   }
 
   async clear(profile: string, sessionId: string): Promise<void> {
@@ -209,9 +313,33 @@ class PreviewProxy {
     });
   }
 
-  private createProxyServer(getDevPort: () => number): http.Server {
+  private createProxyServer(entry: PreviewEntry): http.Server {
     const server = http.createServer((req, res) => {
-      const devPort = getDevPort();
+      const access = previewAccess(req, entry);
+      if (access.kind === 'denied') {
+        req.resume();
+        res.writeHead(403, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
+        res.end('preview access denied: open this preview from Parasaur');
+        return;
+      }
+      if (access.kind === 'query') {
+        // Exchange the URL secret for a cookie and drop it from the address,
+        // so it stays out of history and Referer headers.
+        req.resume();
+        res.writeHead(302, {
+          location: access.path,
+          'set-cookie': `${previewCookieName(entry.listenPort)}=${entry.secret}; Path=/; HttpOnly; SameSite=Lax`,
+          'cache-control': 'no-store',
+          'referrer-policy': 'no-referrer'
+        });
+        res.end();
+        return;
+      }
+      const devPort = entry.devPort;
+      const headers: http.OutgoingHttpHeaders = { ...req.headers, host: `localhost:${devPort}`, 'x-forwarded-for': forwardedFor(req) };
+      const cookie = upstreamCookie(req.headers.cookie);
+      if (cookie) headers.cookie = cookie;
+      else delete headers.cookie;
       // agent:false — one connection per request. The global agent pools
       // keep-alive sockets to the dev server that outlive preview clears
       // (and pin the process open in tests); preview traffic doesn't need
@@ -221,8 +349,8 @@ class PreviewProxy {
           host: '127.0.0.1',
           port: devPort,
           method: req.method,
-          path: req.url,
-          headers: { ...req.headers, host: `localhost:${devPort}`, 'x-forwarded-for': forwardedFor(req) },
+          path: access.path,
+          headers,
           agent: false
         },
         (upstream) => {
@@ -240,14 +368,24 @@ class PreviewProxy {
     // WebSocket upgrade (Vite HMR): splice a raw TCP socket to the dev
     // server with the Host header rewritten. No frame inspection needed.
     server.on('upgrade', (req, socket, head) => {
-      const devPort = getDevPort();
+      // An upgrade cannot be redirected: a secret in its query is accepted
+      // and stripped, like the cookie.
+      const access = previewAccess(req, entry);
+      if (access.kind === 'denied') {
+        socket.destroy();
+        return;
+      }
+      const devPort = entry.devPort;
       const upstream = net.connect(devPort, '127.0.0.1', () => {
-        const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`];
+        const lines = [`${req.method} ${access.path} HTTP/${req.httpVersion}`];
         for (const [name, value] of Object.entries(req.headers)) {
           if (name === 'host') {
             lines.push(`host: localhost:${devPort}`);
           } else if (name === 'x-forwarded-for') {
             continue;
+          } else if (name === 'cookie') {
+            const cookie = upstreamCookie(Array.isArray(value) ? value.join('; ') : value);
+            if (cookie) lines.push(`cookie: ${cookie}`);
           } else if (Array.isArray(value)) {
             for (const v of value) lines.push(`${name}: ${v}`);
           } else if (value !== undefined) {

@@ -741,9 +741,16 @@ test('a session preview auto-detects the dev-server port and proxies it', { time
 
     // The preview URL actually serves the dev server through the proxy,
     // with the Host header rewritten to localhost (dev-server
-    // allowedHosts protection never sees the node's address).
-    const served = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+    // allowedHosts protection never sees the node's address). The URL's
+    // access secret is first exchanged for the listener's cookie.
+    const accessCookie = await new Promise<string>((resolve, reject) => {
       http.get(preview.url, { agent: false }, (res) => {
+        res.resume();
+        resolve(String(res.headers['set-cookie']?.[0] ?? '').split(';')[0]);
+      }).on('error', reject);
+    });
+    const served = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      http.get(new URL('/', preview.url), { agent: false, headers: { cookie: accessCookie } }, (res) => {
         let body = '';
         res.on('data', (chunk) => { body += chunk; });
         res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
