@@ -162,3 +162,22 @@ fn unresolvable_target_refuses_only_controller_improve_and_fix() {
     assert!(guard.is_none());
     assert_eq!(claimed, None);
 }
+
+/// Without central claims an issue number or existing-branch target still
+/// writes no ledger claim: only target files are claimed locally.
+#[test]
+fn local_claims_still_cover_only_target_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut cfg, prof, mut args) = central_fixture(tmp.path());
+    cfg.defaults.registry_central_url = None;
+    args.mode = "fix".into();
+    args.target = "123".into();
+    args.work_id = Some("#123".into());
+    args.existing_branch = Some("gah/repo-issue-123".into());
+    args.dispatch_reason = Some("post_review_repair".into());
+    let (guard, claimed) =
+        acquire_claim(&cfg, &prof, &args, &tmp.path().join("sessions/run")).unwrap();
+    assert!(guard.is_none());
+    assert_eq!(claimed, None);
+    assert!(crate::ledger::read_entries(&cfg).unwrap().is_empty());
+}

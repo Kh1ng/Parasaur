@@ -242,7 +242,12 @@ pub(super) fn check_duplicate_work(
     args: &DispatchArgs,
     central_claims_active: bool,
 ) -> Result<Option<String>> {
-    let Some(work_id) = claim_work_id(profile, args) else {
+    let work_id = if central_claims_active {
+        central_claim_work_id(profile, args)
+    } else {
+        target_work_id(profile, args)
+    };
+    let Some(work_id) = work_id else {
         return Ok(None);
     };
     check_claimed_or_open(
@@ -254,13 +259,15 @@ pub(super) fn check_duplicate_work(
     )
 }
 
-/// Issue #1541: the work id a dispatch's exclusivity claim is taken under,
-/// in the form the ledger records it. The controller's own work id comes
+/// Issue #1541: the work id a dispatch takes its central lease under, in
+/// the form the ledger records it. The controller's own work id comes
 /// first, then the id the target file names, then an issue number target
 /// (`123`, `#123`) as `#123`, and last the existing branch a repair works
 /// on. `None` only when the dispatch names no work, such as a free-text
-/// target.
-fn claim_work_id(profile: &Profile, args: &DispatchArgs) -> Option<String> {
+/// target. Without central claims only a target file is claimed, as
+/// before: the loop's own per-work claim already keeps one node from
+/// starting an issue twice, and the gap this closes is between nodes.
+fn central_claim_work_id(profile: &Profile, args: &DispatchArgs) -> Option<String> {
     let given = |value: &Option<String>| value.clone().filter(|value| !value.trim().is_empty());
     given(&args.work_id)
         .or_else(|| target_work_id(profile, args))
