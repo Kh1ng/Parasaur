@@ -1,5 +1,5 @@
 //! Per-issue budget projection (`routing.issue_budget`). Derived from the
-//! ledger on every snapshot and never stored, so a `gah clear-attempts`
+//! ledger on every snapshot and never stored, so a `gah ledger clear-attempts`
 //! tombstone releases a held issue the same way it resets the retry cap.
 //! The controller reads the projected status; it never re-counts.
 
