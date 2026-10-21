@@ -115,11 +115,16 @@ pub fn isolate_command<C>(
 
 pub trait TestCommandEnvironment {
     fn env_path(&mut self, key: &str, value: &Path);
+    fn env_unset(&mut self, key: &str);
 }
 
 impl TestCommandEnvironment for assert_cmd::Command {
     fn env_path(&mut self, key: &str, value: &Path) {
         self.env(key, value);
+    }
+
+    fn env_unset(&mut self, key: &str) {
+        self.env_remove(key);
     }
 }
 
@@ -127,13 +132,42 @@ impl TestCommandEnvironment for std::process::Command {
     fn env_path(&mut self, key: &str, value: &Path) {
         self.env(key, value);
     }
+
+    fn env_unset(&mut self, key: &str) {
+        self.env_remove(key);
+    }
 }
+
+/// Write the node-pressure fixture every `gah` child gets unless its test
+/// sets its own: an idle 64 GiB node, so node admission never depends on
+/// the free memory or load of the host running the tests.
+pub fn write_idle_node_pressure(path: &Path) {
+    fs::write(
+        path,
+        serde_json::json!({
+            "memory_total_bytes": 64_u64 * 1024 * 1024 * 1024,
+            "memory_available_bytes": 60_u64 * 1024 * 1024 * 1024,
+            "logical_cpus": 8, "load_one": 0.0,
+            "memory_full_psi_avg10": 0.0, "cpu_some_psi_avg10": 0.0
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
+/// Variables that make a child's anyhow errors end in a stack backtrace. A
+/// developer shell often exports them; the backtrace then pushes the error
+/// text that tests assert on out of view, so `gah` children never inherit
+/// them.
+pub const BACKTRACE_ENV_VARS: [&str; 2] = ["RUST_BACKTRACE", "RUST_LIB_BACKTRACE"];
 
 /// Isolate all process-global GAH state used by CLI integration children,
 /// including the node-wide capacity lease registry. CLI integration tests
 /// may run under the real systemd loop, which sets XDG_STATE_HOME to the
 /// operator's persistent state directory; never let fake profiles and work
-/// claims leak into (or inherit from) that state.
+/// claims leak into (or inherit from) that state. Node admission reads an
+/// idle pressure fixture instead of the live host; a test that sets
+/// `GAH_TEST_NODE_PRESSURE_FILE` on the returned command overrides it.
 pub fn isolate_gah_command<C: TestCommandEnvironment>(command: C) -> IsolatedCommand<C> {
     isolate_command(command, |command, root| {
         let tmp = root.join("tmp");
@@ -149,6 +183,12 @@ pub fn isolate_gah_command<C: TestCommandEnvironment>(command: C) -> IsolatedCom
             &root.join("validation-check.json"),
         );
         command.env_path("TMPDIR", &tmp);
+        let node_pressure = root.join("node-pressure.json");
+        write_idle_node_pressure(&node_pressure);
+        command.env_path("GAH_TEST_NODE_PRESSURE_FILE", &node_pressure);
+        for key in BACKTRACE_ENV_VARS {
+            command.env_unset(key);
+        }
     })
 }
 
