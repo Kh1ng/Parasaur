@@ -279,9 +279,9 @@ fn concurrent_terminal_attempts_produce_one_coherent_export() {
         ));
 
     let mut harness = ScenarioHarness::new("github").with_ledger(ledger);
-    // Cheaply write the config file and set up the harness's process-wide
-    // env vars (GAH_CONFIG/GAH_LEDGER_PATH/...) without a real dispatch, so
-    // the in-process library calls below resolve the same paths.
+    // Cheaply write the config file and ledger without a real dispatch, so
+    // the in-process library calls below resolve the harness ledger and
+    // telemetry paths from the config's artifact root.
     harness.run_status_json().unwrap();
 
     let cfg = Arc::new(support::load_config(Some(harness.config_path.to_str().unwrap())).unwrap());
