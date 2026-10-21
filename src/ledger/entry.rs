@@ -874,7 +874,7 @@ impl LedgerEntry {
         self.failure_stage = Some(stage.as_str().to_string());
     }
 
-    /// Issue #95: create a tombstone entry for `gah clear-attempts`. The
+    /// Issue #95: create a tombstone entry for `gah ledger clear-attempts`. The
     /// tombstone marks all prior ledger entries for the given `work_id` as
     /// stale. It does NOT rewrite history -- the original entries remain in
     /// the JSONL file, but `ledger_lookup_for_ticket` will reset its running

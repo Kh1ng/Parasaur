@@ -1264,3 +1264,25 @@ console.log(JSON.stringify(yaml.parse(fs.readFileSync(process.argv[1], 'utf8')))
         );
     }
 }
+
+/// Bearer tokens reach curl on stdin (`-H @-` plus a here-string), never in
+/// its arguments, which any local user can read from `ps` while curl runs.
+#[test]
+fn installer_scripts_never_pass_bearer_tokens_in_curl_arguments() {
+    for script in ["install-linux.sh", "install-macos.sh", "macos-launchd.sh"] {
+        let source = std::fs::read_to_string(repo().join("scripts").join(script)).unwrap();
+        for (number, line) in source.lines().enumerate() {
+            if line.contains("Bearer $") || line.contains("Bearer ${") {
+                assert!(
+                    line.contains("<<<\"Authorization: Bearer "),
+                    "{script}:{}: a bearer token must reach curl on stdin: {line}",
+                    number + 1
+                );
+            }
+        }
+        assert!(
+            source.contains("-H @-"),
+            "{script} must read its Authorization header from stdin"
+        );
+    }
+}

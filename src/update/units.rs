@@ -6,6 +6,37 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+// Unit tests run the guard in-process, often under a root CI or container
+// account, so each test thread sees a simulated non-root installing account
+// unless it sets another uid (#1561).
+#[cfg(test)]
+thread_local! {
+    static TEST_EFFECTIVE_UID: std::cell::Cell<u32> = const { std::cell::Cell::new(1000) };
+}
+
+#[cfg(test)]
+fn effective_uid() -> u32 {
+    TEST_EFFECTIVE_UID.with(std::cell::Cell::get)
+}
+
+#[cfg(not(test))]
+fn effective_uid() -> u32 {
+    // Integration tests execute the real `gah` binary, so `cfg(test)` is not
+    // available inside that child. Debug builds accept an explicit uid so the
+    // suite also runs under a root account (#1561). Release binaries do not
+    // compile this branch and always check the live effective uid.
+    #[cfg(debug_assertions)]
+    if let Some(uid) = env::var("GAH_TEST_EFFECTIVE_UID")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+    {
+        eprintln!("gah update: using explicit debug-only effective uid {uid}");
+        return uid;
+    }
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    unsafe { libc::geteuid() }
+}
+
 pub(super) struct UnitValues {
     user: Option<String>,
     repo: PathBuf,
@@ -21,8 +52,7 @@ impl UnitValues {
     /// `SUDO_USER` survives `sudo -iu <account>`, so the check is the
     /// effective uid, not sudo's environment.
     pub(super) fn ensure_installing_account() -> Result<()> {
-        // SAFETY: geteuid has no preconditions and cannot fail.
-        if unsafe { libc::geteuid() } == 0 {
+        if effective_uid() == 0 {
             bail!(
                 "run gah update without sudo; Parasaur requests sudo only for system unit installation"
             );
@@ -322,14 +352,22 @@ mod tests {
 
     #[test]
     fn resolves_for_a_non_root_account_with_sudo_user_set() {
-        // SAFETY: geteuid has no preconditions and cannot fail.
-        if unsafe { libc::geteuid() } == 0 {
-            // A root test run cannot prove the non-root path this guards.
-            return;
-        }
         let _sudo_user = SudoUserEnvGuard::set("provisioning-admin");
         let _exec = crate::test_support::ExecGuard::new();
         let dir = tempfile::tempdir().unwrap();
         assert!(UnitValues::resolve(dir.path()).is_ok());
+    }
+
+    #[test]
+    fn refuses_to_render_or_deploy_for_root() {
+        TEST_EFFECTIVE_UID.with(|uid| uid.set(0));
+        let dir = tempfile::tempdir().unwrap();
+        for error in [
+            UnitValues::ensure_installing_account().unwrap_err(),
+            UnitValues::resolve(dir.path()).err().unwrap(),
+        ] {
+            assert!(error.to_string().contains("run gah update without sudo"));
+        }
+        TEST_EFFECTIVE_UID.with(|uid| uid.set(1000));
     }
 }

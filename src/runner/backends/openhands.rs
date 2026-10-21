@@ -20,9 +20,12 @@ pub fn load_oh_profile(name: &str) -> Result<LlmConfig> {
     })?;
     let v: serde_json::Value = serde_json::from_str(&text)
         .with_context(|| format!("parsing openhands profile {}", path.display()))?;
+    let api_key = v["api_key"].as_str().unwrap_or("").to_string();
+    // The profile key reaches only the child's environment.
+    crate::redact::register_secret("LLM_API_KEY", &api_key);
     Ok(LlmConfig {
         base_url: v["base_url"].as_str().unwrap_or("").to_string(),
-        api_key: v["api_key"].as_str().unwrap_or("").to_string(),
+        api_key,
         model: v["model"].as_str().unwrap_or("").to_string(),
     })
 }
@@ -184,6 +187,39 @@ mod tests {
         }
         assert!(log.contains("[REDACTED:TOKEN]"));
         assert!(task.contains("[REDACTED:GITHUB_TOKEN]"));
+    }
+
+    #[test]
+    fn registered_child_only_secret_is_redacted_in_backend_log() {
+        let _exec_guard = crate::test_support::ExecGuard::new();
+        let f = fixture();
+        make_fake_bin(
+            &f.bin_dir,
+            "openhands",
+            "#!/bin/sh\necho \"bound=$GAH_TEST_BOUND_KEY\"\n",
+        );
+        let value = "child-only-bound-value-91e3";
+        crate::redact::register_secret("GAH_TEST_BOUND_KEY", value);
+        let envs = vec![
+            ("PATH".to_string(), f.bin_dir.to_string_lossy().into_owned()),
+            ("GAH_TEST_BOUND_KEY".to_string(), value.to_string()),
+        ];
+
+        let result = run_with_executable(
+            Path::new("openhands"),
+            &f.worktree,
+            "task",
+            &f.session_dir,
+            &test_llm(),
+            &[],
+            &envs,
+            300,
+        )
+        .unwrap();
+
+        let log = fs::read_to_string(result.log_path).unwrap();
+        assert!(!log.contains(value), "raw bound secret persisted: {log}");
+        assert!(log.contains("bound=[REDACTED:GAH_TEST_BOUND_KEY]"), "{log}");
     }
 
     #[test]
