@@ -73,16 +73,18 @@ pub fn required_cidrs(defaults: &Defaults, level: NetworkExposureLevel) -> Vec<S
 /// Existing `ufw` rules for a port, as `(source_cidr, port)` pairs parsed
 /// from `ufw status`. Used to keep `apply` idempotent -- re-running with
 /// the same config must not duplicate rules.
+///
+/// Like `apply`, this may prompt for a `sudo` password: only stdout is
+/// captured, so the prompt and any error reach the operator's terminal.
 fn existing_allowed_cidrs(port: u16) -> Result<Vec<String>> {
     let output = Command::new("sudo")
-        .args(["-n", "ufw", "status"])
+        .args(["ufw", "status"])
+        .stdin(Stdio::inherit())
+        .stderr(Stdio::inherit())
         .output()
         .context("running sudo ufw status")?;
     if !output.status.success() {
-        anyhow::bail!(
-            "ufw status failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
+        anyhow::bail!("sudo ufw status failed ({})", output.status);
     }
     let text = String::from_utf8_lossy(&output.stdout);
     let port_prefix = format!("{port}/tcp");

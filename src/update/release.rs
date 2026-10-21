@@ -285,9 +285,7 @@ fn install_binary(source: &Path, target: PathBuf) -> Result<PathBuf> {
         permissions.set_mode(0o755);
         std::fs::set_permissions(&staged, permissions)?;
     }
-    let probe = Command::new(&staged)
-        .arg("--version")
-        .output()
+    let probe = version_probe(&staged)
         .with_context(|| format!("running {} --version sanity check", staged.display()))?;
     if !probe.status.success() {
         bail!(
@@ -299,6 +297,34 @@ fn install_binary(source: &Path, target: PathBuf) -> Result<PathBuf> {
     std::fs::rename(&staged, &target)
         .with_context(|| format!("installing release binary over {}", target.display()))?;
     Ok(target)
+}
+
+/// Run a freshly written binary's `--version`. Executing a file fails with
+/// ETXTBSY while any process still holds it open for writing, which a child
+/// forked by another thread during the copy does until it execs. That window
+/// closes within milliseconds, so retry briefly instead of failing the update.
+fn version_probe(binary: &Path) -> std::io::Result<std::process::Output> {
+    let mut delay = std::time::Duration::from_millis(10);
+    for _ in 0..8 {
+        match Command::new(binary).arg("--version").output() {
+            Err(err) if is_text_file_busy(&err) => {
+                std::thread::sleep(delay);
+                delay *= 2;
+            }
+            result => return result,
+        }
+    }
+    Command::new(binary).arg("--version").output()
+}
+
+#[cfg(unix)]
+fn is_text_file_busy(err: &std::io::Error) -> bool {
+    err.raw_os_error() == Some(libc::ETXTBSY)
+}
+
+#[cfg(not(unix))]
+fn is_text_file_busy(_err: &std::io::Error) -> bool {
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -1027,5 +1053,32 @@ mod tests {
         assert!(cargo_home.join("bin/parasaur").exists());
         assert!(repo.join("apps/server/dist/bin.js").is_file());
         assert!(repo.join("apps/web/dist/index.html").is_file());
+    }
+
+    /// A binary still open for writing elsewhere (here, by this test) fails
+    /// to exec with ETXTBSY; the probe waits for the writer to close it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn version_probe_retries_while_the_binary_is_still_open_for_writing() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let binary = dir.path().join("gah.download");
+        let mut writer = fs::File::create(&binary).unwrap();
+        writer.write_all(b"#!/bin/sh\necho gah 9.9.9\n").unwrap();
+        writer.flush().unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+        let busy = Command::new(&binary).arg("--version").output().unwrap_err();
+        assert!(is_text_file_busy(&busy), "{busy}");
+
+        let closer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            drop(writer);
+        });
+        let output = version_probe(&binary).unwrap();
+        closer.join().unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "gah 9.9.9");
     }
 }

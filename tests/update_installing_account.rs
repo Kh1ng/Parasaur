@@ -2,6 +2,10 @@ use assert_cmd::Command;
 use predicates::boolean::PredicateBooleanExt;
 use predicates::str::contains;
 
+// The guard refuses root, and these tests also run under root CI or container
+// accounts; debug builds accept this uid in place of the live one (#1561).
+const NON_ROOT_UID: (&str, &str) = ("GAH_TEST_EFFECTIVE_UID", "1000");
+
 #[test]
 fn sudo_environment_does_not_refuse_a_non_root_update() {
     // `sudo -iu <account> gah update` runs as that account while keeping
@@ -9,12 +13,25 @@ fn sudo_environment_does_not_refuse_a_non_root_update() {
     // a non-root run proceeds to checkout access, where this run fails.
     Command::cargo_bin("gah")
         .unwrap()
+        .env(NON_ROOT_UID.0, NON_ROOT_UID.1)
         .env("SUDO_USER", "provisioning-admin")
         .args(["update", "--repo", "/missing-checkout-must-not-be-accessed"])
         .assert()
         .failure()
         .stderr(contains("is not a Git checkout"))
         .stderr(contains("run gah update without sudo").not());
+}
+
+#[test]
+fn root_update_is_refused_before_checkout_access() {
+    Command::cargo_bin("gah")
+        .unwrap()
+        .env(NON_ROOT_UID.0, "0")
+        .args(["update", "--repo", "/missing-checkout-must-not-be-accessed"])
+        .assert()
+        .failure()
+        .stderr(contains("run gah update without sudo"))
+        .stderr(contains("is not a Git checkout").not());
 }
 
 #[test]
@@ -34,6 +51,7 @@ fn update_without_pull_accepts_a_local_dirty_checkout_and_cancels_before_changes
     std::fs::write(&file, "local changes").unwrap();
     Command::cargo_bin("gah")
         .unwrap()
+        .env(NON_ROOT_UID.0, NON_ROOT_UID.1)
         .args(["update", "--role", "worker", "--agent", "claude", "--repo"])
         .arg(repo.path())
         .write_stdin("n\n")
@@ -111,6 +129,7 @@ fn update_installs_selected_assets_and_refreshes_them_without_agent_flags() {
                 .env("CARGO_HOME", &cargo)
                 .env("PATH", &path)
                 .env("GAH_TEST_SYSTEMCTL_LOG", &log)
+                .env(NON_ROOT_UID.0, NON_ROOT_UID.1)
                 .args(["update", "--role", "worker", "--yes", "--repo"])
                 .arg(&repo);
             if let Some(selected) = selected {

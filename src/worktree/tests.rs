@@ -108,11 +108,56 @@ fn create_fails_loudly_when_target_branch_does_not_exist_on_origin() {
 
     let err = create(&repo, "does-not-exist", "gah/test-1", &worktree_base).unwrap_err();
 
-    let msg = format!("{:#}", err);
+    // Plain `{}`: the parallel loop prints only the outermost message, so
+    // git's own stderr must be part of it, not a hidden cause layer.
+    let msg = err.to_string();
     assert!(
         msg.contains("creating worktree from origin/does-not-exist"),
         "{msg}"
     );
+    assert!(msg.contains("git worktree add"), "{msg}");
+    assert!(
+        msg.contains("invalid reference"),
+        "git stderr missing: {msg}"
+    );
+}
+
+#[test]
+fn concurrent_creates_in_one_repository_all_succeed() {
+    // Parallel loop slots create worktrees from the same repository at the
+    // same moment. Unserialized, one slot's fetch trips over another's
+    // half-added `worktrees/<name>/HEAD` ("bad object"), and two
+    // `git worktree add -b` calls contend for the shared `config.lock`.
+    // Several rounds per slot make the overlap likely; every slot must get
+    // every worktree.
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    init_bare_repo_with_main(&repo);
+    add_bare_origin(&repo);
+    let worktree_base = tmp.path().join("worktrees");
+
+    let barrier = std::sync::Barrier::new(8);
+    thread::scope(|scope| {
+        let handles: Vec<_> = (0..8)
+            .map(|slot| {
+                let (repo, base, barrier) = (&repo, &worktree_base, &barrier);
+                scope.spawn(move || {
+                    barrier.wait();
+                    (0..4)
+                        .map(|round| {
+                            create(repo, "main", &format!("gah/slot-{slot}-{round}"), base)
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })
+            })
+            .collect();
+        for handle in handles {
+            for wt in handle.join().unwrap().unwrap() {
+                assert!(wt.join("f.txt").exists());
+            }
+        }
+    });
 }
 
 #[test]
