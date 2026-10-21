@@ -9,6 +9,17 @@ use std::path::Path;
 /// Replaces `path` with `contents` at `mode`. The new file is complete on
 /// disk before it takes the old one's name, so a reader never sees half.
 pub fn replace(path: &Path, contents: &[u8], mode: u32) -> Result<()> {
+    replace_with(path, mode, |file| Ok(file.write_all(contents)?))
+}
+
+/// Like [`replace`], but `write` fills the staged file, so a large file is
+/// streamed instead of built in memory. If `write` or any later step fails,
+/// the staged file is removed and `path` keeps its old contents.
+pub fn replace_with(
+    path: &Path,
+    mode: u32,
+    write: impl FnOnce(&mut std::fs::File) -> Result<()>,
+) -> Result<()> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -16,9 +27,9 @@ pub fn replace(path: &Path, contents: &[u8], mode: u32) -> Result<()> {
     std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     let mut temporary = tempfile::NamedTempFile::new_in(parent)
         .with_context(|| format!("staging a file in {}", parent.display()))?;
-    temporary.write_all(contents)?;
-    temporary.as_file().sync_all()?;
+    write(temporary.as_file_mut())?;
     std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(mode))?;
+    temporary.as_file().sync_all()?;
     temporary
         .persist(path)
         .with_context(|| format!("replacing {}", path.display()))?;

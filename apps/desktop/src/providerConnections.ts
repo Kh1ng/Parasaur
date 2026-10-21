@@ -190,17 +190,18 @@ export function bindProviderConnections(section: HTMLElement, invoke: Invoke) {
     if (results[0].status === 'rejected') throw results[0].reason;
     entries = results[0].value;
     instances = results[1].status === 'fulfilled' ? results[1].value : [];
-    if (results[1].status === 'rejected') status.textContent = 'Saved connections are available, but local instances could not be checked. Update Parasaur and retry.';
+    // Without a saved connection there is nothing to bind, and a fresh computer has no local configuration yet.
+    if (results[1].status === 'rejected' && entries.length) status.textContent = 'Saved connections are available, but local instances could not be checked. Update Parasaur and retry.';
     else status.textContent = entries.length ? `${entries.length} named connections saved on this computer.` : 'No named connections saved yet. Your existing default Mistral connection stays above.';
     render();
   }
 
-  async function perform(action: () => Promise<void>) {
+  async function perform(action: () => Promise<void>, failure = 'The connection could not be updated. Check the fields and update Parasaur on this computer.') {
     if (busy) return;
     busy = true;
     section.querySelectorAll('button').forEach(button => { button.disabled = true; });
     try { await action(); } catch {
-      status.textContent = 'The connection could not be updated. Check the fields and update Parasaur on this computer.';
+      status.textContent = failure;
     } finally {
       busy = false;
       section.querySelectorAll('button').forEach(button => { button.disabled = !(enabled.get(button)?.() ?? true); });
@@ -271,6 +272,8 @@ export function bindProviderConnections(section: HTMLElement, invoke: Invoke) {
     if (!name) { dashboardLabel.reportValidity(); return; }
     void perform(() => startLogin(`mistral-${crypto.randomUUID()}`, name));
   });
-  void perform(refresh);
+  // Opening Settings saves nothing, so a first load that cannot reach the CLI
+  // (a fresh computer before setup) is not reported as a failed update.
+  void perform(refresh, 'Saved connections appear here after Parasaur is set up on this computer. Select Check saved connections to check again.');
   return show;
 }

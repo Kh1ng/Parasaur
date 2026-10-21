@@ -2,6 +2,7 @@ package com.kh1ng.gah;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
 import android.content.res.ColorStateList;
 import android.content.Intent;
 import android.graphics.Color;
@@ -19,8 +20,6 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-
-import java.net.URI;
 
 public final class MainActivity extends Activity {
     private static final String PREFS = "gah-controller";
@@ -105,8 +104,14 @@ public final class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri target = request.getUrl();
-                if (trustedUrl != null && CentralUrl.sameOrigin(trustedUrl, URI.create(target.toString()))) return false;
-                if ("http".equals(target.getScheme()) || "https".equals(target.getScheme())) startActivity(new Intent(Intent.ACTION_VIEW, target));
+                if (trustedUrl != null && CentralUrl.sameOrigin(trustedUrl, target.toString())) return false;
+                if ("http".equals(target.getScheme()) || "https".equals(target.getScheme())) {
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, target));
+                    } catch (ActivityNotFoundException ignored) {
+                        // No browser can open the link; stay on the current page.
+                    }
+                }
                 return true;
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {

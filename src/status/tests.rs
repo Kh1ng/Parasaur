@@ -322,7 +322,8 @@ default_target_branch = "main"
                     "work_id": "TICKET-436",
                     "pid": std::process::id(),
                     "hostname": "localhost",
-                    "claimed_at": "2026-07-14T00:00:00Z"
+                    // Another host's claim holds only until it ages out.
+                    "claimed_at": chrono::Utc::now().to_rfc3339()
                 }
             ]
         }
