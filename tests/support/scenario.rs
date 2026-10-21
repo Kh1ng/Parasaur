@@ -15,7 +15,9 @@ use std::sync::OnceLock;
 use tempfile::TempDir;
 
 use super::fake_ledger::TestLedger;
-use super::{write_idle_node_pressure, ExecGuard, FakeBackend, Scenario, BACKTRACE_ENV_VARS};
+use super::{
+    test_tempdir, write_idle_node_pressure, ExecGuard, FakeBackend, Scenario, BACKTRACE_ENV_VARS,
+};
 
 /// Result of a single subprocess invocation.
 #[derive(Debug)]
@@ -69,7 +71,11 @@ pub struct ScenarioHarness {
 impl ScenarioHarness {
     pub fn new(provider: &str) -> Self {
         let lock = ExecGuard::new();
-        let temp = TempDir::new().unwrap();
+        // Dispatch refuses to start with under 10 GiB free on the worktree
+        // and temporary filesystems; `test_tempdir` picks a root that has
+        // that room instead of the host's `/tmp`, which CI runners and
+        // developer machines often keep small.
+        let temp = test_tempdir();
         let root = temp.path();
 
         let artifacts_dir = root.join("artifacts");
@@ -310,8 +316,10 @@ impl ScenarioHarness {
     fn gah_command(&self) -> Command {
         let mut command = Command::new(&self.gah_bin);
         fs::create_dir_all(self._temp.path().join("home")).unwrap();
+        fs::create_dir_all(self._temp.path().join("tmp")).unwrap();
         command
             .env("HOME", self._temp.path().join("home"))
+            .env("TMPDIR", self._temp.path().join("tmp"))
             .env(
                 "GAH_CANONICAL_CONFIG",
                 self._temp.path().join("canonical.toml"),
@@ -507,7 +515,7 @@ impl ScenarioHarness {
         let temp_dir = self
             .temp_dir_override
             .clone()
-            .unwrap_or_else(std::env::temp_dir);
+            .unwrap_or_else(|| self._temp.path().join("tmp"));
         let mut cmd = self.gah_command();
         cmd.args(["dispatch", "--profile", &self.profile_name]);
         cmd.args(args);
