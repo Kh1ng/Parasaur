@@ -242,10 +242,40 @@ pub(super) fn check_duplicate_work(
     args: &DispatchArgs,
     central_claims_active: bool,
 ) -> Result<Option<String>> {
-    let Some(work_id) = target_work_id(profile, args) else {
+    let work_id = if central_claims_active {
+        central_claim_work_id(profile, args)
+    } else {
+        target_work_id(profile, args)
+    };
+    let Some(work_id) = work_id else {
         return Ok(None);
     };
-    check_claimed_or_open(cfg, profile, work_id, central_claims_active)
+    check_claimed_or_open(
+        cfg,
+        profile,
+        work_id,
+        args.existing_branch.as_deref(),
+        central_claims_active,
+    )
+}
+
+/// Issue #1541: the work id a dispatch takes its central lease under, in
+/// the form the ledger records it. The controller's own work id comes
+/// first, then the id the target file names, then an issue number target
+/// (`123`, `#123`) as `#123`, and last the existing branch a repair works
+/// on. `None` only when the dispatch names no work, such as a free-text
+/// target. Without central claims only a target file is claimed, as
+/// before: the loop's own per-work claim already keeps one node from
+/// starting an issue twice, and the gap this closes is between nodes.
+fn central_claim_work_id(profile: &Profile, args: &DispatchArgs) -> Option<String> {
+    let given = |value: &Option<String>| value.clone().filter(|value| !value.trim().is_empty());
+    given(&args.work_id)
+        .or_else(|| target_work_id(profile, args))
+        .or_else(|| {
+            super::issues::is_issue_number_reference(&args.target)
+                .then(|| crate::work_claim::normalize_work_identity(&args.target))
+        })
+        .or_else(|| given(&args.existing_branch))
 }
 
 /// The work id a dispatch target names: the first candidate of a candidates
@@ -308,10 +338,13 @@ pub(crate) fn manual_worker_work_id(profile: &Profile, args: &DispatchArgs) -> O
 
 /// Refuses `work_id` when another in-flight worker claimed it or an open
 /// PR/MR already carries it; otherwise hands it back for this run to claim.
+/// The open PR/MR on `repairing_branch` is the one an existing-branch
+/// repair (`FixMr`) works on, so it does not refuse that repair.
 fn check_claimed_or_open(
     cfg: &GahConfig,
     profile: &Profile,
     work_id: String,
+    repairing_branch: Option<&str>,
     central_claims_active: bool,
 ) -> Result<Option<String>> {
     let matching_entries = match crate::ledger::entries_for_work_id(cfg, &work_id) {
@@ -363,6 +396,9 @@ fn check_claimed_or_open(
         });
 
         if let Some(mr) = matching_mr {
+            if repairing_branch == Some(mr.branch.as_str()) {
+                continue;
+            }
             let class = crate::sync::classify(mr);
             if class == "MERGED" {
                 continue;
@@ -414,22 +450,43 @@ pub(super) fn acquire_claim(
     args: &DispatchArgs,
     session_dir: &Path,
 ) -> Result<(Option<crate::central_claims::ClaimGuard>, Option<String>)> {
-    let central_url = cfg.defaults.registry_central_url.clone();
-    let Some(work_id) = check_duplicate_work(cfg, profile, args, central_url.is_some())? else {
-        return Ok((None, None));
-    };
-
-    if let Some(central_url) = &central_url {
+    acquire_claim_with(cfg, profile, args, session_dir, |central_url, lease_id| {
         let node_id = crate::central_claims::resolve_node_id()
             .context("resolving this node's identity for the central claims API")?;
         let token = std::env::var("COORDINATOR_TOKEN").ok();
-        let guard = crate::central_claims::acquire(
+        crate::central_claims::acquire(
             central_url,
             &node_id,
             &args.profile,
-            &work_id,
+            lease_id,
             token.as_deref(),
-        )?;
+        )
+    })
+}
+
+/// `acquire_claim` with the central lease call passed in as
+/// `acquire_central(central_url, lease_id)`, the seam tests observe it
+/// through. The lease id is the claim's work id normalised the way the
+/// loop's own work claims are (`#123`), so every node keys a work item the
+/// same way whichever form its dispatch named it in.
+fn acquire_claim_with<G>(
+    cfg: &GahConfig,
+    profile: &Profile,
+    args: &DispatchArgs,
+    session_dir: &Path,
+    acquire_central: impl FnOnce(&str, &str) -> Result<G>,
+) -> Result<(Option<G>, Option<String>)> {
+    let central_url = cfg.defaults.registry_central_url.as_deref();
+    let Some(work_id) = check_duplicate_work(cfg, profile, args, central_url.is_some())? else {
+        if central_url.is_some() {
+            refuse_unclaimable_controller_dispatch(args)?;
+        }
+        return Ok((None, None));
+    };
+
+    if let Some(central_url) = central_url {
+        let lease_id = crate::work_claim::normalize_work_identity(&work_id);
+        let guard = acquire_central(central_url, &lease_id)?;
         return Ok((Some(guard), Some(work_id)));
     }
 
@@ -443,6 +500,26 @@ pub(super) fn acquire_claim(
         eprintln!("warning: failed to append claim ledger entry: {e:#}");
     }
     Ok((None, Some(work_id)))
+}
+
+/// Issue #1541: with central claims configured, an improve or fix dispatch
+/// the controller started (it always records a `dispatch_reason`) must hold
+/// a central lease, so one that resolves no work id does not start. A
+/// direct `gah dispatch` with a free-text target names no work another node
+/// could pick too, so it still runs unclaimed, as experiment dispatches do.
+fn refuse_unclaimable_controller_dispatch(args: &DispatchArgs) -> Result<()> {
+    let controller_work = args.dispatch_reason.is_some()
+        && matches!(
+            JobKind::parse(&args.mode),
+            Ok(JobKind::Improve) | Ok(JobKind::Fix)
+        );
+    if controller_work {
+        anyhow::bail!(
+            "Refusing dispatch: central claims are configured but target {:?} resolves to no work id, so no central claim can be taken",
+            args.target
+        );
+    }
+    Ok(())
 }
 
 /// Issue #1460: a direct dispatch that fails before the workflow resolves

@@ -243,3 +243,24 @@ fn replacing_api_key_with_subscription_reclassifies_existing_paid_route() {
     assert!(!candidate.requires_approval);
     assert_eq!(candidate.marginal_cost_usd, None);
 }
+
+#[test]
+#[cfg(unix)]
+fn resolved_execution_source_is_redacted_without_entering_process_env() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("credentials");
+    let value = "synthetic-bound-key-7d2a91";
+    let rejected = "synthetic-rejected-key-3b8e04";
+    save_at(&root, info("bound"), value).unwrap();
+    save_at(&root, info("mismatch"), rejected).unwrap();
+    assert!(execution_env_at(&root, "mismatch", "openai").is_err());
+    assert_eq!(
+        execution_env_at(&root, "bound", "nous").unwrap(),
+        vec![("NOUS_API_KEY".into(), value.into())]
+    );
+    assert!(std::env::vars().all(|(_, env_value)| env_value != value));
+    assert_eq!(
+        crate::redact::redact(&format!("child echoed {value} and {rejected}")),
+        format!("child echoed [REDACTED:NOUS_API_KEY] and {rejected}")
+    );
+}

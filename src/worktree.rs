@@ -157,10 +157,30 @@ pub(crate) fn wait_with_timeout_for(
     })
 }
 
-fn fetch_origin(repo: &Path) -> Result<()> {
+/// Exclusive, cross-process lock on one repository's shared git state,
+/// released on drop.
+///
+/// Every checkout of a repository shares one common git directory, and
+/// parallel loop slots (or separate GAH processes) write to it at the same
+/// moment. Git fails instead of waiting on contention there:
+/// `git worktree add -b <branch> origin/<target>` exits non-zero when a
+/// sibling holds `config.lock` while it records upstream tracking, and a
+/// `git fetch` that runs while another worktree is being added reports the
+/// half-initialized `worktrees/<name>/HEAD` as a bad object. GAH therefore
+/// serializes fetches, worktree creation and local branch deletion on this
+/// lock.
+struct RepoGitLock(fs::File);
+
+impl Drop for RepoGitLock {
+    fn drop(&mut self) {
+        FileExt::unlock(&self.0).ok();
+    }
+}
+
+fn lock_repo_git_state(repo: &Path) -> Result<RepoGitLock> {
     // `.git` is a file in a linked worktree, not a directory. Resolve the
     // shared common Git directory so every checkout of the same repository
-    // serializes fetches on one lock and linked-worktree profiles work too.
+    // serializes on one lock and linked-worktree profiles work too.
     let git_common_dir = PathBuf::from(git(
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
         repo,
@@ -172,11 +192,31 @@ fn fetch_origin(repo: &Path) -> Result<()> {
         .truncate(false)
         .open(&lock_path)
         .with_context(|| format!("opening fetch lock {}", lock_path.display()))?;
-    lock.lock_exclusive().context("locking shared git fetch")?;
-    let result =
-        retry_transient_git_network("fetch", || git(&["fetch", "-q", "origin", "--prune"], repo));
-    FileExt::unlock(&lock).ok();
-    result.map(|_| ())
+    lock.lock_exclusive()
+        .context("locking shared git repository state")?;
+    Ok(RepoGitLock(lock))
+}
+
+/// Run `operation` while holding the repository's shared git-state lock.
+/// `operation` must not call a function in this module that takes the lock
+/// itself (`create`, `fetch_remote_branch_sha`, ...): the lock is not
+/// re-entrant and that would deadlock.
+pub(crate) fn with_repo_git_lock<T>(
+    repo: &Path,
+    operation: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let _lock = lock_repo_git_state(repo)?;
+    operation()
+}
+
+fn fetch_origin(repo: &Path) -> Result<()> {
+    let lock = lock_repo_git_state(repo)?;
+    fetch_origin_locked(&lock, repo)
+}
+
+fn fetch_origin_locked(_lock: &RepoGitLock, repo: &Path) -> Result<()> {
+    retry_transient_git_network("fetch", || git(&["fetch", "-q", "origin", "--prune"], repo))
+        .map(|_| ())
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -268,7 +308,10 @@ pub fn create(
     new_branch: &str,
     worktree_base: &Path,
 ) -> Result<PathBuf> {
-    fetch_origin(repo)?;
+    // Held until return: the fetch and the worktree add form one critical
+    // section against sibling slots (see `RepoGitLock`).
+    let lock = lock_repo_git_state(repo)?;
+    fetch_origin_locked(&lock, repo)?;
 
     let origin_ref = format!("origin/{}", target_branch);
     let worktree_path = worktree_base.join(new_branch.replace('/', "-"));
@@ -286,7 +329,10 @@ pub fn create(
         ],
         repo,
     )
-    .with_context(|| format!("creating worktree from {}", origin_ref))?;
+    // One flat message, not a context layer: callers that print only the
+    // outermost `{}` (the parallel loop's slot outcome) still show git's
+    // stderr.
+    .map_err(|err| anyhow::anyhow!("creating worktree from {origin_ref}: {err:#}"))?;
 
     Ok(worktree_path)
 }
@@ -296,7 +342,8 @@ pub fn create_existing(
     existing_branch: &str,
     worktree_base: &Path,
 ) -> Result<PathBuf> {
-    fetch_origin(repo)?;
+    let lock = lock_repo_git_state(repo)?;
+    fetch_origin_locked(&lock, repo)?;
 
     let origin_ref = format!("origin/{}", existing_branch);
     let worktree_path = worktree_base.join(existing_branch.replace('/', "-"));
@@ -333,7 +380,9 @@ pub fn create_existing(
         ],
         repo,
     )
-    .with_context(|| format!("creating worktree from existing branch {}", origin_ref))?;
+    .map_err(|err| {
+        anyhow::anyhow!("creating worktree from existing branch {origin_ref}: {err:#}")
+    })?;
 
     Ok(worktree_path)
 }
@@ -859,6 +908,9 @@ pub fn fetch_remote_branch_sha(repo: &Path, worktree: &Path, branch: &str) -> Re
 /// Best-effort removal of local, successful-dispatch-only WIP checkpoint
 /// refs. Never use this for terminal failures: those refs are recovery data.
 pub fn delete_local_branch(repo: &Path, branch: &str) -> Result<()> {
+    // `branch -D` also rewrites the shared config to drop the branch's
+    // section, which would race a sibling slot's worktree creation.
+    let _lock = lock_repo_git_state(repo)?;
     git(&["branch", "-D", branch], repo)?;
     Ok(())
 }

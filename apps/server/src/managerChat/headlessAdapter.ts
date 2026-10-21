@@ -30,6 +30,7 @@ import type { ChatTranscriptTurn } from '@git-agent-harness/contracts';
 import { runConfigShowProfile } from '../gahCli.js';
 import type { ManagerAdapter, ManagerCommandInfo, ManagerModelInfo, ManagerReasoningEffortInfo } from './registry.js';
 import { isInsideWorkingDirectory } from './permissionPolicy.js';
+import { agentChildEnv } from './childEnv.js';
 
 export type { ManagerCommandInfo, ManagerModelInfo };
 
@@ -160,7 +161,7 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
         });
         const child = spawn(args[0], args.slice(1), {
           cwd,
-          env: { ...process.env, ...await spec.spawnEnv?.(input.profile ?? gahProfile) },
+          env: agentChildEnv(await spec.spawnEnv?.(input.profile ?? gahProfile)),
           stdio: ['pipe', 'pipe', 'pipe']
         });
         state.child = child;
@@ -564,7 +565,7 @@ interface AgyStreamResult {
 }
 
 function runAgyModels(runtime?: { executable: string; state_root: string | null }) {
-  const result = execFile(runtime?.executable ?? 'agy', ['models'], { encoding: 'utf8', timeout: 10_000, env: { ...process.env, ...(runtime?.state_root ? { HOME: runtime.state_root } : {}) } });
+  const result = execFile(runtime?.executable ?? 'agy', ['models'], { encoding: 'utf8', timeout: 10_000, env: agentChildEnv(runtime?.state_root ? { HOME: runtime.state_root } : {}) });
   result.child.stdin?.end();
   return result;
 }

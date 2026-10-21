@@ -20,7 +20,7 @@ pub struct WorkClaim {
     pub hostname: String,
     /// Timestamp when the claim was made
     pub claimed_at: DateTime<Utc>,
-    /// Manual workers keep their claim while their local process is alive.
+    /// Manual workers keep a claim made on another host until it ages out.
     #[serde(default)]
     pub manual_worker: bool,
     /// The agent running the job, once routing has picked one.
@@ -35,16 +35,29 @@ impl WorkClaim {
             .num_seconds();
         let too_old = age > max_age_secs.min(i64::MAX as u64) as i64;
         let local_host = get().unwrap_or_default().to_string_lossy().into_owned();
+        let remote = self.hostname != local_host;
         // A remote PID cannot establish whether a manual worker is alive.
-        if self.manual_worker && self.hostname != local_host {
+        if self.manual_worker && remote {
             return self.pid == 0 || too_old;
         }
         if self.pid == 0 || !is_process_alive(self.pid) {
             return true;
         }
-        // Local manual jobs can legitimately run longer than the loop's
-        // stale-claim timeout. Their owner releases them on every exit path.
-        !self.manual_worker && too_old
+        // A live local owner, loop or manual, releases its claim on every
+        // exit path, and an agent run can outlast the age limit. Only a claim
+        // whose owner cannot be checked from this host expires by age.
+        remote && too_old
+    }
+
+    fn detail(&self) -> ClaimDetail {
+        ClaimDetail {
+            work_id: normalize_work_identity(&self.work_id),
+            pid: self.pid,
+            hostname: self.hostname.clone(),
+            claimed_at: self.claimed_at,
+            is_stale: self.is_stale(CLAIM_MAX_AGE_SECS),
+            route: self.route.clone(),
+        }
     }
 }
 
@@ -313,33 +326,26 @@ impl WorkClaimState {
     pub fn get_claims_with_details(&self, profile: &str) -> Vec<ClaimDetail> {
         self.claims
             .get(profile)
-            .map(|entries| {
-                entries
-                    .iter()
-                    .map(|entry| match entry {
-                        WorkClaimStateEntry::V1(id) => ClaimDetail {
-                            work_id: normalize_work_identity(id),
-                            pid: 0,
-                            hostname: "unknown".to_string(),
-                            claimed_at: Utc::now(),
-                            is_stale: true,
-                            route: None,
-                        },
-                        WorkClaimStateEntry::V2(claim) => {
-                            let is_stale = claim.pid == 0 || !is_process_alive(claim.pid);
-                            ClaimDetail {
-                                work_id: normalize_work_identity(&claim.work_id),
-                                pid: claim.pid,
-                                hostname: claim.hostname.clone(),
-                                claimed_at: claim.claimed_at,
-                                is_stale,
-                                route: claim.route.clone(),
-                            }
-                        }
-                    })
-                    .collect()
-            })
+            .map(|entries| entries.iter().map(WorkClaimStateEntry::detail).collect())
             .unwrap_or_default()
+    }
+}
+
+impl WorkClaimStateEntry {
+    /// Staleness here is the rule `try_claim_work` applies, so a listing
+    /// never shows a claim as active that the next claim attempt would take.
+    fn detail(&self) -> ClaimDetail {
+        match self {
+            WorkClaimStateEntry::V1(id) => ClaimDetail {
+                work_id: normalize_work_identity(id),
+                pid: 0,
+                hostname: "unknown".to_string(),
+                claimed_at: Utc::now(),
+                is_stale: true,
+                route: None,
+            },
+            WorkClaimStateEntry::V2(claim) => claim.detail(),
+        }
     }
 }
 
@@ -371,6 +377,7 @@ fn is_process_alive(pid: u32) -> bool {
         std::process::Command::new("kill")
             .arg("-0")
             .arg(pid.to_string())
+            .stderr(std::process::Stdio::null())
             .status()
             .map(|status| status.success())
             .unwrap_or(false)
@@ -497,7 +504,7 @@ fn save_state(state: &WorkClaimState) -> Result<()> {
     Ok(())
 }
 
-/// A loop claim older than this is reclaimed; see `WorkClaim::is_stale`.
+/// A claim held on another host expires after this; see `WorkClaim::is_stale`.
 const CLAIM_MAX_AGE_SECS: u64 = 3600;
 
 /// Claim a work_id for a profile and persist to file
@@ -575,7 +582,8 @@ pub fn release_owned_for_profile(profile: &str) -> Result<()> {
     release_owned_claims(profile, None)
 }
 
-/// Release a manual worker's claim only if it still belongs to this process.
+/// Release a claim only if it still belongs to this process. The loop's
+/// parallel workers are threads of the process that took their claims.
 pub fn release_owned_work(profile: &str, work_id: &str) -> Result<()> {
     release_owned_claims(profile, Some(work_id))
 }
@@ -588,17 +596,17 @@ fn release_owned_claims(profile: &str, work_id: Option<&str>) -> Result<()> {
     })
 }
 
-/// Release a work_id for a profile and persist to file  
-pub fn release_work(profile: &str, work_id: &str) -> Result<()> {
-    with_locked_state(|state| {
-        state.release(profile, work_id);
-        Ok(())
-    })
-}
-
-/// Get all claimed work_ids for a profile
+/// Work ids (normalized) whose claims still hold for a profile. A stale claim
+/// is left out: `try_claim_work` takes it over when the item is picked.
 pub fn get_claimed_work_ids(profile: &str) -> Result<Vec<String>> {
-    with_locked_state(|state| Ok(state.get_claimed(profile)))
+    with_locked_state(|state| {
+        Ok(state
+            .get_claims_with_details(profile)
+            .into_iter()
+            .filter(|claim| !claim.is_stale)
+            .map(|claim| claim.work_id)
+            .collect())
+    })
 }
 
 /// Check if a work_id is claimed for a profile
@@ -639,26 +647,14 @@ pub fn handle_claims_list(profile: Option<&str>, json: bool) -> Result<()> {
             let mut all_claims = Vec::new();
             for (profile_name, entries) in &state.claims {
                 for entry in entries {
-                    let detail = match entry {
-                        WorkClaimStateEntry::V1(id) => ClaimDetail {
-                            work_id: id.clone(),
-                            pid: 0,
-                            hostname: "unknown".to_string(),
-                            claimed_at: Utc::now(),
-                            is_stale: true,
-                            route: None,
-                        },
-                        WorkClaimStateEntry::V2(claim) => {
-                            let is_stale = claim.pid == 0 || !is_process_alive(claim.pid);
-                            ClaimDetail {
-                                work_id: claim.work_id.clone(),
-                                pid: claim.pid,
-                                hostname: claim.hostname.clone(),
-                                claimed_at: claim.claimed_at,
-                                is_stale,
-                                route: claim.route.clone(),
-                            }
-                        }
+                    // This listing shows the work id as stored.
+                    let stored_id = match entry {
+                        WorkClaimStateEntry::V1(id) => id,
+                        WorkClaimStateEntry::V2(claim) => &claim.work_id,
+                    };
+                    let detail = ClaimDetail {
+                        work_id: stored_id.clone(),
+                        ..entry.detail()
                     };
                     all_claims.push((profile_name.clone(), detail));
                 }
@@ -804,6 +800,116 @@ mod tests {
             &hostname,
         );
         assert!(state.get_claimed("repo@repo").is_empty());
+    }
+
+    fn claim_for(work_id: &str, pid: u32, hostname: &str, age_hours: i64) -> WorkClaimStateEntry {
+        WorkClaimStateEntry::V2(WorkClaim {
+            work_id: work_id.to_string(),
+            pid,
+            hostname: hostname.to_string(),
+            claimed_at: Utc::now() - chrono::Duration::hours(age_hours),
+            manual_worker: false,
+            route: None,
+        })
+    }
+
+    #[test]
+    fn live_local_loop_claim_does_not_age_out_under_a_manual_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = crate::test_support::ClaimStateEnvGuard::set(dir.path().join("claims.json"));
+        assert!(try_claim_work("repo@repo", "#42").unwrap());
+        // The loop has been running #42 for two hours.
+        with_locked_state(|state| {
+            for entry in state.claims.get_mut("repo@repo").unwrap() {
+                if let WorkClaimStateEntry::V2(claim) = entry {
+                    claim.claimed_at = Utc::now() - chrono::Duration::hours(2);
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert!(!try_claim_manual_work("repo@repo", "42").unwrap());
+        assert_eq!(get_claimed_work_ids("repo@repo").unwrap(), ["#42"]);
+    }
+
+    #[test]
+    fn loop_worker_thread_releases_its_own_claim_and_no_other_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = crate::test_support::ClaimStateEnvGuard::set(dir.path().join("claims.json"));
+        let hostname = get().unwrap().to_string_lossy().into_owned();
+        let other = std::process::id() + 1;
+        assert!(try_claim_work("repo@repo", "#42").unwrap());
+        with_locked_state(|state| {
+            let claims = state.claims.get_mut("repo@repo").unwrap();
+            claims.push(claim_for("#42", other, &hostname, 0));
+            claims.push(claim_for("#43", other, &hostname, 0));
+            Ok(())
+        })
+        .unwrap();
+        // Parallel workers release from a thread of the claiming process.
+        std::thread::spawn(|| release_owned_work("repo@repo", "42").unwrap())
+            .join()
+            .unwrap();
+        let left = with_locked_state(|state| Ok(state.claims["repo@repo"].clone())).unwrap();
+        let owners: Vec<_> = left
+            .iter()
+            .map(|entry| match entry {
+                WorkClaimStateEntry::V2(claim) => (claim.work_id.as_str(), claim.pid),
+                WorkClaimStateEntry::V1(_) => unreachable!(),
+            })
+            .collect();
+        assert_eq!(owners, [("#42", other), ("#43", other)]);
+    }
+
+    #[test]
+    fn claim_listings_apply_the_claim_staleness_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = crate::test_support::ClaimStateEnvGuard::set(dir.path().join("claims.json"));
+        let local = get().unwrap().to_string_lossy().into_owned();
+        let me = std::process::id();
+        let mut remote_manual = claim_for("#4", 999_999, "other-host.invalid", 0);
+        if let WorkClaimStateEntry::V2(claim) = &mut remote_manual {
+            claim.manual_worker = true;
+        }
+        let entries = vec![
+            claim_for("#1", me, &local, 2),
+            claim_for("#2", 999_999, &local, 0),
+            claim_for("#3", me, "other-host.invalid", 2),
+            remote_manual,
+            claim_for("#5", 0, &local, 0),
+        ];
+        with_locked_state(|state| {
+            state.claims.insert("repo@repo".into(), entries);
+            Ok(())
+        })
+        .unwrap();
+
+        let details = claim_details_for_profile("repo@repo").unwrap();
+        let stale: Vec<_> = details
+            .iter()
+            .map(|claim| (claim.work_id.as_str(), claim.is_stale))
+            .collect();
+        assert_eq!(
+            stale,
+            [
+                ("#1", false),
+                ("#2", true),
+                ("#3", true),
+                ("#4", false),
+                ("#5", true)
+            ]
+        );
+        let state = load_state().unwrap();
+        for claim in &details {
+            assert_eq!(
+                state.is_claim_stale("repo@repo", &claim.work_id, CLAIM_MAX_AGE_SECS),
+                claim.is_stale,
+                "{}",
+                claim.work_id
+            );
+        }
+        // The loop's refill skips exactly the claims that still hold.
+        assert_eq!(get_claimed_work_ids("repo@repo").unwrap(), ["#1", "#4"]);
     }
 
     #[test]
