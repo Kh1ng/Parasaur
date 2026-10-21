@@ -1491,3 +1491,6 @@ mod early_failure;
 
 #[path = "tests/claim_work_id.rs"]
 mod claim_work_id;
+
+#[path = "tests/central_lease.rs"]
+mod central_lease;
