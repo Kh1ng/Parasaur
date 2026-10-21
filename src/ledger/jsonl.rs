@@ -474,7 +474,8 @@ pub(crate) fn read_entries_call_count(cfg: &GahConfig) -> usize {
 /// entry for `branch` that doesn't already have a verdict and updates it
 /// in place (the ledger has no other mutation path today; this is the one
 /// exception, and it's rare enough -- once per review completion -- not to
-/// need more than a full read-modify-write of the file).
+/// need more than a full read-modify-write of the file, which
+/// `rewrite_locked` replaces atomically).
 pub struct ReviewVerdictBackfill<'a> {
     pub verdict: &'a str,
     pub confidence: &'a str,
@@ -536,14 +537,15 @@ pub fn backfill_review_verdict(
     entries[idx].review_evidence = backfill.evidence.to_vec();
     entries[idx].review_compatibility_evidence = backfill.compatibility_evidence.to_vec();
 
-    let mut out = String::new();
-    for entry in &entries {
-        let mut value = serde_json::to_value(entry).context("serializing ledger entry")?;
-        crate::redact::redact_json_value(&mut value);
-        out.push_str(&serde_json::to_string(&value).context("serializing ledger entry")?);
-        out.push('\n');
-    }
-    fs::write(&path, out).with_context(|| format!("rewriting ledger {}", path.display()))?;
+    rewrite_locked(&path, |out| {
+        for entry in &entries {
+            let mut value = serde_json::to_value(entry).context("serializing ledger entry")?;
+            crate::redact::redact_json_value(&mut value);
+            serde_json::to_writer(&mut *out, &value).context("serializing ledger entry")?;
+            out.write_all(b"\n").context("writing ledger record")?;
+        }
+        Ok(())
+    })?;
     drop(lock_file);
 
     if let Err(err) = super::sqlite_store::rebuild_from_jsonl(cfg) {
@@ -551,6 +553,28 @@ pub fn backfill_review_verdict(
     }
 
     Ok(true)
+}
+
+/// Replace the whole ledger while the caller holds its exclusive lock. The
+/// new contents are staged beside the ledger, synced, and renamed over it,
+/// so a kill or full disk mid-write leaves the previous ledger intact and a
+/// reader sees either the old file or the new one. The ledger keeps its
+/// file mode; a symlinked ledger keeps its link and its target is replaced.
+fn rewrite_locked(path: &Path, write: impl FnOnce(&mut dyn Write) -> Result<()>) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let target =
+        fs::canonicalize(path).with_context(|| format!("resolving ledger {}", path.display()))?;
+    let mode = fs::metadata(&target)
+        .with_context(|| format!("reading ledger {}", target.display()))?
+        .permissions()
+        .mode()
+        & 0o7777;
+    crate::installer::files::replace_with(&target, mode, |file| {
+        let mut out = std::io::BufWriter::new(file);
+        write(&mut out)?;
+        out.flush().context("writing ledger")
+    })
+    .with_context(|| format!("rewriting ledger {}", path.display()))
 }
 
 /// TICKET-096: the query sync/reconciliation needs to associate a
@@ -632,6 +656,10 @@ fn review_is_dedup_eligible(entry: &LedgerEntry) -> bool {
 #[cfg(test)]
 #[path = "jsonl/concurrency_tests.rs"]
 mod concurrency_tests;
+
+#[cfg(test)]
+#[path = "jsonl/rewrite_tests.rs"]
+mod rewrite_tests;
 
 #[cfg(test)]
 mod tests {
