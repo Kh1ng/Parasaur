@@ -231,31 +231,23 @@ pub(in crate::dispatch) fn prepare_review_diff(
     _profile: &Profile,
     target: &mut ReviewTarget,
 ) -> Result<ReviewDiffBundle> {
-    worktree::git(&["fetch", "-q", "origin", "--prune"], repo)?;
-    worktree::git(
-        &[
-            "fetch",
-            "-q",
-            "origin",
-            &format!(
-                "{}:refs/remotes/origin/{}",
-                target.target_branch, target.target_branch
-            ),
-        ],
-        repo,
-    )?;
-    worktree::git(
-        &[
-            "fetch",
-            "-q",
-            "origin",
-            &format!(
-                "{}:refs/remotes/origin/{}",
-                target.source_branch, target.source_branch
-            ),
-        ],
-        repo,
-    )?;
+    // Same shared-state lock as worktree creation: a fetch racing a sibling
+    // slot's `git worktree add` fails on the half-initialized worktree.
+    worktree::with_repo_git_lock(repo, || {
+        worktree::git(&["fetch", "-q", "origin", "--prune"], repo)?;
+        for branch in [&target.target_branch, &target.source_branch] {
+            worktree::git(
+                &[
+                    "fetch",
+                    "-q",
+                    "origin",
+                    &format!("{branch}:refs/remotes/origin/{branch}"),
+                ],
+                repo,
+            )?;
+        }
+        Ok(())
+    })?;
 
     let target_ref = format!("origin/{}", target.target_branch);
     let source_ref = format!("origin/{}", target.source_branch);
