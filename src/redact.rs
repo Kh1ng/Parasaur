@@ -8,7 +8,16 @@
 
 use regex::Regex;
 use serde_json::Value;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
+
+/// Values shorter than this are never treated as secrets, so ordinary prose
+/// is not replaced accidentally.
+const MIN_SECRET_LEN: usize = 4;
+
+/// From this length on a known value is redacted wherever it appears, even
+/// inside a longer identifier: such a value is not an ordinary word, and any
+/// verbatim occurrence of it is a disclosure.
+const UNANCHORED_SECRET_LEN: usize = 16;
 
 fn github_token_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -53,8 +62,77 @@ fn query_secret_re() -> &'static Regex {
 
 fn secret_env_values() -> Vec<(String, String)> {
     std::env::vars()
-        .filter(|(name, value)| is_secret_env_name(name) && value.len() >= 4)
+        .filter(|(name, value)| is_secret_env_name(name) && value.len() >= MIN_SECRET_LEN)
         .collect()
+}
+
+fn secret_registry() -> &'static RwLock<Vec<(String, String)>> {
+    static REGISTRY: OnceLock<RwLock<Vec<(String, String)>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+/// Register a secret this process holds outside its own environment, such as
+/// a named credential injected only into a child's environment.
+///
+/// Every later [`redact`] and [`redact_json_value`] call in this process
+/// replaces the value with `[REDACTED:<name>]`. Values shorter than the
+/// env-derived minimum are ignored, and a value already registered keeps its
+/// first name. Registration is never undone: a rotated-out value is still a
+/// secret.
+pub fn register_secret(name: &str, value: &str) {
+    if value.len() < MIN_SECRET_LEN {
+        return;
+    }
+    // A poisoned lock still holds a usable list; redaction must not stop.
+    let mut secrets = secret_registry()
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if secrets.iter().any(|(_, known)| known == value) {
+        return;
+    }
+    secrets.push((name.to_owned(), value.to_owned()));
+}
+
+/// Live environment secrets plus every registered secret, read at call time
+/// so a newly registered or newly exported value is covered immediately.
+fn known_secrets() -> Vec<(String, String)> {
+    let mut secrets = secret_env_values();
+    secrets.extend(
+        secret_registry()
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .cloned(),
+    );
+    secrets
+}
+
+fn word_char_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^\w$").expect("valid word character regex"))
+}
+
+/// Whether `\b` can match beside `ch`: the regex engine's own (Unicode) word
+/// class decides, so the anchor and this check never disagree.
+fn is_word_char(ch: char) -> bool {
+    let mut buf = [0_u8; 4];
+    word_char_re().is_match(ch.encode_utf8(&mut buf))
+}
+
+/// Pattern for one known value. A short value is anchored with `\b` only on
+/// an edge whose character is a word character: a value that starts or ends
+/// with punctuation (`hunter2!`, base64 padding) has no word boundary there.
+/// A long value is matched anywhere.
+fn known_secret_pattern(value: &str) -> Option<Regex> {
+    let escaped = regex::escape(value);
+    if value.len() >= UNANCHORED_SECRET_LEN {
+        return Regex::new(&escaped).ok();
+    }
+    let first = value.chars().next()?;
+    let last = value.chars().next_back()?;
+    let start = if is_word_char(first) { r"\b" } else { "" };
+    let end = if is_word_char(last) { r"\b" } else { "" };
+    Regex::new(&format!("{start}{escaped}{end}")).ok()
 }
 
 fn is_secret_env_name(name: &str) -> bool {
@@ -71,9 +149,10 @@ fn is_secret_env_name(name: &str) -> bool {
     .any(|needle| name.contains(needle))
 }
 
-/// Redact known live environment secrets plus common provider-token forms.
+/// Redact known live environment secrets, registered secrets (see
+/// [`register_secret`]) and common provider-token forms.
 pub fn redact(text: &str) -> String {
-    redact_with_known_secrets(text, &secret_env_values())
+    redact_with_known_secrets(text, &known_secrets())
 }
 
 /// Redact text using explicit secrets as well as provider token patterns.
@@ -85,7 +164,7 @@ pub fn redact_with_known_secrets(text: &str, secrets: &[(String, String)]) -> St
     let mut output = text.to_string();
     let mut secrets: Vec<_> = secrets
         .iter()
-        .filter(|(_, value)| value.len() >= 4)
+        .filter(|(_, value)| value.len() >= MIN_SECRET_LEN)
         .collect();
     // Longest-first prevents a prefix secret from leaving the suffix behind.
     secrets.sort_by_key(|secret| std::cmp::Reverse(secret.1.len()));
@@ -96,12 +175,14 @@ pub fn redact_with_known_secrets(text: &str, secrets: &[(String, String)]) -> St
         // appears inside a longer, unrelated word -- "token" inside
         // "input_tokens" being the concrete case that surfaced this. Anchor
         // on word boundaries so only a standalone occurrence of the value is
-        // redacted, never a substring of a different identifier.
-        let Ok(pattern) = Regex::new(&format!(r"\b{}\b", regex::escape(value))) else {
+        // redacted, never a substring of a different identifier. Only edges
+        // that are word characters can carry a boundary, and a long value is
+        // never a common word (see `known_secret_pattern`).
+        let Some(pattern) = known_secret_pattern(value) else {
             continue;
         };
         output = pattern
-            .replace_all(&output, format!("[REDACTED:{name}]"))
+            .replace_all(&output, regex::NoExpand(&format!("[REDACTED:{name}]")))
             .into_owned();
     }
     output = github_token_re()
@@ -126,7 +207,7 @@ pub fn redact_with_known_secrets(text: &str, secrets: &[(String, String)]) -> St
 
 /// Recursively redact every string in a JSON value before serialization.
 pub fn redact_json_value(value: &mut Value) {
-    redact_json_value_with_known_secrets(value, &secret_env_values());
+    redact_json_value_with_known_secrets(value, &known_secrets());
 }
 
 fn redact_json_value_with_known_secrets(value: &mut Value, secrets: &[(String, String)]) {
@@ -144,7 +225,7 @@ fn redact_json_value_with_known_secrets(value: &mut Value, secrets: &[(String, S
 
 #[cfg(test)]
 mod tests {
-    use super::{redact_json_value_with_known_secrets, redact_with_known_secrets};
+    use super::{redact_json_value_with_known_secrets, redact_with_known_secrets, register_secret};
 
     fn redact(text: &str) -> String {
         redact_with_known_secrets(
@@ -173,6 +254,61 @@ mod tests {
             &[("GITHUB_TOKEN".to_string(), "token".to_string())],
         );
         assert_eq!(result, "auth failed: [REDACTED:GITHUB_TOKEN] invalid");
+    }
+
+    #[test]
+    fn known_secret_ending_in_punctuation_is_redacted() {
+        let result = redact_with_known_secrets(
+            "login with hunter2! failed",
+            &[("DB_PASSWORD".to_string(), "hunter2!".to_string())],
+        );
+        assert_eq!(result, "login with [REDACTED:DB_PASSWORD] failed");
+    }
+
+    #[test]
+    fn known_base64_secret_with_padding_is_redacted() {
+        let secrets = [
+            ("SHORT_SECRET".to_string(), "YWJjZA==".to_string()),
+            (
+                "LONG_SECRET".to_string(),
+                "c2VjcmV0LXZhbHVlLTEy==".to_string(),
+            ),
+        ];
+        let result = redact_with_known_secrets("a=YWJjZA== b=c2VjcmV0LXZhbHVlLTEy== end", &secrets);
+        assert_eq!(
+            result,
+            "a=[REDACTED:SHORT_SECRET] b=[REDACTED:LONG_SECRET] end"
+        );
+    }
+
+    #[test]
+    fn known_secret_directly_after_word_characters_is_redacted() {
+        let result = redact_with_known_secrets(
+            "POST https://api.example.test/bot123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/sendMessage",
+            &[(
+                "BOT_TOKEN".to_string(),
+                "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw".to_string(),
+            )],
+        );
+        assert_eq!(
+            result,
+            "POST https://api.example.test/bot[REDACTED:BOT_TOKEN]/sendMessage"
+        );
+    }
+
+    #[test]
+    fn registered_secret_outside_process_env_is_redacted() {
+        let value = "registered-only-value-4f1c9e";
+        assert!(std::env::vars().all(|(_, env_value)| env_value != value));
+        register_secret("SELECTED_API_KEY", value);
+        register_secret("IGNORED_SHORT", "abc");
+        assert_eq!(
+            super::redact(&format!("child echoed {value}; abc")),
+            "child echoed [REDACTED:SELECTED_API_KEY]; abc"
+        );
+        let mut json = serde_json::json!({"nested": [format!("key {value}")]});
+        super::redact_json_value(&mut json);
+        assert_eq!(json["nested"][0], "key [REDACTED:SELECTED_API_KEY]");
     }
 
     #[test]

@@ -42,7 +42,7 @@ plist_value() {
 wait_for_worker_health() {
   local url="$1" limit="${GAH_WORKER_HEALTH_TIMEOUT:-60}" log="$HOME/.local/state/gah/worker.log"
   local started="$SECONDS" reported=0
-  until /usr/bin/curl "${curl_args[@]}" "$url" >/dev/null 2>&1; do
+  until /usr/bin/curl "${curl_args[@]}" "$url" >/dev/null 2>&1 <<<"Authorization: Bearer ${COORDINATOR_TOKEN:-}"; do
     local waited=$((SECONDS - started))
     if [ "$waited" -ge "$limit" ]; then
       echo "ERROR: the macOS worker did not become healthy at ${url%/health} within ${limit}s" >&2
@@ -71,8 +71,10 @@ register_worker() {
   # shellcheck disable=SC1090
   [ ! -f "$HOME/.config/gah/gah-loop.env" ] || . "$HOME/.config/gah/gah-loop.env"
   set +a
+  # The token reaches curl on stdin (-H @-), never in its arguments, which
+  # any local user can read while curl runs.
   curl_args=(-fsS -m 2)
-  [ -z "${COORDINATOR_TOKEN:-}" ] || curl_args+=(-H "Authorization: Bearer $COORDINATOR_TOKEN")
+  [ -z "${COORDINATOR_TOKEN:-}" ] || curl_args+=(-H @-)
   wait_for_worker_health "http://$host:$port/health" || return 1
   registration="$(GAH_COORDINATOR_IDENTITY_PATH="$identity_path" "$gah_path" node register --transport-mode "$transport_mode")"
   printf '%s\n' "$registration"
@@ -81,10 +83,10 @@ register_worker() {
   node_id="$("$cli" installer json --file "$identity_path" --pointer /node_id)"
   health_url="${central_url%/}/api/registry/nodes/$node_id/health"
   health_args=(-fsS -m 15)
-  [ -z "${COORDINATOR_TOKEN:-}" ] || health_args+=(-H "Authorization: Bearer $COORDINATOR_TOKEN")
+  [ -z "${COORDINATOR_TOKEN:-}" ] || health_args+=(-H @-)
   health=''
   for _ in 1 2 3; do
-    health="$(/usr/bin/curl "${health_args[@]}" "$health_url" 2>/dev/null || true)"
+    health="$(/usr/bin/curl "${health_args[@]}" "$health_url" 2>/dev/null <<<"Authorization: Bearer ${COORDINATOR_TOKEN:-}" || true)"
     if [ "$(printf '%s' "$health" | "$cli" installer json --pointer /status 2>/dev/null || true)" = healthy ]; then
       return
     fi

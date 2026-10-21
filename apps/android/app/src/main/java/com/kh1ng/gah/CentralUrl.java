@@ -24,6 +24,21 @@ final class CentralUrl {
         }
     }
 
+    // Compares only scheme://authority, so characters a WebView leaves unescaped in the path,
+    // query, or fragment cannot make parsing throw. An origin that does not parse is not trusted.
+    static boolean sameOrigin(String trusted, String candidate) {
+        if (candidate == null) return false;
+        int separator = candidate.indexOf("://");
+        if (separator <= 0) return false;
+        int end = separator + 3;
+        while (end < candidate.length() && "/?#".indexOf(candidate.charAt(end)) < 0) end++;
+        try {
+            return sameOrigin(trusted, new URI(candidate.substring(0, end)));
+        } catch (URISyntaxException error) {
+            return false;
+        }
+    }
+
     static boolean sameOrigin(String trusted, URI candidate) {
         URI base = URI.create(trusted);
         return candidate != null && base.getScheme().equalsIgnoreCase(candidate.getScheme())

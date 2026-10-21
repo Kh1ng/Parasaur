@@ -68,6 +68,34 @@ test('a headless turn runs in the conversation cwd and replays history into the 
   }
 });
 
+test('a headless turn spawns the backend with an allow-listed env plus the spec env', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-headless-env-'));
+  const saved = { COORDINATOR_TOKEN: process.env.COORDINATOR_TOKEN, TDAI_GATEWAY_API_KEY: process.env.TDAI_GATEWAY_API_KEY };
+  try {
+    process.env.COORDINATOR_TOKEN = 'owner-token';
+    process.env.TDAI_GATEWAY_API_KEY = 'gateway-key';
+    const cli = join(dir, 'env-backend');
+    writeFileSync(cli, `#!/bin/sh
+cat >/dev/null
+echo "coordinator=\${COORDINATOR_TOKEN-unset} gateway=\${TDAI_GATEWAY_API_KEY-unset} adapter=\${ADAPTER_KEY-unset} home=\${HOME-unset} path=\${PATH:+set}"
+`, { mode: 0o755 });
+    const backend = createHeadlessBackend({
+      id: 'fake',
+      displayName: 'Fake',
+      turnArgs: () => [cli],
+      encodeStdin: (prompt) => prompt,
+      spawnEnv: async () => ({ ADAPTER_KEY: 'adapter-key' })
+    });
+    const result = await backend.runTurn('p#env', { prompt: 'hi', history: [], onChunk: () => {}, onToolResult: () => {} });
+    assert.equal(result.reply, `coordinator=unset gateway=unset adapter=adapter-key home=${process.env.HOME} path=set`);
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a headless backend surfaces CLI failure text and rejects cleanly', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-headless-fail-'));
   try {

@@ -219,7 +219,7 @@ pub fn self_check_validation_gate(profile: &Profile, cfg: &GahConfig, skip: bool
     // over. The branch must be deleted too: worktree::cleanup only removes
     // the worktree dir and prunes, leaving the branch ref behind.
     worktree::cleanup(&wt, repo);
-    let _ = worktree::git_raw(&["branch", "-D", &branch], repo);
+    let _ = worktree::delete_local_branch(repo, &branch);
 
     if crate::runner::shutdown_requested() {
         fs2::FileExt::unlock(&profile_lock).ok();

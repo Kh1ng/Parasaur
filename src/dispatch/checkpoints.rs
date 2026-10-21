@@ -276,16 +276,18 @@ pub fn create_worktree_from_checkpoint(
             worktree_path.display()
         );
     }
-    worktree::git(
-        &[
-            "worktree",
-            "add",
-            "-q",
-            worktree_path.to_str().unwrap(),
-            checkpoint_branch,
-        ],
-        repo,
-    )
+    worktree::with_repo_git_lock(repo, || {
+        worktree::git(
+            &[
+                "worktree",
+                "add",
+                "-q",
+                worktree_path.to_str().unwrap(),
+                checkpoint_branch,
+            ],
+            repo,
+        )
+    })
     .with_context(|| format!("creating worktree from local checkpoint {checkpoint_branch}"))?;
     Ok(worktree_path)
 }

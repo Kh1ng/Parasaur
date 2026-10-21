@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 /// attempts are inside the reserve, a plain retry of the same tier is
 /// refused. Defaults to one attempt when `max_attempts` is set.
 ///
-/// A `gah clear-attempts` tombstone resets every counter, the same way it
+/// A `gah ledger clear-attempts` tombstone resets every counter, the same way it
 /// resets the retry cap.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
 pub struct IssueBudget {

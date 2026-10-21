@@ -1629,7 +1629,7 @@ and what to do:
 | `human_blocked`      | Explicitly requires a human                                   | Human gate. Automation stops here by design. |
 | `unknown`            | Unclassified                                                  | Stops by default. Inspect session logs before overriding. |
 
-Three consecutive counted attempts with the same `harness_error` or `environment_error` setup signature produce a derived `repeated_setup_failure` human gate. Digits and absolute paths are normalized when comparing errors. Correct the setup problem, then run `gah clear-attempts` to reset the history and release the gate; control records and capacity deferrals do not count as attempts.
+Three consecutive counted attempts with the same `harness_error` or `environment_error` setup signature produce a derived `repeated_setup_failure` human gate. Digits and absolute paths are normalized when comparing errors. Correct the setup problem, then run `gah ledger clear-attempts --profile <profile> <WORK_ID>` to reset the history and release the gate; control records and capacity deferrals do not count as attempts.
 
 Escalation rule: **only `agent_failure` (genuine agent-performance failure)
 justifies escalating model strength.** Never escalate for harness, environment,

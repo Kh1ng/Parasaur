@@ -134,3 +134,41 @@ fn multi_loop_preserves_state() {
     assert!(!events.is_empty(), "no events after 3 loops");
     let _ = entries; // ledger may be empty for WaitUntil/NoOp loops
 }
+
+/// Harness children get the harness bin dir through their own command
+/// environment, and only their own. The test process's `PATH` is never
+/// changed, so parallel harnesses cannot resolve each other's fakes (#1557).
+#[test]
+fn harness_child_path_holds_exactly_its_own_bin_dir() {
+    let process_path = std::env::var("PATH").unwrap_or_default();
+    let mut harness = ScenarioHarness::new("github").worker_scenario("success");
+    let tmp = TempDir::new().unwrap();
+    let gh = FakeBackend::new(tmp.path(), "gh").capture_env_vars(&["PATH"]);
+    gh.install(Scenario::success().with_stdout("[]"));
+    harness.install_custom_gh(&gh);
+
+    let result = harness.run_one_loop().unwrap();
+
+    let child_path = gh
+        .env_for_call(1)
+        .remove("PATH")
+        .unwrap_or_else(|| panic!("gh was not invoked; stderr: {}", result.stderr_tail));
+    let harness_bin_dirs: Vec<&str> = child_path
+        .split(':')
+        .filter(|entry| {
+            let entry = std::path::Path::new(entry);
+            // Harness roots live under the integration-test temp root; the
+            // system temp dir is checked too so a leaked root from an older
+            // harness layout is still caught.
+            (entry.starts_with(support::test_temp_root())
+                || entry.starts_with(std::env::temp_dir()))
+                && entry.file_name().is_some_and(|name| name == "bin")
+        })
+        .collect();
+    assert_eq!(
+        harness_bin_dirs,
+        [harness.bin_dir.to_str().unwrap()],
+        "child PATH: {child_path}"
+    );
+    assert_eq!(std::env::var("PATH").unwrap_or_default(), process_path);
+}
