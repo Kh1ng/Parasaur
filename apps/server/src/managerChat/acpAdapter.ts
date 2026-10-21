@@ -21,6 +21,7 @@ import * as acp from '@agentclientprotocol/sdk';
 import type { Writable as NodeWritable, Readable as NodeReadable } from 'node:stream';
 import type { ChatTranscriptTurn, ChatUsage } from '@git-agent-harness/contracts';
 import type { PermissionAsk } from './permissionPolicy.js';
+import { agentChildEnv } from './childEnv.js';
 
 export interface ManagerCommandInfo {
   name: string;
@@ -503,7 +504,7 @@ export function createAcpBackend(
     const spec = spawnSpec();
     const child = spawn(spec.command, spec.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: spec.env ? { ...process.env, ...spec.env } : undefined
+      env: agentChildEnv(spec.env)
     });
 
     const stream = acp.ndJsonStream(

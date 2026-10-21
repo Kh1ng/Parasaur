@@ -207,16 +207,18 @@ case "${GAH_GATEWAY_MODE:-}" in
     fi
     # gateway-url-default:end
     echo "Checking remote gateway reachability and auth: $GAH_GATEWAY_URL/recall"
+    # The key reaches curl on stdin (-H @-), never in its arguments, which
+    # any local user can read while curl runs.
     auth_header=()
     if [ -n "${GAH_GATEWAY_API_KEY:-}" ]; then
-      auth_header=(-H "Authorization: Bearer $GAH_GATEWAY_API_KEY")
+      auth_header=(-H @-)
     fi
     # GET /health needs no auth, so it can't catch a wrong API key -- POST
     # /recall requires auth on every configured gateway and is read-only, so
     # it doubles as a safe reachability+credential check in one call.
     if ! curl -fsS -m 10 "${auth_header[@]}" -H "Content-Type: application/json" \
       -d '{"query":"gah install reachability check","session_key":"gah:install-check"}' \
-      "$GAH_GATEWAY_URL/recall" >/dev/null; then
+      "$GAH_GATEWAY_URL/recall" >/dev/null <<<"Authorization: Bearer ${GAH_GATEWAY_API_KEY:-}"; then
       echo "ERROR: remote gateway at $GAH_GATEWAY_URL is not reachable (or rejected the API key). Aborting install -- fix reachability/credentials and re-run." >&2
       exit 1
     fi

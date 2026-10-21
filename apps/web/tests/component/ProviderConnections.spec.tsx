@@ -92,6 +92,26 @@ test('failed metadata reload preserves previous named connections', async ({ mou
   await expect(component.getByRole('status')).toHaveText(/connection could not be updated/);
 });
 
+test('first open on a fresh computer shows no update error until a save fails', async ({ mount }) => {
+  const component = await mount(<NativeProviderConnections entries={[]} cliUnavailable />);
+  const status = component.getByRole('status');
+  await expect(status).not.toHaveText('Checking saved connections…');
+  await expect(status).toHaveText(/Saved connections appear here after Parasaur is set up on this computer/);
+  await expect(component).not.toContainText('could not be updated');
+  await component.getByRole('button', { name: 'Add API key', exact: true }).click();
+  await component.getByLabel('Connection name', { exact: true }).fill('Work');
+  await component.getByLabel('Provider', { exact: true }).fill('mistral');
+  await component.getByLabel('API key', { exact: true }).fill('synthetic-private-api-key');
+  await component.getByRole('button', { name: 'Save key', exact: true }).click();
+  await expect(status).toHaveText(/The connection could not be updated/);
+  await expect(component).not.toContainText('synthetic-private-api-key');
+});
+
+test('first open without a local configuration shows the empty state, not an instance warning', async ({ mount }) => {
+  const component = await mount(<NativeProviderConnections entries={[]} noConfig />);
+  await expect(component.getByRole('status')).toHaveText(/No named connections saved yet/);
+});
+
 test('automatic success cannot be overwritten by an older pending slot response', async ({ mount }) => {
   const component = await mount(<NativeProviderConnections entries={[]} automatic />);
   await component.getByLabel('Another Mistral account name').fill('Automatic Mistral');

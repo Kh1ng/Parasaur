@@ -340,7 +340,8 @@ new dispatches, so the MR the last attempt produced still gets its review.
 With `max_attempts = 2` and the default reserve of 1, one setup failure
 already holds the issue, because a same-tier retry may not use the reserve.
 `gah status` lists each issue's remaining budget under "Issue budgets", and
-`gah clear-attempts` releases the hold by resetting the counters.
+`gah ledger clear-attempts --profile <profile> <WORK_ID>` releases the hold by
+resetting the counters.
 
 ### Restricting a job kind to named models
 

@@ -22,4 +22,23 @@ public final class CentralUrlTest {
         assertFalse(CentralUrl.sameOrigin(central, URI.create("https://evil.test/chat")));
         assertFalse(CentralUrl.sameOrigin(central, URI.create("http://central.test/chat")));
     }
+
+    @Test public void navigationWithUnescapedQueryOrFragmentComparesOriginWithoutThrowing() {
+        String central = CentralUrl.normalize("https://x");
+        assertTrue(CentralUrl.sameOrigin(central, "https://x/?a=b|c#{d}"));
+        assertTrue(CentralUrl.sameOrigin(central, "https://x:443/%zz"));
+        assertTrue(CentralUrl.sameOrigin(central, "https://x?a=b|c"));
+        assertFalse(CentralUrl.sameOrigin(central, "https://host/%zz"));
+        assertFalse(CentralUrl.sameOrigin(central, "https://x:8443/?a=b|c#{d}"));
+        assertFalse(CentralUrl.sameOrigin(central, "http://x/?a=b|c#{d}"));
+        assertTrue(CentralUrl.sameOrigin(CentralUrl.normalize("https://host"), "https://host/%zz"));
+    }
+
+    @Test public void unparseableOrNonHierarchicalNavigationIsNotTrusted() {
+        String central = CentralUrl.normalize("https://central.test");
+        for (String value : new String[] {null, "", "central.test/chat", "https://cen|tral.test/", "javascript:alert('https://central.test')", "data:text/html,https://central.test"}) {
+            assertFalse(CentralUrl.sameOrigin(central, value));
+        }
+        assertFalse(CentralUrl.sameOrigin(central, "https://central.test@evil.test/?q=|"));
+    }
 }
