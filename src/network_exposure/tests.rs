@@ -12,12 +12,14 @@ fn defaults(lan_cidrs: &[&str], tailscale_cidr: Option<&str>) -> Defaults {
 }
 
 /// A fake `sudo` answering exactly the two invocations `apply`/
-/// `existing_allowed_cidrs` make: `-n ufw status` (returns a canned
+/// `existing_allowed_cidrs` make: `ufw status` (returns a canned
 /// status with one pre-existing rule for `port`/`preexisting_cidr`) and
 /// `ufw allow ...` (records the call and succeeds). Matches real `ufw
 /// status`'s plain (non-verbose) column layout exactly -- this is the
 /// shape that caught a real parsing bug (the code assumed a `verbose`-only
-/// "ALLOW IN" column that plain `ufw status` doesn't have).
+/// "ALLOW IN" column that plain `ufw status` doesn't have). Like real sudo
+/// without a cached credential, it refuses non-interactive `-n` calls, so
+/// a call that can never prompt for a password fails the test.
 fn write_fake_sudo(
     dir: &std::path::Path,
     record_path: &std::path::Path,
@@ -26,7 +28,11 @@ fn write_fake_sudo(
 ) {
     let script = format!(
         r#"#!/bin/sh
-if [ "$1" = "-n" ] && [ "$2" = "ufw" ] && [ "$3" = "status" ]; then
+if [ "$1" = "-n" ]; then
+  echo "sudo: a password is required" >&2
+  exit 1
+fi
+if [ "$1" = "ufw" ] && [ "$2" = "status" ]; then
   cat <<EOF
 Status: active
 
