@@ -800,7 +800,7 @@ fn build_snapshot_inner(
 
     // A spent issue budget (`routing.issue_budget`) holds the work item the
     // same way a ledger gate does: ticket-scoped, refused dispatch, visible
-    // below, released by `gah clear-attempts`. A ledger gate already on the
+    // below, released by `gah ledger clear-attempts`. A ledger gate already on the
     // ticket keeps its own reason.
     let budget_status = |work_id: Option<&str>| {
         work_waypoint_evidence
