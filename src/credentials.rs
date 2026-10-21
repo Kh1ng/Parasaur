@@ -457,21 +457,33 @@ fn remove_at(root: &Path, id: &str, quota_path: &Path) -> Result<()> {
     std::fs::remove_file(root.join(format!("{id}.json"))).context("named credential unavailable")
 }
 
-pub(crate) fn selected(id: &str) -> Result<(CredentialInfo, String)> {
-    let stored = read_at(&root()?, id)?;
-    Ok((stored.info, stored.secret))
-}
-
 /// Resolve a single explicitly bound execution source. Dashboard cookies never enter
 /// execution, and a provider mismatch cannot fall back to an ambient key.
 /// Which runner may use the source is the caller's check
 /// (`ExecutionIdentity::credential_env`).
 pub fn execution_env(id: &str, expected_provider: &str) -> Result<Vec<(String, String)>> {
-    let (info, secret) = match selected(id) {
+    let Ok(root) = root() else {
+        bail!("named credential unavailable");
+    };
+    execution_env_at(&root, id, expected_provider)
+}
+
+fn execution_env_at(
+    root: &Path,
+    id: &str,
+    expected_provider: &str,
+) -> Result<Vec<(String, String)>> {
+    let stored = match read_at(root, id) {
         Ok(value) => value,
         Err(_) => bail!("named credential unavailable"),
     };
-    execution_env_with(info, secret, expected_provider)
+    let env = execution_env_with(stored.info, stored.secret, expected_provider)?;
+    // A bound source reaches only the child's environment, never this
+    // process's, so redaction learns it here before any child output exists.
+    for (name, value) in &env {
+        crate::redact::register_secret(name, value);
+    }
+    Ok(env)
 }
 
 fn execution_env_with(

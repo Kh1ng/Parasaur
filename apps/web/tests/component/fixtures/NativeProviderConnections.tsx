@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import settingsHtml from '../../../../desktop/index.html?raw';
 import { bindProviderConnections, type CredentialInfo } from '../../../../desktop/src/providerConnections.js';
 
-export function NativeProviderConnections({ entries: initialEntries, failUsage = false, failReload = false, automatic = false }: { entries: CredentialInfo[]; failUsage?: boolean; failReload?: boolean; automatic?: boolean }) {
+export function NativeProviderConnections({ entries: initialEntries, failUsage = false, failReload = false, automatic = false, cliUnavailable = false, noConfig = false }: { entries: CredentialInfo[]; failUsage?: boolean; failReload?: boolean; automatic?: boolean; cliUnavailable?: boolean; noConfig?: boolean }) {
   const root = useRef<HTMLDivElement>(null);
   const section = settingsHtml.match(/<section id="provider-connections"[\s\S]*?<\/section>/)?.[0] ?? '';
   const style = settingsHtml.match(/<style>[\s\S]*?<\/style>/)?.[0] ?? '';
@@ -13,10 +13,13 @@ export function NativeProviderConnections({ entries: initialEntries, failUsage =
     const show = bindProviderConnections(root.current!.querySelector<HTMLElement>('#provider-connections')!, async <T,>(command: string, args?: Record<string, unknown>): Promise<T> => {
       const call: { command: string; id?: string; secretMatched?: boolean } = { command };
       let result: unknown;
+      // A fresh install has no CLI yet: every native command fails before saving anything.
+      if (cliUnavailable && command.startsWith('credential_')) throw new Error('Parasaur is not installed.');
       if (command === 'credential_list') {
         if (failReload && lists++ > 0) throw new Error('private native error');
         result = entries;
       } else if (command === 'credential_instances') {
+        if (noConfig) throw new Error('no config found');
         result = [
           { profile: 'local-work', instance: 'vibe-work', runner_kind: 'vibe', credential_id: null },
           { profile: 'local-work', instance: 'codex-work', runner_kind: 'codex', credential_id: null },
@@ -51,6 +54,6 @@ export function NativeProviderConnections({ entries: initialEntries, failUsage =
       root.current!.querySelector('#native-calls')!.textContent = JSON.stringify(calls);
       return result as T;
     });
-  }, [initialEntries, failUsage, failReload, automatic]);
+  }, [initialEntries, failUsage, failReload, automatic, cliUnavailable, noConfig]);
   return <div ref={root} style={{ backgroundColor: '#0b0e14', color: '#e6e9ef', minHeight: '100vh' }}><div dangerouslySetInnerHTML={{ __html: `${style}<main>${section}</main>` }} /><output id="native-calls" hidden /></div>;
 }
