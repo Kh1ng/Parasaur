@@ -157,7 +157,11 @@ fn harness_child_path_holds_exactly_its_own_bin_dir() {
         .split(':')
         .filter(|entry| {
             let entry = std::path::Path::new(entry);
-            entry.starts_with(std::env::temp_dir())
+            // Harness roots live under the integration-test temp root; the
+            // system temp dir is checked too so a leaked root from an older
+            // harness layout is still caught.
+            (entry.starts_with(support::test_temp_root())
+                || entry.starts_with(std::env::temp_dir()))
                 && entry.file_name().is_some_and(|name| name == "bin")
         })
         .collect();
