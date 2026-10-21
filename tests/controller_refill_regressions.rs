@@ -112,6 +112,48 @@ fn read_u32_file(path: &std::path::Path) -> u32 {
         .unwrap_or(0)
 }
 
+/// Upper bound for an event wait. It exists only so a genuinely stuck loop
+/// fails instead of hanging; it is not a performance expectation.
+const WORKER_EVENT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Wait until `observed()` holds while the controller is still running. On
+/// an early controller exit or a stuck loop, release the blocked fake workers
+/// and fail with the controller's output so the cause is diagnosable.
+fn wait_for_worker_event(
+    mut child: ProcessGroupGuard,
+    release: &std::path::Path,
+    observed: impl Fn() -> bool,
+    what: &str,
+) -> ProcessGroupGuard {
+    let deadline = Instant::now() + WORKER_EVENT_TIMEOUT;
+    while !observed() {
+        let exited = child.try_wait().unwrap().is_some();
+        if exited || Instant::now() >= deadline {
+            let reason = if exited {
+                "controller exited before refill opportunity".to_string()
+            } else {
+                format!("timed out after {}s", WORKER_EVENT_TIMEOUT.as_secs())
+            };
+            fs::write(release, "release").unwrap();
+            if !exited {
+                // A stuck controller would never exit on its own; kill its
+                // whole process group so collecting the output cannot hang.
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+            }
+            let output = child.wait_with_output().unwrap();
+            panic!(
+                "{what}: {reason}\nstdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    child
+}
+
 #[cfg(unix)]
 #[test]
 fn process_group_guard_drop_reaps_the_entire_test_process_group() {
@@ -891,7 +933,7 @@ fn parallel_loop_reprobes_node_pressure_with_active_worker_remaining() {
              echo \"call-$n\" >> \"$call_count_file\"\n\
              case \"$n\" in\n\
                1) while [ ! -f \"$slow_release\" ]; do sleep 0.05; done ;;\n\
-               2) echo started > \"$second_started\"; sleep 2 ;;\n\
+               2) echo started > \"$second_started\"; while [ ! -f \"$slow_release\" ]; do sleep 0.05; done ;;\n\
              esac\n\
              dec_active\n\
              ",
@@ -913,7 +955,7 @@ fn parallel_loop_reprobes_node_pressure_with_active_worker_remaining() {
         }
     });
 
-    let mut child = ProcessGroupGuard::new(
+    let child = ProcessGroupGuard::new(
         command
             .args([
                 "loop",
@@ -938,38 +980,24 @@ fn parallel_loop_reprobes_node_pressure_with_active_worker_remaining() {
             .unwrap(),
     );
 
-    let start_deadline = Instant::now() + Duration::from_secs(5);
-    while read_u32_file(&active_count) < 1 {
-        assert!(
-            Instant::now() < start_deadline,
-            "first worker did not start"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
-
-    // 20s, not 10s: this polls for the same class of event (the real child
-    // binary admitting and launching a worker after a real subprocess spawn)
-    // as the 20s deadlines above (see e.g. "two initial workers did not
-    // start" / "third slot did not start"). This one was inconsistently set
-    // to half that margin with no stated reason, and flaked under CI load
-    // twice (2026-08-05, issue #824) on unrelated commits while every
-    // sibling wait in this file passed -- the 500ms pressure-flip + 100ms
-    // reprobe interval this test relies on only need ~600ms of slack, but
-    // the fixed 10s ceiling left too little room for the rest of the
-    // pipeline (fake gh/codex spawns, decide_next_action) under real
-    // contention.
-    let refill_deadline = Instant::now() + Duration::from_secs(20);
-    while !second_started.exists() {
-        assert!(
-            child.try_wait().unwrap().is_none(),
-            "controller exited before refill opportunity"
-        );
-        assert!(
-            Instant::now() < refill_deadline,
-            "second worker did not start while first was active"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+    // Event-based waits, not wall-clock deadlines (issues #824, #1587): both
+    // fake workers block on `slow_release`, so the first stays active until
+    // this test releases it and the second worker's marker can only appear
+    // while the first is still running. A loaded runner is slow, not wrong;
+    // the generous bound only catches a loop that is genuinely stuck.
+    let child = wait_for_worker_event(
+        child,
+        &slow_release,
+        || read_u32_file(&active_count) >= 1,
+        "first worker did not start",
+    );
+    let child = wait_for_worker_event(
+        child,
+        &slow_release,
+        || second_started.exists(),
+        "second worker did not start while first was active",
+    );
+    // Neither worker can have finished: both still wait for the release.
     assert_eq!(read_u32_file(&active_count), 2);
 
     fs::write(&slow_release, "release").unwrap();
