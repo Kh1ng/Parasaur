@@ -796,18 +796,72 @@ test('fleet dispatch treats a lease store with an incomplete record as unreadabl
   const { leaseStorePath, quarantinePath, harness, options, expectRestartRefuses, preservedFiles } = fixture;
   try {
     await harness(new Map()).startSession(options);
-    const stored = JSON.parse(readFileSync(leaseStorePath, 'utf8')) as { leases: Array<Record<string, unknown>> };
-    // Keep one complete record next to the incomplete one: the whole store is still rejected.
-    const incomplete = JSON.stringify({ leases: [stored.leases[0], { requestId: 'running-request' }] });
-    writeFileSync(leaseStorePath, incomplete);
+    const stored = JSON.parse(readFileSync(leaseStorePath, 'utf8')) as { leases: Array<Record<string, any>> };
+    const complete = stored.leases[0]!;
+    const { profile: _profile, workKey: _workKey, ...withoutProfile } = complete;
+    // Each shape below could be the running work; none says which work it holds.
+    const incompleteRecords: Array<[string, unknown]> = [
+      ['request id only', { requestId: 'running-request' }],
+      ['routing fields only', {
+        requestId: 'running-request',
+        nodeId: complete.nodeId,
+        nodeUrl: complete.nodeUrl,
+        session: { id: complete.session.id }
+      }],
+      ['no profile', { ...withoutProfile, requestId: 'running-request' }],
+      ['no recoverable work key', {
+        ...complete,
+        requestId: 'running-request',
+        workKey: undefined,
+        session: { ...complete.session, repo: undefined }
+      }],
+      ['work key field of the wrong type', {
+        ...complete,
+        requestId: 'running-request',
+        session: { ...complete.session, branch: 42 }
+      }]
+    ];
+    for (const [shape, record] of incompleteRecords) {
+      rmSync(quarantinePath, { force: true });
+      // Keep one complete record next to the incomplete one: the whole store is still rejected.
+      const incomplete = JSON.stringify({ leases: [complete, record] });
+      writeFileSync(leaseStorePath, incomplete);
 
-    const logged = t.mock.method(console, 'error', () => {});
-    await expectRestartRefuses();
-    assert.match(String(logged.mock.calls[0]?.arguments[0]), /incomplete lease record/);
-    assert.equal(existsSync(quarantinePath), true);
-    assert.equal(readFileSync(resolve(fixture.leaseDir, preservedFiles()[0]!), 'utf8'), incomplete);
+      const logged = t.mock.method(console, 'error', () => {});
+      await expectRestartRefuses();
+      assert.match(String(logged.mock.calls[0]?.arguments[0]), /incomplete lease record/, shape);
+      assert.equal(existsSync(quarantinePath), true, shape);
+      assert.equal(readFileSync(resolve(fixture.leaseDir, preservedFiles().at(-1)!), 'utf8'), incomplete, shape);
 
-    await expectRestartRefuses();
+      await expectRestartRefuses();
+      logged.mock.restore();
+    }
+  } finally {
+    rmSync(fixture.leaseDir, { recursive: true, force: true });
+  }
+});
+
+test('fleet dispatch still deduplicates against legacy lease records whose work identity can be recovered', async () => {
+  const fixture = createUnreadableStoreFixture('gah-fleet-legacy-');
+  const { leaseStorePath, quarantinePath, harness, options } = fixture;
+  try {
+    const first = await harness(new Map()).startSession(options);
+    const stored = JSON.parse(readFileSync(leaseStorePath, 'utf8')) as { leases: Array<Record<string, any>> };
+    const complete = stored.leases[0]!;
+    const { workKey: _workKey, ...withoutWorkKey } = complete;
+    const { repo: _repo, mode: _mode, ...sessionWithoutWork } = complete.session;
+    const legacyRecords: Array<[string, unknown]> = [
+      ['work key derived from the session', withoutWorkKey],
+      ['stored work key only', { ...complete, session: sessionWithoutWork }]
+    ];
+    for (const [shape, record] of legacyRecords) {
+      writeFileSync(leaseStorePath, JSON.stringify({ leases: [record] }));
+      const transports = new Map<string, FakeTransport>();
+      const retried = await harness(transports).startSession({ ...options, requestId: 'dispatch-legacy-retry' });
+      assert.equal(retried.id, first.id, shape);
+      assert.equal(transports.size, 0, `${shape}: the running work is not started again`);
+      assert.equal(existsSync(quarantinePath), false, shape);
+    }
   } finally {
     rmSync(fixture.leaseDir, { recursive: true, force: true });
   }

@@ -158,14 +158,29 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
+const WORK_KEY_SESSION_FIELDS = ['repo', 'branch', 'target', 'mr', 'mode', 'backend', 'model'] as const;
+
+/** A lease is usable only if it says where its session runs and which work it
+ * holds: the profile reconciliation filters by, and a work key derived from
+ * the session or stored by the writer. Anything less could be running work
+ * that deduplication cannot see. */
 function isCompleteLease(value: unknown): value is LeaseRecord {
   const lease = value as Partial<LeaseRecord> | null;
-  return typeof lease === 'object' && lease !== null
+  if (!(typeof lease === 'object' && lease !== null
     && isNonEmptyString(lease.requestId)
     && isNonEmptyString(lease.nodeId)
     && isNonEmptyString(lease.nodeUrl)
+    && isNonEmptyString(lease.profile)
     && typeof lease.session === 'object' && lease.session !== null
-    && isNonEmptyString(lease.session.id);
+    && isNonEmptyString(lease.session.id))) {
+    return false;
+  }
+  const session = lease.session;
+  if (!WORK_KEY_SESSION_FIELDS.every((field) => session[field] == null || typeof session[field] === 'string')) {
+    return false;
+  }
+  return deriveLeaseWorkKey({ profile: lease.profile, session: lease.session }) !== null
+    || isNonEmptyString(lease.workKey);
 }
 
 class LeaseStore {
@@ -202,11 +217,7 @@ class LeaseStore {
         }
         const normalizedLease = {
           ...lease,
-          profile: typeof lease.profile === 'string' ? lease.profile : '',
-          workKey: deriveLeaseWorkKey({
-            profile: typeof lease.profile === 'string' ? lease.profile : '',
-            session: lease.session
-          }) ?? (typeof lease.workKey === 'string' ? lease.workKey : lease.requestId)
+          workKey: deriveLeaseWorkKey(lease) ?? lease.workKey
         } satisfies LeaseRecord;
         this.leases.set(normalizedLease.requestId, normalizedLease);
         this.leasesByWorkKey.set(normalizedLease.workKey, normalizedLease);
