@@ -1,5 +1,5 @@
 import { readdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
@@ -13,7 +13,9 @@ function testsIn(directory) {
 }
 
 const root = dirname(fileURLToPath(import.meta.url));
-const tests = testsIn(join(root, 'src')).sort();
+// GAH_SERVER_TEST_DIR runs another directory's tests through this same
+// runner; src/testRunner.test.ts uses it for its leaked-handle fixtures.
+const tests = testsIn(resolve(root, process.env.GAH_SERVER_TEST_DIR || 'src')).sort();
 if (tests.length === 0) throw new Error('No server tests found');
 console.log(`Running ${tests.length} server test files`);
 // A test file whose process keeps a handle open after its tests finish (a
