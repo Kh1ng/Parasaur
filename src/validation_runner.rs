@@ -320,6 +320,43 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
+    fn returns_partial_output_while_an_escaped_child_keeps_writing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pid_file = tmp.path().join("writer.pid");
+        let command = format!(
+            "printf early; setsid sh -c 'echo $$ > \"{0}\"; while :; do echo payload; done' & \
+             while [ ! -s '{0}' ]; do sleep 0.05; done",
+            pid_file.display()
+        );
+
+        let started = Instant::now();
+        let output = run_shell_command_with_shutdown(
+            &command,
+            tmp.path(),
+            &[],
+            Duration::from_secs(30),
+            || false,
+        );
+        let elapsed = started.elapsed();
+        let writer = crate::runner::pipes::read_pid(&pid_file);
+        // Nothing reads the abandoned pipe any more, so the escaped writer
+        // gets EPIPE instead of filling an unreachable buffer.
+        let writer_stopped =
+            crate::runner::pipes::process_exits_within(writer, Duration::from_secs(2));
+        unsafe {
+            libc::kill(writer as libc::pid_t, libc::SIGKILL);
+        }
+
+        let output = output.unwrap();
+        assert!(output.status.success());
+        assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+        assert!(output.stdout.starts_with(b"early"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("still held open"));
+        assert!(writer_stopped, "the escaped writer kept a live reader");
+    }
+
+    #[test]
     fn timeout_kills_the_validation_command_process_group() {
         let tmp = tempfile::tempdir().unwrap();
         let marker = tmp.path().join("timeout-marker");
