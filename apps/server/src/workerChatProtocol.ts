@@ -172,9 +172,11 @@ export function parseWorkerChatReply(value: unknown, request: Record<string, unk
       if (!object(usage) || !timestamp(usage.size) || !timestamp(usage.used)) throw invalid();
       contextUsage = { size: usage.size, used: usage.used };
     }
+    // Optional since #1507; older workers omit it.
+    if (value.bundledRuntime !== undefined && typeof value.bundledRuntime !== 'boolean') throw invalid();
     return { models: choices(value.models), reasoningEfforts: choices(value.reasoningEfforts),
       currentModelId: value.currentModelId, currentReasoningEffortId: value.currentReasoningEffortId,
-      contextUsage };
+      contextUsage, ...(value.bundledRuntime === undefined ? {} : { bundledRuntime: value.bundledRuntime }) };
   }
   if (request.action === 'commands' && Array.isArray(value)) {
     return value.map(entry => {

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { test } from 'node:test';
 
 import { createAcpBackend } from './managerChat/acpAdapter.js';
+import { defaultClaudeSpawn } from './managerChat/registry.js';
 
 const FAKE_ACP_SOURCE = String.raw`
 const fs = require('node:fs');
@@ -29,6 +30,14 @@ lines.on('line', (line) => {
   const request = JSON.parse(line);
   if (request.method === 'initialize') {
     respond({ jsonrpc: '2.0', id: request.id, result: { protocolVersion: request.params.protocolVersion } });
+    return;
+  }
+  if (request.method === 'session/new' && mode === 'runtime-models') {
+    // Advertise a model list that names the runtime this child was spawned for.
+    const runtime = process.env.CLAUDE_CODE_EXECUTABLE ? 'installed' : 'bundled';
+    respond({ jsonrpc: '2.0', id: request.id, result: { sessionId: 'fake-session', configOptions: [{
+      id: 'model', name: 'Model', type: 'select', category: 'model', currentValue: runtime,
+      options: [{ value: runtime, name: runtime }] }] } });
     return;
   }
   if (request.method === 'session/new') {
@@ -300,6 +309,39 @@ test('credential rotation retires an ACP child after its current prompt settles'
       try { process.kill(pid, 0); } catch { stopped = true; }
     }
     assert.equal(stopped, true, 'retired child exits after the turn finishes');
+  } finally {
+    backend.dispose();
+    rmSync(fake.dir, { recursive: true, force: true });
+  }
+});
+
+test('each cached Claude connection keeps the runtime provenance of its own spawn', async () => {
+  const fake = fakeAcpScript();
+  const installed = join(fake.dir, 'bin');
+  mkdirSync(installed);
+  writeFileSync(join(installed, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  // The real executable lookup and spawn env, with the fake ACP child in
+  // place of the bridge so the model list reflects what this spawn ran.
+  let searchPath = '';
+  const backend = createAcpBackend('Claude', () => ({
+    ...defaultClaudeSpawn(searchPath), command: process.execPath, args: [fake.path, 'runtime-models']
+  }));
+  const provenance = async (profile: string) => {
+    const summary = await backend.listModels(profile);
+    return { bundledRuntime: summary.bundledRuntime, model: summary.currentModelId };
+  };
+  const bundled = { bundledRuntime: true, model: 'bundled' };
+  const cli = { bundledRuntime: false, model: 'installed' };
+  try {
+    assert.deepEqual(await provenance('a'), bundled);
+    searchPath = [fake.dir, installed].join(delimiter);
+    assert.deepEqual(await provenance('b'), cli);
+    assert.deepEqual(await provenance('a'), bundled, 'A still runs the bundled binary it was spawned with');
+
+    searchPath = fake.dir;
+    assert.deepEqual(await provenance('c'), bundled);
+    assert.deepEqual(await provenance('b'), cli, 'B still runs the installed CLI it was spawned with');
+    assert.deepEqual(await provenance('a'), bundled);
   } finally {
     backend.dispose();
     rmSync(fake.dir, { recursive: true, force: true });

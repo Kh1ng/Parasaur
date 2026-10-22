@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { resolveInstanceAdapter } from './registry.js';
+import { delimiter, join } from 'node:path';
+import { defaultClaudeSpawn, resolveInstanceAdapter } from './registry.js';
 
 test('named adapter cache enforces backend ownership and changes after credential replacement', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-instance-cache-'));
@@ -24,6 +24,29 @@ test('named adapter cache enforces backend ownership and changes after credentia
     assert.notEqual(await resolveInstanceAdapter('credential-test', 'hermes', 'hermes-work'), first);
   } finally {
     if (previous === undefined) delete process.env.GAH_BINARY; else process.env.GAH_BINARY = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('default Claude adapter runs the installed claude and flags the bundled fallback', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-claude-path-'));
+  const bundled = join(dir, 'node_modules', '.bin');
+  const notExecutable = join(dir, 'plain');
+  const installed = join(dir, 'bin');
+  for (const folder of [bundled, notExecutable, installed]) mkdirSync(folder, { recursive: true });
+  writeFileSync(join(bundled, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  writeFileSync(join(notExecutable, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o644 });
+  writeFileSync(join(installed, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  try {
+    const found = defaultClaudeSpawn(['relative', bundled, notExecutable, installed].join(delimiter));
+    assert.equal(found.bundledRuntime, false);
+    assert.deepEqual(found.env, { CLAUDE_CODE_EXECUTABLE: join(installed, 'claude') });
+
+    const none = defaultClaudeSpawn([bundled, notExecutable].join(delimiter));
+    assert.equal(none.bundledRuntime, true);
+    assert.equal(none.env, undefined);
+    assert.deepEqual(none.args, found.args);
+  } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });

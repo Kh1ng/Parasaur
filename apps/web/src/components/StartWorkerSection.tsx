@@ -63,7 +63,7 @@ export function StartWorkerSection({ profile, agents, tickets, sessions, onActiv
       </label>
       <label className="block space-y-1 text-xs text-secondary">Model
         <AgentModelSelect label="Worker model" value={model} options={catalog?.options ?? []}
-          currentLabel={currentAgentModelLabel(backend, model, catalog?.options ?? [])} loading={catalog?.loading} failed={catalog?.failed}
+          currentLabel={currentAgentModelLabel(backend, model, catalog?.options ?? [])} loading={catalog?.loading} failed={catalog?.failed} bundledRuntime={catalog?.bundledRuntime}
           onChange={(value) => setModels((current) => ({ ...current, [backend]: value }))} />
       </label>
       <label className="block space-y-1 text-xs text-secondary">Reasoning level

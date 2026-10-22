@@ -90,13 +90,14 @@ test('worker session replies preserve expected identity and omit worker-supplied
 test('worker model and command responses validate consumed fields and strip unknown values', () => {
   assert.deepEqual(parseWorkerChatReply({ ...models, models: [{ ...models.models[0], secret: 'omit' }],
     reasoningEfforts: [{ ...models.reasoningEfforts[0], secret: 'omit' }], contextUsage: { ...models.contextUsage, secret: 'omit' } }, { action: 'models' }), models);
+  assert.deepEqual(parseWorkerChatReply({ ...models, bundledRuntime: true }, { action: 'models' }), { ...models, bundledRuntime: true });
   const commands = [{ name: 'help', description: 'Help', argsHint: 'topic' }];
   assert.deepEqual(parseWorkerChatReply([{ ...commands[0], secret: 'omit' }], { action: 'commands' }), commands);
   assert.deepEqual(parseWorkerChatReply({ success: true, secret: 'omit' }, { action: 'cancel' }), { success: true });
   for (const patch of [{ models: [null] }, { models: [{ id: '', name: 'bad' }] }, { models: [models.models[0], models.models[0]] },
     { models: [{ ...models.models[0], description: null }] }, { reasoningEfforts: [{ id: 'high' }] },
     { currentModelId: {} }, { currentReasoningEffortId: undefined }, { contextUsage: undefined },
-    { contextUsage: { size: 100, used: -1 } }, { contextUsage: { size: Infinity, used: 10 } }]) {
+    { contextUsage: { size: 100, used: -1 } }, { contextUsage: { size: Infinity, used: 10 } }, { bundledRuntime: 'yes' }]) {
     assert.throws(() => parseWorkerChatReply({ ...models, ...patch }, { action: 'models' }), /invalid chat response/);
   }
   for (const value of [null, {}, [null], [{ name: 'help' }], [{ name: 'help', description: 'Help', argsHint: null }]]) {
