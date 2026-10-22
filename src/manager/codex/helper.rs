@@ -189,15 +189,15 @@ pub(super) fn bounded_command_output(
     }
 
     let mut cleanup_failures = Vec::new();
-    let exited = match exited_without_reaping(&child) {
-        Ok(exited) => exited,
-        Err(error) => {
-            cleanup_failures.push(format!("checking {context} before cleanup: {error}"));
-            false
+    match exited_without_reaping(&child) {
+        Ok(exited) => {
+            if let Some(error) = terminate_group(&mut child, exited) {
+                cleanup_failures.push(error);
+            }
         }
-    };
-    if let Some(error) = terminate_group(&mut child, exited) {
-        cleanup_failures.push(error);
+        // Not provably ours any more (ECHILD: already reaped): its pid and
+        // group id may name other processes, so signal neither.
+        Err(error) => cleanup_failures.push(format!("checking {context} before cleanup: {error}")),
     }
     let mut overflow_reported = stdout.overflowed || stderr.overflowed;
     if let Err(error) = drain_reader(&mut stdout, &mut stdout_reader) {

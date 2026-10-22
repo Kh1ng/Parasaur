@@ -124,8 +124,13 @@ pub(crate) fn wait_with_timeout_for(
         .take()
         .map(|pipe: ChildStderr| PipeCapture::spawn(pipe));
     let started = Instant::now();
-    // Leave the leader unreaped until cleanup so its group id stays ours.
-    while !crate::runner::exited_without_reaping(&child)? {
+    // Leave the leader unreaped until cleanup so its group id stays ours. An
+    // error means it is not provably ours any more (ECHILD: already reaped):
+    // return without signalling or waiting; the dropped captures stop
+    // retaining output.
+    while !crate::runner::exited_without_reaping(&child)
+        .with_context(|| format!("{context}: lost track of the process; not cleaned up"))?
+    {
         if started.elapsed() >= timeout {
             // Kill the whole group: a hook or remote helper that inherited
             // the pipes would otherwise keep them open after git dies.

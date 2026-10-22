@@ -728,6 +728,7 @@ fn spawn_with_idle_watch_with_shutdown(
     let mut killed_for_hard_timeout = false;
     let mut killed_for_shutdown = false;
     let mut cleanup_error = None;
+    let mut owned = true;
     // `None` once the backend exited on its own. The leader stays unreaped
     // until cleanup below has signalled its group, so that group id cannot
     // name an unrelated group by then.
@@ -812,11 +813,11 @@ fn spawn_with_idle_watch_with_shutdown(
                 }
                 thread::sleep(poll_interval);
             }
-            Err(_) => {
-                // waitid() itself erroring is rare, but the child may
-                // still be alive -- kill and reap rather than risk leaking
-                // it (same pattern as the idle-kill branch above).
-                cleanup_error = kill_process_group(&mut child);
+            Err(error) => {
+                // Not provably ours any more (ECHILD: already reaped), so its
+                // pid and group id may name other processes: no signal, no wait.
+                cleanup_error = Some(format!("lost track of backend process: {error}"));
+                owned = false;
                 break Some(-1);
             }
         }
@@ -842,10 +843,14 @@ fn spawn_with_idle_watch_with_shutdown(
     // ends with it. A surviving descendant may still own the inherited pipe
     // descriptors (one outside the group is not reachable here); wait for the
     // log copiers only for a bounded grace, never an unbounded join.
-    crate::runner::kill_unreaped_process_group(&child);
-    let status = child.wait();
-    let mut exit_code = killed_exit_code
-        .unwrap_or_else(|| status.ok().and_then(|status| status.code()).unwrap_or(-1));
+    let status = owned.then(|| {
+        crate::runner::kill_unreaped_process_group(&child);
+        child.wait()
+    });
+    let mut exit_code = killed_exit_code.unwrap_or_else(|| {
+        let code = status.and_then(Result::ok).and_then(|status| status.code());
+        code.unwrap_or(-1)
+    });
     if !crate::runner::pipes::readers_finish_within_grace(&[&stdout_thread, &stderr_thread]) {
         if let Ok(mut file) = fs::OpenOptions::new().append(true).open(log_path) {
             let _ = writeln!(

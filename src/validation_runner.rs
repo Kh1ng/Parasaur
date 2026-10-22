@@ -119,8 +119,15 @@ fn run_shell_command_with_shutdown(
     let started = Instant::now();
     let waiting = || format!("waiting for validation command '{command_text}'");
     loop {
-        if crate::runner::exited_without_reaping(&child).with_context(waiting)? {
-            break;
+        match crate::runner::exited_without_reaping(&child) {
+            Ok(true) => break,
+            Ok(false) => {}
+            // Not provably ours any more (ECHILD: already reaped), so neither
+            // its pid nor its group id may be signalled. Dropping the
+            // captures stops them retaining output.
+            Err(error) => bail!(
+                "validation process cleanup failed: lost track of validation command '{command_text}': {error}"
+            ),
         }
         if started.elapsed() >= timeout {
             let cleanup_error = crate::runner::kill_process_group(&mut child);
