@@ -3,7 +3,7 @@ use crate::runner::pipes::exited_without_reaping;
 use anyhow::{anyhow, Context};
 use std::io::Read;
 use std::os::fd::AsRawFd;
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 #[cfg(test)]
 use std::sync::atomic::Ordering;
 use std::thread;
@@ -17,6 +17,14 @@ pub(super) static FAIL_HELPER_CLEANUP_AFTER_REAP: std::sync::atomic::AtomicBool 
 #[cfg(test)]
 pub(super) static FAIL_HELPER_NONBLOCKING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+thread_local! {
+    /// Make this thread's next helper exit check report ECHILD and record
+    /// the pid it lost.
+    static LOSE_NEXT_HELPER_CHECK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static LOST_HELPER_PID: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static HELPER_CHILD_OPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[derive(Default)]
 struct Capture {
@@ -96,7 +104,24 @@ impl From<anyhow::Error> for HelperCommandFailure {
     }
 }
 
+/// Counts every check, signal and reap of the helper child in tests.
+fn count_child_op() {
+    #[cfg(test)]
+    HELPER_CHILD_OPS.with(|ops| ops.set(ops.get() + 1));
+}
+
+fn helper_exited(child: &Child) -> std::io::Result<bool> {
+    count_child_op();
+    #[cfg(test)]
+    if LOSE_NEXT_HELPER_CHECK.with(|lose| lose.replace(false)) {
+        LOST_HELPER_PID.with(|pid| pid.set(child.id()));
+        return Err(std::io::Error::from_raw_os_error(libc::ECHILD));
+    }
+    exited_without_reaping(child)
+}
+
 fn terminate_group(child: &mut std::process::Child, exited: bool) -> Option<String> {
+    count_child_op();
     let result = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
     if result == -1 {
         let error = std::io::Error::last_os_error();
@@ -133,6 +158,9 @@ pub(super) fn bounded_command_output(
     let mut status = None;
     let mut failure: Option<(bool, anyhow::Error)> = None;
     let mut setup_failures = Vec::new();
+    // Set once a check fails: the pid, and so the group id, may now name
+    // other processes. Terminal: never query, signal or reap the child again.
+    let mut lost = false;
     if let Some(reader) = stdout_reader.as_ref() {
         if let Err(error) = make_helper_pipe_nonblocking(reader.as_raw_fd()) {
             setup_failures.push(format!("making {context} stdout nonblocking: {error}"));
@@ -172,7 +200,7 @@ pub(super) fn bounded_command_output(
             ));
             break;
         }
-        match exited_without_reaping(&child) {
+        match helper_exited(&child) {
             Ok(true) => {
                 break;
             }
@@ -182,22 +210,32 @@ pub(super) fn bounded_command_output(
                 break;
             }
             Err(error) => {
-                failure = Some((false, anyhow!("waiting for {context}: {error}")));
+                lost = true;
+                failure = Some((true, anyhow!("lost track of {context}: {error}")));
                 break;
             }
         }
     }
 
     let mut cleanup_failures = Vec::new();
-    match exited_without_reaping(&child) {
-        Ok(exited) => {
-            if let Some(error) = terminate_group(&mut child, exited) {
-                cleanup_failures.push(error);
+    let mut cleanup_deadline = cleanup_deadline;
+    if !lost {
+        match helper_exited(&child) {
+            Ok(exited) => {
+                if let Some(error) = terminate_group(&mut child, exited) {
+                    cleanup_failures.push(error);
+                }
+            }
+            Err(error) => {
+                lost = true;
+                cleanup_failures.push(format!("lost track of {context} before cleanup: {error}"));
             }
         }
-        // Not provably ours any more (ECHILD: already reaped): its pid and
-        // group id may name other processes, so signal neither.
-        Err(error) => cleanup_failures.push(format!("checking {context} before cleanup: {error}")),
+    }
+    if lost {
+        // Its exit can never be confirmed, so give the pipes only the grace
+        // period rather than the rest of the command timeout.
+        cleanup_deadline = cleanup_deadline.min(Instant::now() + CLEANUP_GRACE);
     }
     let mut overflow_reported = stdout.overflowed || stderr.overflowed;
     if let Err(error) = drain_reader(&mut stdout, &mut stdout_reader) {
@@ -228,7 +266,8 @@ pub(super) fn bounded_command_output(
                 overflow_reported = true;
             }
         }
-        if status.is_none() {
+        if status.is_none() && !lost {
+            count_child_op();
             match child.try_wait() {
                 Ok(Some(exit)) => status = Some(exit),
                 Ok(None) => {}
@@ -238,11 +277,11 @@ pub(super) fn bounded_command_output(
                 }
             }
         }
-        if status.is_some() && stdout.finished() && stderr.finished() {
+        if (status.is_some() || lost) && stdout.finished() && stderr.finished() {
             break;
         }
         if Instant::now() >= cleanup_deadline {
-            if status.is_none() {
+            if status.is_none() && !lost {
                 cleanup_failures.push("helper was not reaped before cleanup deadline".into());
             }
             if !stdout.finished() || !stderr.finished() {
@@ -296,6 +335,39 @@ mod tests {
         }
         assert!(terminate_group(&mut child, true).is_none());
         assert!(child.try_wait().unwrap().is_some());
+    }
+
+    /// After a failed exit check the pid may name another process, so the
+    /// helper never checks, signals or reaps it again. The injected ECHILD
+    /// leaves the real child running: any later check, group kill or reap
+    /// would show.
+    #[test]
+    fn lost_helper_is_never_checked_signalled_or_reaped_again() {
+        let mut command = Command::new("sleep");
+        command.arg("30");
+        HELPER_CHILD_OPS.with(|ops| ops.set(0));
+        LOSE_NEXT_HELPER_CHECK.with(|lose| lose.set(true));
+        let started = Instant::now();
+
+        let result = bounded_command_output(&mut command, "lost helper", Duration::from_secs(30));
+
+        let elapsed = started.elapsed();
+        let pid = LOST_HELPER_PID.with(std::cell::Cell::get) as libc::pid_t;
+        assert_ne!(pid, 0, "no helper check was lost");
+        let untouched = unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) } == 0;
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+            libc::waitpid(pid, std::ptr::null_mut(), 0);
+        }
+        let error = match result {
+            Err(HelperCommandFailure::Fatal(error)) => format!("{error:#}"),
+            Err(HelperCommandFailure::Command) => "command failure".into(),
+            Ok(_) => "success".into(),
+        };
+        assert!(untouched, "lost helper was signalled or reaped");
+        assert_eq!(HELPER_CHILD_OPS.with(std::cell::Cell::get), 1);
+        assert!(error.contains("lost track of lost helper"), "{error}");
+        assert!(elapsed < Duration::from_secs(5), "took {elapsed:?}");
     }
 
     #[test]
