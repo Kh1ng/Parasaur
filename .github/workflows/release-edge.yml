@@ -236,8 +236,9 @@ jobs:
           OS_NAME: ${{ matrix.os_name }}
         run: |
           mkdir -p updater-stage
-          artifact=$(ls ${{ matrix.bundle_glob }} | head -n 1)
-          [ -n "$artifact" ] || { echo "no updater bundle matched ${{ matrix.bundle_glob }}" >&2; exit 1; }
+          bundles=(${{ matrix.bundle_glob }})
+          artifact=${bundles[0]}
+          [ -e "$artifact" ] || { echo "no updater bundle matched ${{ matrix.bundle_glob }}" >&2; exit 1; }
           cp "$artifact" updater-stage/
           cp "$artifact.sig" updater-stage/ || { echo "missing signature for $artifact" >&2; exit 1; }
           OS_NAME="$OS_NAME" PLATFORM_KEYS="$PLATFORM_KEYS" node -e '
@@ -247,7 +248,7 @@ jobs:
             const bundle = stage.find((name) => !name.endsWith(".sig"));
             const signature = fs.readFileSync(path.join("updater-stage", bundle + ".sig"), "utf8").trim();
             fs.writeFileSync(
-              path.join("updater-stage", `fragment-${process.env.OS_NAME}.json`),
+              path.join("updater-stage", "fragment-" + process.env.OS_NAME + ".json"),
               JSON.stringify({
                 platform_keys: JSON.parse(process.env.PLATFORM_KEYS),
                 asset_name: bundle,
