@@ -68,6 +68,13 @@ function request<T extends ServerMessage['type']>(
  * interchangeable between models), the log must be session-scoped, and
  * archiving must save uncommitted work as a patch while the branch survives.
  */
+/** Close a test HTTP server without waiting on connections a failed
+ * assertion left open; `server.close()` alone waits for every one of them. */
+function closeServer(server: http.Server): Promise<void> {
+  server.closeAllConnections();
+  return new Promise<void>((done) => server.close(() => done()));
+}
+
 test('a chat session runs its turn inside its worktree and archives safely', { timeout: 30_000 }, async () => {
   const stateDir = mkdtempSync(join(tmpdir(), 'gah-chat-sessions-e2e-'));
 
@@ -190,8 +197,8 @@ test('a chat session runs its turn inside its worktree and archives safely', { t
   } finally {
     for (const client of wss.clients) client.terminate();
     wss.close();
-    await new Promise<void>((done) => server.close(() => done()));
-    await new Promise<void>((done) => gateway.close(() => done()));
+    await closeServer(server);
+    await closeServer(gateway);
     execFileSync('git', ['worktree', 'prune'], { cwd: checkout });
     process.env = savedEnv;
     rmSync(stateDir, { recursive: true, force: true });
@@ -292,8 +299,8 @@ test('a session serves turns on its pinned model and switches model/backend in p
   } finally {
     for (const client of wss.clients) client.terminate();
     wss.close();
-    await new Promise<void>((done) => server.close(() => done()));
-    await new Promise<void>((done) => gateway.close(() => done()));
+    await closeServer(server);
+    await closeServer(gateway);
     execFileSync('git', ['worktree', 'prune'], { cwd: checkout });
     process.env = savedEnv;
     rmSync(stateDir, { recursive: true, force: true });
@@ -407,8 +414,8 @@ test('a session pins its reasoning effort, serves turns on it, and switches it i
   } finally {
     for (const client of wss.clients) client.terminate();
     wss.close();
-    await new Promise<void>((done) => server.close(() => done()));
-    await new Promise<void>((done) => gateway.close(() => done()));
+    await closeServer(server);
+    await closeServer(gateway);
     execFileSync('git', ['worktree', 'prune'], { cwd: checkout });
     process.env = savedEnv;
     rmSync(stateDir, { recursive: true, force: true });
@@ -627,8 +634,8 @@ test('tool calls stream as structured events and permissions round-trip through 
     // Failed assertions must release fixture sockets before awaiting server.close.
     for (const client of wss.clients) client.terminate();
     wss.close();
-    await new Promise<void>((done) => server.close(() => done()));
-    await new Promise<void>((done) => gateway.close(() => done()));
+    await closeServer(server);
+    await closeServer(gateway);
     execFileSync('git', ['worktree', 'prune'], { cwd: checkout });
     process.env = savedEnv;
     rmSync(stateDir, { recursive: true, force: true });
@@ -758,9 +765,9 @@ test('a session preview auto-detects the dev-server port and proxies it', { time
   } finally {
     for (const client of wss.clients) client.terminate();
     wss.close();
-    await new Promise<void>((done) => server.close(() => done()));
-    await new Promise<void>((done) => gateway.close(() => done()));
-    await new Promise<void>((done) => devServer.close(() => done()));
+    await closeServer(server);
+    await closeServer(gateway);
+    await closeServer(devServer);
     if (createdSessionId) await previewProxy.clear(profile, createdSessionId);
     execFileSync('git', ['worktree', 'prune'], { cwd: checkout });
     process.env = savedEnv;
