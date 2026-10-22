@@ -9,6 +9,9 @@ use std::{
     thread,
 };
 
+#[path = "support/cli.rs"]
+mod cli_support;
+
 /// Serves one response, runs `gah diag export --out OUT`, and returns the
 /// CLI output with the request line and headers the server saw.
 fn export(
@@ -40,7 +43,8 @@ fn export(
         socket.write_all(&body).unwrap();
         String::from_utf8(request).unwrap()
     });
-    let output = Command::new(env!("CARGO_BIN_EXE_gah"))
+    // Isolated HOME/XDG state, like every other `gah` child in the suite.
+    let output = cli_support::gah_command()
         .args(["diag", "export", "--server", &url, "--out"])
         .arg(out)
         .env("GAH_SERVER_TOKEN", "test-owner-token")
@@ -72,12 +76,8 @@ fn diag_export_saves_the_gzip_bundle_intact() {
         "node_role": "worker",
         "timeline": [{"t": "a"}, {"t": "b"}]
     });
-    let (output, request) = export(
-        "200 OK",
-        "application/gzip",
-        gzip(bundle.to_string().as_bytes()),
-        &out,
-    );
+    let served = gzip(bundle.to_string().as_bytes());
+    let (output, request) = export("200 OK", "application/gzip", served.clone(), &out);
     assert!(
         output.status.success(),
         "{}",
@@ -85,6 +85,7 @@ fn diag_export_saves_the_gzip_bundle_intact() {
     );
     assert!(request.starts_with("GET /api/diagnostics/export "));
     assert!(request.contains("Authorization: Bearer test-owner-token"));
+    assert_eq!(fs::read(&out).unwrap(), served, "saved byte for byte");
     let unzipped = Command::new("gzip").arg("-dc").arg(&out).output().unwrap();
     assert!(
         unzipped.status.success(),
@@ -99,16 +100,46 @@ fn diag_export_saves_the_gzip_bundle_intact() {
 
 #[test]
 fn diag_export_rejection_keeps_the_existing_output_file() {
-    let tmp = tempfile::tempdir().unwrap();
-    let out = tmp.path().join("bundle.json.gz");
-    fs::write(&out, b"earlier export").unwrap();
-    let (output, _) = export(
-        "429 Too Many Requests",
-        "application/json",
-        br#"{"error":"rate_limited"}"#.to_vec(),
-        &out,
-    );
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("HTTP 429"));
-    assert_eq!(fs::read(&out).unwrap(), b"earlier export");
+    let cases: [(&'static str, &'static str, &[u8], &str); 4] = [
+        (
+            "403 Forbidden",
+            "application/json",
+            br#"{"error":"owner_required"}"#,
+            "HTTP 403",
+        ),
+        (
+            "429 Too Many Requests",
+            "application/json",
+            br#"{"error":"rate_limited"}"#,
+            "HTTP 429",
+        ),
+        (
+            "500 Internal Server Error",
+            "application/json",
+            br#"{"error":"diagnostics_export_failed"}"#,
+            "HTTP 500",
+        ),
+        // A success page that is not gzip (a proxy, an older server) is no bundle.
+        (
+            "200 OK",
+            "text/html",
+            b"<!doctype html><p>not a bundle</p>",
+            "not a gzip diagnostics bundle",
+        ),
+    ];
+    for (status, content_type, body, expected) in cases {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("bundle.json.gz");
+        fs::write(&out, b"earlier export").unwrap();
+        let (output, _) = export(status, content_type, body.to_vec(), &out);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{status} must fail the export");
+        assert!(stderr.contains(expected), "{status}: {stderr}");
+        assert_eq!(fs::read(&out).unwrap(), b"earlier export", "{status}");
+        assert_eq!(
+            fs::read_dir(tmp.path()).unwrap().count(),
+            1,
+            "{status} leaves no staged file"
+        );
+    }
 }
