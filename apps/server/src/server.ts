@@ -194,6 +194,7 @@ type CreateServerOptions = Partial<ConfigEffectiveDeps> & {
   cliRouterQuotaObserver?: ReturnType<typeof createCliRouterQuotaObserver>;
   /** Issue #1454: test seams for the notification module routes. */
   notificationSettings?: Omit<NotificationSettingsDeps, 'record'>;
+  buildDiagnosticsBundle?: typeof buildDiagnosticsBundle;
 };
 
 const activityKinds = new Set<ActivityKind>([
@@ -340,6 +341,7 @@ export function createServer(
   const readAdminUpdateStateFn = configDeps.readAdminUpdateState ?? readAdminUpdateState;
   const getReleaseStatusFn = configDeps.getReleaseStatus ?? getReleaseStatus;
   const detectTailscaleIPv4Fn = configDeps.detectTailscaleIPv4 ?? detectTailscaleIPv4;
+  const buildDiagnosticsBundleFn = configDeps.buildDiagnosticsBundle ?? buildDiagnosticsBundle;
   const gatewaySettingsSummary = async () => {
     const apiKey = gatewayApiKey();
     const stored = readGatewaySettings();
@@ -1271,9 +1273,11 @@ export function createServer(
     return raw;
   };
 
-  app.get('/api/diagnostics/export', requireOwner, async (_req, res) => {
+  // Each export runs ps and gzips the timeline. A tester asks for one when
+  // something misbehaves, so 10/min never throttles a human.
+  app.get('/api/diagnostics/export', rateLimit({ windowMs: 60_000, limit: 10, standardHeaders: true, legacyHeaders: false }), requireOwner, async (_req, res) => {
     try {
-      const bundle = await buildDiagnosticsBundle(node.role);
+      const bundle = await buildDiagnosticsBundleFn(node.role);
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       res.setHeader('Content-Type', 'application/gzip');
       res.setHeader('Content-Disposition', `attachment; filename="parasaur-diagnostics-${stamp}.json.gz"`);
