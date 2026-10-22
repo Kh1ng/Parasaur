@@ -5,7 +5,7 @@ import { formatChatName } from '../lib/format.js';
 import { BoundedCollection } from './BoundedCollection.js';
 import { projectKey } from '@git-agent-harness/contracts';
 import { useUiStore } from '../store/uiStore.js';
-import { gahApi } from '../api/client.js';
+import { gahApi, pairingApi } from '../api/client.js';
 
 /**
  * The chat page's navigator: every configured project and every conversation
@@ -50,6 +50,9 @@ export function ProjectRail({
     return gahApi.getChatNodes().then((result) => setNodes(result.nodes)).catch(() => setNodesError(true));
   };
   useEffect(() => { void loadNodes(); }, []);
+  // Import writes node configuration, so only the owner sees the form; unknown access fails closed.
+  const [owner, setOwner] = useState<boolean | null>(null);
+  useEffect(() => { pairingApi.session().then((session) => setOwner(session.principal.kind === 'owner')).catch(() => setOwner(false)); }, []);
   const localNodeId = nodes.find((node) => node.role === 'central')?.nodeId || '';
   const nodeName = (id: string) => nodes.find((node) => node.nodeId === id)?.displayName || id || 'This node';
   const [reclone, setReclone] = useState(false);
@@ -193,7 +196,8 @@ export function ProjectRail({
       </section>
 
       <div className="mt-4 border-t border-subtle pt-3 space-y-2">
-        <details className="pt-1" open={importOpen} onToggle={(event) => setImportOpen(event.currentTarget.open)}>
+        {owner === false && <p className="text-[11px] leading-relaxed text-muted">Owner access is required to import repositories. Sign in under Settings → Connection & pairing.</p>}
+        {owner && <details className="pt-1" open={importOpen} onToggle={(event) => setImportOpen(event.currentTarget.open)}>
           <summary className="cursor-pointer select-none text-xs font-medium text-secondary hover:text-primary">Import from Git</summary>
           <div className="mt-2 space-y-2">
             <label className="block space-y-1 text-xs text-secondary">
@@ -243,7 +247,7 @@ export function ProjectRail({
               {saving ? 'Working…' : 'Import repository'}
             </button>
           </div>
-        </details>
+        </details>}
 
         {message && (
           <p role={message.tone === 'error' ? 'alert' : 'status'} className={`text-[11px] leading-relaxed ${message.tone === 'error' ? 'text-critical' : 'text-secondary'}`}>

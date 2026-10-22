@@ -305,6 +305,31 @@ async function verifyCheckout(
   }
 }
 
+/** A refused re-clone leaves the checkout untouched; `code` is the stable wire identifier. */
+export class CheckoutHasLocalWork extends Error {
+  constructor(readonly code: 'checkout_unpushed_commits' | 'checkout_has_stash' | 'checkout_has_linked_worktrees', message: string) {
+    super(message);
+    this.name = 'CheckoutHasLocalWork';
+  }
+}
+
+/** A re-clone deletes the old checkout, so every commit reachable from a local
+ * ref (branches, tags, notes, stash, HEAD), every stash, and every linked
+ * worktree there must be published or absent first. */
+async function assertNoLocalWork(path: string, git: (args: string[]) => Promise<string>): Promise<void> {
+  // Stash commits are reachable from refs/stash too, so name the stash first.
+  if (await git(['-C', path, 'stash', 'list'])) {
+    throw new CheckoutHasLocalWork('checkout_has_stash', 'Managed checkout has stashed changes. Apply or drop them before re-cloning.');
+  }
+  if (await git(['-C', path, 'rev-list', '--max-count=1', '--all', '--not', '--remotes'])) {
+    throw new CheckoutHasLocalWork('checkout_unpushed_commits', 'Managed checkout has commits on local branches, tags, or other refs that are not on any remote. Push or remove them before re-cloning.');
+  }
+  const worktrees = (await git(['-C', path, 'worktree', 'list', '--porcelain'])).split('\n').filter((line) => line.startsWith('worktree '));
+  if (worktrees.length > 1) {
+    throw new CheckoutHasLocalWork('checkout_has_linked_worktrees', 'Managed checkout has linked worktrees. Remove or prune them before re-cloning.');
+  }
+}
+
 function detectedValidation(path: string): { languages: string[]; commands: string[] } {
   const languages: string[] = [];
   const commands: string[] = [];
@@ -396,6 +421,7 @@ export async function importGitProject(
       if (!input.reclone) {
         checkoutStatus = 'verified';
       } else {
+        await assertNoLocalWork(checkoutPath, git);
         backupPath = `${checkoutPath}.backup-${process.pid}-${Date.now()}`;
         renameSync(checkoutPath, backupPath);
         await git(['clone', '--origin', 'origin', '--', identity.cloneUrl, checkoutPath]);
