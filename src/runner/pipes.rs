@@ -31,20 +31,32 @@ pub(crate) fn kill_unreaped_process_group(leader: &Child) {
 
 /// True once `child` has exited, without reaping it (see
 /// `kill_unreaped_process_group`).
+///
+/// An error means the child can no longer be proven ours: ECHILD says it was
+/// already reaped (an inherited `SIGCHLD=SIG_IGN` reaps every child as it
+/// exits), so its pid and group id may already name unrelated processes.
+/// After an error, never signal or wait on the child; report the lost
+/// cleanup instead.
 pub(crate) fn exited_without_reaping(child: &Child) -> std::io::Result<bool> {
-    let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
-    let result = unsafe {
-        libc::waitid(
-            libc::P_PID,
-            child.id() as libc::id_t,
-            info.as_mut_ptr(),
-            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-        )
-    };
-    if result == -1 {
-        return Err(std::io::Error::last_os_error());
+    loop {
+        let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id() as libc::id_t,
+                info.as_mut_ptr(),
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if result == -1 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        return Ok(unsafe { info.assume_init().si_pid() } != 0);
     }
-    Ok(unsafe { info.assume_init().si_pid() } != 0)
 }
 
 /// Wait at most `PIPE_DRAIN_GRACE` for every reader thread to finish.
@@ -70,11 +82,14 @@ pub(crate) fn wait_until(deadline: Instant, done: impl Fn() -> bool) -> bool {
 }
 
 /// A pipe drained on its own thread into a shared buffer, so a caller can
-/// stop waiting at a deadline and still keep the bytes read so far.
+/// stop waiting at a deadline and still keep the bytes read so far. Dropping
+/// it without `take` (an early error return, a panic) abandons the pipe the
+/// same way `take` does.
 pub(crate) struct PipeCapture {
-    /// `None` once `take` abandoned a still-open pipe.
+    /// `None` once the capture was taken or dropped.
     bytes: Arc<Mutex<Option<Vec<u8>>>>,
-    reader: JoinHandle<std::io::Result<()>>,
+    /// `None` only inside `take`, after it joined a finished reader.
+    reader: Option<JoinHandle<std::io::Result<()>>>,
 }
 
 impl PipeCapture {
@@ -100,12 +115,15 @@ impl PipeCapture {
                 }
             }
         });
-        Self { bytes, reader }
+        Self {
+            bytes,
+            reader: Some(reader),
+        }
     }
 
     /// True once the pipe reached EOF (or the read failed).
     pub(crate) fn is_finished(&self) -> bool {
-        self.reader.is_finished()
+        self.reader.as_ref().is_none_or(JoinHandle::is_finished)
     }
 
     /// Return the bytes read so far and whether the pipe reached EOF. A
@@ -113,20 +131,33 @@ impl PipeCapture {
     /// at its next read, or once the last holder closes the pipe.
     // ponytail: a silent holder parks the reader (one thread + fd, no growth)
     // until it writes or exits; poll(2) with a cancel flag if that matters.
-    pub(crate) fn take(self) -> std::io::Result<(Vec<u8>, bool)> {
-        let finished = self.reader.is_finished();
+    pub(crate) fn take(mut self) -> std::io::Result<(Vec<u8>, bool)> {
+        // Check before taking the bytes: a reader that finishes in between
+        // may have dropped a final chunk, and must not be reported as EOF.
+        let finished = self.is_finished();
         if finished {
-            self.reader
-                .join()
-                .map_err(|_| std::io::Error::other("pipe reader panicked"))??;
+            if let Some(reader) = self.reader.take() {
+                reader
+                    .join()
+                    .map_err(|_| std::io::Error::other("pipe reader panicked"))??;
+            }
         }
-        let bytes = self
-            .bytes
+        Ok((self.abandon(), finished))
+    }
+
+    /// Move out the bytes read so far; the reader keeps nothing more.
+    fn abandon(&self) -> Vec<u8> {
+        self.bytes
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take()
-            .unwrap_or_default();
-        Ok((bytes, finished))
+            .unwrap_or_default()
+    }
+}
+
+impl Drop for PipeCapture {
+    fn drop(&mut self) {
+        self.abandon();
     }
 }
 
@@ -214,6 +245,125 @@ mod tests {
             libc::kill(writer as libc::pid_t, libc::SIGKILL);
         }
         assert!(released && writer_gone);
+    }
+
+    #[test]
+    fn dropped_capture_stops_retaining_a_continuously_writing_escaped_child() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pid_file = tmp.path().join("writer.pid");
+        let script = format!(
+            "(while echo x; do :; done) & echo $! > '{}'; exit 0",
+            pid_file.display()
+        );
+        let mut child = Command::new("sh")
+            .args(["-c", &script])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let capture = PipeCapture::spawn(child.stdout.take().unwrap());
+        child.wait().unwrap();
+        let writer = read_pid(&pid_file);
+        let retained = Arc::downgrade(&capture.bytes);
+
+        // An early error return drops the capture without `take`.
+        drop(capture);
+
+        let released = wait_until(Instant::now() + Duration::from_secs(2), || {
+            retained.upgrade().is_none()
+        });
+        let writer_gone = process_exits_within(writer, Duration::from_secs(2));
+        unsafe {
+            libc::kill(writer as libc::pid_t, libc::SIGKILL);
+        }
+        assert!(released && writer_gone);
+    }
+
+    /// Under an inherited `SIGCHLD=SIG_IGN` an exited child is reaped at
+    /// once and `waitid` fails with ECHILD, so its pid and group id are no
+    /// longer ours. Each caller must then report the failure without
+    /// signalling. A member left in the group would die from any group
+    /// signal, so it surviving proves none was sent. The disposition is
+    /// process-wide, so this runs in its own re-executed test process.
+    #[test]
+    fn lost_child_is_never_signalled_under_ignored_sigchld() {
+        const ISOLATED: &str = "GAH_TEST_SIGCHLD_IGNORED";
+        if std::env::var_os(ISOLATED).is_none() {
+            let name = concat!(
+                module_path!(),
+                "::lost_child_is_never_signalled_under_ignored_sigchld"
+            );
+            let name = name.split_once("::").unwrap().1;
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([name, "--exact", "--test-threads=1", "--nocapture"])
+                .env(ISOLATED, "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "{stdout}\n{stderr}"
+            );
+            return;
+        }
+        unsafe {
+            libc::signal(libc::SIGCHLD, libc::SIG_IGN);
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let script = |name: &str| {
+            let pid_file = tmp.path().join(name);
+            let script = format!("sleep 30 & echo $! > '{}'; exit 0", pid_file.display());
+            (script, pid_file)
+        };
+        let survives = |pid_file: &std::path::Path| {
+            let member = read_pid(pid_file);
+            let survived = !process_exits_within(member, Duration::from_millis(500));
+            unsafe {
+                libc::kill(member as libc::pid_t, libc::SIGKILL);
+            }
+            survived
+        };
+
+        let (backend, backend_pid) = script("backend.pid");
+        let mut command = Command::new("sh");
+        command.args(["-c", &backend]);
+        let log = tmp.path().join("backend.log");
+        let (exit_code, _, _) =
+            crate::runner::process::spawn_with_idle_watch(command, &log, tmp.path(), 60, "test")
+                .unwrap();
+        assert!(survives(&backend_pid), "backend group was signalled");
+        assert_eq!(
+            exit_code,
+            crate::runner::process::PROCESS_CLEANUP_FAILED_EXIT_CODE
+        );
+        assert!(std::fs::read_to_string(&log)
+            .unwrap()
+            .contains("GAH: harness process cleanup failed: lost track"));
+
+        let (validation, validation_pid) = script("validation.pid");
+        let error = crate::validation_runner::validate(
+            &[validation],
+            tmp.path(),
+            &[],
+            Duration::from_secs(30),
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("lost track"), "{error:#}");
+        assert!(survives(&validation_pid), "validation group was signalled");
+
+        let (git, git_pid) = script("git.pid");
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", &git])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        crate::runner::prepare_process_group(&mut command);
+        let child = command.spawn().unwrap();
+        let error =
+            crate::worktree::wait_with_timeout_for(child, "git test", Duration::from_secs(30))
+                .unwrap_err();
+        assert!(format!("{error:#}").contains("lost track"), "{error:#}");
+        assert!(survives(&git_pid), "git group was signalled");
     }
 
     #[test]
