@@ -298,7 +298,10 @@ class MockHermes {
         content: { type: 'text', text: reply.slice(mid) }
       }
     });
-    if (++prompts === 3) setTimeout(() => process.exit(0), 250);
+    // Never exit after a fixed number of prompts: a test that sends more
+    // turns would race the exit, and its next prompt would fail with a
+    // closed connection. The idle timer below ends a lingering fixture.
+    prompts += 1;
     return { stopReason: 'end_turn' };
   }
 
