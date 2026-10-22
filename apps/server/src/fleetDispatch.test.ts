@@ -799,6 +799,7 @@ test('fleet dispatch treats a lease store with an incomplete record as unreadabl
     const stored = JSON.parse(readFileSync(leaseStorePath, 'utf8')) as { leases: Array<Record<string, any>> };
     const complete = stored.leases[0]!;
     const { profile: _profile, workKey: _workKey, ...withoutProfile } = complete;
+    const { repo: _repo, mode: _mode, ...sessionWithoutWork } = complete.session;
     // Each shape below could be the running work; none says which work it holds.
     const incompleteRecords: Array<[string, unknown]> = [
       ['request id only', { requestId: 'running-request' }],
@@ -819,7 +820,22 @@ test('fleet dispatch treats a lease store with an incomplete record as unreadabl
         ...complete,
         requestId: 'running-request',
         session: { ...complete.session, branch: 42 }
-      }]
+      }],
+      // With repo and mode absent the stored key is the only identity, so it
+      // must be one a writer made: seven or eight encoded parts for this profile.
+      ...([
+        ['request id as stored key', 'running-request'],
+        ['stored key for another profile', complete.workKey.replace(/^gah\|/, 'other|')],
+        ['stored key without a repo', complete.workKey.replace('|owner%2Frepo|', '||')],
+        ['stored key with too few parts', complete.workKey.split('|').slice(0, 6).join('|')],
+        ['stored key with an unencoded part', complete.workKey.replace('owner%2Frepo', 'owner/repo')],
+        ['stored key with a malformed escape', complete.workKey.replace('owner%2Frepo', 'owner%2')]
+      ] as const).map(([shape, workKey]): [string, unknown] => [shape, {
+        ...complete,
+        requestId: 'running-request',
+        workKey,
+        session: sessionWithoutWork
+      }])
     ];
     for (const [shape, record] of incompleteRecords) {
       rmSync(quarantinePath, { force: true });
@@ -845,19 +861,27 @@ test('fleet dispatch still deduplicates against legacy lease records whose work 
   const fixture = createUnreadableStoreFixture('gah-fleet-legacy-');
   const { leaseStorePath, quarantinePath, harness, options } = fixture;
   try {
-    const first = await harness(new Map()).startSession(options);
+    // Branch and target are set so a misplaced legacy mr part changes the key.
+    const work = { ...options, branch: 'feature', target: 'main' };
+    const first = await harness(new Map()).startSession(work);
     const stored = JSON.parse(readFileSync(leaseStorePath, 'utf8')) as { leases: Array<Record<string, any>> };
     const complete = stored.leases[0]!;
     const { workKey: _workKey, ...withoutWorkKey } = complete;
     const { repo: _repo, mode: _mode, ...sessionWithoutWork } = complete.session;
     const legacyRecords: Array<[string, unknown]> = [
       ['work key derived from the session', withoutWorkKey],
-      ['stored work key only', { ...complete, session: sessionWithoutWork }]
+      ['stored work key only', { ...complete, session: sessionWithoutWork }],
+      // Written before #1102 added mr: profile|repo|branch|target|mode|backend|model.
+      ['seven-part stored work key', {
+        ...complete,
+        workKey: complete.workKey.split('|').filter((_part: string, index: number) => index !== 4).join('|'),
+        session: sessionWithoutWork
+      }]
     ];
     for (const [shape, record] of legacyRecords) {
       writeFileSync(leaseStorePath, JSON.stringify({ leases: [record] }));
       const transports = new Map<string, FakeTransport>();
-      const retried = await harness(transports).startSession({ ...options, requestId: 'dispatch-legacy-retry' });
+      const retried = await harness(transports).startSession({ ...work, requestId: 'dispatch-legacy-retry' });
       assert.equal(retried.id, first.id, shape);
       assert.equal(transports.size, 0, `${shape}: the running work is not started again`);
       assert.equal(existsSync(quarantinePath), false, shape);

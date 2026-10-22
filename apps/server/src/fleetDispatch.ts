@@ -160,10 +160,44 @@ function isNonEmptyString(value: unknown): value is string {
 
 const WORK_KEY_SESSION_FIELDS = ['repo', 'branch', 'target', 'mr', 'mode', 'backend', 'model'] as const;
 
+/** Rebuilds a stored work key in today's format. Writers stored seven parts
+ * before #1102 added mr as the fifth, and eight since. Anything else, a key for
+ * another profile, or one without repo and mode is not a key any writer made. */
+function normalizeStoredWorkKey(profile: string, workKey: unknown): string | null {
+  if (!isNonEmptyString(workKey)) {
+    return null;
+  }
+  const parts = workKey.split('|');
+  if (parts.length === 7) {
+    parts.splice(4, 0, '');
+  }
+  if (parts.length !== 8) {
+    return null;
+  }
+  let decoded: string[];
+  try {
+    decoded = parts.map((part) => decodeURIComponent(part));
+  } catch {
+    return null;
+  }
+  const [keyProfile, repo, branch, target, mr, mode, backend, model] = decoded as [string, ...string[]];
+  if (keyProfile !== profile || !repo || !mode) {
+    return null;
+  }
+  const normalized = deriveDispatchWorkKey({ profile, repo, branch, target, mr, mode, backend, model });
+  // A writer encoded every part, so a differently encoded key did not come from one.
+  return normalized === parts.join('|') ? normalized : null;
+}
+
+/** The one key deduplication uses for a stored lease: derived from its session
+ * when the session names the work, else its stored key in today's format. */
+function recoverLeaseWorkKey(lease: Pick<LeaseRecord, 'profile' | 'session'> & { workKey?: unknown }): string | null {
+  return deriveLeaseWorkKey(lease) ?? normalizeStoredWorkKey(lease.profile, lease.workKey);
+}
+
 /** A lease is usable only if it says where its session runs and which work it
- * holds: the profile reconciliation filters by, and a work key derived from
- * the session or stored by the writer. Anything less could be running work
- * that deduplication cannot see. */
+ * holds: the profile reconciliation filters by, and a recoverable work key.
+ * Anything less could be running work that deduplication cannot see. */
 function isCompleteLease(value: unknown): value is LeaseRecord {
   const lease = value as Partial<LeaseRecord> | null;
   if (!(typeof lease === 'object' && lease !== null
@@ -179,8 +213,7 @@ function isCompleteLease(value: unknown): value is LeaseRecord {
   if (!WORK_KEY_SESSION_FIELDS.every((field) => session[field] == null || typeof session[field] === 'string')) {
     return false;
   }
-  return deriveLeaseWorkKey({ profile: lease.profile, session: lease.session }) !== null
-    || isNonEmptyString(lease.workKey);
+  return recoverLeaseWorkKey({ profile: lease.profile, session, workKey: lease.workKey }) !== null;
 }
 
 class LeaseStore {
@@ -217,7 +250,7 @@ class LeaseStore {
         }
         const normalizedLease = {
           ...lease,
-          workKey: deriveLeaseWorkKey(lease) ?? lease.workKey
+          workKey: recoverLeaseWorkKey(lease)!
         } satisfies LeaseRecord;
         this.leases.set(normalizedLease.requestId, normalizedLease);
         this.leasesByWorkKey.set(normalizedLease.workKey, normalizedLease);
