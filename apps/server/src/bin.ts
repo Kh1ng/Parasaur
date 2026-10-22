@@ -23,6 +23,7 @@ import {
 } from './bindHost.js';
 import { startChatMaintenanceScheduler, stopChatMaintenanceScheduler } from './managerChat/chatMaintenance.js';
 import { previewProxy } from './managerChat/previewProxy.js';
+import { grantAgentMemoryGateway } from './managerChat/childEnv.js';
 import { ActivityFeed } from './activityFeed.js';
 import { WebPushNotifications } from './webPush.js';
 import { apnsFromEnvironment } from './apns.js';
@@ -63,7 +64,11 @@ async function main() {
   loadProviderKeys();
 
   const node = validateNodeRole(await runNodeRole());
-  Object.assign(process.env, workerMemoryEnvironment(node, process.env.COORDINATOR_TOKEN));
+  const memoryEnvironment = workerMemoryEnvironment(node, process.env.COORDINATOR_TOKEN);
+  Object.assign(process.env, memoryEnvironment);
+  // Agent children get an allow-listed environment; worker memory hooks
+  // receive only the gateway variables, never the token under its own name.
+  grantAgentMemoryGateway(memoryEnvironment);
   console.log(`Node role: ${node.role}; central URL: ${node.central_url ?? '(unset)'}`);
   if (node.role === 'central') initializeSkillBank(node);
 

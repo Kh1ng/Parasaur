@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProfileSummary } from '@git-agent-harness/contracts';
@@ -166,6 +166,58 @@ test('archiveSession saves dirty work and restoreSession rematerializes it idemp
   assert.ok(restored.worktreePath && existsSync(restored.worktreePath));
   assert.equal(readFileSync(join(restored.worktreePath!, 'dirty.txt'), 'utf8'), 'uncommitted work\n');
   assert.equal((await restoreSession('p', session.id, env.profileInfo)).worktreePath, restored.worktreePath);
+}));
+
+test('archive saves binary and untracked work privately and restores it byte-for-byte', withEnv(async (env) => {
+  const session = await createSession({ profile: 'p', profileInfo: env.profileInfo, backend: 'hermes' });
+  const worktree = session.worktreePath!;
+  writeFileSync(join(worktree, 'blob.bin'), Buffer.from([0, 1, 2, 3, 255, 254, 0, 10, 13]));
+  execFileSync('git', ['add', 'blob.bin'], { cwd: worktree });
+  execFileSync('git', ['commit', '--quiet', '-m', 'add blob'], { cwd: worktree });
+  // Operator diff settings must not leak into the saved patch.
+  execFileSync('git', ['config', 'diff.external', 'echo'], { cwd: env.checkout });
+  execFileSync('git', ['config', 'diff.noprefix', 'true'], { cwd: env.checkout });
+  const blob = Buffer.from([0, 9, 8, 7, 255, 0, 128, 10, 0, 1]);
+  const untracked = Buffer.from('new file\r\nwith caf\xe9 bytes\n', 'latin1');
+  writeFileSync(join(worktree, 'blob.bin'), blob);
+  writeFileSync(join(worktree, 'notes.txt'), untracked);
+
+  await archiveSession('p', session.id, env.profileInfo);
+  assert.ok(!existsSync(worktree), 'worktree removed after a verified patch');
+  const sessionDir = join(env.stateDir, 'project-p', `session-${session.id}`);
+  const files = readdirSync(sessionDir);
+  const patches = files.filter((f) => /^archive-\d+\.patch$/.test(f));
+  assert.equal(patches.length, 1);
+  assert.deepEqual(files.filter((f) => f.startsWith('.archive.')), [], 'no temporary files left behind');
+  assert.equal(statSync(join(sessionDir, patches[0])).mode & 0o777, 0o600);
+  assert.equal(statSync(sessionDir).mode & 0o777, 0o700);
+
+  const restored = await restoreSession('p', session.id, env.profileInfo);
+  assert.deepEqual(readFileSync(join(restored.worktreePath!, 'blob.bin')), blob);
+  assert.deepEqual(readFileSync(join(restored.worktreePath!, 'notes.txt')), untracked);
+}));
+
+test('archive keeps the worktree when its patch would not restore onto the branch', withEnv(async (env) => {
+  const session = await createSession({ profile: 'p', profileInfo: env.profileInfo, backend: 'hermes' });
+  const worktree = session.worktreePath!;
+  // Work committed off the session branch: a patch against HEAD cannot
+  // replay onto the branch tip that restore uses.
+  execFileSync('git', ['checkout', '--quiet', '--detach'], { cwd: worktree });
+  writeFileSync(join(worktree, 'README.md'), '# detached\n');
+  execFileSync('git', ['commit', '--quiet', '-am', 'detached'], { cwd: worktree });
+  writeFileSync(join(worktree, 'README.md'), '# detached and dirty\n');
+
+  await assert.rejects(archiveSession('p', session.id, env.profileInfo), (error: Error & { code?: string }) => {
+    assert.equal(error.code, 'chat_archive_unverified');
+    return true;
+  });
+  assert.ok(existsSync(worktree), 'worktree kept');
+  assert.equal(readFileSync(join(worktree, 'README.md'), 'utf8'), '# detached and dirty\n');
+  const stored = getSession('p', session.id)!;
+  assert.equal(stored.archivedAt, null);
+  assert.equal(stored.worktreePath, worktree);
+  const sessionDir = join(env.stateDir, 'project-p', `session-${session.id}`);
+  assert.deepEqual(existsSync(sessionDir) ? readdirSync(sessionDir) : [], [], 'no patch or temporary files written');
 }));
 
 test('restoreSession degrades to checkout mode when the branch never existed', withEnv(async (env) => {

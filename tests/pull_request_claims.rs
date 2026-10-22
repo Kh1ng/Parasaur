@@ -260,19 +260,6 @@ fn run_cycle_with_workers(
     std::fs::create_dir_all(&state).unwrap();
     install_gh(&harness, &state, pulls);
     install_workers(&harness, &state, worker);
-    let pressure = harness.artifacts_dir.join("pressure.json");
-    std::fs::write(
-        &pressure,
-        serde_json::json!({
-            "memory_total_bytes": 64_u64 * 1024 * 1024 * 1024,
-            "memory_available_bytes": 60_u64 * 1024 * 1024 * 1024,
-            "logical_cpus": 8, "load_one": 0.0,
-            "memory_full_psi_avg10": 0.0, "cpu_some_psi_avg10": 0.0
-        })
-        .to_string(),
-    )
-    .unwrap();
-    harness.node_pressure_fixture = Some(pressure);
 
     let result = harness.run_one_loop().unwrap();
 

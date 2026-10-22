@@ -58,6 +58,13 @@ lines.on('line', (line) => {
     setTimeout(() => process.exit(0), 25);
     return;
   }
+  if (request.method === 'session/prompt' && mode === 'env-reply') {
+    const text = ['COORDINATOR_TOKEN', 'TDAI_GATEWAY_API_KEY', 'PATH'].map((name) => name + '=' + (name in process.env ? 'set' : 'unset')).join(' ');
+    respond({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'fake-session',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } } });
+    respond({ jsonrpc: '2.0', id: request.id, result: { stopReason: 'end_turn' } });
+    return;
+  }
   if (request.method === 'session/prompt' && mode === 'reconnect-sequence') {
     promptNumber += 1;
     if (spawnNumber === 1 && promptNumber !== 2) {
@@ -255,6 +262,24 @@ test('cancel evicts a child only when its prompt ignores cancellation', { timeou
   }
 });
 
+
+test('an ACP child without spec env still gets only the allow-listed environment', async () => {
+  const fake = fakeAcpScript();
+  const saved = { COORDINATOR_TOKEN: process.env.COORDINATOR_TOKEN, TDAI_GATEWAY_API_KEY: process.env.TDAI_GATEWAY_API_KEY };
+  process.env.COORDINATOR_TOKEN = 'owner-token';
+  process.env.TDAI_GATEWAY_API_KEY = 'gateway-key';
+  const backend = createAcpBackend('Hermes', () => ({ command: process.execPath, args: [fake.path, 'env-reply'] }));
+  try {
+    const result = await backend.runTurn('profile', emptyTurnInput);
+    assert.equal(result.reply, 'COORDINATOR_TOKEN=unset TDAI_GATEWAY_API_KEY=unset PATH=set');
+  } finally {
+    backend.dispose();
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(fake.dir, { recursive: true, force: true });
+  }
+});
 
 test('credential rotation retires an ACP child after its current prompt settles', { timeout: 3000 }, async () => {
   const fake = fakeAcpScript();
