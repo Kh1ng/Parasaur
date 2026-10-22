@@ -10,7 +10,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { archiveSession, createSession } from './managerChat/chatSessions.js';
+import { archiveSession, createSession, setChatSessionStoreOptions } from './managerChat/chatSessions.js';
 import { withFixtureServer } from './fixtureGahHarness.js';
 
 const gitFixtures = resolve(dirname(fileURLToPath(import.meta.url)), '../tests/fixtures');
@@ -64,6 +64,37 @@ test('process-starting routes are rate-limited while sibling reads are not', asy
     assert.notEqual((await fetch(`${base}/api/manager-chat/sessions?profile=missing-profile`)).status, 429, 'GET on the same path is not limited');
     assert.notEqual((await fetch(`${base}/api/manager-chat/sessions/all`)).status, 429, 'GET on a sibling path is not limited');
   });
+});
+
+// Session metadata updates share the settings-write bucket; once it is
+// exhausted the handler, and so the session index write, is never reached.
+test('session updates share the settings-write limiter and a rejected update leaves the session index unchanged', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'gah-session-update-limit-'));
+  const profile = 'session-update-limit';
+  setChatSessionStoreOptions({ stateDir });
+  try {
+    const session = await createSession(
+      { profile, profileInfo: { repo_id: 'repo', local_path: stateDir, worktree_base: join(stateDir, 'worktrees') }, backend: 'codex', worktree: false }
+    );
+    const indexPath = join(stateDir, `project-${profile}`, 'sessions.json');
+    await withFixtureServer(async base => {
+      const update = (title: string) => fetch(`${base}/api/manager-chat/sessions/update`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile, sessionId: session.id, title })
+      });
+      for (let request = 1; request <= 120; request++) assert.equal((await update(`title ${request}`)).status, 200, `request ${request}`);
+      const before = readFileSync(indexPath, 'utf8');
+      assert.equal((JSON.parse(before) as { sessions: { title: string }[] }).sessions[0].title, 'title 120');
+      const limited = await update('rejected');
+      assert.equal(limited.status, 429);
+      assert.equal((await limited.json() as { error: string }).error, 'rate_limited');
+      assert.equal(readFileSync(indexPath, 'utf8'), before, 'a rejected update does not reach the session store');
+      assert.equal((await fetch(`${base}/api/manager-chat/preview/set`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 429, 'the bucket is shared with other settings writes');
+      assert.notEqual((await fetch(`${base}/api/manager-chat/sessions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile: 'missing-profile' }) })).status, 429, 'process routes keep their own bucket');
+    });
+  } finally {
+    setChatSessionStoreOptions({ stateDir: undefined });
+    rmSync(stateDir, { recursive: true, force: true });
+  }
 });
 
 function profilePayload(profile: string): ConfigProfileSummary {

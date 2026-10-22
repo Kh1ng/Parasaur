@@ -717,8 +717,10 @@ export function createServer(
     '/api/manager-chat/sessions', '/api/manager-chat/sessions/archive', '/api/manager-chat/sessions/restore',
     '/api/manager-chat/issues/start', '/api/manager-chat/prs/start'
   ], processLimiter);
-  // Preview and skill-binding edits only rewrite small settings files and
-  // follow quick toggles in the chat UI, so they get a roomier bucket.
+  // Preview, skill-binding and session metadata edits (rename, backend or
+  // model switch) only rewrite small settings or session-index files and
+  // follow quick toggles in the chat UI, so they get a roomier bucket. A
+  // session update starts no process; the next turn picks up the change.
   const settingsWriteLimiter = rateLimit({
     windowMs: 60_000,
     limit: 120,
@@ -726,7 +728,7 @@ export function createServer(
     legacyHeaders: false,
     message: { error: 'rate_limited', message: 'Too many setting changes. Retry in a minute.' }
   });
-  app.post('/api/manager-chat/preview/set', settingsWriteLimiter);
+  app.post(['/api/manager-chat/preview/set', '/api/manager-chat/sessions/update'], settingsWriteLimiter);
   app.put('/api/skills/bindings', settingsWriteLimiter);
   app.delete('/api/skills/bindings', settingsWriteLimiter);
 
