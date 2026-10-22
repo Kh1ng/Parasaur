@@ -40,12 +40,12 @@ test('default Claude adapter runs the installed claude and flags the bundled fal
   try {
     const found = defaultClaudeSpawn(['relative', bundled, notExecutable, installed].join(delimiter));
     assert.equal(found.bundledRuntime, false);
-    assert.deepEqual(found.spec.env, { CLAUDE_CODE_EXECUTABLE: join(installed, 'claude') });
+    assert.deepEqual(found.env, { CLAUDE_CODE_EXECUTABLE: join(installed, 'claude') });
 
     const none = defaultClaudeSpawn([bundled, notExecutable].join(delimiter));
     assert.equal(none.bundledRuntime, true);
-    assert.equal(none.spec.env, undefined);
-    assert.deepEqual(none.spec.args, found.spec.args);
+    assert.equal(none.env, undefined);
+    assert.deepEqual(none.args, found.args);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

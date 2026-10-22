@@ -98,36 +98,22 @@ function acpManagerAdapter(
 
 /** Default Claude Manager Chat runs the `claude` that dispatch resolves, so
  * its model list is that CLI's own (#1507). With none installed, the ACP
- * bridge falls back to the SDK binary pinned in package-lock.json. */
-export function defaultClaudeSpawn(searchPath?: string): { spec: SpawnSpec; bundledRuntime: boolean } {
+ * bridge falls back to the SDK binary pinned in package-lock.json.
+ * Each new connection resolves again, so installing or removing `claude`
+ * takes effect on the next spawn, and the connection keeps the provenance of
+ * the spawn that started it. */
+export function defaultClaudeSpawn(searchPath?: string): SpawnSpec & { bundledRuntime: boolean } {
   const executable = findInstalledExecutable('claude', searchPath);
   return {
-    spec: claudeSpawnSpec(executable ? { executable, state_root: null } : undefined),
+    ...claudeSpawnSpec(executable ? { executable, state_root: null } : undefined),
     bundledRuntime: executable === null
-  };
-}
-
-function defaultClaudeAdapter(): ManagerAdapter {
-  // Each connection resolves again, so installing `claude` takes effect on
-  // the next spawn; the flag describes the most recent one.
-  let bundledRuntime = false;
-  const adapter = acpManagerAdapter('claude', 'Claude', () => {
-    const resolved = defaultClaudeSpawn();
-    bundledRuntime = resolved.bundledRuntime;
-    return resolved.spec;
-  });
-  return {
-    ...adapter,
-    async listModels(gahProfile, cwd) {
-      return { ...(await adapter.listModels(gahProfile, cwd)), bundledRuntime };
-    }
   };
 }
 
 const REGISTRY: Record<string, ManagerAdapter> = {
   hermes: acpManagerAdapter('hermes', 'Hermes', hermesSpawnSpec),
   codex: acpManagerAdapter('codex', 'Codex', codexSpawnSpec, { consecutiveFailureReconnectThreshold: 2 }),
-  claude: defaultClaudeAdapter(),
+  claude: acpManagerAdapter('claude', 'Claude', () => defaultClaudeSpawn()),
   opencode: acpManagerAdapter('opencode', 'OpenCode', opencodeSpawnSpec),
   vibe: { ...createHeadlessBackend(vibeBackendSpec()) } as ManagerAdapter,
   agy: { ...createHeadlessBackend(agyBackendSpec()) } as ManagerAdapter,

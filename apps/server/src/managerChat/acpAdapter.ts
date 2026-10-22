@@ -45,6 +45,11 @@ export interface SpawnSpec {
   command: string;
   args: string[];
   env?: Record<string, string>;
+  /** Set by backends with a bundled SDK fallback (#1507): true when this
+   * spawn runs the bundled binary because no CLI is installed. Recorded on
+   * the connection it starts, so each cached connection reports its own
+   * provenance alongside its own model list. */
+  bundledRuntime?: boolean;
 }
 
 const COMPACTION_COMMAND_NAMES = new Set(['compact', 'compress', 'clear', 'reset']);
@@ -241,6 +246,8 @@ interface ProfileConnection {
    * turns (WP2) -- which is what makes a worktree interchangeable between
    * backends: every backend spawns into the same directory. */
   cwd: string;
+  /** SpawnSpec.bundledRuntime of the spawn that started this connection. */
+  bundledRuntime: boolean | undefined;
   models: ManagerModelInfo[];
   currentModelId: string | null;
   modelConfigId: string | null;
@@ -519,6 +526,7 @@ export function createAcpBackend(
       client,
       sessionId: '',
       cwd: cwd ?? process.cwd(),
+      bundledRuntime: spec.bundledRuntime,
       models: [],
       currentModelId: null,
       modelConfigId: null,
@@ -734,7 +742,8 @@ export function createAcpBackend(
       currentModelId: state.currentModelId,
       reasoningEfforts: state.reasoningEfforts,
       currentReasoningEffortId: state.currentReasoningEffortId,
-      contextUsage: toContextUsage(state.client.usageUpdate)
+      contextUsage: toContextUsage(state.client.usageUpdate),
+      ...(state.bundledRuntime === undefined ? {} : { bundledRuntime: state.bundledRuntime })
     };
   }
 
