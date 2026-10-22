@@ -36,17 +36,17 @@ async function fakeDevServer(handler: http.RequestListener): Promise<{ server: h
   };
 }
 
-function fetchUrl(url: string, headers: http.OutgoingHttpHeaders = {}): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
+function fetchUrl(url: string, headers: http.OutgoingHttpHeaders = {}, method = 'GET'): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     // agent:false -- a fresh connection per fetch. The global agent pools
     // keep-alive sockets per host:port, and a pooled socket to a preview
     // port whose listener was closed+rebound mid-suite gets reused after
     // the server destroyed it (ECONNRESET). Browsers don't do this.
-    http.get(url, { agent: false, headers }, (res) => {
+    http.request(url, { method, agent: false, headers }, (res) => {
       let body = '';
       res.on('data', (chunk) => { body += chunk; });
       res.on('end', () => resolve({ status: res.statusCode ?? 0, body, headers: res.headers }));
-    }).on('error', reject);
+    }).on('error', reject).end();
   });
 }
 
@@ -300,6 +300,60 @@ test('the URL secret is exchanged for a listener-scoped cookie that does not sto
   }
 });
 
+test('a preview cookie only works from that preview\'s own origin', async () => {
+  // Browsers send every listener's cookie to every port on the host, so a
+  // page on preview A presenting B's cookie must not reach B's dev server.
+  previewProxy.configure({ basePort: TEST_BASE_PORT, maxPort: TEST_MAX_PORT, advertiseHost: '127.0.0.1', bindHost: '127.0.0.1', protectedPorts: [] });
+  let upstreamRequests = 0;
+  const devB = await fakeDevServer((req, res) => {
+    upstreamRequests++;
+    req.resume();
+    res.end('app B');
+  });
+  devB.server.on('upgrade', (_req, socket) => {
+    upstreamRequests++;
+    socket.end('HTTP/1.1 101 Switching Protocols\r\n\r\n');
+  });
+  const devA = await fakeDevServer((_req, res) => { res.end('app A'); });
+  try {
+    const a = await previewProxy.set('p', 'iso-a', devA.port);
+    const b = await previewProxy.set('p', 'iso-b', devB.port);
+    const originA = new URL(a.url).origin;
+    const originB = new URL(b.url).origin;
+    const cookie = await previewCookie(b.url);
+
+    // From A's page: refused for unsafe methods, reads, and upgrades.
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      assert.equal((await fetchUrl(`${originB}/api`, { cookie, origin: originA }, method)).status, 403, method);
+    }
+    assert.equal((await fetchUrl(`${originB}/api`, { cookie, origin: originA, 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'cors' })).status, 403);
+    assert.equal((await fetchUrl(`${originB}/api`, { cookie, origin: 'null' }, 'POST')).status, 403, 'an opaque origin is not this listener');
+    assert.equal(await rawUpgrade(b.listenPort, [`cookie: ${cookie}`, `origin: ${originA}`]), '', 'an upgrade from another preview is dropped');
+    // Without an Origin, the fetch metadata still marks the other context.
+    assert.equal((await fetchUrl(`${originB}/api`, { cookie, 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'navigate' }, 'POST')).status, 403);
+    assert.equal((await fetchUrl(`${originB}/main.js`, { cookie, 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'no-cors' })).status, 403);
+    assert.equal(await rawUpgrade(b.listenPort, [`cookie: ${cookie}`, 'sec-fetch-site: same-site', 'sec-fetch-mode: websocket']), '');
+    assert.equal(upstreamRequests, 0, 'refused traffic never reaches the dev server');
+
+    // From B's own page: allowed.
+    assert.equal((await fetchUrl(`${originB}/api`, { cookie, origin: originB, 'sec-fetch-site': 'same-origin' }, 'POST')).body, 'app B');
+    assert.match(await rawUpgrade(b.listenPort, [`cookie: ${cookie}`, `origin: ${originB}`, 'sec-fetch-site: same-origin']), /^HTTP\/1\.1 101/);
+    // The same listener under another name for its address is still its own page.
+    assert.equal((await fetchUrl(`${originB}/api`, { cookie, host: `localhost:${b.listenPort}`, origin: `http://localhost:${b.listenPort}` }, 'POST')).status, 200);
+    // Another context may still navigate to the preview (a link, the dashboard's frame).
+    assert.equal((await fetchUrl(`${originB}/`, { cookie, 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'navigate' })).status, 200);
+    // Non-browser clients send no Origin: the cookie alone still works.
+    assert.equal((await fetchUrl(`${originB}/api`, { cookie }, 'POST')).status, 200);
+    assert.match(await rawUpgrade(b.listenPort, [`cookie: ${cookie}`]), /^HTTP\/1\.1 101/);
+    assert.equal(upstreamRequests, 6);
+  } finally {
+    await previewProxy.clear('p', 'iso-a');
+    await previewProxy.clear('p', 'iso-b');
+    await devA.close();
+    await devB.close();
+  }
+});
+
 test('auto-detection probes the loopback: a port with no listener is not adopted', async () => {
   const dev = await fakeDevServer((_req, res) => { res.end('ok'); });
   const dead = await fakeDevServer(() => { /* never used */ });
@@ -315,12 +369,24 @@ test('auto-detection probes the loopback: a port with no listener is not adopted
 test('a preview refuses the memory gateway port', async () => {
   const saved = { url: process.env.TDAI_GATEWAY_URL, settings: process.env.GAH_GATEWAY_SETTINGS_PATH };
   process.env.GAH_GATEWAY_SETTINGS_PATH = '/nonexistent/gateway-settings.json';
-  previewProxy.configure({ basePort: TEST_BASE_PORT, maxPort: TEST_MAX_PORT, advertiseHost: '127.0.0.1', protectedPorts: [] });
+  previewProxy.configure({ basePort: TEST_BASE_PORT, maxPort: TEST_MAX_PORT, advertiseHost: '127.0.0.1', bindHost: '127.0.0.1', protectedPorts: [] });
   try {
     delete process.env.TDAI_GATEWAY_URL;
     await assert.rejects(previewProxy.set('p', 'gw', 8420), PreviewTargetRefusedError);
     process.env.TDAI_GATEWAY_URL = 'http://127.0.0.1:18420';
     await assert.rejects(previewProxy.set('p', 'gw', 18420), PreviewTargetRefusedError);
+    // A scheme's default port is the gateway's port, written out or not.
+    for (const [url, port] of [['http://gw/', 80], ['http://127.0.0.1:80', 80], ['https://gw/', 443], ['https://gw:443/', 443]] as const) {
+      process.env.TDAI_GATEWAY_URL = url;
+      await assert.rejects(previewProxy.set('p', 'gw', port), PreviewTargetRefusedError, url);
+    }
+    // 8420 is not protected once a default-port gateway is configured.
+    process.env.TDAI_GATEWAY_URL = 'http://gw/';
+    await assert.doesNotReject(previewProxy.set('p', 'gw-free', 8420));
+    await previewProxy.clear('p', 'gw-free');
+    // An unparsable URL keeps the documented default protected.
+    process.env.TDAI_GATEWAY_URL = 'not a url';
+    await assert.rejects(previewProxy.set('p', 'gw', 8420), PreviewTargetRefusedError);
     assert.equal(previewProxy.get('p', 'gw'), null);
   } finally {
     if (saved.url === undefined) delete process.env.TDAI_GATEWAY_URL; else process.env.TDAI_GATEWAY_URL = saved.url;

@@ -20,9 +20,13 @@
  * Every listener requires its own random access secret. The advertised URL
  * carries it once as a query parameter; the proxy exchanges it for an
  * HttpOnly cookie scoped by name to that listener, holding a token derived
- * from the secret rather than the secret itself, and redirects to `/`. Requests and upgrades without a valid secret are refused
- * before any upstream connection is made, so only clients that received
- * the URL from the authenticated control plane can reach the dev server.
+ * from the secret rather than the secret itself, and redirects to `/`.
+ * Requests and upgrades without a valid secret are refused before any
+ * upstream connection is made, so only clients that received the URL from
+ * the authenticated control plane can reach the dev server. A cookie is
+ * honoured only for requests that this listener's own pages sent (see
+ * fromOwnOrigin): browsers attach every listener's cookie to every port on
+ * the host, so the cookie alone does not keep one preview from another.
  */
 
 import http from 'node:http';
@@ -124,6 +128,47 @@ type PreviewAccess =
   | { kind: 'query'; path: string }
   | { kind: 'denied' };
 
+/** True when `origin` names this listener: its advertised origin, or the
+ * authority the browser connected to (the Host header, which page script
+ * cannot set), so a listener reached under another name for the same
+ * address still matches. */
+function isOwnOrigin(origin: string, req: http.IncomingMessage, entry: PreviewEntry): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (parsed.origin === new URL(entry.url).origin) return true;
+  const host = req.headers.host;
+  if (!host) return false;
+  try {
+    return parsed.origin === new URL(`http://${host}`).origin;
+  } catch {
+    return false;
+  }
+}
+
+/** Cookie-authenticated requests must come from this listener's own pages.
+ * Browsers send every listener's cookie to every port on the host, and a
+ * page on one preview is same-site with every other, so the cookie proves
+ * only that this browser once opened the preview. Browsers mark the
+ * requesting context on every upgrade and unsafe-method request (Origin)
+ * and, where supported, on every request (Sec-Fetch-Site): a foreign
+ * Origin is refused on any request, and another context may only navigate
+ * to the preview (a link, or the dashboard's frame), never script it,
+ * submit to it, or open its sockets. A request carrying neither header
+ * stays allowed: that is the supported non-browser path (curl or a script
+ * holding the cookie), and a browser page cannot open a socket or send an
+ * unsafe method without an Origin, so it cannot use that path. */
+function fromOwnOrigin(req: http.IncomingMessage, entry: PreviewEntry): boolean {
+  const origin = req.headers.origin;
+  if (origin !== undefined && !isOwnOrigin(origin, req, entry)) return false;
+  const site = req.headers['sec-fetch-site'];
+  if (site === undefined || site === 'same-origin' || site === 'none') return true;
+  return req.method === 'GET' && req.headers['sec-fetch-mode'] === 'navigate' && req.headers.upgrade === undefined;
+}
+
 /** Decides whether a request to a preview listener may reach upstream. */
 function previewAccess(req: http.IncomingMessage, entry: PreviewEntry): PreviewAccess {
   const raw = req.url ?? '/';
@@ -140,17 +185,27 @@ function previewAccess(req: http.IncomingMessage, entry: PreviewEntry): PreviewA
     return { kind: 'query', path: rest ? `${safePath}?${rest}` : safePath };
   }
   const cookie = cookieValue(req.headers.cookie, previewCookieName(entry.listenPort));
-  return secretMatches(cookie, entry.cookieToken) ? { kind: 'cookie', path: raw } : { kind: 'denied' };
+  return secretMatches(cookie, entry.cookieToken) && fromOwnOrigin(req, entry)
+    ? { kind: 'cookie', path: raw }
+    : { kind: 'denied' };
 }
 
-/** The memory gateway's port: a product service, never a dev server. */
+/** The memory gateway's port: a product service, never a dev server. URL
+ * omits a scheme's default port (even when written out), so an empty port
+ * means 80 or 443. effectiveGatewayUrl falls back to port 8420 when nothing
+ * is configured; 8420 stands in here only for a URL that cannot be parsed
+ * or names another scheme without a port. */
 function gatewayPort(): number {
+  let url: URL;
   try {
-    const port = Number.parseInt(new URL(effectiveGatewayUrl()).port, 10);
-    return Number.isInteger(port) && port > 0 ? port : DEFAULT_GATEWAY_PORT;
+    url = new URL(effectiveGatewayUrl());
   } catch {
     return DEFAULT_GATEWAY_PORT;
   }
+  if (url.port !== '') return Number.parseInt(url.port, 10);
+  if (url.protocol === 'http:') return 80;
+  if (url.protocol === 'https:') return 443;
+  return DEFAULT_GATEWAY_PORT;
 }
 
 /** True when something accepts TCP connections on the loopback at `port`.
