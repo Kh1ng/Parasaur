@@ -75,7 +75,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           INPUTS_VERSION: ${{ inputs.version }}
         run: |
-          exe=$(ls apps/desktop/target/release/bundle/nsis/*.exe | head -1)
+          exe=$(compgen -G 'apps/desktop/target/release/bundle/nsis/*.exe' | sort | head -n 1)
           tag="${INPUTS_VERSION}"
           if [ -z "$tag" ] && [ "${GITHUB_REF_TYPE}" = tag ]; then
             tag="${GITHUB_REF_NAME}"

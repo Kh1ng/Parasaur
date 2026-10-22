@@ -71,7 +71,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           INPUTS_VERSION: ${{ inputs.version }}
         run: |
-          dmg=$(ls apps/desktop/target/release/bundle/dmg/*.dmg | head -1)
+          dmg=$(compgen -G 'apps/desktop/target/release/bundle/dmg/*.dmg' | sort | head -n 1)
           tag="${INPUTS_VERSION}"
           if [ -z "$tag" ] && [ "${GITHUB_REF_TYPE}" = tag ]; then
             tag="${GITHUB_REF_NAME}"
