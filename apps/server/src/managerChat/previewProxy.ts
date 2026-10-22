@@ -123,6 +123,25 @@ function upstreamCookie(header: string | undefined): string | undefined {
   return kept.length > 0 ? kept.join('; ') : undefined;
 }
 
+const REFERRER_POLICIES = new Set([
+  'no-referrer', 'no-referrer-when-downgrade', 'same-origin', 'origin', 'strict-origin',
+  'origin-when-cross-origin', 'strict-origin-when-cross-origin', 'unsafe-url'
+]);
+
+/** The Referrer-Policy header forwarded from the dev server. A GET from this
+ * listener's own page may prove its origin only by its Referer (see
+ * fromOwnOrigin), and `no-referrer`, the only policy that omits it on a
+ * same-origin request, would get the app's own assets refused. It becomes
+ * `same-origin`, which still sends nothing to any other origin; the extra
+ * Referer goes only to this preview's own dev server. Browsers apply the
+ * last policy token they recognise, so the others pass through unchanged.
+ * A `<meta name="referrer">` or a per-element policy overrides this header
+ * and is not rewritten: those requests stay refused. */
+function upstreamReferrerPolicy(header: string | string[] | undefined): string | string[] | undefined {
+  const tokens = [header ?? []].flat().join(',').split(',').map((token) => token.trim().toLowerCase());
+  return tokens.filter((token) => REFERRER_POLICIES.has(token)).at(-1) === 'no-referrer' ? 'same-origin' : header;
+}
+
 type PreviewAccess =
   | { kind: 'cookie'; path: string }
   /** A valid secret in the query; `path` is the request path without it
@@ -428,7 +447,8 @@ class PreviewProxy {
           agent: false
         },
         (upstream) => {
-          res.writeHead(upstream.statusCode ?? 502, upstream.headers);
+          const policy = upstreamReferrerPolicy(upstream.headers['referrer-policy']);
+          res.writeHead(upstream.statusCode ?? 502, policy === undefined ? upstream.headers : { ...upstream.headers, 'referrer-policy': policy });
           upstream.pipe(res);
         }
       );

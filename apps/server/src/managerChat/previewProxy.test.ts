@@ -370,6 +370,31 @@ test('a preview cookie only works from that preview\'s own origin', async () => 
   }
 });
 
+test('an app\'s no-referrer policy still lets its own pages name it in the Referer', async () => {
+  // Over plain non-loopback HTTP the Referer is the only proof a GET came
+  // from the preview's own page, and `no-referrer` would drop it.
+  previewProxy.configure({ basePort: TEST_BASE_PORT, maxPort: TEST_MAX_PORT, advertiseHost: '127.0.0.1', bindHost: '127.0.0.1', protectedPorts: [] });
+  const dev = await fakeDevServer((req, res) => {
+    const policy = new URL(req.url ?? '/', 'http://x').searchParams.get('policy');
+    if (policy) res.setHeader('referrer-policy', policy);
+    res.end('ok');
+  });
+  try {
+    const info = await previewProxy.set('p', 'policy', dev.port);
+    const policyFor = async (upstream: string): Promise<string | string[] | undefined> =>
+      (await fetchPreview(info.url, `/?policy=${encodeURIComponent(upstream)}`)).headers['referrer-policy'];
+    assert.equal(await policyFor('no-referrer'), 'same-origin');
+    assert.equal(await policyFor('strict-origin, No-Referrer'), 'same-origin', 'the last recognised token applies');
+    assert.equal(await policyFor('no-referrer, bogus'), 'same-origin', 'an unknown token is ignored');
+    assert.equal(await policyFor('no-referrer, strict-origin'), 'no-referrer, strict-origin');
+    assert.equal(await policyFor('unsafe-url'), 'unsafe-url');
+    assert.equal((await fetchPreview(info.url)).headers['referrer-policy'], undefined, 'no policy is added');
+  } finally {
+    await previewProxy.clear('p', 'policy');
+    await dev.close();
+  }
+});
+
 test('auto-detection probes the loopback: a port with no listener is not adopted', async () => {
   const dev = await fakeDevServer((_req, res) => { res.end('ok'); });
   const dead = await fakeDevServer(() => { /* never used */ });
