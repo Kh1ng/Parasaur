@@ -42,12 +42,13 @@ jobs:
         run: node scripts/check-release-version.mjs "$GAH_RELEASE_TAG"
 
       - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.extra_targets || '' }}
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Build CLI (macOS universal)
         if: runner.os == 'macOS'
@@ -79,17 +80,18 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUTS_VERSION: ${{ inputs.version }}
         run: |
-          tag="${{ inputs.version }}"
-          if [ -z "$tag" ] && [ "${{ github.ref_type }}" = tag ]; then
-            tag="${{ github.ref_name }}"
+          tag="${INPUTS_VERSION}"
+          if [ -z "$tag" ] && [ "${GITHUB_REF_TYPE}" = tag ]; then
+            tag="${GITHUB_REF_NAME}"
           fi
           if [ -z "$tag" ]; then
             tag="release-$(date -u +%Y%m%d-%H%M)-cli"
           fi
           gh release create "$tag" "${{ matrix.artifact_name }}" "${{ matrix.mcp_artifact_name }}" \
             --title "Parasaur CLI — $tag" \
-            --notes "Parasaur CLI and MCP server binaries for macOS (universal arm64+x86_64) and Linux (x86_64). The CLI installs as gah; gah update and the installers add the parasaur command next to it. Built from ${{ github.ref }}." \
+            --notes "Parasaur CLI and MCP server binaries for macOS (universal arm64+x86_64) and Linux (x86_64). The CLI installs as gah; gah update and the installers add the parasaur command next to it. Built from ${GITHUB_REF}." \
             --repo "${{ github.repository }}" || \
           gh release upload "$tag" "${{ matrix.artifact_name }}" "${{ matrix.mcp_artifact_name }}" --clobber \
             --repo "${{ github.repository }}"

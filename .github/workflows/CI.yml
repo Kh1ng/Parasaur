@@ -94,7 +94,9 @@ jobs:
 
       - name: Install Rust
         if: steps.scope.outputs.run == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
       - name: Stage an operator-style main checkout of this pull request
         if: steps.scope.outputs.run == 'true'
@@ -231,13 +233,14 @@ jobs:
             patchelf
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache Rust build artifacts
         if: steps.rust-test-scope.outputs.has_rust_changes == 'true' || steps.rust-test-scope.outputs.has_desktop_changes == 'true'
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: |
             .

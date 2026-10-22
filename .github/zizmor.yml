@@ -1,0 +1,10 @@
+# zizmor (https://docs.zizmor.sh) policy for this repository's workflows.
+# First-party GitHub actions may be pinned to a release tag; every other
+# action must be pinned to a full commit SHA (with the tag in a comment).
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "actions/*": ref-pin
+        "github/*": ref-pin
+        "*": hash-pin
