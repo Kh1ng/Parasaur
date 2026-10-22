@@ -5,6 +5,7 @@ pub(crate) mod backend_runner;
 #[cfg(test)]
 mod backend_runner_contract_tests;
 pub(crate) mod backends;
+mod log_copier;
 pub(crate) mod output;
 pub(crate) mod pipes;
 pub(crate) mod process;
