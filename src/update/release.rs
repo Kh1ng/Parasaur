@@ -278,25 +278,36 @@ fn install_binary(source: &Path, target: PathBuf) -> Result<PathBuf> {
             staged.display()
         )
     })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = std::fs::metadata(&staged)?.permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&staged, permissions)?;
-    }
-    let probe = version_probe(&staged)
-        .with_context(|| format!("running {} --version sanity check", staged.display()))?;
-    if !probe.status.success() {
-        bail!(
-            "downloaded {} failed its --version sanity check: {}",
-            target.display(),
-            String::from_utf8_lossy(&probe.stderr).trim()
-        );
-    }
+    require_version_probe(&staged, &target)?;
     std::fs::rename(&staged, &target)
         .with_context(|| format!("installing release binary over {}", target.display()))?;
     Ok(target)
+}
+
+/// The executable sanity gate every release binary passes before it is
+/// installed: mark `binary` executable, run its `--version` and require it
+/// to succeed. Failures name `reported_as` (the download, or the install
+/// target a staged copy replaces). Both the preflight probe of each download
+/// and `install_binary`'s probe of its staged copy go through here, so the
+/// two gates cannot disagree.
+fn require_version_probe(binary: &Path, reported_as: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(binary)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(binary, permissions)?;
+    }
+    let probe = version_probe(binary)
+        .with_context(|| format!("running {} --version sanity check", binary.display()))?;
+    if !probe.status.success() {
+        bail!(
+            "downloaded {} failed its --version sanity check: {}",
+            reported_as.display(),
+            String::from_utf8_lossy(&probe.stderr).trim()
+        );
+    }
+    Ok(())
 }
 
 /// Run a freshly written binary's `--version`. Executing a file fails with
@@ -463,26 +474,10 @@ fn asset_for_current_platform(
 }
 
 /// Require a downloaded binary to pass `--version` where it was fetched,
-/// before any artifact is installed. `install_binary` probes its own staged
-/// copy again right before the rename.
+/// before any artifact is installed. `install_binary` runs the same gate on
+/// its own staged copy again right before the rename.
 fn probe_downloaded_binary(path: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = std::fs::metadata(path)?.permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(path, permissions)?;
-    }
-    let probe = version_probe(path)
-        .with_context(|| format!("running {} --version sanity check", path.display()))?;
-    if !probe.status.success() {
-        bail!(
-            "downloaded {} failed its --version sanity check: {}",
-            path.display(),
-            String::from_utf8_lossy(&probe.stderr).trim()
-        );
-    }
-    Ok(())
+    require_version_probe(path, path)
 }
 
 /// Download and install the release artifacts (CLI binary and, when this
@@ -941,6 +936,27 @@ mod tests {
         assert!(error.to_string().contains("--version"));
         // The previous good install survived the failed swap.
         assert!(installed.is_file());
+    }
+
+    #[test]
+    fn version_probe_gate_marks_the_binary_executable_and_names_the_reported_path() {
+        let dir = tempfile::tempdir().unwrap();
+        // Written without the execute bit, as a fresh download is.
+        let good = dir.path().join("good");
+        fs::write(&good, "#!/bin/sh\necho 'gah 9.9.9'\n").unwrap();
+        require_version_probe(&good, &good).unwrap();
+
+        let broken = dir.path().join("broken.download");
+        fs::write(&broken, "#!/bin/sh\necho oops >&2\nexit 3\n").unwrap();
+        let reported = dir.path().join("bin/gah");
+        let error = require_version_probe(&broken, &reported).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "downloaded {} failed its --version sanity check: oops",
+                reported.display()
+            )
+        );
     }
 
     fn write_bundle(dir: &Path, name: &str, central: bool) -> PathBuf {
