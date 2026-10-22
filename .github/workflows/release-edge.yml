@@ -26,7 +26,8 @@ jobs:
   # fires for every completed CI run whose head branch is named `main`,
   # including runs for pull requests, so the event that started CI, the
   # repository it ran on and the branch are all checked here. Every build job
-  # needs this gate, so nothing is checked out or built when it is skipped.
+  # needs this gate, so nothing is checked out or built when it is skipped
+  # or fails.
   trusted-source:
     if: >-
       ${{
@@ -41,7 +42,16 @@ jobs:
     steps:
       - env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-        run: echo "Publishing edge from $HEAD_SHA"
+        # Expression `==` ignores case, so the `if` above also admits
+        # refs/heads/Main, a different branch. Compare the exact ref here,
+        # from the runner environment and the raw event payload.
+        run: |
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch) [ "$GITHUB_REF" = refs/heads/main ] ;;
+            workflow_run) jq -e '.workflow_run.head_branch == "main"' "$GITHUB_EVENT_PATH" > /dev/null ;;
+            *) false ;;
+          esac || { echo "Edge publishes only from refs/heads/main" >&2; exit 1; }
+          echo "Publishing edge from $HEAD_SHA"
 
   cli-linux:
     needs: trusted-source

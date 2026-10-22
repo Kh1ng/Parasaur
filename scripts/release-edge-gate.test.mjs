@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 // js-yaml is already installed by `npm ci` (a dev dependency of the web
 // workspace's test tooling); JSON_SCHEMA loads plain data only.
@@ -146,7 +149,27 @@ const usesStatusFunction = node =>
 
 const needsOf = name => [jobs[name].needs ?? []].flat();
 
-const gateAllows = github => evaluate(parse(jobs[GATE].if), { github });
+// The gate's run step, executed as GitHub runs it on Linux, with the runner
+// variables it reads and the event payload written to GITHUB_EVENT_PATH.
+const gateStepPasses = (env, event) => {
+  const [step, ...others] = jobs[GATE].steps;
+  assert.equal(others.length, 0, 'trusted-source has a single step');
+  assert.equal(step.uses, undefined, 'trusted-source loads no action');
+  const dir = mkdtempSync(join(tmpdir(), 'edge-gate-'));
+  const eventPath = join(dir, 'event.json');
+  writeFileSync(eventPath, typeof event === 'string' ? event : JSON.stringify(event));
+  const result = spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', step.run], {
+    env: { PATH: process.env.PATH, GITHUB_EVENT_PATH: eventPath, HEAD_SHA: 'sha', ...env },
+    encoding: 'utf8',
+  });
+  rmSync(dir, { recursive: true });
+  assert.equal(result.error, undefined);
+  return result.status === 0;
+};
+
+const gateAllows = github =>
+  evaluate(parse(jobs[GATE].if), { github }) &&
+  gateStepPasses({ GITHUB_EVENT_NAME: github.event_name, GITHUB_REF: github.ref }, github.event);
 
 const ciRun = overrides => ({
   event_name: 'workflow_run',
@@ -187,10 +210,31 @@ test('the trust gate rejects pull requests, non-push events, failed runs and oth
     'manual dispatch on a main-prefixed branch': dispatch('refs/heads/main-next'),
     'manual dispatch on a tag': dispatch('refs/tags/v0.3.0'),
     'push event': { ...dispatch('refs/heads/main'), event_name: 'push' },
+    // Expression == ignores case; these are distinct branches.
+    'manual dispatch on refs/heads/Main': dispatch('refs/heads/Main'),
+    'manual dispatch on refs/heads/MAIN': dispatch('refs/heads/MAIN'),
+    'manual dispatch on refs/heads/main with a trailing space': dispatch('refs/heads/main '),
+    'manual dispatch on refs/heads/main with a trailing tab': dispatch('refs/heads/main\t'),
+    'push to Main': ciRun({ head_branch: 'Main' }),
+    'push to MAIN': ciRun({ head_branch: 'MAIN' }),
+    'push to main with a trailing space': ciRun({ head_branch: 'main ' }),
+    'push to main with a trailing tab': ciRun({ head_branch: 'main\t' }),
   };
   for (const [label, github] of Object.entries(rejected)) {
     assert.equal(gateAllows(github), false, label);
   }
+});
+
+test('the gate step fails closed on an unknown event or a malformed payload', () => {
+  const main = { GITHUB_REF: 'refs/heads/main' };
+  assert.equal(gateStepPasses({ ...main, GITHUB_EVENT_NAME: 'push' }, {}), false, 'unknown event');
+  assert.equal(gateStepPasses({ ...main }, {}), false, 'missing event name');
+  assert.equal(gateStepPasses({ GITHUB_EVENT_NAME: 'workflow_dispatch' }, {}), false, 'missing ref');
+  const run = { ...main, GITHUB_EVENT_NAME: 'workflow_run' };
+  assert.equal(gateStepPasses(run, {}), false, 'missing workflow_run');
+  assert.equal(gateStepPasses(run, { workflow_run: {} }), false, 'missing head_branch');
+  assert.equal(gateStepPasses(run, { workflow_run: { head_branch: ['main'] } }), false, 'non-string head_branch');
+  assert.equal(gateStepPasses(run, '{"workflow_run":'), false, 'malformed payload');
 });
 
 test('the evaluator rejects expression syntax it does not model', () => {
