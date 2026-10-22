@@ -140,6 +140,22 @@ test('git import clones, derives a profile, re-clones clean checkouts, and guard
   inCheckout('commit', '--allow-empty', '-m', 'local only');
   await refuses('checkout_unpushed_commits');
   inCheckout('reset', '--hard', 'origin/main');
+  // History reachable only from a local tag (its branch deleted) is unpublished too.
+  inCheckout('switch', '-c', 'temporary');
+  inCheckout('commit', '--allow-empty', '-m', 'tagged only');
+  const tagged = inCheckout('rev-parse', 'HEAD');
+  inCheckout('tag', 'local-backup');
+  inCheckout('switch', 'main');
+  inCheckout('branch', '-D', 'temporary');
+  await refuses('checkout_unpushed_commits');
+  assert.equal(inCheckout('rev-parse', 'local-backup^{commit}'), tagged);
+  assert.equal(inCheckout('cat-file', '-t', tagged), 'commit');
+  inCheckout('tag', '-d', 'local-backup');
+  // So is a commit reachable only from a detached HEAD.
+  inCheckout('switch', '--detach');
+  inCheckout('commit', '--allow-empty', '-m', 'detached only');
+  await refuses('checkout_unpushed_commits');
+  inCheckout('switch', 'main');
   writeFileSync(join(checkout, 'package.json'), '{}');
   inCheckout('stash', 'push', '-m', 'local stash');
   await refuses('checkout_has_stash');

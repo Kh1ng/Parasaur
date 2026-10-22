@@ -313,14 +313,16 @@ export class CheckoutHasLocalWork extends Error {
   }
 }
 
-/** A re-clone deletes the old checkout, so every local commit, stash, and
- * linked worktree there must be published or absent first. */
+/** A re-clone deletes the old checkout, so every commit reachable from a local
+ * ref (branches, tags, notes, stash, HEAD), every stash, and every linked
+ * worktree there must be published or absent first. */
 async function assertNoLocalWork(path: string, git: (args: string[]) => Promise<string>): Promise<void> {
-  if (await git(['-C', path, 'log', '--branches', '--not', '--remotes', '--oneline'])) {
-    throw new CheckoutHasLocalWork('checkout_unpushed_commits', 'Managed checkout has commits that are not on any remote. Push or remove them before re-cloning.');
-  }
+  // Stash commits are reachable from refs/stash too, so name the stash first.
   if (await git(['-C', path, 'stash', 'list'])) {
     throw new CheckoutHasLocalWork('checkout_has_stash', 'Managed checkout has stashed changes. Apply or drop them before re-cloning.');
+  }
+  if (await git(['-C', path, 'rev-list', '--max-count=1', '--all', '--not', '--remotes'])) {
+    throw new CheckoutHasLocalWork('checkout_unpushed_commits', 'Managed checkout has commits on local branches, tags, or other refs that are not on any remote. Push or remove them before re-cloning.');
   }
   const worktrees = (await git(['-C', path, 'worktree', 'list', '--porcelain'])).split('\n').filter((line) => line.startsWith('worktree '));
   if (worktrees.length > 1) {
