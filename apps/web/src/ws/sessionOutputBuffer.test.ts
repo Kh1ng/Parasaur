@@ -39,6 +39,28 @@ test('character cap bounds a stream of long lines and a single huge line', () =>
   expect(buffer.text('s2')!.truncated).toBe(true);
 });
 
+test('lines dropped by the character cap are released, not just hidden', () => {
+  const buffer = new SessionOutputBuffer();
+  // Distinct large lines: small ones (many per budget) and ones near the cap,
+  // enough of each to pass the line-count compaction threshold.
+  const sizes = [4096, MAX_OUTPUT_CHARS_PER_STREAM / 4 + 1, MAX_OUTPUT_CHARS_PER_STREAM - 16];
+  const count = MAX_OUTPUT_LINES_PER_STREAM + 500;
+  for (const [s, size] of sizes.entries()) {
+    const sessionId = `s${s}`;
+    const fill = 'x'.repeat(size);
+    for (let i = 0; i < count; i += 1) {
+      buffer.append(sessionId, 'stdout', `${String(i).padStart(8, '0')}${fill}`.slice(0, size));
+      const storage = buffer.storageForTest(sessionId, 'stdout')!;
+      expect(storage.chars).toBeLessThanOrEqual(MAX_OUTPUT_CHARS_PER_STREAM);
+      expect(storage.slots).toBeLessThanOrEqual(2 * MAX_OUTPUT_LINES_PER_STREAM);
+    }
+    const kept = buffer.lines(sessionId, 'stdout');
+    expect(kept.at(-1)!.startsWith(String(count - 1).padStart(8, '0'))).toBe(true);
+    expect(kept.join('').length).toBe(buffer.storageForTest(sessionId, 'stdout')!.chars);
+    expect(buffer.text(sessionId)!.truncated).toBe(true);
+  }
+});
+
 test('short output is kept verbatim in the previous line format', () => {
   const buffer = new SessionOutputBuffer();
   buffer.append('s1', 'stdout', 'one');

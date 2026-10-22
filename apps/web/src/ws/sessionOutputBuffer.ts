@@ -10,7 +10,10 @@
  * finished ones; MAX_RETAINED_SESSIONS caps every entry, finished or not.
  *
  * Appends are O(1) amortized: lines go into an array and the dropped head is
- * compacted away in bulk instead of copying one ever-growing string.
+ * compacted away in bulk instead of copying one ever-growing string. A dropped
+ * line's slot is cleared as soon as it is dropped, so the strings a stream
+ * references never exceed its character budget; compaction only reclaims the
+ * empty slots.
  */
 import type { SessionId } from '@git-agent-harness/contracts';
 
@@ -45,10 +48,11 @@ class OutputStream {
     this.chars += line.length;
     while (this.lines.length - this.start > MAX_OUTPUT_LINES_PER_STREAM || this.chars > MAX_OUTPUT_CHARS_PER_STREAM) {
       this.chars -= this.lines[this.start].length;
+      this.lines[this.start] = '';
       this.start += 1;
       this.truncated = true;
     }
-    // Drop the dead head in bulk once it outweighs the live tail.
+    // Drop the (already cleared) dead head in bulk once it outweighs the live tail.
     if (this.start > MAX_OUTPUT_LINES_PER_STREAM && this.start * 2 > this.lines.length) {
       this.lines = this.lines.slice(this.start);
       this.start = 0;
@@ -61,6 +65,13 @@ class OutputStream {
 
   text(): string {
     return this.lines.length > this.start ? this.retained().join('\n') + '\n' : '';
+  }
+
+  /** Test-only: the whole backing array, dropped head included. */
+  storage(): { slots: number; chars: number } {
+    let chars = 0;
+    for (const line of this.lines) chars += line.length;
+    return { slots: this.lines.length, chars };
   }
 }
 
@@ -130,6 +141,11 @@ export class SessionOutputBuffer {
       stderr: entry.stderr.text(),
       truncated: entry.stdout.truncated || entry.stderr.truncated
     };
+  }
+
+  /** Test-only: what a stream's backing array still references. */
+  storageForTest(sessionId: SessionId, stream: OutputStreamName): { slots: number; chars: number } | undefined {
+    return this.entries.get(sessionId)?.[stream].storage();
   }
 
   delete(sessionId: SessionId): void {
