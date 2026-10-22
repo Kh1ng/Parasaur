@@ -20,7 +20,7 @@
  * Every listener requires its own random access secret. The advertised URL
  * carries it once as a query parameter; the proxy exchanges it for an
  * HttpOnly cookie scoped by name to that listener, holding a token derived
- * from the secret rather than the secret itself, and redirects to `/`.
+ * from the secret rather than the secret itself, and reloads `/`.
  * Requests and upgrades without a valid secret are refused before any
  * upstream connection is made, so only clients that received the URL from
  * the authenticated control plane can reach the dev server. A cookie is
@@ -60,6 +60,8 @@ interface PreviewEntry extends PreviewInfo {
 /** Query parameter that carries a preview's access secret on first visit. */
 export const PREVIEW_SECRET_PARAM = '__gah_preview';
 const PREVIEW_COOKIE_PREFIX = '__gah_preview_';
+/** Served for a valid URL secret: loads the preview root from its own page. */
+const PREVIEW_EXCHANGE_PAGE = '<!doctype html><title>Opening preview</title><script>location.replace("/")</script>';
 
 export interface PreviewProxyOptions {
   /** First port of the listen range (tests override). */
@@ -157,15 +159,22 @@ function isOwnOrigin(origin: string, req: http.IncomingMessage, entry: PreviewEn
  * and, where supported, on every request (Sec-Fetch-Site): a foreign
  * Origin is refused on any request, and another context may only navigate
  * to the preview (a link, or the dashboard's frame), never script it,
- * submit to it, or open its sockets. A request carrying neither header
- * stays allowed: that is the supported non-browser path (curl or a script
- * holding the cookie), and a browser page cannot open a socket or send an
- * unsafe method without an Origin, so it cannot use that path. */
+ * submit to it, or open its sockets. Over plain HTTP to a non-loopback
+ * address (the Tailnet URL) a browser sends neither header on a GET, so a
+ * page on another preview could load this one's scripts with the cookie.
+ * Such a request must name this listener in its Referer, which page script
+ * can remove but never forge; the exchange page (see createProxyServer)
+ * makes the first navigation carry one. A non-browser client holding the
+ * cookie sends that Referer itself. */
 function fromOwnOrigin(req: http.IncomingMessage, entry: PreviewEntry): boolean {
   const origin = req.headers.origin;
   if (origin !== undefined && !isOwnOrigin(origin, req, entry)) return false;
   const site = req.headers['sec-fetch-site'];
-  if (site === undefined || site === 'same-origin' || site === 'none') return true;
+  if (site === undefined) {
+    const referer = req.headers.referer;
+    return origin !== undefined || (referer !== undefined && isOwnOrigin(referer, req, entry));
+  }
+  if (site === 'same-origin' || site === 'none') return true;
   return req.method === 'GET' && req.headers['sec-fetch-mode'] === 'navigate' && req.headers.upgrade === undefined;
 }
 
@@ -384,16 +393,20 @@ class PreviewProxy {
       }
       if (access.kind === 'query') {
         // Exchange the URL secret for a cookie and drop it from the address,
-        // so it stays out of history and Referer headers. The advertised
-        // URL is always `/?<param>=...`, so the redirect target is fixed.
+        // so it stays out of history and Referer headers. The page reloads
+        // the fixed root from this origin, so that navigation carries this
+        // listener's origin as its Referer (a redirect would carry the
+        // linking page's, or none), and the `origin` policy keeps the secret
+        // out of it.
         req.resume();
-        res.writeHead(302, {
-          location: '/',
+        res.writeHead(200, {
           'set-cookie': `${previewCookieName(entry.listenPort)}=${entry.cookieToken}; Path=/; HttpOnly; SameSite=Lax`,
+          'content-type': 'text/html; charset=utf-8',
           'cache-control': 'no-store',
-          'referrer-policy': 'no-referrer'
+          'referrer-policy': 'origin',
+          'x-content-type-options': 'nosniff'
         });
-        res.end();
+        res.end(PREVIEW_EXCHANGE_PAGE);
         return;
       }
       const devPort = entry.devPort;

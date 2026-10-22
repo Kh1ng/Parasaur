@@ -51,15 +51,16 @@ function fetchUrl(url: string, headers: http.OutgoingHttpHeaders = {}, method = 
 }
 
 /** Follows the advertised URL like a browser: trades the URL secret for
- * the access cookie, then fetches `path` on the listener with it. */
+ * the access cookie, then fetches `path` on the listener with it, as the
+ * exchange page's reload does (Referer: the listener's origin). */
 async function fetchPreview(url: string, path = '/'): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
   const cookie = await previewCookie(url);
-  return fetchUrl(new URL(path, url).toString(), { cookie });
+  return fetchUrl(new URL(path, url).toString(), { cookie, referer: `${new URL(url).origin}/` });
 }
 
 async function previewCookie(url: string): Promise<string> {
   const exchange = await fetchUrl(url);
-  assert.equal(exchange.status, 302, 'the URL secret is exchanged for a cookie');
+  assert.equal(exchange.status, 200, 'the URL secret is exchanged for a cookie');
   const setCookie = exchange.headers['set-cookie']?.[0];
   assert.ok(setCookie, 'access cookie set');
   return setCookie.split(';')[0];
@@ -255,7 +256,7 @@ test('a preview without its access secret is refused before upstream is contacte
     assert.equal(upstreamConnections, 0, 'refused traffic never reaches the dev server');
 
     const cookie = await previewCookie(preview.url);
-    assert.match(await rawUpgrade(preview.listenPort, [`cookie: ${cookie}`]), /^HTTP\/1\.1 101/, 'an authenticated upgrade is spliced');
+    assert.match(await rawUpgrade(preview.listenPort, [`cookie: ${cookie}`, `origin: ${origin}`]), /^HTTP\/1\.1 101/, 'an authenticated upgrade is spliced');
     assert.equal(upstreamConnections, 1);
   } finally {
     await previewProxy.clear('p', 'deny');
@@ -278,8 +279,10 @@ test('the URL secret is exchanged for a listener-scoped cookie that does not sto
     const origin = new URL(preview.url).origin;
 
     const exchange = await fetchUrl(`${origin}/page?a=1&${PREVIEW_SECRET_PARAM}=${secret}`);
-    assert.equal(exchange.status, 302);
-    assert.equal(exchange.headers.location, '/', 'the exchange always redirects to the fixed root');
+    assert.equal(exchange.status, 200);
+    assert.match(exchange.body, /location\.replace\("\/"\)/, 'the exchange page always reloads the fixed root');
+    assert.ok(!exchange.body.includes(String(secret)));
+    assert.equal(exchange.headers['referrer-policy'], 'origin', 'the reload\'s Referer carries the origin, never the secret');
     const setCookie = exchange.headers['set-cookie']?.[0] ?? '';
     assert.match(setCookie, new RegExp(`^__gah_preview_${preview.listenPort}=[A-Za-z0-9_-]{43}; `));
     assert.ok(!setCookie.includes(String(secret)), 'the cookie holds a derived token, not the URL secret');
@@ -290,7 +293,7 @@ test('the URL secret is exchanged for a listener-scoped cookie that does not sto
     assert.equal((await fetchUrl(`${origin}/`, { cookie: `__gah_preview_${preview.listenPort}=${secret}` })).status, 403);
 
     const accessCookie = setCookie.split(';')[0];
-    const served = await fetchUrl(`${origin}/page?a=1`, { cookie: `theme=dark; ${accessCookie}; __gah_preview_1=x` });
+    const served = await fetchUrl(`${origin}/page?a=1`, { cookie: `theme=dark; ${accessCookie}; __gah_preview_1=x`, referer: `${origin}/` });
     assert.equal(served.status, 200);
     assert.equal(served.body, 'app');
     assert.deepEqual(seen, [{ url: '/page?a=1', cookie: 'theme=dark' }], 'preview cookies never reach the dev server');
@@ -342,10 +345,23 @@ test('a preview cookie only works from that preview\'s own origin', async () => 
     assert.equal((await fetchUrl(`${originB}/api`, { cookie, host: `localhost:${b.listenPort}`, origin: `http://localhost:${b.listenPort}` }, 'POST')).status, 200);
     // Another context may still navigate to the preview (a link, the dashboard's frame).
     assert.equal((await fetchUrl(`${originB}/`, { cookie, 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'navigate' })).status, 200);
-    // Non-browser clients send no Origin: the cookie alone still works.
-    assert.equal((await fetchUrl(`${originB}/api`, { cookie }, 'POST')).status, 200);
-    assert.match(await rawUpgrade(b.listenPort, [`cookie: ${cookie}`]), /^HTTP\/1\.1 101/);
-    assert.equal(upstreamRequests, 6);
+    assert.equal(upstreamRequests, 4);
+
+    // Plain HTTP to a non-loopback address (the Tailnet URL): a browser sends
+    // no Origin and no fetch metadata on a GET, so a <script src> on A's page
+    // differs from B's own only by its Referer, which A can drop but not forge.
+    assert.equal((await fetchUrl(`${originB}/private-config.js`, { cookie, referer: `${originA}/` })).status, 403);
+    assert.equal((await fetchUrl(`${originB}/private-config.js`, { cookie })).status, 403, 'a dropped Referer proves nothing');
+    assert.equal((await fetchUrl(`${originB}/private-config.js`, { cookie, referer: 'null' })).status, 403);
+    assert.equal(await rawUpgrade(b.listenPort, [`cookie: ${cookie}`]), '', 'an upgrade with no Origin is not a page of B');
+    assert.equal(upstreamRequests, 4, 'refused traffic never reaches the dev server');
+    // B's own pages name B in the Referer: the exchange page's reload, then
+    // every subresource and same-origin fetch.
+    assert.equal((await fetchUrl(`${originB}/`, { cookie, referer: `${originB}/` })).status, 200);
+    assert.equal((await fetchUrl(`${originB}/src/main.ts`, { cookie, referer: `${originB}/page?x=1` })).status, 200);
+    // A non-browser client holding the cookie sends that Referer itself.
+    assert.match(await rawUpgrade(b.listenPort, [`cookie: ${cookie}`, `referer: ${originB}/`]), /^HTTP\/1\.1 101/);
+    assert.equal(upstreamRequests, 7);
   } finally {
     await previewProxy.clear('p', 'iso-a');
     await previewProxy.clear('p', 'iso-b');

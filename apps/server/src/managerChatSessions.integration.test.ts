@@ -750,7 +750,7 @@ test('a session preview auto-detects the dev-server port and proxies it', { time
       }).on('error', reject);
     });
     const served = await new Promise<{ status: number; body: string }>((resolve, reject) => {
-      http.get(new URL('/', preview.url), { agent: false, headers: { cookie: accessCookie } }, (res) => {
+      http.get(new URL('/', preview.url), { agent: false, headers: { cookie: accessCookie, referer: `${new URL(preview.url).origin}/` } }, (res) => {
         let body = '';
         res.on('data', (chunk) => { body += chunk; });
         res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
