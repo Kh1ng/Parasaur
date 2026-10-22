@@ -344,30 +344,17 @@ pub fn run_review_backend_for_identity(
     let mut last_progress_elapsed_secs = None;
     let mut saw_progress = false;
     let mut cleanup_error = None;
-    let mut supplemental_stderr = None;
-    let outcome = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                if status.success() {
-                    break ReviewProcessOutcome::Success;
-                }
-                if let Some(code) = status.code() {
-                    break ReviewProcessOutcome::NonZeroExit(code);
-                }
-                #[cfg(unix)]
-                {
-                    use std::os::unix::process::ExitStatusExt;
-                    if let Some(signal) = status.signal() {
-                        break ReviewProcessOutcome::SignalTermination(signal);
-                    }
-                }
-                break ReviewProcessOutcome::SpawnFailure;
-            }
-            Ok(None) => {
+    let mut owned = true;
+    // `None` once the reviewer exited on its own. The leader stays unreaped
+    // until cleanup below has signalled its group, so that group id cannot
+    // name an unrelated group by then.
+    let killed_outcome = loop {
+        match crate::runner::exited_without_reaping(&child) {
+            Ok(true) => break None,
+            Ok(false) => {
                 if shutdown_requested() {
                     cleanup_error = kill_process_group(&mut child);
-                    let _ = child.wait();
-                    break ReviewProcessOutcome::SignalTermination(libc::SIGTERM);
+                    break Some(ReviewProcessOutcome::SignalTermination(libc::SIGTERM));
                 }
                 let previous_progress_at = last_progress_at;
                 // Progress is any of: new stdout/stderr bytes (stream activity or
@@ -421,24 +408,23 @@ pub fn run_review_backend_for_identity(
                 };
                 if stalled {
                     cleanup_error = kill_process_group(&mut child);
-                    let _ = child.wait();
-                    break ReviewProcessOutcome::IdleTimeout;
+                    break Some(ReviewProcessOutcome::IdleTimeout);
                 }
                 // Optional hard ceiling: a separate explicit safety policy. Even
                 // a continuously-active reviewer is killed here -- but classified
                 // as HardTimeout, never as a backend failure.
                 if hard_timeout.is_some_and(|timeout| start.elapsed() >= timeout) {
                     cleanup_error = kill_process_group(&mut child);
-                    let _ = child.wait();
-                    break ReviewProcessOutcome::HardTimeout;
+                    break Some(ReviewProcessOutcome::HardTimeout);
                 }
                 thread::sleep(poll_interval);
             }
-            Err(err) => {
-                cleanup_error = kill_process_group(&mut child);
-                let _ = child.wait();
-                supplemental_stderr = Some(err.to_string());
-                break ReviewProcessOutcome::SpawnFailure;
+            Err(error) => {
+                // Not provably ours any more (ECHILD: already reaped), so its
+                // pid and group id may name other processes: no signal, no wait.
+                cleanup_error = Some(format!("lost track of review process: {error}"));
+                owned = false;
+                break Some(ReviewProcessOutcome::SpawnFailure);
             }
         }
     };
@@ -456,30 +442,37 @@ pub fn run_review_backend_for_identity(
             crate::runner::resources::finish_resource_sampler_none()
         }
     };
-    // A surviving descendant may still own the inherited pipe descriptors.
-    // Do not let joining the stream-copy threads turn a bounded cleanup
-    // failure into another hang; dropping the handles detaches them.
-    if cleanup_error.is_none() {
-        if let Some(handle) = stdout_thread {
-            let _ = handle.join();
-        }
-        if let Some(handle) = stderr_thread {
-            let _ = handle.join();
-        }
+    // The review is over, so whatever the reviewer left in its process group
+    // ends with it. A process outside the group may still hold the inherited
+    // pipes; wait for the copiers only for a bounded grace, never a join.
+    let status = owned.then(|| {
+        crate::runner::kill_unreaped_process_group(&child);
+        child.wait()
+    });
+    if let Some(Err(error)) = &status {
+        cleanup_error.get_or_insert_with(|| format!("lost track of review process: {error}"));
     }
+    let outcome = killed_outcome.unwrap_or_else(|| match status {
+        Some(Ok(status)) => exit_outcome(status),
+        _ => ReviewProcessOutcome::SpawnFailure,
+    });
+    let output_complete =
+        crate::runner::pipes::readers_finish_within_grace(&[&stdout_thread, &stderr_thread]);
     if progress_rx.try_iter().last().is_some() {
         last_progress_elapsed_secs = Some(start.elapsed().as_secs_f64());
     }
+    // Stop collecting: a copier still reading closes its pipe at its next read.
+    drop(progress_rx);
 
     let raw_stdout = read_text_file(&stdout_path);
     let usage_artifacts = usage_capture.finish(worktree, session_dir, &raw_stdout, env_vars);
     let mut stdout = usage_artifacts.review_text.unwrap_or(raw_stdout);
     let mut stderr = read_text_file(&stderr_path);
-    if let Some(extra) = supplemental_stderr {
+    if !output_complete {
         if !stderr.is_empty() {
             stderr.push('\n');
         }
-        stderr.push_str(&extra);
+        stderr.push_str("GAH: review output was still held open by a process outside its process group; output may be incomplete.");
     }
     let outcome = if let Some(error) = cleanup_error {
         if !stderr.is_empty() {
@@ -513,6 +506,23 @@ pub fn run_review_backend_for_identity(
         agy_cli_log_delta: usage_artifacts.agy_cli_log_delta,
         resources: review_resources,
     }
+}
+
+fn exit_outcome(status: std::process::ExitStatus) -> ReviewProcessOutcome {
+    if status.success() {
+        return ReviewProcessOutcome::Success;
+    }
+    if let Some(code) = status.code() {
+        return ReviewProcessOutcome::NonZeroExit(code);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return ReviewProcessOutcome::SignalTermination(signal);
+        }
+    }
+    ReviewProcessOutcome::SpawnFailure
 }
 
 fn read_text_file(path: &Path) -> String {
@@ -696,6 +706,153 @@ mod tests {
 
         assert_eq!(result.outcome, ReviewProcessOutcome::IdleTimeout);
         assert!(result.duration_secs < 5.0);
+    }
+
+    /// Run the fake `claude` reviewer `body` with a 60s idle budget.
+    fn review_with_fake_claude(f: &Fixture, body: &str) -> ReviewRunResult {
+        make_fake_bin(&f.bin_dir, "claude", body);
+        let mut profile = test_profile();
+        profile.review_timeout_seconds = Some(60);
+        let _guard = PathGuard::set(f.bin_dir.display().to_string());
+        run_review_backend(
+            &profile,
+            "claude",
+            &f.worktree,
+            "task",
+            &f.session_dir,
+            None,
+            &[],
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_review_backend_normal_exit_reaps_a_background_child_holding_the_pipes() {
+        let _exec_guard = crate::test_support::ExecGuard::new();
+        let f = fixture();
+        let pid_path = f.session_dir.join("sleeper.pid");
+        let body = format!(
+            "#!/bin/sh\nsleep 30 &\necho $! > '{}'\necho 'review done'\n",
+            pid_path.display()
+        );
+        let started = Instant::now();
+
+        let result = review_with_fake_claude(&f, &body);
+
+        assert_eq!(result.outcome, ReviewProcessOutcome::Success);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(result.stdout.contains("review done"));
+        let pid = crate::runner::pipes::read_pid(&pid_path);
+        assert!(crate::runner::pipes::process_exits_within(
+            pid,
+            Duration::from_secs(2)
+        ));
+    }
+
+    /// A reviewer leaves a newline-free writer in its own session, which
+    /// group cleanup cannot reach. The review returns after the drain grace
+    /// and its copier closes the pipe; the writer records the EPIPE.
+    #[cfg(unix)]
+    #[test]
+    fn run_review_backend_return_releases_an_escaped_endless_writer() {
+        let _exec_guard = crate::test_support::ExecGuard::new();
+        let f = fixture();
+        let stop = f.session_dir.join("stop");
+        let closed = f.session_dir.join("closed");
+        let writer = format!(
+            "(while [ ! -e \"{}\" ] && printf x; do :; done); touch \"{}\"",
+            stop.display(),
+            closed.display()
+        );
+        let body = format!(
+            "#!/bin/sh\necho 'review done'\nwriter='{writer}'\n\
+             if command -v setsid >/dev/null 2>&1; then setsid sh -c \"$writer\" 2>/dev/null &\n\
+             else perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' sh -c \"$writer\" 2>/dev/null &\n\
+             fi\nsleep 0.2\n"
+        );
+        let started = Instant::now();
+
+        let result = review_with_fake_claude(&f, &body);
+        let elapsed = started.elapsed();
+        let released =
+            crate::runner::pipes::wait_until(Instant::now() + Duration::from_secs(2), || {
+                closed.exists()
+            });
+        fs::write(&stop, "").unwrap();
+
+        assert_eq!(result.outcome, ReviewProcessOutcome::Success);
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "returned after {elapsed:?}"
+        );
+        assert!(
+            released,
+            "copier kept reading the escaped writer after return"
+        );
+        assert!(result.stdout.contains("review done"));
+        assert!(
+            !result.stdout.contains("xxxx"),
+            "abandoned partial line was flushed"
+        );
+        assert!(result.stderr.contains("still held open"));
+    }
+
+    /// Under an inherited `SIGCHLD=SIG_IGN` the exited reviewer is reaped at
+    /// once, so its pid and group id are no longer ours. The run must report
+    /// a cleanup failure without signalling: a member left in the group
+    /// would die from any group signal, so it surviving proves none was sent.
+    /// The disposition is process-wide, so this re-executes itself alone.
+    #[cfg(unix)]
+    #[test]
+    fn run_review_backend_never_signals_a_lost_reviewer() {
+        const ISOLATED: &str = "GAH_TEST_REVIEW_SIGCHLD_IGNORED";
+        if std::env::var_os(ISOLATED).is_none() {
+            let name = concat!(
+                module_path!(),
+                "::run_review_backend_never_signals_a_lost_reviewer"
+            );
+            let name = name.split_once("::").unwrap().1;
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([name, "--exact", "--test-threads=1", "--nocapture"])
+                .env(ISOLATED, "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "{stdout}\n{stderr}"
+            );
+            return;
+        }
+        unsafe {
+            libc::signal(libc::SIGCHLD, libc::SIG_IGN);
+        }
+        let _exec_guard = crate::test_support::ExecGuard::new();
+        let f = fixture();
+        let pid_path = f.session_dir.join("member.pid");
+        let body = format!(
+            "#!/bin/sh\nsleep 30 &\necho $! > '{}'\necho 'review done'\n",
+            pid_path.display()
+        );
+        let started = Instant::now();
+
+        let result = review_with_fake_claude(&f, &body);
+
+        let member = crate::runner::pipes::read_pid(&pid_path);
+        let survived =
+            !crate::runner::pipes::process_exits_within(member, Duration::from_millis(500));
+        unsafe {
+            libc::kill(member as libc::pid_t, libc::SIGKILL);
+        }
+        assert!(survived, "lost reviewer group was signalled");
+        assert!(
+            matches!(&result.outcome, ReviewProcessOutcome::CleanupFailure(error) if error.contains("lost track")),
+            "{:?}",
+            result.outcome
+        );
+        assert!(result.stderr.contains("cleanup failed: lost track"));
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 
     #[test]

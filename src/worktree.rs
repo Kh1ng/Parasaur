@@ -1,12 +1,12 @@
+use crate::runner::PipeCapture;
 use anyhow::{Context, Result};
 use fs2::FileExt;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::{Child, ChildStderr, ChildStdout, ExitStatus, Output, Stdio};
 use std::thread;
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(300);
@@ -74,29 +74,37 @@ fn wait_with_timeout(child: Child, context: &str) -> Result<Output> {
     wait_with_timeout_for(child, context, GIT_TIMEOUT)
 }
 
-fn drain_pipe<R>(mut pipe: R) -> JoinHandle<std::io::Result<Vec<u8>>>
-where
-    R: Read + Send + 'static,
-{
-    thread::spawn(move || {
-        let mut bytes = Vec::new();
-        pipe.read_to_end(&mut bytes)?;
-        Ok(bytes)
-    })
+/// Spawn a git (or provider CLI) command unattended, with piped output, in
+/// its own process group so a timeout can terminate hooks and remote helpers
+/// it started along with it.
+fn spawn_git(cmd: &mut Command, context: &str) -> Result<Child> {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    crate::runner::prepare_process_group(cmd);
+    cmd.spawn().with_context(|| context.to_string())
 }
 
-fn collect_pipe(
-    reader: Option<JoinHandle<std::io::Result<Vec<u8>>>>,
+/// Wait at most `PIPE_DRAIN_GRACE` for both streams to reach EOF. A stream a
+/// leftover process still holds yields the bytes read so far.
+fn collect_pipes(
+    stdout: Option<PipeCapture>,
+    stderr: Option<PipeCapture>,
     context: &str,
-    stream: &str,
-) -> Result<Vec<u8>> {
-    let Some(reader) = reader else {
-        return Ok(Vec::new());
+) -> Result<(Vec<u8>, Vec<u8>, bool)> {
+    let finished = |pipe: &Option<PipeCapture>| pipe.as_ref().is_none_or(PipeCapture::is_finished);
+    crate::runner::wait_until(Instant::now() + crate::runner::PIPE_DRAIN_GRACE, || {
+        finished(&stdout) && finished(&stderr)
+    });
+    let take = |pipe: Option<PipeCapture>, stream: &str| match pipe {
+        None => Ok((Vec::new(), true)),
+        Some(pipe) => pipe
+            .take()
+            .with_context(|| format!("reading {context} {stream}")),
     };
-    reader
-        .join()
-        .map_err(|_| anyhow::anyhow!("{context} {stream} reader panicked"))?
-        .with_context(|| format!("reading {context} {stream}"))
+    let (stdout, stdout_closed) = take(stdout, "stdout")?;
+    let (stderr, stderr_closed) = take(stderr, "stderr")?;
+    Ok((stdout, stderr, stdout_closed && stderr_closed))
 }
 
 pub(crate) fn wait_with_timeout_for(
@@ -110,32 +118,50 @@ pub(crate) fn wait_with_timeout_for(
     let stdout = child
         .stdout
         .take()
-        .map(|pipe: ChildStdout| drain_pipe(pipe));
+        .map(|pipe: ChildStdout| PipeCapture::spawn(pipe));
     let stderr = child
         .stderr
         .take()
-        .map(|pipe: ChildStderr| drain_pipe(pipe));
+        .map(|pipe: ChildStderr| PipeCapture::spawn(pipe));
     let started = Instant::now();
-    let status: ExitStatus = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
+    // Leave the leader unreaped until cleanup so its group id stays ours. An
+    // error means it is not provably ours any more (ECHILD: already reaped):
+    // return without signalling or waiting; the dropped captures stop
+    // retaining output.
+    while !crate::runner::exited_without_reaping(&child)
+        .with_context(|| format!("{context}: lost track of the process; not cleaned up"))?
+    {
         if started.elapsed() >= timeout {
-            let _ = child.kill();
+            // Kill the whole group: a hook or remote helper that inherited
+            // the pipes would otherwise keep them open after git dies.
+            let _ = crate::runner::kill_process_group(&mut child);
             let _ = child.wait();
-            // Killing the child closes its pipe ends, allowing the drain
-            // threads to terminate before this function returns.
-            let _ = collect_pipe(stdout, context, "stdout");
-            let _ = collect_pipe(stderr, context, "stderr");
+            let _ = collect_pipes(stdout, stderr, context);
             anyhow::bail!("{context} timed out after {}s", timeout.as_secs());
         }
         thread::sleep(Duration::from_millis(100));
-    };
+    }
 
+    let collected = collect_pipes(stdout, stderr, context);
+    let closed = collected.as_ref().map_or(true, |(_, _, closed)| *closed);
+    if !closed {
+        // Something git started still holds its output after git exited.
+        // Leftovers are not killed on a clean exit (a hook may detach work
+        // on purpose), only ones that would otherwise block this caller.
+        crate::runner::kill_unreaped_process_group(&child);
+    }
+    let status: ExitStatus = child.wait()?;
+    let (stdout, mut stderr, _) = collected?;
+    if !closed {
+        stderr.extend_from_slice(
+            format!("\nGAH: {context} output was still held open after exit; stopped waiting and terminated its process group.\n")
+                .as_bytes(),
+        );
+    }
     Ok(Output {
         status,
-        stdout: collect_pipe(stdout, context, "stdout")?,
-        stderr: collect_pipe(stderr, context, "stderr")?,
+        stdout,
+        stderr,
     })
 }
 
@@ -273,17 +299,15 @@ pub fn git(args: &[&str], cwd: &Path) -> Result<String> {
 
 /// Run git and return raw Output. Does NOT error on non-zero exit.
 pub fn git_raw(args: &[&str], cwd: &Path) -> Result<std::process::Output> {
-    let child = Command::new("git")
-        .args(args)
+    let context = format!("git {}", args.join(" "));
+    let mut cmd = Command::new("git");
+    cmd.args(args)
         .current_dir(cwd)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_PAGER", "")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("git {}", args.join(" ")))?;
-    wait_with_timeout(child, &format!("git {}", args.join(" ")))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    let child = spawn_git(&mut cmd, &context)?;
+    wait_with_timeout(child, &context)
 }
 
 pub fn create(
@@ -922,16 +946,13 @@ fn push_branch_with_executable(
 ) -> Result<()> {
     let askpass = write_askpass()?;
     let result = retry_transient_git_network("push", || {
-        let child = Command::new(executable)
-            .args(["push", "-q", push_url, branch])
+        let mut cmd = Command::new(executable);
+        cmd.args(["push", "-q", push_url, branch])
             .env("GIT_ASKPASS", &askpass)
             .env(ASKPASS_SECRET_ENV, pat)
             .env("GIT_TERMINAL_PROMPT", "0")
-            .current_dir(worktree)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context("git push")?;
+            .current_dir(worktree);
+        let child = spawn_git(&mut cmd, "git push")?;
         let out = wait_with_timeout(child, "git push")?;
         if !out.status.success() {
             anyhow::bail!(
@@ -968,16 +989,13 @@ fn delete_remote_branch_with_executable(
 ) -> Result<()> {
     let askpass = write_askpass()?;
     let result = retry_transient_git_network("push --delete", || {
-        let child = Command::new(executable)
-            .args(["push", "-q", push_url, "--delete", branch])
+        let mut cmd = Command::new(executable);
+        cmd.args(["push", "-q", push_url, "--delete", branch])
             .env("GIT_ASKPASS", &askpass)
             .env(ASKPASS_SECRET_ENV, pat)
             .env("GIT_TERMINAL_PROMPT", "0")
-            .current_dir(worktree)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context("git push --delete")?;
+            .current_dir(worktree);
+        let child = spawn_git(&mut cmd, "git push --delete")?;
         let out = wait_with_timeout(child, "git push --delete")?;
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr);

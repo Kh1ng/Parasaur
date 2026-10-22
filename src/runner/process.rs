@@ -12,12 +12,14 @@ use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+pub(crate) use crate::runner::log_copier::copy_stream_to_file;
 
 /// Set by the loop/dispatch process's SIGINT/SIGTERM handler. Backend runners
 /// poll it and terminate their dedicated process group, allowing the caller to
@@ -413,45 +415,6 @@ fn kill_linux_process_tree(root_pid: u32) -> Vec<u32> {
     }
 }
 
-pub(crate) fn copy_stream_to_file<R: Read + Send + 'static>(
-    mut reader: R,
-    path: PathBuf,
-    progress_tx: Option<mpsc::Sender<()>>,
-) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) else {
-            return;
-        };
-        let mut buf = [0_u8; 8192];
-        let mut pending = Vec::new();
-        while let Ok(read) = reader.read(&mut buf) {
-            if read == 0 {
-                break;
-            }
-            pending.extend_from_slice(&buf[..read]);
-            while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
-                let line: Vec<_> = pending.drain(..=newline).collect();
-                let text = String::from_utf8_lossy(&line);
-                if file
-                    .write_all(crate::redact::redact(&text).as_bytes())
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            let _ = file.flush();
-            if let Some(tx) = &progress_tx {
-                let _ = tx.send(());
-            }
-        }
-        if !pending.is_empty() {
-            let text = String::from_utf8_lossy(&pending);
-            let _ = file.write_all(crate::redact::redact(&text).as_bytes());
-            let _ = file.flush();
-        }
-    })
-}
-
 pub(crate) fn write_redacted_task(session_dir: &Path, task: &str) -> Result<()> {
     fs::write(session_dir.join("task.md"), crate::redact::redact(task))
         .context("writing redacted task artifact")
@@ -728,15 +691,18 @@ fn spawn_with_idle_watch_with_shutdown(
     let mut killed_for_hard_timeout = false;
     let mut killed_for_shutdown = false;
     let mut cleanup_error = None;
-    let mut exit_code = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status.code().unwrap_or(-1),
-            Ok(None) => {
+    let mut owned = true;
+    // `None` once the backend exited on its own. The leader stays unreaped
+    // until cleanup below has signalled its group, so that group id cannot
+    // name an unrelated group by then.
+    let killed_exit_code = loop {
+        match crate::runner::exited_without_reaping(&child) {
+            Ok(true) => break None,
+            Ok(false) => {
                 if shutdown_requested.load(Ordering::SeqCst) {
                     cleanup_error = kill_process_group(&mut child);
-                    let _ = child.wait();
                     killed_for_shutdown = true;
-                    break -2;
+                    break Some(-2);
                 }
                 let previous_progress_at = last_progress_at;
                 while progress_rx.try_recv().is_ok() {
@@ -791,9 +757,8 @@ fn spawn_with_idle_watch_with_shutdown(
                 };
                 if hard_timeout.is_some_and(|timeout| start.elapsed() >= timeout) {
                     cleanup_error = kill_process_group(&mut child);
-                    let _ = child.wait();
                     killed_for_hard_timeout = true;
-                    break -1;
+                    break Some(-1);
                 }
                 if stalled {
                     // Issue #579: record whether the backend had already
@@ -806,19 +771,17 @@ fn spawn_with_idle_watch_with_shutdown(
                     had_attempt_progress_at_kill =
                         worktree_changed_since(initial_worktree_snapshot.as_deref(), worktree);
                     cleanup_error = kill_process_group(&mut child);
-                    let _ = child.wait();
                     killed_for_idle = true;
-                    break -1;
+                    break Some(-1);
                 }
                 thread::sleep(poll_interval);
             }
-            Err(_) => {
-                // try_wait() itself erroring is rare, but the child may
-                // still be alive -- kill and reap rather than risk leaking
-                // it (same pattern as the idle-kill branch above).
-                cleanup_error = kill_process_group(&mut child);
-                let _ = child.wait();
-                break -1;
+            Err(error) => {
+                // Not provably ours any more (ECHILD: already reaped), so its
+                // pid and group id may name other processes: no signal, no wait.
+                cleanup_error = Some(format!("lost track of backend process: {error}"));
+                owned = false;
+                break Some(-1);
             }
         }
     };
@@ -839,16 +802,28 @@ fn spawn_with_idle_watch_with_shutdown(
             crate::runner::resources::finish_resource_sampler_none()
         }
     };
-    // A surviving descendant may still own the inherited pipe descriptors.
-    // Never turn a bounded cleanup failure into an unbounded thread join.
-    if cleanup_error.is_none() {
-        if let Some(handle) = stdout_thread {
-            let _ = handle.join();
-        }
-        if let Some(handle) = stderr_thread {
-            let _ = handle.join();
+    // The attempt is over, so whatever the backend left in its process group
+    // ends with it. A surviving descendant may still own the inherited pipe
+    // descriptors (one outside the group is not reachable here); wait for the
+    // log copiers only for a bounded grace, never an unbounded join.
+    let status = owned.then(|| {
+        crate::runner::kill_unreaped_process_group(&child);
+        child.wait()
+    });
+    let mut exit_code = killed_exit_code.unwrap_or_else(|| {
+        let code = status.and_then(Result::ok).and_then(|status| status.code());
+        code.unwrap_or(-1)
+    });
+    if !crate::runner::pipes::readers_finish_within_grace(&[&stdout_thread, &stderr_thread]) {
+        if let Ok(mut file) = fs::OpenOptions::new().append(true).open(log_path) {
+            let _ = writeln!(
+                file,
+                "GAH: backend output was still held open by a process outside its process group; log may be incomplete."
+            );
         }
     }
+    // Stop collecting: a copier still reading closes its pipe at its next read.
+    drop(progress_rx);
     if let Some(error) = cleanup_error {
         exit_code = PROCESS_CLEANUP_FAILED_EXIT_CODE;
         if let Ok(mut file) = fs::OpenOptions::new().append(true).open(log_path) {
@@ -991,6 +966,32 @@ mod tests {
         let log = fs::read_to_string(log_path).unwrap();
         assert!(!log.contains("leaked"));
         assert!(log.contains("configured 1s hard wall-clock timeout"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normal_exit_reaps_a_background_child_holding_the_log_pipes() {
+        let _exec_guard = ExecGuard::new();
+        let f = fixture();
+        let pid_path = f.session_dir.join("sleeper.pid");
+        let body = format!(
+            "#!/bin/sh\nsleep 30 &\necho $! > '{}'\necho done\n",
+            pid_path.display()
+        );
+        make_fake_bin(&f.bin_dir, "backend", &body);
+        let log_path = f.session_dir.join("backend-output.log");
+        let started = Instant::now();
+        let command = Command::new(f.bin_dir.join("backend"));
+        let result = spawn_with_idle_watch(command, &log_path, &f.worktree, 60, "test").unwrap();
+
+        assert_eq!(result.0, 0);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(fs::read_to_string(log_path).unwrap().contains("done"));
+        let pid = crate::runner::pipes::read_pid(&pid_path);
+        assert!(crate::runner::pipes::process_exits_within(
+            pid,
+            Duration::from_secs(2)
+        ));
     }
 
     #[cfg(target_os = "linux")]

@@ -95,6 +95,60 @@ fn wait_with_timeout_drains_output_larger_than_os_pipe_capacity() {
     assert_eq!(output.stderr.len(), 262_144);
 }
 
+/// Run `script` as a stand-in git through the real spawn path. The pid of
+/// the background sleeper it starts is written to `<dir>/sleeper.pid`.
+#[cfg(unix)]
+fn run_fake_git_with_sleeper(script: &str, timeout: Duration) -> (Result<Output>, Duration, u32) {
+    let tmp = TempDir::new().unwrap();
+    let pid_file = tmp.path().join("sleeper.pid");
+    let mut cmd = StdCommand::new("sh");
+    cmd.args([
+        "-c",
+        &script.replace("PID_FILE", &pid_file.display().to_string()),
+    ]);
+    let child = spawn_git(&mut cmd, "fake git").unwrap();
+    let started = Instant::now();
+    let result = wait_with_timeout_for(child, "fake git", timeout);
+    let elapsed = started.elapsed();
+    let pid = crate::runner::pipes::read_pid(&pid_file);
+    (result, elapsed, pid)
+}
+
+#[cfg(unix)]
+#[test]
+fn git_timeout_kills_helpers_that_inherited_the_output_pipes() {
+    let (result, elapsed, pid) = run_fake_git_with_sleeper(
+        "sleep 60 & echo $! > 'PID_FILE'; sleep 60",
+        Duration::from_secs(1),
+    );
+
+    let err = result.unwrap_err();
+    assert!(format!("{err:#}").contains("fake git timed out"), "{err:#}");
+    assert!(elapsed < Duration::from_secs(3), "{elapsed:?}");
+    assert!(crate::runner::pipes::process_exits_within(
+        pid,
+        Duration::from_secs(2)
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn git_exit_does_not_wait_forever_on_a_helper_holding_the_output_pipes() {
+    let (result, elapsed, pid) = run_fake_git_with_sleeper(
+        "sleep 60 & echo $! > 'PID_FILE'; echo out",
+        Duration::from_secs(30),
+    );
+
+    let output = result.unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"out\n");
+    assert!(elapsed < Duration::from_secs(4), "{elapsed:?}");
+    assert!(crate::runner::pipes::process_exits_within(
+        pid,
+        Duration::from_secs(2)
+    ));
+}
+
 // ── create() ─────────────────────────────────────────────────────────
 
 #[test]
