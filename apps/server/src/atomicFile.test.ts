@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import fs, { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { preserveCorruptFile, writeFileAtomic } from './atomicFile.js';
@@ -28,17 +29,24 @@ test('atomic writes create private files, replace existing ones, and leave no te
   }
 });
 
-test('a failed atomic write keeps the previous contents and removes its temporary file', () => {
+test('a failed atomic write keeps the previous contents and removes its temporary file', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-atomic-'));
   try {
     const path = join(dir, 'state');
     writeFileSync(path, 'old');
-    // Renaming a file over a directory fails after the temporary file is written.
-    const blocked = join(dir, 'blocked');
-    writeFileAtomic(join(blocked, 'placeholder'), 'x');
-    assert.throws(() => writeFileAtomic(blocked, 'new'));
+    // Fail the replacement of this same file after its temporary file is written.
+    t.mock.method(fs, 'renameSync', () => {
+      throw Object.assign(new Error('injected rename failure'), { code: 'EIO' });
+    });
+    syncBuiltinESMExports();
+    try {
+      assert.throws(() => writeFileAtomic(path, 'new'), /injected rename failure/);
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
     assert.equal(readFileSync(path, 'utf8'), 'old');
-    assert.deepEqual(readdirSync(dir).sort(), ['blocked', 'state']);
+    assert.deepEqual(readdirSync(dir), ['state']);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -148,38 +148,68 @@ function deriveLeaseWorkKey(lease: Pick<LeaseRecord, 'profile' | 'session'>): st
   });
 }
 
+/** Marker beside the lease store that keeps dispatch refused until removed. */
+const LEASE_QUARANTINE_SUFFIX = '.quarantined';
+const LEASE_RECONCILE_STEPS = 'To resume dispatch, check the fleet nodes for sessions this coordinator started and stop any duplicates, then delete the quarantine marker and restart the server.';
+
+class LeaseStoreShapeError extends Error {}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function isCompleteLease(value: unknown): value is LeaseRecord {
+  const lease = value as Partial<LeaseRecord> | null;
+  return typeof lease === 'object' && lease !== null
+    && isNonEmptyString(lease.requestId)
+    && isNonEmptyString(lease.nodeId)
+    && isNonEmptyString(lease.nodeUrl)
+    && typeof lease.session === 'object' && lease.session !== null
+    && isNonEmptyString(lease.session.id);
+}
+
 class LeaseStore {
   private leases = new Map<string, LeaseRecord>();
   private leasesByWorkKey = new Map<string, LeaseRecord>();
   private unreadable = false;
+  /** Present while the store is quarantined. Only an operator removes it. */
+  private readonly quarantinePath: string;
 
   constructor(private readonly path: string) {
+    this.quarantinePath = `${path}${LEASE_QUARANTINE_SUFFIX}`;
     this.load();
   }
 
   private load(): void {
+    if (existsSync(this.quarantinePath)) {
+      this.unreadable = true;
+      console.error(`error: dispatch lease store ${this.path} is quarantined by ${this.quarantinePath}; new dispatches are refused. ${LEASE_RECONCILE_STEPS}`);
+      return;
+    }
     if (!existsSync(this.path)) {
       return;
     }
     try {
-      const payload = JSON.parse(readFileSync(this.path, 'utf8')) as { leases?: LeaseRecord[] };
-      if (Array.isArray(payload.leases)) {
-        for (const lease of payload.leases) {
-          if (lease?.requestId && lease?.session?.id && lease?.nodeId && lease?.nodeUrl) {
-            const normalizedLease = {
-              ...lease,
-              profile: typeof lease.profile === 'string' ? lease.profile : '',
-              workKey: deriveLeaseWorkKey({
-                profile: typeof lease.profile === 'string' ? lease.profile : '',
-                session: lease.session
-              }) ?? (typeof lease.workKey === 'string' ? lease.workKey : lease.requestId)
-            } satisfies LeaseRecord;
-            this.leases.set(normalizedLease.requestId, normalizedLease);
-            this.leasesByWorkKey.set(normalizedLease.workKey, normalizedLease);
-          }
+      const payload = JSON.parse(readFileSync(this.path, 'utf8')) as { leases?: unknown };
+      if (!Array.isArray(payload.leases)) {
+        throw new LeaseStoreShapeError('no leases array');
+      }
+      for (const lease of payload.leases) {
+        // A record without these fields could be running work; skipping it
+        // would let the same work start again.
+        if (!isCompleteLease(lease)) {
+          throw new LeaseStoreShapeError('incomplete lease record');
         }
-      } else {
-        throw new Error('no leases array');
+        const normalizedLease = {
+          ...lease,
+          profile: typeof lease.profile === 'string' ? lease.profile : '',
+          workKey: deriveLeaseWorkKey({
+            profile: typeof lease.profile === 'string' ? lease.profile : '',
+            session: lease.session
+          }) ?? (typeof lease.workKey === 'string' ? lease.workKey : lease.requestId)
+        } satisfies LeaseRecord;
+        this.leases.set(normalizedLease.requestId, normalizedLease);
+        this.leasesByWorkKey.set(normalizedLease.workKey, normalizedLease);
       }
     } catch (error) {
       this.leases.clear();
@@ -190,24 +220,44 @@ class LeaseStore {
 
   /** Without its leases the coordinator cannot tell which work is already
    * running, so it stops dispatching rather than start duplicates. Corrupt
-   * contents are moved aside for inspection, so the next server start begins
-   * with no leases; a file that could not be read is left in place. */
+   * contents are quarantined: a marker is written first, then the file is
+   * moved aside for inspection, and dispatch stays refused across restarts
+   * until an operator removes the marker. A file that could not be read is
+   * left in place, so the next start reads it again. */
   private markUnreadable(error: unknown): void {
     const code = (error as NodeJS.ErrnoException).code;
-    const preservedPath = code ? null : preserveCorruptFile(this.path);
     this.unreadable = true;
     // Parser messages quote file contents, so log only the kind of failure.
-    const reason = code ?? (error instanceof SyntaxError ? 'invalid JSON' : 'unexpected contents');
-    const recovery = preservedPath
-      ? `Moved it to ${preservedPath}. Check the fleet nodes for sessions this coordinator started and stop any duplicates, then restart the server to resume dispatch.`
-      : `Left it in place. Check the fleet nodes for sessions this coordinator started and stop any duplicates, then repair or move ${this.path} aside and restart the server.`;
+    const reason = code
+      ?? (error instanceof SyntaxError ? 'invalid JSON' : error instanceof LeaseStoreShapeError ? error.message : 'unexpected contents');
+    let recovery: string;
+    if (code) {
+      recovery = `Left it in place. Check the fleet nodes for sessions this coordinator started and stop any duplicates, then repair or move ${this.path} aside and restart the server.`;
+    } else if (!this.writeQuarantineMarker(reason)) {
+      recovery = `Could not write the quarantine marker ${this.quarantinePath}, so the file was left in place. Check the fleet nodes for sessions this coordinator started and stop any duplicates, then repair or move ${this.path} aside and restart the server.`;
+    } else {
+      const preservedPath = preserveCorruptFile(this.path);
+      recovery = `${preservedPath ? `Moved it to ${preservedPath}` : 'Left it in place'} and wrote ${this.quarantinePath}. ${LEASE_RECONCILE_STEPS}`;
+    }
     console.error(`error: dispatch lease store ${this.path} is unreadable (${reason}); new dispatches are refused. ${recovery}`);
+  }
+
+  private writeQuarantineMarker(reason: string): boolean {
+    try {
+      writeFileAtomic(
+        this.quarantinePath,
+        `Dispatch lease store quarantined at ${nowIso()} (${reason}).\n${LEASE_RECONCILE_STEPS}\n`
+      );
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   assertReadable(): void {
     if (this.unreadable) {
       throw new GAHError(
-        'Dispatch leases could not be read, so new dispatches are refused to avoid duplicate work. An operator must reconcile the lease store; the server log names the preserved file and the recovery steps.',
+        `Dispatch leases could not be read, so new dispatches are refused to avoid duplicate work. An operator must reconcile the lease store: stop any duplicate sessions on the fleet nodes, then delete the quarantine marker (the lease file's name plus \`${LEASE_QUARANTINE_SUFFIX}\`) and restart the server. The server log names the files.`,
         'DISPATCH_LEASES_UNREADABLE'
       );
     }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, truncateSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
@@ -710,8 +710,8 @@ test('fleet dispatch deduplicates concurrent starts for the same work identity a
   }
 });
 
-test('fleet dispatch refuses new work when the lease file is torn and preserves it', async (t) => {
-  const leaseDir = mkdtempSync(resolve(tmpdir(), 'gah-fleet-torn-'));
+function createUnreadableStoreFixture(prefix: string) {
+  const leaseDir = mkdtempSync(resolve(tmpdir(), prefix));
   const leaseStorePath = resolve(leaseDir, 'dispatch-leases.json');
   const published: PublishedMessage[] = [];
   const registryService = {
@@ -739,6 +739,26 @@ test('fleet dispatch refuses new work when the lease file is torn and preserves 
     transportMap,
     published
   });
+  /** Simulate a server start and check that it refuses every dispatch without contacting a node. */
+  const expectRestartRefuses = async () => {
+    const transports = new Map<string, FakeTransport>();
+    const restarted = harness(transports);
+    for (const retry of [options, { ...options, requestId: 'dispatch-torn-retry' }, { ...options, repo: 'owner/other' }]) {
+      await assert.rejects(
+        restarted.startSession(retry),
+        (error: unknown) => (error as { code?: string }).code === 'DISPATCH_LEASES_UNREADABLE'
+      );
+    }
+    assert.equal(transports.size, 0, 'no node may be asked to start work');
+  };
+  const quarantinePath = `${leaseStorePath}.quarantined`;
+  const preservedFiles = () => readdirSync(leaseDir).filter((name) => name.startsWith('dispatch-leases.json.corrupt-'));
+  return { leaseDir, leaseStorePath, quarantinePath, options, harness, expectRestartRefuses, preservedFiles };
+}
+
+test('fleet dispatch keeps refusing new work across restarts after a torn lease file until an operator reconciles', async (t) => {
+  const fixture = createUnreadableStoreFixture('gah-fleet-torn-');
+  const { leaseStorePath, quarantinePath, options, harness, expectRestartRefuses, preservedFiles } = fixture;
   try {
     const first = await harness(new Map()).startSession(options);
     assert.equal(first.nodeId, 'worker-1');
@@ -747,23 +767,49 @@ test('fleet dispatch refuses new work when the lease file is torn and preserves 
     const torn = readFileSync(leaseStorePath, 'utf8');
 
     const logged = t.mock.method(console, 'error', () => {});
-    const restartedTransports = new Map<string, FakeTransport>();
-    const restarted = harness(restartedTransports);
+    await expectRestartRefuses();
     assert.equal(logged.mock.callCount(), 1, 'an unreadable lease store is reported once at load');
-
-    for (const retry of [{ ...options, requestId: 'dispatch-torn-retry' }, { ...options, repo: 'owner/other' }]) {
-      await assert.rejects(
-        restarted.startSession(retry),
-        (error: unknown) => (error as { code?: string }).code === 'DISPATCH_LEASES_UNREADABLE'
-      );
-    }
-    assert.equal(restartedTransports.size, 0, 'no node may be asked to start work');
     assert.equal(existsSync(leaseStorePath), false, 'no partial lease file is written in its place');
-    const preserved = readdirSync(leaseDir).filter((name) => name.startsWith('dispatch-leases.json.corrupt-'));
-    assert.equal(preserved.length, 1);
-    assert.equal(readFileSync(resolve(leaseDir, preserved[0]!), 'utf8'), torn, 'the torn file is kept for inspection');
+    assert.equal(existsSync(quarantinePath), true, 'the quarantine is recorded durably');
+    assert.equal(preservedFiles().length, 1);
+    assert.equal(readFileSync(resolve(fixture.leaseDir, preservedFiles()[0]!), 'utf8'), torn, 'the torn file is kept for inspection');
+
+    // A second restart without reconciliation must not mistake the moved-away store for an empty one.
+    await expectRestartRefuses();
+    await expectRestartRefuses();
+    assert.equal(preservedFiles().length, 1, 'later restarts do not move anything else aside');
+    assert.match(String(logged.mock.calls.at(-1)?.arguments[0]), /quarantined/);
+
+    // Removing the marker is the explicit reconciliation step.
+    unlinkSync(quarantinePath);
+    const transports = new Map<string, FakeTransport>();
+    const resumed = await harness(transports).startSession({ ...options, requestId: 'dispatch-after-reconcile' });
+    assert.equal(resumed.nodeId, 'worker-1');
+    assert.equal(transports.size, 1, 'dispatch resumes once the operator removes the marker');
   } finally {
-    rmSync(leaseDir, { recursive: true, force: true });
+    rmSync(fixture.leaseDir, { recursive: true, force: true });
+  }
+});
+
+test('fleet dispatch treats a lease store with an incomplete record as unreadable across restarts', async (t) => {
+  const fixture = createUnreadableStoreFixture('gah-fleet-incomplete-');
+  const { leaseStorePath, quarantinePath, harness, options, expectRestartRefuses, preservedFiles } = fixture;
+  try {
+    await harness(new Map()).startSession(options);
+    const stored = JSON.parse(readFileSync(leaseStorePath, 'utf8')) as { leases: Array<Record<string, unknown>> };
+    // Keep one complete record next to the incomplete one: the whole store is still rejected.
+    const incomplete = JSON.stringify({ leases: [stored.leases[0], { requestId: 'running-request' }] });
+    writeFileSync(leaseStorePath, incomplete);
+
+    const logged = t.mock.method(console, 'error', () => {});
+    await expectRestartRefuses();
+    assert.match(String(logged.mock.calls[0]?.arguments[0]), /incomplete lease record/);
+    assert.equal(existsSync(quarantinePath), true);
+    assert.equal(readFileSync(resolve(fixture.leaseDir, preservedFiles()[0]!), 'utf8'), incomplete);
+
+    await expectRestartRefuses();
+  } finally {
+    rmSync(fixture.leaseDir, { recursive: true, force: true });
   }
 });
 
