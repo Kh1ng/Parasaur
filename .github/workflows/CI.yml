@@ -205,6 +205,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Check the edge release trust gate
+        run: node --test scripts/release-edge-gate.test.mjs
+
       - name: Build frontend assets
         run: npm run build:web
 
