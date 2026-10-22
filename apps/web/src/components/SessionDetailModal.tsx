@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { X, Square, Send } from 'lucide-react';
 import type { Session } from '@git-agent-harness/contracts';
 import { useWebSocket } from '../ws/WebSocketContext.js';
+import { useSessionOutput } from '../ws/sessionOutputStore.js';
 import { StatusBadge, type StatusTone } from './ui/StatusBadge.js';
 import { providerIcon } from '../lib/icons.js';
 import { formatDispatchName } from '../lib/format.js';
@@ -32,7 +33,7 @@ function Field({ label, value }: { label: string; value: string | number | undef
 }
 
 export function SessionDetailModal({ session, onClose }: SessionDetailModalProps) {
-  const { sessionOutput, sendMessage, isConnected } = useWebSocket();
+  const { sendMessage, isConnected } = useWebSocket();
   const [command, setCommand] = useState('');
   const outputRef = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -40,7 +41,7 @@ export function SessionDetailModal({ session, onClose }: SessionDetailModalProps
   useEffect(() => {
     dialog.current?.showModal();
   }, []);
-  const output = sessionOutput[session.id];
+  const output = useSessionOutput(session.id);
   const Icon = providerIcon(session.providerKind);
   const isRunning = session.status === 'running';
   const name = formatDispatchName(session);
@@ -118,6 +119,7 @@ export function SessionDetailModal({ session, onClose }: SessionDetailModalProps
           <div>
             <h4 className="text-xs font-medium text-muted uppercase tracking-wide mb-2">Output</h4>
             <div className="terminal max-h-72 overflow-y-auto" ref={outputRef}>
+              {output?.truncated && <p className="text-xs text-muted">… earlier output truncated</p>}
               <pre className="whitespace-pre-wrap">
                 {combinedOutput || 'No output received yet.'}
               </pre>
