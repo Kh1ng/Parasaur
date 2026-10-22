@@ -73,6 +73,7 @@ jobs:
         run: |
           dmgs=(apps/desktop/target/release/bundle/dmg/*.dmg)
           dmg=${dmgs[0]}
+          [ -e "$dmg" ] || { echo "no DMG bundle matched" >&2; exit 1; }
           tag="${INPUTS_VERSION}"
           if [ -z "$tag" ] && [ "${GITHUB_REF_TYPE}" = tag ]; then
             tag="${GITHUB_REF_NAME}"

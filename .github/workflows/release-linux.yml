@@ -100,6 +100,7 @@ jobs:
         run: |
           appimages=(apps/desktop/target/release/bundle/appimage/*.AppImage)
           appimage=${appimages[0]}
+          [ -e "$appimage" ] || { echo "no AppImage bundle matched" >&2; exit 1; }
           tag="${INPUTS_VERSION}"
           if [ -z "$tag" ] && [ "${GITHUB_REF_TYPE}" = tag ]; then
             tag="${GITHUB_REF_NAME}"
