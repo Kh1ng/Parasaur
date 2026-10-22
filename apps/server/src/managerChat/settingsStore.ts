@@ -6,8 +6,9 @@
  * coordinatorIdentity.ts.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { preserveCorruptFile, writeFileAtomic } from '../atomicFile.js';
 import { DEFAULT_BACKEND_ID } from './registry.js';
 import type { HelperRoutePreference, ChatSessionSummary, ManagerChatPermissionMode } from '@git-agent-harness/contracts';
 
@@ -49,8 +50,13 @@ export function readSettings(): ManagerChatSettings {
         helperRoutes: Array.isArray(data.helperRoutes) ? data.helperRoutes.filter(validHelperRoute) : [],
         permissionMode: data.permissionMode === 'bypass' ? 'bypass' : 'ask'
       };
-    } catch {
-      // Fall through to defaults on a corrupt file rather than crash.
+    } catch (error) {
+      // Every default below is the conservative choice (permissionMode 'ask'),
+      // so an unreadable file falls back to them rather than blocking manager
+      // chat. Corrupt contents are moved aside once so the operator can
+      // recover the lost preferences; a failed read leaves the file alone.
+      const preserved = (error as NodeJS.ErrnoException).code ? null : preserveCorruptFile(path);
+      console.error(`error: manager chat settings ${path} are unreadable; using defaults${preserved ? ` and moved the file to ${preserved}` : ''}.`);
     }
   }
   return {
@@ -87,12 +93,7 @@ export function helperRouteFor(profile: string, backend: string, backendInstance
 }
 
 export function writeSettings(settings: ManagerChatSettings): void {
-  const path = settingsPath();
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  writeFileSync(path, JSON.stringify(settings, null, 2));
+  writeFileAtomic(settingsPath(), JSON.stringify(settings, null, 2));
 }
 
 export function backendForProfile(profile: string): string {

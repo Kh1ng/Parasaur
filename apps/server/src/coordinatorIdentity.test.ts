@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getCoordinatorIdentity, resetCachedCoordinatorIdentity } from './coordinatorIdentity.js';
@@ -34,14 +34,40 @@ test('a first identity is generated and persisted; a valid file is reused as-is'
   }
 });
 
-test('a corrupt identity file yields a fresh identity without throwing or overwriting the file', () => {
+test('a corrupt identity file is repaired once so the node id stays stable across restarts', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-identity-'));
   try {
     writeFileSync(identityPath(dir), '{broken');
+    t.mock.method(console, 'warn', () => {});
     resetCachedCoordinatorIdentity();
     const identity = getCoordinatorIdentity(identityPath(dir), 3773);
     assert.match(identity.node_id, /^[0-9a-f-]{36}$/, 'a random id must be minted, not guessed from the corrupt file');
-    assert.equal(readFileSync(identityPath(dir), 'utf8'), '{broken', 'the corrupt file must not be silently rewritten');
+    assert.equal(JSON.parse(readFileSync(identityPath(dir), 'utf8')).node_id, identity.node_id, 'the file must be repaired with the minted id');
+    assert.equal((statSync(identityPath(dir)).mode & 0o777).toString(8), '600');
+    const preserved = readdirSync(dir).filter(name => name.startsWith('coordinator-identity.json.corrupt-'));
+    assert.equal(preserved.length, 1);
+    assert.equal(readFileSync(join(dir, preserved[0]!), 'utf8'), '{broken', 'the corrupt file is kept for inspection');
+
+    resetCachedCoordinatorIdentity();
+    assert.equal(getCoordinatorIdentity(identityPath(dir), 3773).node_id, identity.node_id, 'a restart must keep the repaired id');
+  } finally {
+    resetCachedCoordinatorIdentity();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an identity file without a node id gets one written, keeping its other fields', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-identity-'));
+  try {
+    writeFileSync(identityPath(dir), JSON.stringify({ display_name: 'Named', advertised_url: 'https://central.example', version: '0.0.1' }));
+    resetCachedCoordinatorIdentity();
+    const identity = getCoordinatorIdentity(identityPath(dir), 3773);
+    assert.equal(identity.display_name, 'Named');
+    assert.deepEqual(JSON.parse(readFileSync(identityPath(dir), 'utf8')), {
+      display_name: 'Named', advertised_url: 'https://central.example', version: '0.0.1', node_id: identity.node_id
+    });
+    resetCachedCoordinatorIdentity();
+    assert.equal(getCoordinatorIdentity(identityPath(dir), 3773).node_id, identity.node_id);
   } finally {
     resetCachedCoordinatorIdentity();
     rmSync(dir, { recursive: true, force: true });

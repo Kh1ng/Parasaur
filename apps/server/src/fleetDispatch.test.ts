@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
-import { mkdtempSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
@@ -707,6 +707,187 @@ test('fleet dispatch deduplicates concurrent starts for the same work identity a
     } catch {
       // ignore cleanup failures
     }
+  }
+});
+
+function createUnreadableStoreFixture(prefix: string) {
+  const leaseDir = mkdtempSync(resolve(tmpdir(), prefix));
+  const leaseStorePath = resolve(leaseDir, 'dispatch-leases.json');
+  const published: PublishedMessage[] = [];
+  const registryService = {
+    getNode: () => undefined,
+    async getNodeObservations() {
+      return [
+        makeSnapshot('coordinator-1', 'http://127.0.0.1:9999', 90, 4, 2),
+        makeSnapshot('worker-1', 'http://127.0.0.1:9998', 10, 0, 0)
+      ];
+    }
+  } as unknown as RegistryService;
+  const options = {
+    requestId: 'dispatch-torn',
+    profile: 'gah',
+    providerKind: 'codex',
+    instanceId: 'codex-0',
+    repo: 'owner/repo',
+    mode: 'fix'
+  } as const;
+  const harness = (transportMap: Map<string, FakeTransport>) => createCoordinatorHarness({
+    leaseStorePath,
+    registryService,
+    coordinatorNodeId: 'coordinator-1',
+    coordinatorUrl: 'http://127.0.0.1:9999',
+    transportMap,
+    published
+  });
+  /** Simulate a server start and check that it refuses every dispatch without contacting a node. */
+  const expectRestartRefuses = async () => {
+    const transports = new Map<string, FakeTransport>();
+    const restarted = harness(transports);
+    for (const retry of [options, { ...options, requestId: 'dispatch-torn-retry' }, { ...options, repo: 'owner/other' }]) {
+      await assert.rejects(
+        restarted.startSession(retry),
+        (error: unknown) => (error as { code?: string }).code === 'DISPATCH_LEASES_UNREADABLE'
+      );
+    }
+    assert.equal(transports.size, 0, 'no node may be asked to start work');
+  };
+  const quarantinePath = `${leaseStorePath}.quarantined`;
+  const preservedFiles = () => readdirSync(leaseDir).filter((name) => name.startsWith('dispatch-leases.json.corrupt-'));
+  return { leaseDir, leaseStorePath, quarantinePath, options, harness, expectRestartRefuses, preservedFiles };
+}
+
+test('fleet dispatch keeps refusing new work across restarts after a torn lease file until an operator reconciles', async (t) => {
+  const fixture = createUnreadableStoreFixture('gah-fleet-torn-');
+  const { leaseStorePath, quarantinePath, options, harness, expectRestartRefuses, preservedFiles } = fixture;
+  try {
+    const first = await harness(new Map()).startSession(options);
+    assert.equal(first.nodeId, 'worker-1');
+    const leaseBytes = readFileSync(leaseStorePath, 'utf8');
+    truncateSync(leaseStorePath, Math.floor(leaseBytes.length / 2));
+    const torn = readFileSync(leaseStorePath, 'utf8');
+
+    const logged = t.mock.method(console, 'error', () => {});
+    await expectRestartRefuses();
+    assert.equal(logged.mock.callCount(), 1, 'an unreadable lease store is reported once at load');
+    assert.equal(existsSync(leaseStorePath), false, 'no partial lease file is written in its place');
+    assert.equal(existsSync(quarantinePath), true, 'the quarantine is recorded durably');
+    assert.equal(preservedFiles().length, 1);
+    assert.equal(readFileSync(resolve(fixture.leaseDir, preservedFiles()[0]!), 'utf8'), torn, 'the torn file is kept for inspection');
+
+    // A second restart without reconciliation must not mistake the moved-away store for an empty one.
+    await expectRestartRefuses();
+    await expectRestartRefuses();
+    assert.equal(preservedFiles().length, 1, 'later restarts do not move anything else aside');
+    assert.match(String(logged.mock.calls.at(-1)?.arguments[0]), /quarantined/);
+
+    // Removing the marker is the explicit reconciliation step.
+    unlinkSync(quarantinePath);
+    const transports = new Map<string, FakeTransport>();
+    const resumed = await harness(transports).startSession({ ...options, requestId: 'dispatch-after-reconcile' });
+    assert.equal(resumed.nodeId, 'worker-1');
+    assert.equal(transports.size, 1, 'dispatch resumes once the operator removes the marker');
+  } finally {
+    rmSync(fixture.leaseDir, { recursive: true, force: true });
+  }
+});
+
+test('fleet dispatch treats a lease store with an incomplete record as unreadable across restarts', async (t) => {
+  const fixture = createUnreadableStoreFixture('gah-fleet-incomplete-');
+  const { leaseStorePath, quarantinePath, harness, options, expectRestartRefuses, preservedFiles } = fixture;
+  try {
+    await harness(new Map()).startSession(options);
+    const stored = JSON.parse(readFileSync(leaseStorePath, 'utf8')) as { leases: Array<Record<string, any>> };
+    const complete = stored.leases[0]!;
+    const { profile: _profile, workKey: _workKey, ...withoutProfile } = complete;
+    const { repo: _repo, mode: _mode, ...sessionWithoutWork } = complete.session;
+    // Each shape below could be the running work; none says which work it holds.
+    const incompleteRecords: Array<[string, unknown]> = [
+      ['request id only', { requestId: 'running-request' }],
+      ['routing fields only', {
+        requestId: 'running-request',
+        nodeId: complete.nodeId,
+        nodeUrl: complete.nodeUrl,
+        session: { id: complete.session.id }
+      }],
+      ['no profile', { ...withoutProfile, requestId: 'running-request' }],
+      ['no recoverable work key', {
+        ...complete,
+        requestId: 'running-request',
+        workKey: undefined,
+        session: { ...complete.session, repo: undefined }
+      }],
+      ['work key field of the wrong type', {
+        ...complete,
+        requestId: 'running-request',
+        session: { ...complete.session, branch: 42 }
+      }],
+      // With repo and mode absent the stored key is the only identity, so it
+      // must be one a writer made: seven or eight encoded parts for this profile.
+      ...([
+        ['request id as stored key', 'running-request'],
+        ['stored key for another profile', complete.workKey.replace(/^gah\|/, 'other|')],
+        ['stored key without a repo', complete.workKey.replace('|owner%2Frepo|', '||')],
+        ['stored key with too few parts', complete.workKey.split('|').slice(0, 6).join('|')],
+        ['stored key with an unencoded part', complete.workKey.replace('owner%2Frepo', 'owner/repo')],
+        ['stored key with a malformed escape', complete.workKey.replace('owner%2Frepo', 'owner%2')]
+      ] as const).map(([shape, workKey]): [string, unknown] => [shape, {
+        ...complete,
+        requestId: 'running-request',
+        workKey,
+        session: sessionWithoutWork
+      }])
+    ];
+    for (const [shape, record] of incompleteRecords) {
+      rmSync(quarantinePath, { force: true });
+      // Keep one complete record next to the incomplete one: the whole store is still rejected.
+      const incomplete = JSON.stringify({ leases: [complete, record] });
+      writeFileSync(leaseStorePath, incomplete);
+
+      const logged = t.mock.method(console, 'error', () => {});
+      await expectRestartRefuses();
+      assert.match(String(logged.mock.calls[0]?.arguments[0]), /incomplete lease record/, shape);
+      assert.equal(existsSync(quarantinePath), true, shape);
+      assert.equal(readFileSync(resolve(fixture.leaseDir, preservedFiles().at(-1)!), 'utf8'), incomplete, shape);
+
+      await expectRestartRefuses();
+      logged.mock.restore();
+    }
+  } finally {
+    rmSync(fixture.leaseDir, { recursive: true, force: true });
+  }
+});
+
+test('fleet dispatch still deduplicates against legacy lease records whose work identity can be recovered', async () => {
+  const fixture = createUnreadableStoreFixture('gah-fleet-legacy-');
+  const { leaseStorePath, quarantinePath, harness, options } = fixture;
+  try {
+    // Branch and target are set so a misplaced legacy mr part changes the key.
+    const work = { ...options, branch: 'feature', target: 'main' };
+    const first = await harness(new Map()).startSession(work);
+    const stored = JSON.parse(readFileSync(leaseStorePath, 'utf8')) as { leases: Array<Record<string, any>> };
+    const complete = stored.leases[0]!;
+    const { workKey: _workKey, ...withoutWorkKey } = complete;
+    const { repo: _repo, mode: _mode, ...sessionWithoutWork } = complete.session;
+    const legacyRecords: Array<[string, unknown]> = [
+      ['work key derived from the session', withoutWorkKey],
+      ['stored work key only', { ...complete, session: sessionWithoutWork }],
+      // Written before #1102 added mr: profile|repo|branch|target|mode|backend|model.
+      ['seven-part stored work key', {
+        ...complete,
+        workKey: complete.workKey.split('|').filter((_part: string, index: number) => index !== 4).join('|'),
+        session: sessionWithoutWork
+      }]
+    ];
+    for (const [shape, record] of legacyRecords) {
+      writeFileSync(leaseStorePath, JSON.stringify({ leases: [record] }));
+      const transports = new Map<string, FakeTransport>();
+      const retried = await harness(transports).startSession({ ...work, requestId: 'dispatch-legacy-retry' });
+      assert.equal(retried.id, first.id, shape);
+      assert.equal(transports.size, 0, `${shape}: the running work is not started again`);
+      assert.equal(existsSync(quarantinePath), false, shape);
+    }
+  } finally {
+    rmSync(fixture.leaseDir, { recursive: true, force: true });
   }
 });
 
