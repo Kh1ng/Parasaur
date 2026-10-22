@@ -34,6 +34,7 @@ import { WorkerUpdateBroker } from './workerUpdateBroker.js';
 import { WorkerUpdateService } from './workerUpdate.js';
 import { createCliRouterQuotaObserver } from './cliRouter.js';
 import { startQuotaRefreshScheduler } from './quotaRefreshScheduler.js';
+import { startMemorySampler } from './diagnostics.js';
 
 const PORT = parseInt(process.env.PORT || '3773');
 const HOST = resolveBindHost();
@@ -232,6 +233,8 @@ async function main() {
     if (warning) {
       console.warn(warning);
     }
+    // Memory timeline for Settings → Diagnostics and `gah diag export`.
+    startMemorySampler();
     // After listening: login checks spawn provider CLIs and must never delay health.
     if (cliAvailable) {
       authHealthProber.start();
