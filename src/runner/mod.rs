@@ -22,7 +22,7 @@ pub use crate::runner::backend_runner::{
 pub(crate) use crate::runner::backends::agy::log_delta;
 pub use crate::runner::backends::openhands::{list_oh_profiles, load_oh_profile};
 pub(crate) use crate::runner::pipes::{
-    kill_process_group_id, wait_until, PipeCapture, PIPE_DRAIN_GRACE,
+    exited_without_reaping, kill_unreaped_process_group, wait_until, PipeCapture, PIPE_DRAIN_GRACE,
 };
 #[allow(unused_imports)]
 pub(crate) use crate::runner::process::{

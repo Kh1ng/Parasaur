@@ -8,6 +8,7 @@
 //! deadline is kept either way.
 
 use std::io::Read;
+use std::process::Child;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -16,19 +17,34 @@ use std::time::{Duration, Instant};
 /// group that owned them has exited or been killed.
 pub(crate) const PIPE_DRAIN_GRACE: Duration = Duration::from_secs(2);
 
-/// SIGKILL every process still in process group `pgid`.
+/// SIGKILL every process still in the process group `leader` leads.
 ///
-/// Unlike `kill_process_group`, this needs no live child handle, so it is
-/// valid after the group leader has been reaped: a process group id stays
-/// reserved while any member remains, so the signal reaches only leftover
-/// members of that group. An empty group makes this a no-op (ESRCH).
-pub(crate) fn kill_process_group_id(pgid: u32) {
-    #[cfg(unix)]
+/// Call only before `leader` is reaped (observe its exit with
+/// `exited_without_reaping`, signal, then `wait`). An unreaped leader keeps
+/// its pid, and so the group id, reserved; once it is reaped and the group
+/// empties, the number can name an unrelated group.
+pub(crate) fn kill_unreaped_process_group(leader: &Child) {
     unsafe {
-        let _ = libc::kill(-(pgid as libc::pid_t), libc::SIGKILL);
+        let _ = libc::kill(-(leader.id() as libc::pid_t), libc::SIGKILL);
     }
-    #[cfg(not(unix))]
-    let _ = pgid;
+}
+
+/// True once `child` has exited, without reaping it (see
+/// `kill_unreaped_process_group`).
+pub(crate) fn exited_without_reaping(child: &Child) -> std::io::Result<bool> {
+    let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            child.id() as libc::id_t,
+            info.as_mut_ptr(),
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(unsafe { info.assume_init().si_pid() } != 0)
 }
 
 /// Wait at most `PIPE_DRAIN_GRACE` for every reader thread to finish.
@@ -56,23 +72,29 @@ pub(crate) fn wait_until(deadline: Instant, done: impl Fn() -> bool) -> bool {
 /// A pipe drained on its own thread into a shared buffer, so a caller can
 /// stop waiting at a deadline and still keep the bytes read so far.
 pub(crate) struct PipeCapture {
-    bytes: Arc<Mutex<Vec<u8>>>,
+    /// `None` once `take` abandoned a still-open pipe.
+    bytes: Arc<Mutex<Option<Vec<u8>>>>,
     reader: JoinHandle<std::io::Result<()>>,
 }
 
 impl PipeCapture {
     pub(crate) fn spawn<R: Read + Send + 'static>(mut pipe: R) -> Self {
-        let bytes = Arc::new(Mutex::new(Vec::new()));
+        let bytes = Arc::new(Mutex::new(Some(Vec::new())));
         let sink = Arc::clone(&bytes);
         let reader = thread::spawn(move || {
             let mut buf = [0_u8; 8192];
             loop {
                 match pipe.read(&mut buf) {
                     Ok(0) => return Ok(()),
-                    Ok(read) => sink
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .extend_from_slice(&buf[..read]),
+                    Ok(read) => {
+                        let mut sink = sink.lock().unwrap_or_else(PoisonError::into_inner);
+                        // Abandoned: stop retaining and close the read end,
+                        // so a writer outside the group gets EPIPE.
+                        let Some(bytes) = sink.as_mut() else {
+                            return Ok(());
+                        };
+                        bytes.extend_from_slice(&buf[..read]);
+                    }
                     Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                     Err(error) => return Err(error),
                 }
@@ -87,22 +109,24 @@ impl PipeCapture {
     }
 
     /// Return the bytes read so far and whether the pipe reached EOF. A
-    /// still-open pipe is left to its reader thread, which exits on its own
-    /// once the last holder closes it; nothing waits on it.
+    /// still-open pipe is abandoned: its reader keeps nothing more and exits
+    /// at its next read, or once the last holder closes the pipe.
+    // ponytail: a silent holder parks the reader (one thread + fd, no growth)
+    // until it writes or exits; poll(2) with a cancel flag if that matters.
     pub(crate) fn take(self) -> std::io::Result<(Vec<u8>, bool)> {
-        if !self.reader.is_finished() {
-            let bytes = self
-                .bytes
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone();
-            return Ok((bytes, false));
+        let finished = self.reader.is_finished();
+        if finished {
+            self.reader
+                .join()
+                .map_err(|_| std::io::Error::other("pipe reader panicked"))??;
         }
-        self.reader
-            .join()
-            .map_err(|_| std::io::Error::other("pipe reader panicked"))??;
-        let bytes = std::mem::take(&mut *self.bytes.lock().unwrap_or_else(PoisonError::into_inner));
-        Ok((bytes, true))
+        let bytes = self
+            .bytes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .unwrap_or_default();
+        Ok((bytes, finished))
     }
 }
 
@@ -156,5 +180,64 @@ mod tests {
         assert!(!finished && !eof);
         assert!(started.elapsed() < Duration::from_secs(2));
         assert_eq!(bytes, b"early");
+    }
+
+    #[test]
+    fn abandoned_capture_stops_retaining_a_continuously_writing_escaped_child() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pid_file = tmp.path().join("writer.pid");
+        let script = format!(
+            "printf early; (while echo x; do :; done) & echo $! > '{}'; exit 0",
+            pid_file.display()
+        );
+        let mut child = Command::new("sh")
+            .args(["-c", &script])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let capture = PipeCapture::spawn(child.stdout.take().unwrap());
+        child.wait().unwrap();
+        let writer = read_pid(&pid_file);
+        let retained = Arc::downgrade(&capture.bytes);
+
+        let (bytes, eof) = capture.take().unwrap();
+
+        assert!(!eof);
+        assert!(bytes.starts_with(b"early"));
+        // The reader dropped its buffer and its read end: the writer dies on
+        // EPIPE instead of growing memory nobody can reach.
+        let released = wait_until(Instant::now() + Duration::from_secs(2), || {
+            retained.upgrade().is_none()
+        });
+        let writer_gone = process_exits_within(writer, Duration::from_secs(2));
+        unsafe {
+            libc::kill(writer as libc::pid_t, libc::SIGKILL);
+        }
+        assert!(released && writer_gone);
+    }
+
+    #[test]
+    fn group_is_signalled_while_its_exited_leader_still_reserves_the_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pid_file = tmp.path().join("sleeper.pid");
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            &format!("sleep 30 & echo $! > '{}'; exit 3", pid_file.display()),
+        ]);
+        crate::runner::prepare_process_group(&mut command);
+        let mut child = command.spawn().unwrap();
+        assert!(wait_until(Instant::now() + Duration::from_secs(5), || {
+            exited_without_reaping(&child).unwrap()
+        }));
+
+        // Exited but unreaped: the pid (and group id) is still taken.
+        assert_eq!(unsafe { libc::kill(child.id() as libc::pid_t, 0) }, 0);
+        kill_unreaped_process_group(&child);
+        assert_eq!(child.wait().unwrap().code(), Some(3));
+        assert!(process_exits_within(
+            read_pid(&pid_file),
+            Duration::from_secs(2)
+        ));
     }
 }

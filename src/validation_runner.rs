@@ -113,17 +113,14 @@ fn run_shell_command_with_shutdown(
     let mut child = command
         .spawn()
         .with_context(|| format!("spawning validation command '{command_text}'"))?;
-    let process_group = child.id();
     let stdout = PipeCapture::spawn(child.stdout.take().context("capturing validation stdout")?);
     let stderr = PipeCapture::spawn(child.stderr.take().context("capturing validation stderr")?);
 
     let started = Instant::now();
-    let status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .with_context(|| format!("waiting for validation command '{command_text}'"))?
-        {
-            break status;
+    let waiting = || format!("waiting for validation command '{command_text}'");
+    loop {
+        if crate::runner::exited_without_reaping(&child).with_context(waiting)? {
+            break;
         }
         if started.elapsed() >= timeout {
             let cleanup_error = crate::runner::kill_process_group(&mut child);
@@ -148,13 +145,15 @@ fn run_shell_command_with_shutdown(
             bail!("shutdown requested during validation command '{command_text}'");
         }
         thread::sleep(Duration::from_millis(50));
-    };
+    }
 
     // Validation is a bounded check, so anything the command left running in
     // its process group (a backgrounded server, a helper a test leaked) ends
     // with it. A survivor would otherwise outlive the dispatch and keep the
-    // output pipes open, so the readers below would never see EOF.
-    crate::runner::kill_process_group_id(process_group);
+    // output pipes open, so the readers below would never see EOF. Signal
+    // before reaping so the group id cannot have been reused.
+    crate::runner::kill_unreaped_process_group(&child);
+    let status = child.wait().with_context(waiting)?;
     let (stdout, stderr) = collect_output(stdout, stderr)?;
     Ok(Output {
         status,

@@ -124,10 +124,8 @@ pub(crate) fn wait_with_timeout_for(
         .take()
         .map(|pipe: ChildStderr| PipeCapture::spawn(pipe));
     let started = Instant::now();
-    let status: ExitStatus = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
+    // Leave the leader unreaped until cleanup so its group id stays ours.
+    while !crate::runner::exited_without_reaping(&child)? {
         if started.elapsed() >= timeout {
             // Kill the whole group: a hook or remote helper that inherited
             // the pipes would otherwise keep them open after git dies.
@@ -137,14 +135,19 @@ pub(crate) fn wait_with_timeout_for(
             anyhow::bail!("{context} timed out after {}s", timeout.as_secs());
         }
         thread::sleep(Duration::from_millis(100));
-    };
+    }
 
-    let (stdout, mut stderr, closed) = collect_pipes(stdout, stderr, context)?;
+    let collected = collect_pipes(stdout, stderr, context);
+    let closed = collected.as_ref().map_or(true, |(_, _, closed)| *closed);
     if !closed {
         // Something git started still holds its output after git exited.
         // Leftovers are not killed on a clean exit (a hook may detach work
         // on purpose), only ones that would otherwise block this caller.
-        crate::runner::kill_process_group_id(child.id());
+        crate::runner::kill_unreaped_process_group(&child);
+    }
+    let status: ExitStatus = child.wait()?;
+    let (stdout, mut stderr, _) = collected?;
+    if !closed {
         stderr.extend_from_slice(
             format!("\nGAH: {context} output was still held open after exit; stopped waiting and terminated its process group.\n")
                 .as_bytes(),

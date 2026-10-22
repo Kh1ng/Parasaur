@@ -728,15 +728,17 @@ fn spawn_with_idle_watch_with_shutdown(
     let mut killed_for_hard_timeout = false;
     let mut killed_for_shutdown = false;
     let mut cleanup_error = None;
-    let mut exit_code = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status.code().unwrap_or(-1),
-            Ok(None) => {
+    // `None` once the backend exited on its own. The leader stays unreaped
+    // until cleanup below has signalled its group, so that group id cannot
+    // name an unrelated group by then.
+    let killed_exit_code = loop {
+        match crate::runner::exited_without_reaping(&child) {
+            Ok(true) => break None,
+            Ok(false) => {
                 if shutdown_requested.load(Ordering::SeqCst) {
                     cleanup_error = kill_process_group(&mut child);
-                    let _ = child.wait();
                     killed_for_shutdown = true;
-                    break -2;
+                    break Some(-2);
                 }
                 let previous_progress_at = last_progress_at;
                 while progress_rx.try_recv().is_ok() {
@@ -791,9 +793,8 @@ fn spawn_with_idle_watch_with_shutdown(
                 };
                 if hard_timeout.is_some_and(|timeout| start.elapsed() >= timeout) {
                     cleanup_error = kill_process_group(&mut child);
-                    let _ = child.wait();
                     killed_for_hard_timeout = true;
-                    break -1;
+                    break Some(-1);
                 }
                 if stalled {
                     // Issue #579: record whether the backend had already
@@ -806,19 +807,17 @@ fn spawn_with_idle_watch_with_shutdown(
                     had_attempt_progress_at_kill =
                         worktree_changed_since(initial_worktree_snapshot.as_deref(), worktree);
                     cleanup_error = kill_process_group(&mut child);
-                    let _ = child.wait();
                     killed_for_idle = true;
-                    break -1;
+                    break Some(-1);
                 }
                 thread::sleep(poll_interval);
             }
             Err(_) => {
-                // try_wait() itself erroring is rare, but the child may
+                // waitid() itself erroring is rare, but the child may
                 // still be alive -- kill and reap rather than risk leaking
                 // it (same pattern as the idle-kill branch above).
                 cleanup_error = kill_process_group(&mut child);
-                let _ = child.wait();
-                break -1;
+                break Some(-1);
             }
         }
     };
@@ -843,7 +842,10 @@ fn spawn_with_idle_watch_with_shutdown(
     // ends with it. A surviving descendant may still own the inherited pipe
     // descriptors (one outside the group is not reachable here); wait for the
     // log copiers only for a bounded grace, never an unbounded join.
-    crate::runner::kill_process_group_id(process_group);
+    crate::runner::kill_unreaped_process_group(&child);
+    let status = child.wait();
+    let mut exit_code = killed_exit_code
+        .unwrap_or_else(|| status.ok().and_then(|status| status.code()).unwrap_or(-1));
     if !crate::runner::pipes::readers_finish_within_grace(&[&stdout_thread, &stderr_thread]) {
         if let Ok(mut file) = fs::OpenOptions::new().append(true).open(log_path) {
             let _ = writeln!(

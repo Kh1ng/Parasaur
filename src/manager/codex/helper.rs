@@ -1,4 +1,5 @@
 use super::make_nonblocking;
+use crate::runner::pipes::exited_without_reaping;
 use anyhow::{anyhow, Context};
 use std::io::Read;
 use std::os::fd::AsRawFd;
@@ -108,22 +109,6 @@ fn terminate_group(child: &mut std::process::Child, exited: bool) -> Option<Stri
     }
     let _ = child.kill();
     None
-}
-
-fn exited_without_reaping(child: &std::process::Child) -> std::io::Result<bool> {
-    let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
-    let result = unsafe {
-        libc::waitid(
-            libc::P_PID,
-            child.id() as libc::id_t,
-            info.as_mut_ptr(),
-            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-        )
-    };
-    if result == -1 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(unsafe { info.assume_init().si_pid() } != 0)
 }
 
 pub(super) fn bounded_command_output(
