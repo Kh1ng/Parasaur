@@ -5,7 +5,7 @@
 // (`src/main.rs`) only calls `git_agent_harness::cli::run()`; all parser
 // definitions live in `crate::cli::args` (`src/cli/args.rs`).
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 
 // Bring the parser structs/enums and `parse_wake_autonomy` into scope.
@@ -17,6 +17,10 @@ pub mod capabilities;
 pub mod commands;
 
 pub fn run() -> Result<()> {
+    // Before any thread, runtime or child: process-group cleanup needs exited
+    // children to stay unreaped until it has signalled their group.
+    crate::runner::pipes::keep_exited_children_waitable()
+        .context("restoring the default SIGCHLD disposition")?;
     crate::update::heal_parasaur_alias();
     let cli = Cli::parse();
     match cli.command {

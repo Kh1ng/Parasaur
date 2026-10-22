@@ -59,6 +59,37 @@ pub(crate) fn exited_without_reaping(child: &Child) -> std::io::Result<bool> {
     }
 }
 
+/// Make exited children wait to be reaped: turn an inherited `SIGCHLD`
+/// `SIG_IGN` back into `SIG_DFL` and clear `SA_NOCLDWAIT`, keeping any
+/// installed handler.
+///
+/// Either setting lets the kernel reap a child the moment it exits, even
+/// after `exited_without_reaping` saw it still running, so its pid and group
+/// id can be reused before a later group signal. The process-group cleanup
+/// here relies on this not happening. `cli::run` calls this first, before any
+/// thread or child exists; a library caller that manages children through
+/// this module must call it (or never ignore `SIGCHLD`) the same way. The
+/// lost-ownership guards still catch a child reaped by something else.
+pub(crate) fn keep_exited_children_waitable() -> std::io::Result<()> {
+    unsafe {
+        let mut action = std::mem::zeroed::<libc::sigaction>();
+        if libc::sigaction(libc::SIGCHLD, std::ptr::null(), &mut action) == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if action.sa_sigaction != libc::SIG_IGN && action.sa_flags & libc::SA_NOCLDWAIT == 0 {
+            return Ok(());
+        }
+        if action.sa_sigaction == libc::SIG_IGN {
+            action.sa_sigaction = libc::SIG_DFL;
+        }
+        action.sa_flags &= !libc::SA_NOCLDWAIT;
+        if libc::sigaction(libc::SIGCHLD, &action, std::ptr::null_mut()) == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
 /// Wait at most `PIPE_DRAIN_GRACE` for every reader thread to finish.
 pub(crate) fn readers_finish_within_grace<T>(readers: &[&Option<JoinHandle<T>>]) -> bool {
     wait_until(Instant::now() + PIPE_DRAIN_GRACE, || {
@@ -364,6 +395,116 @@ mod tests {
                 .unwrap_err();
         assert!(format!("{error:#}").contains("lost track"), "{error:#}");
         assert!(survives(&git_pid), "git group was signalled");
+    }
+
+    /// An inherited `SIGCHLD=SIG_IGN` (on Linux), or `SA_NOCLDWAIT`, makes
+    /// the kernel reap children on exit. After the startup reset an exited
+    /// child stays waitable until reaped, and backend cleanup signals its
+    /// group again. The disposition is process-wide, so each case runs in its
+    /// own re-executed test process; `SIG_IGN` arrives through exec as from a
+    /// real launcher.
+    #[test]
+    fn startup_reset_keeps_children_waitable_under_auto_reaping_sigchld() {
+        use std::os::unix::process::CommandExt;
+        const ISOLATED: &str = "GAH_TEST_SIGCHLD_AUTO_REAP";
+        let Ok(mode) = std::env::var(ISOLATED) else {
+            let name = concat!(
+                module_path!(),
+                "::startup_reset_keeps_children_waitable_under_auto_reaping_sigchld"
+            );
+            let name = name.split_once("::").unwrap().1;
+            for mode in ["inherited-ignore", "nocldwait"] {
+                let mut command = Command::new(std::env::current_exe().unwrap());
+                command
+                    .args([name, "--exact", "--test-threads=1", "--nocapture"])
+                    .env(ISOLATED, mode);
+                if mode == "inherited-ignore" {
+                    // Runs in the forked child only; this process keeps its
+                    // own disposition.
+                    unsafe {
+                        command.pre_exec(|| {
+                            libc::signal(libc::SIGCHLD, libc::SIG_IGN);
+                            Ok(())
+                        });
+                    }
+                }
+                let output = command.output().unwrap();
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert!(
+                    output.status.success() && stdout.contains("1 passed"),
+                    "{mode}: {stdout}\n{stderr}"
+                );
+            }
+            return;
+        };
+        if mode == "nocldwait" {
+            unsafe {
+                let mut action = std::mem::zeroed::<libc::sigaction>();
+                action.sa_sigaction = libc::SIG_DFL;
+                action.sa_flags = libc::SA_NOCLDWAIT;
+                assert_eq!(
+                    libc::sigaction(libc::SIGCHLD, &action, std::ptr::null_mut()),
+                    0
+                );
+            }
+        }
+        let exits = || Command::new("sh").args(["-c", "exit 7"]).spawn().unwrap();
+        let settle = |child: &Child| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let result = exited_without_reaping(child);
+                if !matches!(result, Ok(false)) || Instant::now() > deadline {
+                    return result;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        };
+
+        let auto_reaping = || unsafe {
+            let mut action = std::mem::zeroed::<libc::sigaction>();
+            assert_eq!(
+                libc::sigaction(libc::SIGCHLD, std::ptr::null(), &mut action),
+                0
+            );
+            action.sa_sigaction == libc::SIG_IGN || action.sa_flags & libc::SA_NOCLDWAIT != 0
+        };
+        assert!(
+            auto_reaping(),
+            "{mode}: no auto-reaping disposition in effect"
+        );
+        // Precondition: the kernel really reaps behind our back. macOS drops
+        // the auto-reap of an exec-inherited SIG_IGN; Linux keeps it.
+        if mode == "nocldwait" || cfg!(target_os = "linux") {
+            let lost = settle(&exits()).unwrap_err();
+            assert_eq!(lost.raw_os_error(), Some(libc::ECHILD), "{mode}");
+        }
+
+        keep_exited_children_waitable().unwrap();
+        assert!(!auto_reaping(), "{mode}");
+
+        let mut child = exits();
+        assert!(settle(&child).unwrap(), "{mode}");
+        thread::sleep(Duration::from_millis(200));
+        assert!(exited_without_reaping(&child).unwrap(), "{mode}");
+        assert_eq!(child.wait().unwrap().code(), Some(7), "{mode}");
+
+        let tmp = tempfile::tempdir().unwrap();
+        let pid_file = tmp.path().join("sleeper.pid");
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            &format!("sleep 30 & echo $! > '{}'; exit 3", pid_file.display()),
+        ]);
+        let log = tmp.path().join("backend.log");
+        let (exit_code, _, _) =
+            crate::runner::process::spawn_with_idle_watch(command, &log, tmp.path(), 60, "test")
+                .unwrap();
+        assert_eq!(exit_code, 3, "{mode}");
+        assert!(
+            process_exits_within(read_pid(&pid_file), Duration::from_secs(2)),
+            "{mode}: backend group was not signalled"
+        );
     }
 
     #[test]
