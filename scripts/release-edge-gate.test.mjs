@@ -266,7 +266,7 @@ test('every other job needs the trust gate, directly or transitively', () => {
   }
 });
 
-test('when the trust gate is skipped, every other job is skipped', () => {
+test('when the trust gate is skipped or fails, every other job is skipped', () => {
   // A status function such as always() or !cancelled() lets a job run after
   // a skipped need, so `needs` alone does not prove the gate holds. Simulate
   // GitHub's job selection with the gate skipped and with it passing.
@@ -294,8 +294,10 @@ test('when the trust gate is skipped, every other job is skipped', () => {
     }
     return results;
   };
-  for (const [name, result] of Object.entries(simulate('skipped'))) {
-    if (name !== GATE) assert.equal(result, 'skipped', `${name} runs without the trust gate`);
+  for (const gateResult of ['skipped', 'failure']) {
+    for (const [name, result] of Object.entries(simulate(gateResult))) {
+      if (name !== GATE) assert.equal(result, 'skipped', `${name} runs when the trust gate is ${gateResult}`);
+    }
   }
   assert.equal(simulate('success').publish, 'success', 'publish runs once the gate passes');
 });
