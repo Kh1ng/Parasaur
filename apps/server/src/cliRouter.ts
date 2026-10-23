@@ -211,6 +211,57 @@ async function fetchModels(baseUrl: string, apiKey: string, fetchFn?: typeof glo
   return models;
 }
 
+/** Keep the picker provider inventory current even when no dashboard is open. */
+export function createCliRouterModelRefresher(deps: {
+  readSettingsFn?: typeof readSettings;
+  fetchFn?: typeof globalThis.fetch;
+  configPath?: string;
+} = {}) {
+  let stopped = false;
+  let pending: Promise<void> | undefined;
+  const read = deps.readSettingsFn ?? readSettings;
+  const configPath = deps.configPath ?? join(dirname(settingsPath()), 'router-opencode.json');
+
+  function refresh(): Promise<void> {
+    if (stopped) return Promise.resolve();
+    if (pending) return pending;
+    pending = (async () => {
+      const settings = read();
+      if (!settings?.apiKey) return;
+      // Only update an existing setup-managed provider; never create configuration.
+      const initial = JSON.parse(readFileSync(configPath, 'utf8'));
+      if (!initial?.provider?.['gah-router']) return;
+      const models = await fetchModels(settings.url.replace(/\/$/, ''), settings.apiKey, deps.fetchFn);
+      const current = read();
+      if (stopped || current?.url !== settings.url || current.apiKey !== settings.apiKey) return;
+      // Re-read after the request so edits to other settings survive the refresh.
+      const config = JSON.parse(readFileSync(configPath, 'utf8'));
+      const provider = config?.provider?.['gah-router'];
+      if (!provider) return;
+      const inventory = Object.fromEntries(models.map(({ id }) => [id, provider.models?.[id] ?? { name: id }]));
+      if (JSON.stringify(provider.models) === JSON.stringify(inventory)) return;
+      provider.models = inventory;
+      const tmp = configPath + `.tmp.${randomBytes(6).toString('hex')}`;
+      try {
+        writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+        renameSync(tmp, configPath);
+      } finally { rmSync(tmp, { force: true }); }
+    })().catch(() => undefined).finally(() => { pending = undefined; });
+    return pending;
+  }
+
+  return {
+    refresh,
+    start() {
+      stopped = false;
+      const timer = setInterval(() => { void refresh(); }, 60_000);
+      timer.unref?.();
+      void refresh();
+      return () => { stopped = true; clearInterval(timer); };
+    },
+  };
+}
+
 async function fetchAuthFiles(baseUrl: string, managementKey: string, fetchFn?: typeof globalThis.fetch): Promise<UpstreamAuthFile[]> {
   const result = await boundedUpstreamFetch({
     url: `${baseUrl}/v0/management/auth-files`,

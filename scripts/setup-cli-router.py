@@ -313,7 +313,7 @@ def main():
         register_instance(args.gah_config.expanduser(), args.register_profile, directory, wrapper)
     print(f"CLI router configured at {settings['url']}; {len(models)} models registered.")
     print(f"Runner: {wrapper}")
-    print("Add subscription accounts with the proxy's OAuth login, then rerun with --refresh-models.")
+    print("Add subscription accounts with the proxy's OAuth login. Parasaur refreshes the model list automatically at server startup and every minute.")
 
 
 if __name__ == "__main__":
