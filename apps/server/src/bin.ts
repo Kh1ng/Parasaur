@@ -32,7 +32,7 @@ import { AuthHealthMonitor, AuthHealthProber, configureChatAuthHealth } from './
 import { LoginRepairBroker, LoginRepairs, loadProviderKeys } from './loginRepair.js';
 import { WorkerUpdateBroker } from './workerUpdateBroker.js';
 import { WorkerUpdateService } from './workerUpdate.js';
-import { createCliRouterQuotaObserver } from './cliRouter.js';
+import { createCliRouterModelRefresher, createCliRouterQuotaObserver } from './cliRouter.js';
 import { startQuotaRefreshScheduler } from './quotaRefreshScheduler.js';
 import { startMemorySampler } from './diagnostics.js';
 
@@ -215,6 +215,7 @@ async function main() {
   // still matters.
   if (node.role === 'central') startChatMaintenanceScheduler();
 
+  let stopRouterModelRefresh: (() => void) | undefined;
   let stopRouterQuotaRefresh: (() => void) | undefined;
   let stopQuotaRefresh: (() => Promise<void>) | undefined;
   // Start HTTP server
@@ -235,6 +236,7 @@ async function main() {
     }
     // Memory timeline for Settings → Diagnostics and `gah diag export`.
     startMemorySampler();
+    stopRouterModelRefresh = createCliRouterModelRefresher().start();
     // After listening: login checks spawn provider CLIs and must never delay health.
     if (cliAvailable) {
       authHealthProber.start();
@@ -256,6 +258,7 @@ async function main() {
     authHealthProber.stop();
     server.close();
     stopRouterQuotaRefresh?.();
+    stopRouterModelRefresh?.();
     await stopQuotaRefresh?.();
     process.exit(0);
   };
