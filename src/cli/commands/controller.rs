@@ -19,6 +19,8 @@ pub struct EventsArgs {
     pub profile: Option<String>,
     pub json: bool,
     pub since: String,
+    /// Newest N events to keep after the since/profile filter (#1598).
+    pub limit: Option<usize>,
 }
 
 pub struct StatusArgs {
@@ -252,7 +254,13 @@ pub fn run_loop(args: LoopArgs) -> Result<()> {
 
 pub fn run_events(args: EventsArgs) -> Result<()> {
     let cfg = config::load(args.config_path.as_deref())?;
-    events::run(&cfg, &args.since, args.profile.as_deref(), args.json)?;
+    events::run(
+        &cfg,
+        &args.since,
+        args.profile.as_deref(),
+        args.json,
+        args.limit,
+    )?;
     Ok(())
 }
 

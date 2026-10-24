@@ -206,11 +206,13 @@ pub fn run() -> Result<()> {
             profile,
             json,
             since,
+            limit,
         } => commands::controller::run_events(commands::controller::EventsArgs {
             config_path,
             profile,
             json,
             since,
+            limit,
         })?,
 
         Commands::Status {

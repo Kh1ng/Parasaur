@@ -766,17 +766,25 @@ export function runDispatchCancellable(
 }
 
 /**
- * Run `gah events --profile <profile> --since <since> --json`
- * and parse the output
+ * Run `gah events --profile <profile> --since <since> [--limit N] --json`
+ * and parse the output. `limit` bounds the read to the newest N events after
+ * the since filter (#1598): large `context_built`/`dispatch_*` payloads make
+ * a long window exceed the output cap, so the feed's periodic refresh asks
+ * for a bounded tail. HTTP endpoints leave it unset and keep their explicit
+ * `since` behaviour.
  */
-export function runEvents(profile: string, sinceIso: string, config?: string): Promise<ControllerEvent[]> {
+export function runEvents(profile: string, sinceIso: string, config?: string, limit?: number): Promise<ControllerEvent[]> {
   const args = ['events', '--profile', profile, '--since', sinceIso, '--json'];
 
   if (config) {
     args.push('--config-path', config);
   }
 
-  return eventsCache.get(JSON.stringify([profile, sinceIso, config ?? null]),
+  if (limit !== undefined) {
+    args.push('--limit', String(limit));
+  }
+
+  return eventsCache.get(JSON.stringify([profile, sinceIso, config ?? null, limit ?? null]),
     () => runJsonCommand<ControllerEvent[]>(args, config, false, undefined, MAX_EVENTS_OUTPUT_BYTES));
 }
 
