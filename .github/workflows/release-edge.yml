@@ -19,7 +19,7 @@ permissions:
 
 concurrency:
   group: release-edge
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Only this repository's own main branch may publish. A workflow_run event
