@@ -1,8 +1,8 @@
 # CodeQL scans
 
-Pull requests and pushes to `main` scan only languages with changed source or build inputs.
+Pull requests scan only languages with changed source or build inputs.
 Each selected scan analyzes the complete language database, including unchanged source files.
-The weekly schedule and manual runs scan all six languages.
+Pushes to `main`, the weekly schedule and manual runs scan all six languages.
 
 | Changed files | Selected scan | Runner |
 | --- | --- | --- |

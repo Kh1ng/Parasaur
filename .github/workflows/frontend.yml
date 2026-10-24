@@ -6,14 +6,17 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # `build:web` runs the server tests first; a hung test must not hold the
-    # runner for GitHub's 6-hour default.
+    # The CI node job builds web assets, tests the server and uploads gah-web-dist.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -38,16 +41,6 @@ jobs:
 
       - name: Typecheck mock control plane
         run: npm run typecheck:mock --workspace=apps/server
-
-      - name: Build frontend
-        run: npm run build:web
-
-      - name: Upload frontend artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: gah-web-dist
-          path: apps/web/dist
-          if-no-files-found: error
 
   # Hermetic Playwright e2e + component tests (issue #636). The webServer in
   # playwright.config.ts starts a fixture-backed apps/server (GAH_BINARY ->

@@ -28,7 +28,7 @@ test('source and build inputs select only the affected language scans', () => {
   ]) assert.deepEqual(selected(paths), expected, paths.join(', '));
 });
 
-test('scan configuration changes and periodic/manual runs select every language', () => {
+test('scan configuration changes and full scans select every language', () => {
   const all = ['actions', 'java-kotlin', 'javascript-typescript', 'python', 'rust', 'swift'];
   for (const path of ['.github/workflows/codeql.yml', '.github/codeql/config.yml', 'scripts/codeql-scope.mjs', 'scripts/codeql-scope.test.mjs']) {
     assert.deepEqual(selected([path]), all);
@@ -83,5 +83,15 @@ test('workflow git diff excludes base-only changes and includes deleted/renamed 
     assert.equal(result.status, 0, result.stderr);
     const matrix = JSON.parse(readFileSync(output, 'utf8').split('\n')[0].slice('matrix='.length));
     assert.deepEqual(matrix.include.map(row => row.language), ['rust', 'swift']);
+    for (const event of ['push', 'schedule', 'workflow_dispatch']) {
+      writeFileSync(output, '');
+      const full = spawnSync('bash', ['-c', script], {
+        cwd: dir, encoding: 'utf8',
+        env: { ...process.env, EVENT_NAME: event, BASE_SHA: base, HEAD_SHA: head, GITHUB_OUTPUT: output },
+      });
+      assert.equal(full.status, 0, full.stderr);
+      const fullMatrix = JSON.parse(readFileSync(output, 'utf8').split('\n')[0].slice('matrix='.length));
+      assert.deepEqual(fullMatrix, codeqlScope([], true), `${event} scans every language`);
+    }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

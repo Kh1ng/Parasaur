@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: codeql-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   scope:
@@ -42,15 +42,11 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" = schedule ] || [ "$EVENT_NAME" = workflow_dispatch ] \
+          if [ "$EVENT_NAME" != pull_request ] \
             || [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = 0000000000000000000000000000000000000000 ]; then
             node scripts/codeql-scope.mjs --all </dev/null >> "$GITHUB_OUTPUT"
           else
-            if [ "$EVENT_NAME" = pull_request ]; then
-              range="$BASE_SHA...$HEAD_SHA"
-            else
-              range="$BASE_SHA..$HEAD_SHA"
-            fi
+            range="$BASE_SHA...$HEAD_SHA"
             # Include both paths of renames, plus deletions. Do not truncate large PRs.
             git diff --name-only --no-renames -z "$range" \
               | node scripts/codeql-scope.mjs >> "$GITHUB_OUTPUT"

@@ -74,7 +74,7 @@ validation_commands = [
 
 The second line is the one that is easy to leave out. It runs the source-size
 guard (no Rust file over 1,500 lines, tracked baselines never raised) and the
-contract fixture check. Both fail in CI's `test` job for changes that format
+contract fixture check. Both fail in CI's `rust` job for changes that format
 and typecheck cleanly, so a profile without them opens pull requests that are
 already red. It needs the two test binaries built: about 35 seconds in a fresh
 worktree on a machine with a compiler cache, longer without one, and under a
