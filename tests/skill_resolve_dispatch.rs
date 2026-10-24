@@ -83,7 +83,7 @@ fn dispatch_with_central_down(backend: &str, policy: Option<&str>, proceeds: boo
 }
 
 #[test]
-fn runners_without_skills_dispatch_when_central_is_down_and_cache_is_empty() {
+fn runners_without_native_skills_dispatch_when_central_is_down_and_cache_is_empty() {
     for backend in ["codex", "claude", "opencode", "vibe", "agy"] {
         dispatch_with_central_down(backend, None, true);
     }

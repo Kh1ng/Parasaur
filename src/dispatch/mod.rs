@@ -30,6 +30,7 @@ mod publish;
 mod repair_context;
 mod repo_inspection;
 mod review;
+mod skill_delivery;
 mod terminal;
 #[cfg(test)]
 mod test_util;

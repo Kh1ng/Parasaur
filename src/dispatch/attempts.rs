@@ -567,10 +567,12 @@ pub(super) fn run_backend_with_reserved_route(
         work_id,
         crate::central_claims::DEFAULT_LEASE_SECONDS,
     );
-    let result = runner::for_kind(backend_kind).run(&runner::RunContext {
+    let backend_runner = runner::for_kind(backend_kind);
+    let task = super::skill_delivery::prompt(backend_runner.as_ref(), task, &skills);
+    let result = backend_runner.run(&runner::RunContext {
         executable: &executable,
         worktree: wt,
-        task,
+        task: &task,
         session_dir,
         model: shape.model,
         llm: shape.llm,
