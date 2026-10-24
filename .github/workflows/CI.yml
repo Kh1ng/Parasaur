@@ -185,6 +185,9 @@ jobs:
       - name: Check the edge release trust gate
         run: node --test scripts/release-edge-gate.test.mjs
 
+      - name: Check Supabase config and migration hygiene
+        run: node --test scripts/supabase-hygiene.test.mjs
+
       # The prebuild hook runs all server and mock-control-plane tests.
       - name: Build frontend assets
         run: npm run build:web
