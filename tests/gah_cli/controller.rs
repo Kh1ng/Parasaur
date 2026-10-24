@@ -730,12 +730,16 @@ fn loop_once_prunes_terminal_and_abandoned_open_worktrees_but_retains_live_claim
 
     let worktree_root = tmp.path().join("worktrees");
     fs::create_dir_all(&worktree_root).unwrap();
-    let terminal_branch = "gah/real-913";
-    let abandoned_branch = "gah/real-914";
-    let active_branch = "gah/real-915";
-    let terminal_worktree = worktree_root.join("gah-real-913");
-    let abandoned_worktree = worktree_root.join("gah-real-914");
-    let active_worktree = worktree_root.join("gah-real-915");
+    // Realistic dispatch branches (`{seconds}-{uuid v4 simple}`, see
+    // src/dispatch/identity.rs): prune only considers exact profile-shape
+    // worktree names (src/prune.rs, #1547). The trailing 913/914/915 keeps
+    // the tickets distinguishable inside the 32-hex uuid.
+    let terminal_branch = "gah/real-1730000000-11111111111111111111111111111913";
+    let abandoned_branch = "gah/real-1730000000-11111111111111111111111111111914";
+    let active_branch = "gah/real-1730000000-11111111111111111111111111111915";
+    let terminal_worktree = worktree_root.join(terminal_branch.replace('/', "-"));
+    let abandoned_worktree = worktree_root.join(abandoned_branch.replace('/', "-"));
+    let active_worktree = worktree_root.join(active_branch.replace('/', "-"));
     for (branch, worktree) in [
         (terminal_branch, &terminal_worktree),
         (abandoned_branch, &abandoned_worktree),

@@ -427,15 +427,18 @@ fn prune_dry_run_reports_old_sessions_and_worktrees() {
     let session = tmp.path().join("artifacts/real/sessions/20240101");
     fs::create_dir_all(&session).unwrap();
 
+    // A realistic dispatch branch: prune only considers exact
+    // profile-shape worktree names (see src/prune.rs, #1547).
+    let branch = "gah/real-1730000000-0123456789abcdef0123456789abcdef";
     let worktree_root = tmp.path().join("worktrees");
     fs::create_dir_all(&worktree_root).unwrap();
-    let worktree = worktree_root.join("gah-real-old");
+    let worktree = worktree_root.join(branch.replace('/', "-"));
     ProcessCommand::new("git")
         .args([
             "worktree",
             "add",
             "-b",
-            "gah/real-old",
+            branch,
             worktree.to_str().unwrap(),
             "HEAD",
         ])
@@ -478,15 +481,18 @@ fn prune_retains_dirty_worktree_even_after_retention() {
     init_git_repo(&repo);
     let cfg = write_real_repo_config(&tmp, &repo, "github");
 
+    // A realistic dispatch branch: prune only considers exact
+    // profile-shape worktree names (see src/prune.rs, #1547).
+    let branch = "gah/real-1730000000-0123456789abcdef0123456789abcdef";
     let worktree_root = tmp.path().join("worktrees");
     fs::create_dir_all(&worktree_root).unwrap();
-    let worktree = worktree_root.join("gah-real-dirty");
+    let worktree = worktree_root.join(branch.replace('/', "-"));
     ProcessCommand::new("git")
         .args([
             "worktree",
             "add",
             "-b",
-            "gah/real-dirty",
+            branch,
             worktree.to_str().unwrap(),
             "HEAD",
         ])
