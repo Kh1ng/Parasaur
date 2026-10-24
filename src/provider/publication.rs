@@ -179,6 +179,7 @@ pub fn post_review_comment(
     body: &str,
     labels: &[&str],
 ) -> Result<()> {
+    crate::policy::enforce_policy(profile, "review")?;
     if profile.delivery_mode == crate::config::DeliveryMode::Handoff {
         anyhow::bail!("delivery_mode=handoff: post_review_comment is disallowed in handoff mode");
     }

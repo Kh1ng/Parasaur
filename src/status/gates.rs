@@ -16,6 +16,10 @@ pub(super) fn policy_approval_still_required(
     if gate.reason_code.as_deref() != Some(HumanRequiredReason::PolicyApproval.as_str()) {
         return true;
     }
+    // Backend recovery cannot authorize a repository mutation refused by its policy.
+    if gate.dispatch_reason.as_deref() == Some("repo_policy_blocked") {
+        return true;
+    }
     // TICKET-711: only a review-derived policy_approval gate (raised during
     // review escalation or its post-review repair) is superseded by a stale
     // contract version. A genuine non-review paid-route hold (a regular
@@ -196,9 +200,10 @@ pub(super) fn project_effective_mr_gates(
         ) else {
             continue;
         };
-        let review_derived = JobKind::parse(&gate.mode) == Ok(JobKind::Review)
-            || (gate.reason_code.as_deref() == Some("stuck_loop_gate")
-                && gate.review_generation.is_some());
+        let review_derived = gate.dispatch_reason.as_deref() != Some("repo_policy_blocked")
+            && (JobKind::parse(&gate.mode) == Ok(JobKind::Review)
+                || (gate.reason_code.as_deref() == Some("stuck_loop_gate")
+                    && gate.review_generation.is_some()));
         if review_derived
             && (gate.review_contract_version != Some(ledger::REVIEW_CONTRACT_VERSION)
                 || gate.review_generation.as_deref() != mr.review_generation.as_deref())
@@ -301,6 +306,62 @@ default_target_branch = "main"
             ci_pending: false,
             classification: "NEEDS_REVIEW".into(),
             recommended_action: sync::RecommendedAction::RunReview,
+        }
+    }
+
+    #[test]
+    fn repo_policy_hold_survives_route_recovery_and_review_generation_changes() {
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = make_test_cfg(&tmp);
+        let profile = cfg.profiles.get_mut("test").unwrap();
+        profile.claude_path = Some("/bin/sh".into());
+        profile.routing = toml::from_str(
+            "review_candidates = [{ backend = 'claude', model = 'sonnet', included_in_quota = true }]"
+        ).unwrap();
+        let _availability =
+            crate::test_support::AvailabilityEnvGuard::set(tmp.path().join("availability.json"));
+        let profile = &cfg.profiles["test"];
+        for mode in ["review", "merge", "mark_ready_for_review", "fix"] {
+            let mut entry = LedgerEntry::new("test", profile, "none", mode, "#1544", None, None);
+            entry.work_id = Some("#1544".into());
+            let error = anyhow::anyhow!("POLICY BLOCKED");
+            crate::policy::stamp_refusal(&mut entry, &error);
+            let gate = ledger::effective_human_gate_from_entries(
+                std::slice::from_ref(&entry),
+                "test",
+                &profile.repo_id,
+                "#1544",
+            )
+            .unwrap();
+            assert!(policy_approval_still_required(
+                &cfg,
+                "test",
+                profile,
+                std::slice::from_ref(&entry),
+                "#1544",
+                &gate
+            ));
+            if mode == "review" {
+                let mut route_gate = gate.clone();
+                route_gate.dispatch_reason = Some("review".into());
+                assert!(
+                    !policy_approval_still_required(
+                        &cfg,
+                        "test",
+                        profile,
+                        &[],
+                        "#1544",
+                        &route_gate,
+                    ),
+                    "the recovered route would release an ordinary approval hold"
+                );
+            }
+            let mut mr = test_mr(Some("#1544"), "gah/1544");
+            mr.review_generation = Some("a-new-generation".into());
+            let mut blockers = vec![];
+            project_effective_mr_gates(&cfg, "test", profile, &[entry], &[mr], &mut blockers);
+            assert_eq!(blockers.len(), 1, "{mode}");
+            assert_eq!(blockers[0].reason_code.as_deref(), Some("policy_approval"));
         }
     }
 

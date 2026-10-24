@@ -11,7 +11,6 @@ use super::super::issue_claim::IssueClaimSlot;
 use super::super::issues::{
     parse_ticket_metadata, parse_ticket_metadata_from_issue, resolve_target_to_issue_or_string,
 };
-use super::super::mutation_policy::enforce_policy;
 use super::super::prior_attempts::build_redispatch_task;
 use super::super::prompts::enforce_context_budget;
 use super::super::repair_context;
@@ -27,6 +26,7 @@ use crate::controller::HumanRequiredReason;
 use crate::job_kind::JobKind;
 use crate::ledger::{self, LedgerEntry};
 use crate::notifications::{notify_event, NotifyEvent};
+use crate::policy::enforce_policy;
 use crate::routing::RouteRequest;
 use crate::usage_attribution::UsageAttribution;
 use crate::validation_runner::{validate_with_exit_code, VALIDATION_COMMAND_TIMEOUT_EXIT_CODE};

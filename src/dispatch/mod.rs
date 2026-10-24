@@ -24,7 +24,6 @@ mod identity;
 mod issue_claim;
 mod issues;
 mod metrics;
-mod mutation_policy;
 mod prior_attempts;
 mod prompts;
 mod publish;
@@ -235,6 +234,9 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
         ledger.usage = aggregate_attempt_usage(&ledger.attempts);
     }
     if let Err(err) = &result {
+        if crate::policy::policy_blocked(err).is_some() {
+            crate::policy::stamp_refusal(&mut ledger, err);
+        }
         // Every terminal dispatch error must be attributable. More precise
         // workflow boundaries set their own class/stage; this fallback marks
         // uncaught orchestration/plumbing errors as harness-owned rather than
