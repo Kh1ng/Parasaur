@@ -306,6 +306,7 @@ fn transform_to_report_format(
     let (grouped_data, is_model, group_label) = match group_by {
         LedgerGroupBy::Backend => (&data.grouped_by_backend, false, "Backend"),
         LedgerGroupBy::Model => (&data.grouped_by_model, true, "Model"),
+        LedgerGroupBy::Skill => (&data.grouped_by_skill, false, "Skill"),
         LedgerGroupBy::Difficulty => (&data.grouped_by_difficulty, false, "Difficulty"),
         LedgerGroupBy::BackendDifficulty => (
             &data.grouped_by_backend_difficulty,
@@ -520,6 +521,7 @@ fn display_report(
     let (group_label, grouped_data) = match group_by {
         LedgerGroupBy::Backend => ("Backend", &data.grouped_by_backend),
         LedgerGroupBy::Model => ("Model", &data.grouped_by_model),
+        LedgerGroupBy::Skill => ("Skill", &data.grouped_by_skill),
         LedgerGroupBy::Difficulty => ("Difficulty", &data.grouped_by_difficulty),
         LedgerGroupBy::BackendDifficulty => {
             ("Backend x Difficulty", &data.grouped_by_backend_difficulty)
@@ -807,6 +809,7 @@ mod tests {
             grouped_by_difficulty: None,
             grouped_by_backend_difficulty: None,
             grouped_by_model: None,
+            grouped_by_skill: None,
         }
     }
 
@@ -1188,5 +1191,13 @@ mod tests {
         let (_tmp, cfg) = config_with_ledger(&[]);
         let data = build_series(&cfg, "30d", None, "daily").unwrap();
         assert!(data.series.is_empty());
+    }
+    #[test]
+    fn report_skill_group_is_selectable() {
+        let mut data = mock_summary_data();
+        data.grouped_by_skill = data.grouped_by_backend.take();
+        let report = transform_to_report_format(None, &data, GroupBy::Skill, "7d", None).unwrap();
+        assert_eq!(report.group_by, "Skill");
+        assert!(!report.comparisons.is_empty());
     }
 }

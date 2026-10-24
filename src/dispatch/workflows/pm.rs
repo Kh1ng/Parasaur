@@ -167,10 +167,11 @@ pub(crate) fn pm(
                     None,
                     cfg,
                     profile_name,
-                    ledger.work_id.as_deref(),
+                    ledger.work_id.clone().as_deref(),
                     true,
                     Some(remaining.as_secs().max(1)),
                     crate::runner::WriteIntent::ReadOnly,
+                    Some(ledger),
                 )
             },
         ) {

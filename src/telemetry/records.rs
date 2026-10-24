@@ -38,7 +38,8 @@ use serde::{Deserialize, Serialize};
 /// `quota_remaining_percent` is the canonical percentage. Historical used-only
 /// records remain readable, with remaining derived as 100 minus used when an
 /// explicit remaining percentage is absent.
-pub const SCHEMA_VERSION: u32 = 12;
+/// Version 13 adds exact skill versions to attempts and task outcomes.
+pub const SCHEMA_VERSION: u32 = 13;
 
 /// Record types for telemetry data (used for enum tags)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +92,8 @@ pub struct AttemptUsageRecord {
 
     /// Attempt identifier within the dispatch
     pub attempt_number: u32,
+    #[serde(default)]
+    pub skills: Vec<crate::ledger::skills::SkillVersion>,
     /// Backend used for this attempt
     pub backend: String,
     /// Agent CLI family selected for the attempt.
@@ -280,6 +283,8 @@ impl From<ExportedQuotaObservationRecordRaw> for ExportedQuotaObservationRecord 
 /// Task outcome telemetry record
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TaskOutcomeRecord {
+    #[serde(default)]
+    pub skills: Vec<crate::ledger::skills::SkillVersion>,
     #[serde(flatten)]
     pub base: TelemetryRecord,
 

@@ -136,6 +136,7 @@ pub fn extract_attempt_usage_records(
             target_summary: entry.target_summary.clone(),
             mode: entry.mode.clone(),
             attempt_number: attempt.attempt_number,
+            skills: entry.skills_for_attempt(attempt.attempt_number).to_vec(),
             backend: attempt.backend.clone(),
             runner_kind: identity.map(|identity| identity.runner_kind.clone()),
             effective_backend: attempt.backend.clone(),
@@ -302,6 +303,7 @@ pub fn extract_task_outcome_records(
     };
 
     vec![TaskOutcomeRecord {
+        skills: entry.skills.clone(),
         base,
         profile: entry.profile.clone(),
         repo_id: entry.repo_id.clone(),

@@ -12,6 +12,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use url::Url;
 
+mod binding;
+use binding::Binding;
+
 /// Dispatch behavior when neither the central skill bank nor its cache is usable.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -44,7 +47,7 @@ struct SkillBank {
     #[serde(default)]
     skills: Vec<ResolvedSkill>,
     #[serde(default)]
-    bindings: HashMap<String, Vec<String>>,
+    bindings: HashMap<String, Vec<Binding>>,
     #[serde(rename = "bindingOverrides")]
     binding_overrides: Option<Vec<String>>,
 }
@@ -121,7 +124,7 @@ fn resolve_bank(
         bank.bindings
             .values()
             .flatten()
-            .cloned()
+            .map(|binding| binding.label().to_string())
             .collect::<HashSet<_>>()
             .into_iter()
             .collect()
@@ -140,32 +143,33 @@ fn resolve_bank(
         .cloned()
         .unwrap_or(canonical_backend);
 
-    let mut newest = HashMap::<String, ResolvedSkill>::new();
-    for skill in bank.skills {
-        let replace = newest
-            .get(&skill.id)
-            .is_none_or(|current| version_cmp(&skill.version, &current.version).is_gt());
-        if replace {
-            newest.insert(skill.id.clone(), skill);
-        }
-    }
     let mut skills = bank
         .bindings
         .iter()
-        .filter(|(_, labels)| labels.contains(&label))
-        .map(|(id, _)| {
-            newest
-                .remove(id)
-                .with_context(|| format!("bound skill '{id}' does not exist in the central bank"))
+        .filter_map(|(id, bindings)| {
+            bindings
+                .iter()
+                .find(|b| b.label() == label)
+                .map(|b| (id, b))
+        })
+        .map(|(id, binding)| {
+            bank.skills
+                .iter()
+                .filter(|skill| {
+                    skill.id == *id && binding.version().is_none_or(|v| skill.version == v)
+                })
+                .max_by(|left, right| version_cmp(&left.version, &right.version))
+                .cloned()
+                .with_context(|| {
+                    format!(
+                        "bound skill '{id}' version {:?} does not exist in the central bank",
+                        binding.version()
+                    )
+                })
         })
         .collect::<Result<Vec<_>>>()?;
     skills.sort_by(|left, right| left.id.cmp(&right.id));
-    for skill in &skills {
-        if !skill.backends.is_empty() && !skill.backends.iter().any(|value| value == backend) {
-            anyhow::bail!("skill '{}' does not support backend '{backend}'", skill.id);
-        }
-    }
-    Ok(SkillResolution {
+    let resolution = SkillResolution {
         profile: profile.to_string(),
         backend: backend.to_string(),
         instance: instance.map(str::to_string),
@@ -176,7 +180,9 @@ fn resolve_bank(
         }
         .to_string(),
         skills,
-    })
+    };
+    validate_resolution(&resolution, profile, backend, instance)?;
+    Ok(resolution)
 }
 
 fn local_bank_path() -> PathBuf {
@@ -223,6 +229,13 @@ fn validate_resolution(
         || resolution.instance.as_deref() != instance
     {
         anyhow::bail!("central skill resolution does not match the requested target");
+    }
+    if resolution
+        .skills
+        .iter()
+        .any(|skill| skill.id.trim().is_empty() || skill.version.trim().is_empty())
+    {
+        anyhow::bail!("resolved skill id/version must not be empty");
     }
     let ids = resolution
         .skills

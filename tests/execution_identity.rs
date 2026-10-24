@@ -269,6 +269,7 @@ default_target_branch = "main"
             ..Default::default()
         });
         ledger.attempt_routing.push(AttemptRoutingRecord {
+            skills: Vec::new(),
             attempt_number,
             backend_instance: route.identity.backend_instance.clone(),
             effective_model: route.effective_model.clone(),

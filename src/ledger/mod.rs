@@ -1,6 +1,7 @@
 mod approvals;
 mod dispatch_notify;
 mod entry;
+pub mod skills;
 mod usage_unknown;
 pub use self::usage_unknown::UsageUnknownReason;
 mod jsonl;

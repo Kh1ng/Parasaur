@@ -452,10 +452,11 @@ pub(crate) fn improve(
             env_path,
             cfg,
             &args.profile,
-            ledger.work_id.as_deref(),
+            ledger.work_id.clone().as_deref(),
             true,
             None,
             crate::runner::WriteIntent::Implementation,
+            Some(ledger),
         );
         drop(admission_guard);
         let result = match result {

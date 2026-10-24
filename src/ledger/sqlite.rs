@@ -382,6 +382,7 @@ mod tests {
         entry
             .attempt_routing
             .push(crate::ledger::AttemptRoutingRecord {
+                skills: Vec::new(),
                 attempt_number: 1,
                 backend_instance: identity.backend_instance.clone(),
                 effective_model: identity.effective_model.clone(),

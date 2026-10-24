@@ -465,6 +465,20 @@ test('skill bank API stores versions, resolves newest, and refuses deletion of a
       assert.equal(resolved.source, 'profile');
       assert.deepEqual(resolved.skills.map(({ id, version }) => `${id}@${version}`), ['alpha@2.0.0']);
       assert.equal(resolved.skills[0]?.content, 'v2');
+      const pinned = await fetch(`${baseUrl}/api/skills/bindings`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: 'alpha', backend: 'hermes', bindings: [{ id: 'alpha', version: '1.0.0' }] })
+      });
+      assert.equal(pinned.status, 200);
+      const exact = await (await fetch(`${baseUrl}/api/skills/resolve?profile=alpha&backend=hermes`)).json() as { skills: Array<{ version: string; content: string }> };
+      assert.equal(exact.skills[0].version, '1.0.0');
+      assert.equal(exact.skills[0].content, 'v1-edited');
+      const invalidPin = await fetch(`${baseUrl}/api/skills/bindings`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: 'alpha', backend: 'hermes', bindings: [{ id: 'alpha', version: 3 }] })
+      });
+      assert.equal(invalidPin.status, 400);
+
 
       const chatOverride = await fetch(`${baseUrl}/api/skills/bindings`, {
         method: 'PUT',

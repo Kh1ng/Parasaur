@@ -342,6 +342,7 @@ pub(super) fn run_backend(
         false,
         hard_timeout_seconds,
         runner::WriteIntent::Implementation,
+        None,
     )
 }
 
@@ -360,6 +361,7 @@ pub(super) fn run_backend_for_identity(
     work_id: Option<&str>,
     hard_timeout_seconds: Option<u64>,
     write_intent: runner::WriteIntent,
+    ledger: Option<&mut LedgerEntry>,
 ) -> Result<runner::RunResult> {
     run_backend_with_reserved_route(
         identity,
@@ -376,6 +378,7 @@ pub(super) fn run_backend_for_identity(
         false,
         hard_timeout_seconds,
         write_intent,
+        ledger,
     )
 }
 
@@ -395,6 +398,7 @@ pub(super) fn run_backend_with_reserved_route(
     route_slot_already_reserved: bool,
     hard_timeout_seconds: Option<u64>,
     write_intent: runner::WriteIntent,
+    ledger: Option<&mut LedgerEntry>,
 ) -> Result<runner::RunResult> {
     // Live incident (2026-07-11): concurrent dispatches landing on the same
     // shared free-tier backend+model (opencode/hy3-free) silently rate-limit.
@@ -472,6 +476,10 @@ pub(super) fn run_backend_with_reserved_route(
         profile.skill_resolve_failure_policy,
         session_dir,
     )?;
+
+    if let Some(ledger) = ledger {
+        ledger.record_skills(&skills);
+    }
 
     // Issue #832: the runner invocation itself goes through the uniform
     // `for_kind` constructor so dispatch no longer hand-maintains a match

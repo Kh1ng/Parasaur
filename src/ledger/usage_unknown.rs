@@ -20,9 +20,8 @@ pub enum UsageUnknownReason {
 /// otherwise every dispatch's claim row would be counted as a run that never
 /// started on top of its real completion row.
 pub(super) fn annotate_unknown_usage(entry: &mut LedgerEntry) {
-    if entry.schema_version < super::LEDGER_SCHEMA_VERSION
-        || crate::job_kind::JobKind::parse(&entry.mode).is_err()
-    {
+    // v10 introduced this rule; later schema additions must not move its boundary.
+    if entry.schema_version < 10 || crate::job_kind::JobKind::parse(&entry.mode).is_err() {
         return;
     }
     for attempt in &mut entry.attempts {
@@ -164,6 +163,7 @@ mod tests {
         entry
             .attempt_routing
             .push(crate::ledger::AttemptRoutingRecord {
+                skills: Vec::new(),
                 attempt_number: 1,
                 backend_instance: "vibe".into(),
                 effective_model: None,
@@ -201,6 +201,7 @@ mod tests {
             entry
                 .attempt_routing
                 .push(crate::ledger::AttemptRoutingRecord {
+                    skills: Vec::new(),
                     attempt_number: 1,
                     backend_instance: "vibe".into(),
                     effective_model: None,
@@ -277,7 +278,7 @@ mod tests {
             None,
             None,
         );
-        entry.schema_version = super::super::LEDGER_SCHEMA_VERSION - 1;
+        entry.schema_version = 9;
         entry.attempts_started = None;
         entry.backend_exit_code = Some(0);
         entry.attempts_completed = Some(1);

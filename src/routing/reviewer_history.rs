@@ -246,6 +246,7 @@ mod tests {
             entry
                 .attempt_routing
                 .push(crate::ledger::AttemptRoutingRecord {
+                    skills: Vec::new(),
                     attempt_number: 1,
                     backend_instance: instance.into(),
                     effective_model: Some("gemini".into()),
