@@ -241,6 +241,9 @@ pub(in crate::dispatch) fn review(
         ledger.review_source_sha.as_deref(),
         ledger.review_metadata_fingerprint.as_deref(),
     );
+    if super::super::review::head::skip_reviewed_head(cfg, profile, &target, ledger)? {
+        return Ok(());
+    }
     let bundle = session_dir.join("review-bundle");
     fs::create_dir_all(&bundle)?;
     fs::write(bundle.join("diff.patch"), &diff_bundle.diff)?;
@@ -301,6 +304,7 @@ pub(in crate::dispatch) fn review(
          The JSON object fields are: verdict, confidence, human_required, actionable_findings, non_blocking_findings, risk_notes, evidence, compatibility_evidence.\n\
          actionable_findings must be an array of objects with exactly: summary (string), file (an exact path copied from Changed files), line (string or null), status (the literal confirmed), and evidence (an array containing at least one diff:<same-file>:<specific observation> string). non_blocking_findings, risk_notes, evidence, and compatibility_evidence must be JSON arrays of strings, even when empty or when only one item exists.\n\
          NEEDS_FIX and REJECT require at least one actionable_findings object. Never put a withdrawn, speculative, unverified, contradicted, or explicitly non-blocking concern in actionable_findings; put uncertainty in non_blocking_findings. GAH rejects invalid actionable findings and reroutes to another reviewer instead of dispatching a repair.\n\
+         Exception: if the ONLY finding is a failing CI job and the displayed CI status is failed, return NEEDS_FIX with empty actionable_findings and blocking_findings containing only ci:failed:<job-name> strings. This waits for the author's next push without escalation or automatic repair.\n\
          For an APPROVE, evidence must include exactly one or more file:<changed-path> entries copied from Changed files below. You may include ci:passed only when the displayed control-plane CI status is passed. An APPROVE without grounded file evidence is invalid.\n\
          Every source acceptance criterion is blocking until verified. The canonical Source Issue Contract numbers them explicitly; criterion N is numbered item N in that list. For criterion N, put a separate string directly inside the existing `evidence` array using `ac:N:file:<changed-path>` or `ac:N:test:<command and result>`. Each string must contain exactly one mapping: never append a second `ac:N:` mapping, prose, or a test result to an `ac:N:file:<changed-path>` entry, because the complete suffix is validated as the path. Do not create an `ac_evidence` field, `actionable_findings_ac` field, or any other JSON field; extra fields are ignored and cannot satisfy the gate. Before returning APPROVE, audit the `evidence` array for a contiguous `ac:1:` through `ac:N:` set; ordinary unprefixed file/test evidence does not satisfy this gate. If the criterion claims current, live, latest, exact, open/closed, queued, or other external provider state, file/test evidence alone is insufficient: use `ac:N:provider:<provider>:<queried reference and result>` or `ac:N:snapshot:<changed-path>:<verification command and result>`. The provider must match this profile. If any criterion remains unmet or materially unverified, return NEEDS_FIX with a concrete blocking finding; never hide that admission in non_blocking_findings or risk_notes while approving.\n\
          If a persisted or wire contract file is changed (packages/contracts/, migrations/, src/ledger/, src/telemetry/), do not APPROVE unless compatibility_evidence includes file:<changed-contract-path> and mechanism:<schema-version|backward-compatible-default|migration> that is actually present in the diff.\n\
@@ -429,34 +433,10 @@ pub(in crate::dispatch) fn review(
     };
     let mut route = decide_route(cfg, profile, route_request.clone(), None, ledger)?;
 
-    // Duplicate-review short-circuit runs before the budget check: if nothing
-    // has changed since the last completed review of the same tier, that is
-    // the operator-relevant reason to skip, not a budget refusal, and it must
-    // not consume any part of the review-cycle budget below.
-    let reviewer_class = reviewer_dedup_class(derive_reviewer_tier(cfg, profile, &route), &route);
-    if let (Some(work_id), Some(source_sha), Some(metadata_fingerprint)) = (
-        ledger.work_id.as_deref(),
-        target.source_sha.as_deref(),
-        target.metadata_fingerprint.as_deref(),
-    ) {
-        if crate::ledger::review_already_exists(
-            cfg,
-            &args.profile,
-            &profile.repo_id,
-            work_id,
-            source_sha,
-            metadata_fingerprint,
-            &reviewer_class,
-        )? {
-            ledger.validation_result = Some("skipped_duplicate_review".into());
-            ledger.review_source_sha = Some(source_sha.to_string());
-            ledger.review_metadata_fingerprint = Some(metadata_fingerprint.to_string());
-            ledger.reviewer_class = Some(reviewer_class.to_string());
-            println!("Skipping duplicate {reviewer_class} review for {work_id} at {source_sha}");
-            return Ok(());
-        }
-    }
-    ledger.reviewer_class = Some(reviewer_class.to_string());
+    ledger.reviewer_class = Some(reviewer_dedup_class(
+        derive_reviewer_tier(cfg, profile, &route),
+        &route,
+    ));
 
     if let Some(block) = check_review_budget(
         cfg,
@@ -907,7 +887,7 @@ pub(in crate::dispatch) fn review(
             // Success outcome exactly once to decide whether a format-repair
             // retry is needed, and the terminal parse result is carried
             // forward via `parsed_verdict` so it is never parsed twice.
-            let mut verdict = match parsed_verdict
+            let verdict = match parsed_verdict
                 .take()
                 .expect("Success outcome always sets parsed_verdict before breaking the loop")
             {
@@ -932,24 +912,6 @@ pub(in crate::dispatch) fn review(
                     );
                 }
             };
-            // A reviewer asking for human attention (including an APPROVE
-            // held by the deterministic evidence gate) gets the next
-            // configured second opinion first. Human notification and the
-            // dashboard block are reserved for the final, exhausted handoff.
-            if verdict.human_required
-                && next_escalatory_reviewer(
-                    cfg,
-                    profile,
-                    &args.profile,
-                    &target.source_branch,
-                    Some((&route.effective_backend, route.effective_model.as_deref())),
-                    ledger.review_generation.as_deref(),
-                    &availability::resolve_state_path(),
-                )
-                .is_some()
-            {
-                verdict.human_required = false;
-            }
             fs::write(&verdict_path, serde_json::to_string_pretty(&verdict)?)?;
             println!("{}", result.stdout);
             println!("Written: {}", report_path.display());
@@ -1036,7 +998,8 @@ pub(in crate::dispatch) fn review(
                     },
                 );
             }
-            let mr_body = render_review_comment(&verdict, session_dir);
+            let mut mr_body = render_review_comment(&verdict, session_dir);
+            crate::review_head::stamp(&mut mr_body, ledger)?;
             let labels = review_labels(&verdict);
             if profile.provider == "gitlab" {
                 match provider::gitlab_find_mr_by_branch(profile, &target.source_branch) {

@@ -307,7 +307,8 @@ impl FakeBackend {
         script.push_str(&Self::render_case_body(&open_pulls));
         script.push_str("    ;;\n    */check-runs?*)\n");
         script.push_str(&Self::render_case_body(&check_runs));
-        script.push_str("    ;;\n  esac\nfi\n");
+        script
+            .push_str("    ;;\n    */issues/*/comments*) printf '[]\\n'; exit 0 ;;\n  esac\nfi\n");
         script.push_str(&Self::render_case_body(&default));
 
         let path = self.bin_dir.join(&self.name);
@@ -335,7 +336,7 @@ impl FakeBackend {
         // $2 is the endpoint: ".../merge_requests" (list), ".../merge_requests/<iid>"
         // (single), or ".../merge_requests/<iid>/pipelines" (pipelines) -- check
         // the most specific suffix first since it also matches the broader ones.
-        script.push_str("case \"$2\" in\n  */pipelines)\n");
+        script.push_str("case \"$2\" in\n  */notes?*) printf '[]\\n'; exit 0 ;;\n  */pipelines)\n");
         script.push_str(&Self::render_case_body(&pipelines));
         script.push_str("    ;;\n  */merge_requests)\n");
         script.push_str(&Self::render_case_body(&list));

@@ -499,7 +499,19 @@ fn build_snapshot_inner(
         Ok(mrs) => {
             merge_requests = mrs
                 .iter()
-                .map(|mr| sync::sync_mr_to_json(mr, None, &ledger_entries_by_work_id))
+                .map(|mr| {
+                    let mut row = sync::sync_mr_to_json(mr, None, &ledger_entries_by_work_id);
+                    if let Err(error) =
+                        crate::review_head::project(profile_name, profile, entries, &mut row)
+                    {
+                        errors.push(StatusError {
+                            subsystem: "review_head".into(),
+                            message: format!("{error:#}"),
+                            incomplete_snapshot: true,
+                        });
+                    }
+                    row
+                })
                 .collect();
             raw_mrs = mrs;
         }

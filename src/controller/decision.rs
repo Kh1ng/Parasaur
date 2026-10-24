@@ -270,9 +270,15 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
         }
 
         match mr.classification.as_str() {
+            "NEEDS_REVIEW" if crate::review_head::unchanged(mr) => {}
             "NEEDS_REVIEW" => review_candidates.push(mr),
+            "CI_FAILED" | "NEEDS_FIX"
+                if crate::review_head::unchanged(mr)
+                    && mr.review_gate_reason.as_deref() == Some("ci_failed_waiting_for_push") => {}
             "CI_FAILED" | "NEEDS_FIX" if !has_current_repair_review(mr) => {
-                review_candidates.push(mr)
+                if !crate::review_head::unchanged(mr) {
+                    review_candidates.push(mr)
+                }
             }
             "CI_FAILED" | "NEEDS_FIX" => {
                 let fix_attempts = snapshot
