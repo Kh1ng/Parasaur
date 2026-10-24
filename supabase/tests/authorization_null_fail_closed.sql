@@ -59,6 +59,30 @@ select pg_temp.ok((select stop_requested_at is not null from public.work_items w
     'authorized takeover must still stop the running job');
 select pg_temp.ok((select handoff_kind = 'approved' and handoff_to = :'stranger' from public.tasks where workspace_id = :'ws' and task_id = :'task'),
     'authorized takeover must still reserve the task');
+-- Erasure must actually null the requester before an ordinary member attempts cancellation.
+reset role;
+insert into gah_private.managed_workers (workspace_id, worker_id, request_key, requested_by, lifetime, idle_minutes, profiles, runtime_version)
+values (:'ws', '95000000-0000-0000-0000-000000000001', gen_random_uuid(), :'holder', 'task', 2, array['web'], 'test');
+delete from gah_private.memberships where workspace_id = :'ws' and user_id = :'holder';
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'owner', 'role', 'authenticated')::text, true) \gset
+select public.erase_departed_member(:'ws', :'holder');
+reset role;
+select pg_temp.ok((select requested_by is null from gah_private.managed_workers where workspace_id = :'ws'
+    and worker_id = '95000000-0000-0000-0000-000000000001'), 'erase_departed_member must null the worker requester');
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'stranger', 'role', 'authenticated')::text, true) \gset
+select pg_temp.ok(gah_private.can_access(:'ws') and not gah_private.workspace_owner(:'ws'), 'canceller must be an active non-owner member');
+select pg_temp.ok(pg_temp.denied(format('select public.cancel_managed_worker(%L, %L)', :'ws', '95000000-0000-0000-0000-000000000001'), 'worker_write_denied'),
+    'erased requester must reject member cancellation with 42501/worker_write_denied');
+reset role;
+select pg_temp.ok((select state = 'requested' and not cleanup_confirmed from gah_private.managed_workers where workspace_id = :'ws'
+    and worker_id = '95000000-0000-0000-0000-000000000001'), 'denied cancellation must not retire the worker');
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'owner', 'role', 'authenticated')::text, true) \gset
+select pg_temp.ok(public.cancel_managed_worker(:'ws', '95000000-0000-0000-0000-000000000001') = 'retired',
+    'workspace owner must still cancel an erased-requester worker');
+reset role;
 rollback;
 \o
-\echo 'NULL node permission authorization checks passed'
+\echo 'NULL node permission and erased-requester authorization checks passed'

@@ -24,5 +24,9 @@ supabase db start
 supabase db reset --local
 # Read only the local DB URL; do not print the other status values or evaluate shell output.
 db_url="$(supabase status -o json | node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => { const url = JSON.parse(s).DB_URL; if (!url) process.exit(1); process.stdout.write(url); });')"
-psql -X -q -v ON_ERROR_STOP=1 "$db_url" -f supabase/tests/authorization_null_fail_closed.sql
+failed=0
+for test in supabase/tests/authorization_null*.sql; do
+  psql -X -q -v ON_ERROR_STOP=1 "$db_url" -f "$test" || failed=1
+done
+if ((failed)); then exit 1; fi
 printf 'Supabase local reset and authorization regression passed (%s migrations)\n' "$(find supabase/migrations -name '*.sql' | wc -l | tr -d ' ')"
