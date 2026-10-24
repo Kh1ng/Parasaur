@@ -18,6 +18,9 @@
 //! central rejected the node rather than it silently not appearing in the
 //! fleet.
 
+mod cloud;
+pub use cloud::cloud_advisory;
+
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

@@ -33,7 +33,7 @@ pub fn run(command: NodeCommands) -> Result<()> {
                 })
                 .filter(|l| !l.is_empty());
 
-            node_register::register(&RegisterOptions {
+            let opts = RegisterOptions {
                 central_url: central.clone(),
                 advertised_url,
                 transport_mode,
@@ -42,7 +42,9 @@ pub fn run(command: NodeCommands) -> Result<()> {
                 token: std::env::var("COORDINATOR_TOKEN").ok(),
                 config_path,
                 identity_path: None,
-            })?;
+            };
+            node_register::register(&opts)?;
+            node_register::cloud_advisory(&cfg, Some(&opts));
             println!("Registered node against {central}");
             Ok(())
         }
