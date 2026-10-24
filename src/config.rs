@@ -561,11 +561,7 @@ pub mod tests {
     };
     use crate::test_support::{clear_canonical_config_override, set_canonical_config_override};
 
-    /// Build a structurally complete `Profile` for unit tests in other modules
-    /// (e.g. `notifications`). Mirrors the shape of `dispatch::tests::profile`
-    /// so notification formatting tests can construct a real `Profile` without
-    /// duplicating every field.
-    #[cfg(test)]
+    /// Build a complete `Profile` for tests in other modules.
     pub fn test_profile_for_notifications() -> Profile {
         Profile {
             manager_wake_autonomy: crate::config::WakeAutonomy::default(),
