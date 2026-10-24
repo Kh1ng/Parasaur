@@ -86,8 +86,9 @@ fn write_node_pressure_with_load(
     logical_cpus: u64,
     load_one: f64,
 ) {
+    let replacement = path.with_extension("json.tmp");
     fs::write(
-        path,
+        &replacement,
         format!(
             r#"{{
   "memory_total_bytes": 68719476736,
@@ -103,6 +104,7 @@ fn write_node_pressure_with_load(
         ),
     )
     .unwrap();
+    fs::rename(replacement, path).unwrap();
 }
 
 fn read_u32_file(path: &std::path::Path) -> u32 {
@@ -925,9 +927,11 @@ fn parallel_loop_reprobes_node_pressure_with_active_worker_remaining() {
                echo \"$count\" > \"$active_count_file\"\n\
                release_active_lock\n\
              }}\n\
+             acquire_active_lock\n\
              n=$( [ -f \"${{call_count_file}}.count\" ] && cat \"${{call_count_file}}.count\" || echo 0 )\n\
              n=$((n + 1))\n\
              echo \"$n\" > \"${{call_count_file}}.count\"\n\
+             release_active_lock\n\
              printf 'agent edit %s\n' \"$n\" > \"agent-edit-$n.txt\"\n\
              inc_active\n\
              echo \"call-$n\" >> \"$call_count_file\"\n\

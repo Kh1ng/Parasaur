@@ -21,8 +21,12 @@ mod autonomy;
 pub use autonomy::WakeAutonomy;
 mod external_credential_scopes;
 pub use external_credential_scopes::ExternalCredentialScope;
+mod loading;
+mod orchestration;
+pub use loading::load;
 mod routing_policy;
 mod worker_scaling;
+pub use orchestration::OrchestrationMode;
 use routing_policy::merge_routing_policy;
 pub use routing_policy::{CandidateConfig, IssueBudget, RoutingPolicy, TaskRoutingRule};
 mod default_paths;
@@ -42,6 +46,8 @@ pub struct GahConfig {
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 #[serde(default)]
 pub struct Defaults {
+    /// Cloud modes require GAH_SUPABASE_URL and GAH_SUPABASE_ANON_KEY in the environment.
+    pub orchestration_mode: OrchestrationMode,
     /// None retains factory behavior for configurations predating module selection.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub factory_enabled: Option<bool>,
@@ -486,38 +492,6 @@ pub fn check_profile_candidate_model_consistency(
     } else {
         Err(errors)
     }
-}
-
-pub fn load(config_path: Option<&str>) -> Result<GahConfig> {
-    let path = resolve_config_path(config_path);
-    if !path.exists() {
-        anyhow::bail!(
-            "no config found; set GAH_CONFIG or create {}",
-            default_config_path().display()
-        );
-    }
-
-    let text =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let mut cfg: GahConfig =
-        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-    // Invalid values must not lock the operator out of the config; the
-    // rationale lives on NodeCapacitySettings::sanitized.
-    cfg.defaults.node_capacity = cfg.defaults.node_capacity.sanitized();
-    if let Some(canonical_routing) = load_canonical_routing()? {
-        cfg.defaults.routing = merge_routing_policy(canonical_routing, cfg.defaults.routing);
-    }
-
-    // Lint candidate model consistency
-    for (name, profile) in &cfg.profiles {
-        if let Err(mismatches) = check_profile_candidate_model_consistency(&cfg.defaults, profile) {
-            for m in mismatches {
-                eprintln!("WARNING: Profile '{}': {}", name, m);
-            }
-        }
-    }
-
-    Ok(cfg)
 }
 
 pub fn get_profile<'a>(config: &'a GahConfig, name: &str) -> Result<&'a Profile> {
