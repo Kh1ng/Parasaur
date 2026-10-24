@@ -89,6 +89,12 @@ const sessionStore = new WebSocketSessionStore();
 const pushBus = createServerPushBus();
 let fleetDispatch: ReturnType<typeof createFleetDispatchCoordinator>;
 
+/** #1598: the periodic feed refresh bounds its `gah events` read to the
+ * newest events so a 30-day window of large `context_built`/`dispatch_*`
+ * payloads cannot exceed the CLI output cap. Matches the feed's replay
+ * limit, which is the most it can display anyway. */
+const ACTIVITY_REFRESH_EVENT_LIMIT = 200;
+
 // Temporary storage for profile from query params, used before client.hello arrives
 const pendingProfiles = new Map<WebSocket, string>();
 
@@ -128,14 +134,26 @@ export function createWebSocketHandler(
   const primedEvents = new Set<string>();
   const primedQuota = new Set<string>();
   let gatewayPrimed = false;
+  // #1598: an over-cap (or otherwise failing) events read used to log once
+  // per poll -- 9,000+ lines over two boots on central. Log the failure once
+  // per failing -> ok -> failing transition, and once per distinct message
+  // (#1616): a profile-only set would hide every NEW error behind the first
+  // one until a successful refresh deleted the entry, which may never come.
+  // The map holds the last logged message per profile: the same message
+  // repeating stays quiet, a different one logs and replaces it.
+  const failingEventRefresh = new Map<string, string>();
   const syncActivity = (profile: string): Promise<void> => {
     const current = syncing.get(profile);
     if (current) return current;
     const quotaDue = Date.now() - (quotaSyncedAt.get(profile) ?? 0) >= 60_000;
     if (quotaDue) quotaSyncedAt.set(profile, Date.now());
     const pending = Promise.all([
-      loadEvents(profile, '30d').catch((error) => {
-        console.error(`Failed to refresh activity for ${profile}: ${error instanceof Error ? error.message : String(error)}`);
+      loadEvents(profile, '30d', undefined, ACTIVITY_REFRESH_EVENT_LIMIT).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (failingEventRefresh.get(profile) !== message) {
+          failingEventRefresh.set(profile, message);
+          console.error(`Failed to refresh activity for ${profile}: ${message}`);
+        }
         return null;
       }),
       quotaDue ? loadQuota({ profile, since: '24h' }).catch((error) => {
@@ -151,6 +169,9 @@ export function createWebSocketHandler(
           sessionStore.broadcast({ type: 'workers.snapshot', profile, workers: runningWorkers(status, nodes, nodeId) }, undefined, profile);
         }
         if (events) {
+          if (failingEventRefresh.delete(profile)) {
+            console.log(`Activity refresh for ${profile} recovered`);
+          }
           const announce = primedEvents.has(profile);
           for (const controllerEvent of events) {
             const event = activityFromController(controllerEvent);

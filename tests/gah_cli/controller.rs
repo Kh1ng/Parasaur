@@ -1030,6 +1030,122 @@ fn events_reads_back_loop_once_output_and_filters_by_profile() {
 }
 
 #[test]
+fn events_limit_keeps_only_the_newest_events_after_the_since_filter() {
+    let tmp = test_tempdir();
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+    let cfg = write_real_repo_config(&tmp, &repo, "github");
+
+    // #1598: feed-style consumers bound their read so a window full of
+    // large payloads cannot exceed their output cap. Seed one out-of-window
+    // event and three in-window events; `--limit 2` must keep the newest
+    // two of what survives the since/profile filter.
+    let now = time::OffsetDateTime::now_utc();
+    let stamp = |days_ago: i64| {
+        (now - time::Duration::days(days_ago))
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap()
+    };
+    let seed = |events_path: &std::path::Path, rows: &[(i64, &str)]| {
+        let mut seeded = String::new();
+        for &(days_ago, work_id) in rows {
+            seeded.push_str(
+                &serde_json::to_string(&serde_json::json!({
+                    "timestamp": stamp(days_ago), "event_type": "action_decided",
+                    "profile": "real",
+                    "work_id": work_id,
+                    "details": "decided",
+                    "review_contract_version": 1
+                }))
+                .unwrap(),
+            );
+            seeded.push('\n');
+        }
+        fs::write(events_path, seeded).unwrap();
+    };
+    let events_path = tmp.path().join("events.jsonl");
+    seed(
+        &events_path,
+        &[(200, "#stale"), (3, "#1"), (2, "#2"), (1, "#3")],
+    );
+
+    let run_events = |events_path: &std::path::Path, args: &[&str]| {
+        let out = bin()
+            .args([
+                "events",
+                "--config-path",
+                cfg.to_str().unwrap(),
+                "--profile",
+                "real",
+                "--since",
+                "30d",
+                "--json",
+            ])
+            .args(args)
+            .env("GAH_EVENTS_PATH", events_path)
+            .assert()
+            .success();
+        let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+        serde_json::from_str::<Value>(&stdout)
+            .expect("stdout must be valid JSON")
+            .as_array()
+            .unwrap()
+            .clone()
+    };
+    fn work_ids(events: &[Value]) -> Vec<&str> {
+        events
+            .iter()
+            .map(|e| e["work_id"].as_str().unwrap())
+            .collect()
+    }
+
+    let limited = run_events(&events_path, &["--limit", "2"]);
+    assert_eq!(
+        work_ids(&limited),
+        vec!["#2", "#3"],
+        "--limit must keep the newest N events after the since filter, in stream order"
+    );
+
+    let unlimited = run_events(&events_path, &[]);
+    assert_eq!(
+        work_ids(&unlimited),
+        vec!["#1", "#2", "#3"],
+        "without --limit the whole filtered window is returned"
+    );
+
+    // #1616: the append-only stream is not guaranteed to be in timestamp
+    // order (a delayed writer lands an older event after a newer one), so
+    // the newest-N selection must be by timestamp, not append position --
+    // an append-order tail would otherwise displace the actual newest
+    // event. Selection by timestamp, emission still in stream order.
+    let out_of_order_path = tmp.path().join("events-out-of-order.jsonl");
+    seed(
+        &out_of_order_path,
+        &[
+            (200, "#stale"),
+            (1, "#newest"),
+            (2, "#middle"),
+            (3, "#oldest"),
+        ],
+    );
+
+    let limited_out_of_order = run_events(&out_of_order_path, &["--limit", "2"]);
+    assert_eq!(
+        work_ids(&limited_out_of_order),
+        vec!["#newest", "#middle"],
+        "--limit must select the newest by timestamp even when an older event is appended after a newer one, keeping stream order"
+    );
+
+    let unlimited_out_of_order = run_events(&out_of_order_path, &[]);
+    assert_eq!(
+        work_ids(&unlimited_out_of_order),
+        vec!["#newest", "#middle", "#oldest"],
+        "without --limit the out-of-order window is still returned in stream order"
+    );
+}
+
+#[test]
 fn loop_once_stops_on_stuck_loop_instead_of_repeating_forever() {
     let tmp = test_tempdir();
     let repo = tmp.path().join("repo");

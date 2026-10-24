@@ -390,16 +390,49 @@ pub fn reconcile_abandoned_dispatches(cfg: &GahConfig, profile_name: &str) -> Re
     Ok(orphans.len())
 }
 
-/// TICKET-084: `gah events [--json] [--since DURATION] [--profile NAME]`.
-/// Same shape as `gah ledger summary` -- read, filter, print. No
-/// `--watch`/follow mode per the ticket's own "do not overbuild before
-/// event schema exists."
-pub fn run(cfg: &GahConfig, since: &str, profile: Option<&str>, json: bool) -> Result<()> {
+/// TICKET-084: `gah events [--json] [--since DURATION] [--profile NAME]
+/// [--limit N]`. Same shape as `gah ledger summary` -- read, filter, print.
+/// No `--watch`/follow mode per the ticket's own "do not overbuild before
+/// event schema exists." `--limit` keeps the newest N events after the
+/// since/profile filter (#1598): `context_built`/`dispatch_*` payloads are
+/// large enough that a long window can exceed a reader's output cap, so
+/// feed-style consumers ask for a bounded tail instead of the whole window.
+/// "Newest" is by timestamp, not append position (#1616): a delayed append
+/// can write an older event after a newer one, so an append-order tail
+/// could displace the actual newest events. The kept events are still
+/// emitted in stream (append) order.
+pub fn run(
+    cfg: &GahConfig,
+    since: &str,
+    profile: Option<&str>,
+    json: bool,
+    limit: Option<usize>,
+) -> Result<()> {
     let cutoff = crate::ledger::summary::parse_since(since)?;
     let mut events = read_events(cfg)?;
     events.retain(|e| e.timestamp >= cutoff);
     if let Some(profile) = profile {
         events.retain(|e| e.profile.as_deref() == Some(profile));
+    }
+    if let Some(limit) = limit {
+        // Stable sort by timestamp (ties keep append order -- the same
+        // string convention as the since filter above, since every
+        // recorder writes UTC RFC3339), keep the newest N, then emit the
+        // survivors in their original stream order. Index-based so the
+        // (potentially huge) payloads move once, no clones.
+        let mut order: Vec<usize> = (0..events.len()).collect();
+        order.sort_by_key(|&i| &events[i].timestamp);
+        order.drain(..events.len().saturating_sub(limit));
+        let mut keep = vec![false; events.len()];
+        for i in order {
+            keep[i] = true;
+        }
+        let mut index = 0;
+        events.retain(|_| {
+            let keep_event = keep[index];
+            index += 1;
+            keep_event
+        });
     }
 
     if json {

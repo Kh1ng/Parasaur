@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { test } from 'node:test';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -11,6 +11,7 @@ import { RegistryService } from './registryService.js';
 import { COORDINATOR_SCHEMA_DIGEST, getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { createWebSocketHandler } from './wsServer.js';
 import { createAuthorizedWebSocketServer } from './webSocketAuth.js';
+import { runEvents } from './gahCli.js';
 import type { ControllerEvent, NodeRoleStatus, ServerMessage } from '@git-agent-harness/contracts';
 import { ActivityFeed, activityFromController } from './activityFeed.js';
 
@@ -338,5 +339,174 @@ test('trusted-LAN sockets receive a warning but cannot invoke session mutations'
     await new Promise<void>(resolve => server.close(() => resolve()));
     if (savedMode === undefined) delete process.env.GAH_WS_AUTH_MODE; else process.env.GAH_WS_AUTH_MODE = savedMode;
     if (savedHttp === undefined) delete process.env.GAH_ALLOW_INSECURE_HTTP; else process.env.GAH_ALLOW_INSECURE_HTTP = savedHttp;
+  }
+});
+
+/** Fake `gah` for #1598: the 30-day `events` window holds 250 old
+ * `context_built` events with ~280 KB payloads (~70 MB, over the server's
+ * events output cap) followed by 200 ordinary dispatch events, so the
+ * unlimited window read is over cap exactly like production. `--limit N`
+ * returns only the newest N events, mirroring the real CLI. `status` and
+ * `quota` replay the committed fixture responses so the rest of the
+ * refresh path behaves normally. */
+function writeOverCapEventsGah(dir: string): string {
+  const responses = fileURLToPath(new URL('../tests/fixtures/gah/responses', import.meta.url));
+  const bin = join(dir, 'gah');
+  writeFileSync(bin, `#!/usr/bin/env node
+import fs from 'node:fs';
+
+const args = process.argv.slice(2);
+const command = args[0];
+if (command === 'status') {
+  process.stdout.write(fs.readFileSync('${join(responses, 'status.json')}', 'utf8'));
+  process.exit(0);
+}
+if (command === 'quota') {
+  process.stdout.write(fs.readFileSync('${join(responses, 'quota.json')}', 'utf8'));
+  process.exit(0);
+}
+if (command !== 'events') process.exit(0);
+
+const newest = [];
+for (let i = 0; i < 200; i++) {
+  newest.push({
+    timestamp: new Date(Date.now() - (200 - i) * 60000).toISOString(),
+    event_type: 'dispatch_finished',
+    profile: 'overcap',
+    work_id: '#new-' + i,
+    details: 'dispatch_ticket: success'
+  });
+}
+const limitIndex = args.indexOf('--limit');
+if (limitIndex !== -1) {
+  const limit = Number(args[limitIndex + 1]);
+  process.stdout.write(JSON.stringify(newest.slice(-limit)));
+  process.exit(0);
+}
+const giant = JSON.stringify({
+  timestamp: '2026-10-10T00:00:00.000Z',
+  event_type: 'context_built',
+  profile: 'overcap',
+  work_id: '#giant',
+  details: 'context: ' + 'x'.repeat(280000)
+});
+process.stdout.write('[');
+for (let i = 0; i < 250; i++) {
+  process.stdout.write((i ? ',' : '') + giant);
+}
+process.stdout.write(',' + newest.map((event) => JSON.stringify(event)).join(',') + ']');
+`);
+  chmodSync(bin, 0o755);
+  return bin;
+}
+
+test('an over-cap event window still refreshes the feed with the newest events (#1598)', { timeout: 20000 }, async () => {
+  const fakeDir = mkdtempSync(join(tmpdir(), 'gah-overcap-events-'));
+  const fakeBin = writeOverCapEventsGah(fakeDir);
+  const previousBinary = process.env.GAH_BINARY;
+  process.env.GAH_BINARY = fakeBin;
+  try {
+    // The unlimited 30-day window read (what the HTTP endpoints request)
+    // exceeds the events output cap: the incident, reproduced through the
+    // real spawn/parse transport.
+    await assert.rejects(
+      runEvents('overcap', '30d'),
+      (error: unknown) => error instanceof Error && /gah events output exceeded \d+ bytes/.test(error.message)
+    );
+
+    const server = http.createServer();
+    const wss = new WebSocketServer({ server });
+    createWebSocketHandler(wss, { activityFeed: new ActivityFeed(null) });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}`);
+    try {
+      // client.hello awaits the profile's activity sync and then replays the
+      // feed: if the bounded refresh did not deliver, this replay is empty.
+      const replay = new Promise<Extract<ServerMessage, { type: 'activity.replay' }>>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('timed out waiting for activity.replay')), 15000);
+        ws.on('message', (bytes) => {
+          const message = JSON.parse(bytes.toString()) as ServerMessage;
+          if (message.type === 'activity.replay') { clearTimeout(timer); resolve(message); }
+        });
+      });
+      await new Promise<void>((resolve) => ws.once('open', resolve));
+      ws.send(JSON.stringify({ type: 'client.hello', clientVersion: 'test', profile: 'overcap', capabilities: {} }));
+      const message = await replay;
+      const delivered = message.events.filter((event) => event.workId !== null && event.workId !== undefined);
+      assert.ok(delivered.length >= 199, `the refresh must deliver the newest window, got ${delivered.length} events`);
+      assert.ok(delivered.some((event) => event.workId === '#new-199'), 'the newest event must be delivered');
+      assert.ok(
+        delivered.every((event) => /^#new-\d+$/.test(event.workId ?? '')),
+        'only the newest window events may be delivered'
+      );
+    } finally {
+      ws.terminate();
+      for (const socket of wss.clients) socket.terminate();
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  } finally {
+    if (previousBinary === undefined) delete process.env.GAH_BINARY; else process.env.GAH_BINARY = previousBinary;
+    rmSync(fakeDir, { recursive: true, force: true });
+  }
+});
+
+test('a failing events refresh logs one warning per transition, not one per poll (#1598)', async (t) => {
+  const server = http.createServer();
+  const wss = new WebSocketServer({ server });
+  let failEvents = true;
+  let loads = 0;
+  let errorMessage = 'gah events output exceeded 67108864 bytes (observed 67108966)';
+  createWebSocketHandler(wss, {
+    activityFeed: new ActivityFeed(null),
+    runEvents: async () => {
+      loads += 1;
+      if (failEvents) throw new Error(errorMessage);
+      return [];
+    },
+    runQuota: (async () => { throw new Error('quota unavailable'); }) as never,
+    backgroundProfiles: async () => ['gah'],
+    backgroundIntervalMs: 10
+  });
+  const failureLogs = t.mock.method(console, 'error');
+  const recoveryLogs = t.mock.method(console, 'log');
+  const waitForLoads = async (count: number) => {
+    const deadline = Date.now() + 2000;
+    while (loads < count) {
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${count} activity loads`);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  };
+  const activityFailures = () => failureLogs.mock.calls
+    .filter((call) => typeof call.arguments[0] === 'string' && call.arguments[0].includes('Failed to refresh activity for gah')).length;
+  const recoveries = () => recoveryLogs.mock.calls
+    .filter((call) => typeof call.arguments[0] === 'string' && call.arguments[0].includes('Activity refresh for gah recovered')).length;
+  try {
+    await waitForLoads(3);
+    assert.equal(activityFailures(), 1, 'three failed polls with the same message must log the failure exactly once');
+    failEvents = false;
+    await waitForLoads(loads + 2);
+    assert.equal(recoveries(), 1, 'a successful refresh after failures must log the recovery exactly once');
+    failEvents = true;
+    await waitForLoads(loads + 2);
+    assert.equal(activityFailures(), 2, 'a second failing transition must log the failure again');
+    // #1616: the once-per-transition suppression must be keyed by the error
+    // message too -- a profile-only set suppressed every NEW error behind
+    // the first one until the profile happened to recover. A distinct
+    // message must be visible even while the profile never succeeds, while
+    // the same message repeating stays quiet.
+    errorMessage = 'authentication_error: credential expired';
+    await waitForLoads(loads + 2);
+    assert.equal(activityFailures(), 3, 'a distinct new error message must log again without an intervening recovery');
+    await waitForLoads(loads + 2);
+    assert.equal(activityFailures(), 3, 'the same message repeating must stay quiet');
+    errorMessage = 'gah events output exceeded 67108864 bytes (observed 67108966)';
+    await waitForLoads(loads + 2);
+    assert.equal(activityFailures(), 4, 'switching back to the first message is another change and must log again');
+  } finally {
+    failureLogs.mock.restore();
+    recoveryLogs.mock.restore();
+    await new Promise<void>((resolve) => wss.close(() => resolve()));
   }
 });

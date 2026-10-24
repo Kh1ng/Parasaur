@@ -334,6 +334,12 @@ pub enum Commands {
         json: bool,
         #[arg(long, default_value = "7d")]
         since: String,
+        /// Keep only the newest N events after the since/profile filter
+        /// (#1598): `context_built`/`dispatch_*` payloads are large, so a
+        /// long window can exceed a reader's output cap even at a few
+        /// hundred events.
+        #[arg(long)]
+        limit: Option<usize>,
     },
     /// Provide a single machine-readable controller snapshot of all state
     Status {
