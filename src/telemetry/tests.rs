@@ -75,8 +75,8 @@ pub(crate) mod telemetry_tests {
     #[test]
     fn test_schema_version_in_record() {
         assert_eq!(
-            SCHEMA_VERSION, 12,
-            "remaining-only quota exports must be distinguishable from schema v11"
+            SCHEMA_VERSION, 13,
+            "skill provenance exports must be distinguishable from schema v12"
         );
         let base = TelemetryRecord {
             schema_version: SCHEMA_VERSION,
@@ -95,6 +95,7 @@ pub(crate) mod telemetry_tests {
             target_summary: None,
             mode: "test".to_string(),
             attempt_number: 0,
+            skills: Vec::new(),
             backend: "test".to_string(),
             runner_kind: None,
             effective_backend: "test".to_string(),
@@ -236,6 +237,7 @@ pub(crate) mod telemetry_tests {
         };
 
         let record = TaskOutcomeRecord {
+            skills: Vec::new(),
             base,
             profile: "test-profile".to_string(),
             repo_id: "test-repo".to_string(),
@@ -555,6 +557,7 @@ pub(crate) mod telemetry_tests {
         identity.account_label = Some("google-secondary".into());
         identity.auth_source_label = Some("agy-secondary-session".into());
         entry.attempt_routing = vec![crate::ledger::AttemptRoutingRecord {
+            skills: Vec::new(),
             attempt_number: 1,
             backend_instance: identity.backend_instance.clone(),
             effective_model: identity.effective_model.clone(),
@@ -793,6 +796,7 @@ pub(crate) mod telemetry_tests {
     // Helper function to create a test ledger entry
     pub(crate) fn create_test_ledger_entry() -> LedgerEntry {
         LedgerEntry {
+            skills: Vec::new(),
             timestamp: "2026-07-10T12:00:00Z".to_string(),
             schema_version: crate::ledger::LEDGER_SCHEMA_VERSION,
             session_id: None,
@@ -1190,6 +1194,7 @@ default_target_branch = "main"
         entry.attempts = vec![attempt1, attempt2, attempt3];
         entry.attempt_routing = vec![
             crate::ledger::AttemptRoutingRecord {
+                skills: Vec::new(),
                 attempt_number: 1,
                 backend_instance: "instance-api".into(),
                 effective_model: Some("gpt-4".into()),
@@ -1203,6 +1208,7 @@ default_target_branch = "main"
                 routing_diagnostics: None,
             },
             crate::ledger::AttemptRoutingRecord {
+                skills: Vec::new(),
                 attempt_number: 2,
                 backend_instance: "instance-api".into(),
                 effective_model: Some("gpt-4".into()),
@@ -1216,6 +1222,7 @@ default_target_branch = "main"
                 routing_diagnostics: None,
             },
             crate::ledger::AttemptRoutingRecord {
+                skills: Vec::new(),
                 attempt_number: 3,
                 backend_instance: "instance-sub".into(),
                 effective_model: Some("claude-3-5".into()),

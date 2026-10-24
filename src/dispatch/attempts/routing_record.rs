@@ -19,6 +19,7 @@ pub(in crate::dispatch) fn record_route_attempt(
     ledger
         .attempt_routing
         .push(crate::ledger::AttemptRoutingRecord {
+            skills: Vec::new(),
             attempt_number: ledger.attempt_routing.len() as u32 + 1,
             backend_instance: route.identity.backend_instance.clone(),
             effective_model: route.effective_model.clone(),

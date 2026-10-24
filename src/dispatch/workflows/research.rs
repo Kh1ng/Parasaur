@@ -134,9 +134,10 @@ pub(crate) fn research(
         &cargo_target,
         &llm,
         env_path,
-        ledger.work_id.as_deref(),
+        ledger.work_id.clone().as_deref(),
         None,
         crate::runner::WriteIntent::ReadOnly,
+        Some(ledger),
     )
     .inspect_err(|_| {
         let log_path = attempt_dir.join("backend-output.log");

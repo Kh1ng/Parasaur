@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { withFixtureServer } from './fixtureGahHarness.js';
 
 // Keep the expected Clap vocabulary independent from the API's allowed values.
-const groupings = ['none', 'backend', 'model', 'difficulty', 'backend-difficulty'];
+const groupings = ['none', 'backend', 'model', 'skill', 'difficulty', 'backend-difficulty'];
 const fixture = (name: string): unknown => JSON.parse(readFileSync(new URL(`../tests/fixtures/gah/responses/${name}.json`, import.meta.url), 'utf8'));
 
 test('report queries preserve CLI arguments and complete fixture JSON', async (t) => {
@@ -53,7 +53,7 @@ test('report queries preserve CLI arguments and complete fixture JSON', async (t
           assert.equal(response.status, 400, query);
           assert.deepEqual(await response.json(), {
             error: 'Invalid groupBy',
-            message: 'groupBy must be one of: none, backend, model, difficulty, backend-difficulty'
+            message: 'groupBy must be one of: none, backend, model, skill, difficulty, backend-difficulty'
           });
           assert.deepEqual(calls(), []);
         }

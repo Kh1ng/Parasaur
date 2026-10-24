@@ -283,3 +283,18 @@ test('seed from docs makes the doc a first-class record, idempotently', async ()
     }
   });
 });
+
+test('skill binding pins survive newer versions and clearing restores newest', async () => {
+  await withTempBank(() => {
+    putSkill(skill('alpha', '1.0.0'));
+    putSkill(skill('alpha', '2.0.0'));
+    setSkillBindings('repo', 'hermes', [{ id: 'alpha', version: '1.0.0' }]);
+    assert.equal(resolveSkillBindings('repo', 'hermes').skills[0].version, '1.0.0');
+    putSkill(skill('alpha', '3.0.0'));
+    assert.equal(resolveSkillBindings('repo', 'hermes').skills[0].version, '1.0.0');
+    assert.throws(() => setSkillBindings('repo', 'hermes', [{ id: 'alpha', version: 'missing' }]), /does not exist/);
+    assert.equal(resolveSkillBindings('repo', 'hermes').skills[0].version, '1.0.0');
+    setSkillBindings('repo', 'hermes', ['alpha']);
+    assert.equal(resolveSkillBindings('repo', 'hermes').skills[0].version, '3.0.0');
+  });
+});

@@ -17,10 +17,11 @@
  * silently orphaned.
  */
 
+import { bindingLabel, bindingVersion, isBinding, parseSkillSelections } from './skillSelections.js';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import type { Skill, SkillBankFile, SkillBindingSource, SkillSummary } from '@git-agent-harness/contracts';
+import type { Skill, SkillBankFile, SkillBindingSource, SkillSummary, SkillSelection } from '@git-agent-harness/contracts';
 
 function bankPath(): string {
   return process.env.GAH_SKILL_BANK_PATH
@@ -86,9 +87,9 @@ function readBank(): SkillBankFile {
       throw new Error(`Invalid skill bank at ${path}: bindings.${skillId} must be an array`);
     }
     for (const [labelIndex, label] of labels.entries()) {
-      if (typeof label !== 'string') {
+      if (!isBinding(label)) {
         throw new Error(
-          `Invalid skill bank at ${path}: bindings.${skillId}[${labelIndex}] must be a string`
+          `Invalid skill bank at ${path}: bindings.${skillId}[${labelIndex}] must be a binding label or versioned binding`
         );
       }
     }
@@ -96,7 +97,7 @@ function readBank(): SkillBankFile {
 
   const rawOverrides = (parsed as { bindingOverrides?: unknown }).bindingOverrides;
   const bindingOverrides = rawOverrides === undefined
-    ? [...new Set(Object.values(bindings).flat())]
+    ? [...new Set(Object.values(bindings).flat().map(bindingLabel))]
     : rawOverrides;
   if (!Array.isArray(bindingOverrides)) {
     throw new Error(`Invalid skill bank at ${path}: bindingOverrides must be an array`);
@@ -109,7 +110,7 @@ function readBank(): SkillBankFile {
 
   return {
     skills: skills as Skill[],
-    bindings: bindings as Record<string, string[]>,
+    bindings: bindings as SkillBankFile['bindings'],
     bindingOverrides: bindingOverrides as string[]
   };
 }
@@ -197,7 +198,7 @@ export function putSkill(skill: Skill): Skill {
 export function addBinding(skillId: string, label: string): void {
   const file = readBank();
   const bindings = file.bindings[skillId] ?? [];
-  if (bindings.includes(label)) return;
+  if (bindings.some((binding) => bindingLabel(binding) === label)) return;
   bindings.push(label);
   file.bindings[skillId] = bindings;
   writeBank(file);
@@ -207,14 +208,14 @@ export function addBinding(skillId: string, label: string): void {
 export function removeBinding(skillId: string, label: string): void {
   const file = readBank();
   const bindings = file.bindings[skillId] ?? [];
-  const next = bindings.filter((existing) => existing !== label);
+  const next = bindings.filter((existing) => bindingLabel(existing) !== label);
   if (next.length === bindings.length) return;
   file.bindings[skillId] = next;
   writeBank(file);
 }
 
 export function listBindings(skillId: string): string[] {
-  return readBank().bindings[skillId] ?? [];
+  return (readBank().bindings[skillId] ?? []).map(bindingLabel);
 }
 
 const SKILL_CAPABLE_BACKENDS = new Set([
@@ -287,10 +288,12 @@ export function resolveSkillBindings(
   const selected = selectedLabel(file, profile, backend, scope);
   const available = new Map(newestSkills(file.skills).map((skill) => [skill.id, skill]));
   const selectedIds = Object.entries(file.bindings)
-    .filter(([, labels]) => labels.includes(selected.label))
+    .filter(([, labels]) => labels.some((binding) => bindingLabel(binding) === selected.label))
     .map(([id]) => id);
   const skills = selectedIds.map((id) => {
-    const skill = available.get(id);
+    const binding = file.bindings[id].find((binding) => bindingLabel(binding) === selected.label)!;
+    const version = bindingVersion(binding);
+    const skill = version === undefined ? available.get(id) : file.skills.find((skill) => skill.id === id && skill.version === version);
     if (!skill) throw new Error(`Bound skill '${id}' does not exist in the central bank`);
     return skill;
   }).sort((a, b) => a.id.localeCompare(b.id));
@@ -313,26 +316,26 @@ export function resolveSkillBindings(
 export function setSkillBindings(
   profile: string,
   backend: string,
-  skillIds: string[],
+  skillIds: (string | SkillSelection)[],
   scope: SkillBindingScope = {}
 ): void {
   const file = readBank();
   const label = scopedLabel(profile, targetLabel(backend, scope.instance), scope.sessionId);
-  const uniqueIds = [...new Set(skillIds)];
+  const selections = parseSkillSelections(skillIds);
   const available = new Map(newestSkills(file.skills).map((skill) => [skill.id, skill]));
-  for (const id of uniqueIds) {
-    const skill = available.get(id);
+  for (const { id, version } of selections) {
+    const skill = version === undefined ? available.get(id) : file.skills.find((skill) => skill.id === id && skill.version === version);
     if (!skill) throw new Error(`Skill '${id}' does not exist in the central bank`);
     if (!compatible(skill, backend)) {
       throw new Error(`Skill '${id}' does not support backend '${backend}'`);
     }
   }
   for (const labels of Object.values(file.bindings)) {
-    const index = labels.indexOf(label);
+    const index = labels.findIndex((binding) => bindingLabel(binding) === label);
     if (index >= 0) labels.splice(index, 1);
   }
-  for (const id of uniqueIds) {
-    (file.bindings[id] ??= []).push(label);
+  for (const { id, version } of selections) {
+    (file.bindings[id] ??= []).push(version === undefined ? label : { label, version });
   }
   if (!file.bindingOverrides.includes(label)) file.bindingOverrides.push(label);
   writeBank(file);
@@ -346,7 +349,7 @@ export function clearSkillBindings(
   const file = readBank();
   const label = scopedLabel(profile, targetLabel(backend, scope.instance), scope.sessionId);
   for (const labels of Object.values(file.bindings)) {
-    const index = labels.indexOf(label);
+    const index = labels.findIndex((binding) => bindingLabel(binding) === label);
     if (index >= 0) labels.splice(index, 1);
   }
   file.bindingOverrides = file.bindingOverrides.filter((existing) => existing !== label);
@@ -359,7 +362,7 @@ export function addCanonicalSkillBinding(skillId: string, backend: string): void
   const label = targetLabel(backend);
   const bindings = file.bindings[skillId] ?? [];
   let changed = false;
-  if (!bindings.includes(label)) {
+  if (!bindings.some((binding) => bindingLabel(binding) === label)) {
     bindings.push(label);
     file.bindings[skillId] = bindings;
     changed = true;
@@ -377,7 +380,7 @@ export function skillBindingSummary(
   scope: SkillBindingScope & { observedSkills?: { id: string; version: string }[] | null } = {}
 ): import('@git-agent-harness/contracts').SkillBindingSummary {
   const resolution = resolveSkillBindings(profile, backend, scope);
-  const available = newestSkills(listSkills()).filter((skill) => compatible(skill, backend));
+  const available = newestSkills(listSkills()).map((skill) => resolution.skills.find((bound) => bound.id === skill.id) ?? skill).filter((skill) => compatible(skill, backend));
   return {
     profile,
     backend,
@@ -407,7 +410,7 @@ export function deleteSkill(id: string): Skill[] {
   const bindings = file.bindings[id] ?? [];
   if (bindings.length > 0) {
     throw new Error(
-      `Cannot delete skill '${id}': it is still bound to ${bindings.join(', ')}; unbind first`
+      `Cannot delete skill '${id}': it is still bound to ${bindings.map(bindingLabel).join(', ')}; unbind first`
     );
   }
   const remaining = file.skills.filter((skill) => skill.id !== id);

@@ -691,7 +691,7 @@ export interface BackendModelComparison {
 }
 
 /** Clap values shared by `gah report` and `gah ledger summary` (ledger::GroupBy). */
-export const REPORT_GROUP_BY_VALUES = ['none', 'backend', 'model', 'difficulty', 'backend-difficulty'] as const;
+export const REPORT_GROUP_BY_VALUES = ['none', 'backend', 'model', 'skill', 'difficulty', 'backend-difficulty'] as const;
 export type ReportGroupBy = typeof REPORT_GROUP_BY_VALUES[number];
 
 /**
@@ -1522,7 +1522,10 @@ export interface ExecutionIdentity {
   effective_model: string | null;
 }
 
+export interface SkillVersion { id: string; version: string }
+
 export interface AttemptRoutingRecord {
+  skills?: SkillVersion[];
   attempt_number: number;
   backend_instance: string;
   effective_model: string | null;
@@ -1531,6 +1534,7 @@ export interface AttemptRoutingRecord {
 }
 
 export interface LedgerEntry {
+  skills?: SkillVersion[];
   timestamp: string;
   session_id: string | null;
   profile: string;
@@ -1635,9 +1639,10 @@ export interface LedgerSummary {
   estimated_cost_usd: number | null;
   actual_cost_usd: number | null;
   last_run: string | null;
-  /** Rust omits groups that were not requested. `groupBy=none` omits all four. */
+  /** Rust omits groups that were not requested. `groupBy=none` omits all groups. */
   grouped_by_backend?: LedgerGroupSummary[];
   grouped_by_model?: LedgerGroupSummary[];
+  grouped_by_skill?: LedgerGroupSummary[];
   grouped_by_difficulty?: LedgerGroupSummary[];
   grouped_by_backend_difficulty?: LedgerGroupSummary[];
 }
@@ -1903,11 +1908,15 @@ export interface Skill {
 /** The durable bank file's shape: a flat list of versioned records plus the
  * (still-resolving, #965) binding registry used to refuse deletion of a
  * skill that is in use. */
+/** A legacy label follows newest; an object can pin an exact version. */
+export type SkillBinding = string | { label: string; version?: string };
+export interface SkillSelection { id: string; version?: string }
+
 export interface SkillBankFile {
   skills: Skill[];
   /** skillId -> human-readable binding labels (e.g. 'hermes' or
    * 'hermes:gah'). A skill with bindings cannot be deleted. */
-  bindings: Record<string, string[]>;
+  bindings: Record<string, SkillBinding[]>;
   /** Binding labels that declare a set explicitly. This preserves empty
    * project overrides and distinguishes absent canonical instance sets. */
   bindingOverrides: string[];
@@ -1956,7 +1965,9 @@ export interface SkillBindingUpdate {
   backend: string;
   instance?: string | null;
   sessionId?: string | null;
-  skillIds: string[];
+  skillIds?: string[];
+  /** Exact pins or newest-by-default selections. Replaces skillIds when supplied. */
+  bindings?: SkillSelection[];
 }
 
 export interface SkillResolution {

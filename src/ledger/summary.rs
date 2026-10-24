@@ -9,6 +9,7 @@ pub enum GroupBy {
     None,
     Backend,
     Model,
+    Skill,
     Difficulty,
     BackendDifficulty,
 }
@@ -21,10 +22,11 @@ impl std::str::FromStr for GroupBy {
             "none" => Ok(GroupBy::None),
             "backend" => Ok(GroupBy::Backend),
             "model" => Ok(GroupBy::Model),
+            "skill" => Ok(GroupBy::Skill),
             "difficulty" => Ok(GroupBy::Difficulty),
             "backend-difficulty" | "backenddifficulty" => Ok(GroupBy::BackendDifficulty),
             _ => Err(format!(
-                "Invalid group-by value: '{}'. Expected 'none', 'backend', 'model', 'difficulty', or 'backend-difficulty'",
+                "Invalid group-by value: '{}'. Expected 'none', 'backend', 'model', 'skill', 'difficulty', or 'backend-difficulty'",
                 s
             )),
         }
@@ -150,6 +152,8 @@ pub struct SummaryData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grouped_by_model: Option<Vec<GroupSummary>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub grouped_by_skill: Option<Vec<GroupSummary>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub grouped_by_difficulty: Option<Vec<GroupSummary>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grouped_by_backend_difficulty: Option<Vec<GroupSummary>>,
@@ -232,6 +236,10 @@ pub fn run_with_json(
     }
     if let Some(last) = data.last_run {
         println!("Last run: {}", last);
+    }
+
+    if let Some(grouped) = &data.grouped_by_skill {
+        super::skills::display(grouped);
     }
 
     // TICKET-125: Display grouped data if requested
@@ -679,6 +687,7 @@ pub fn build_summary(
         estimated_cost_usd: estimated_cost_seen.then_some(estimated_cost),
         actual_cost_usd: actual_cost_seen.then_some(actual_cost),
         last_run,
+        grouped_by_skill: (group_by == GroupBy::Skill).then(|| super::skills::summarize(&entries)),
         grouped_by_backend,
         grouped_by_model,
         grouped_by_difficulty,

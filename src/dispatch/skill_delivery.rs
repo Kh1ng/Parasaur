@@ -144,3 +144,34 @@ mod tests {
         }
     }
 }
+
+/// Review attempts resolve the same bank snapshot as implementation attempts.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn review_prompt<'a>(
+    cfg: &crate::config::GahConfig,
+    profile_name: &str,
+    profile: &crate::config::Profile,
+    identity: &crate::execution_identity::ExecutionIdentity,
+    ledger: &mut crate::ledger::LedgerEntry,
+    session_dir: &std::path::Path,
+    task: &'a str,
+) -> anyhow::Result<Cow<'a, str>> {
+    let kind = crate::backend_kind::BackendKind::parse(&identity.runner_kind)?;
+    let skills = crate::skill_bindings::resolve_for_dispatch(
+        &cfg.defaults,
+        profile_name,
+        identity,
+        kind,
+        profile.skill_resolve_failure_policy,
+        session_dir,
+    )?;
+    ledger.record_skills(&skills);
+    Ok(prompt(
+        crate::runner::for_kind(kind).as_ref(),
+        task,
+        &skills,
+    ))
+}
+
+#[cfg(test)]
+mod version_tests;

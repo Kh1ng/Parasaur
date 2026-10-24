@@ -135,9 +135,10 @@ pub(crate) fn experiment(
         &cargo_target,
         &llm,
         env_path,
-        ledger.work_id.as_deref(),
+        ledger.work_id.clone().as_deref(),
         None,
         runner::WriteIntent::Implementation,
+        Some(ledger),
     ) {
         Ok(r) => r,
         Err(e) => {

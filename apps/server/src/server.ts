@@ -1,3 +1,4 @@
+import { parseSkillSelections } from './skillSelections.js';
 import { runningWorkers } from './runningWorkers.js';
 import express from 'express';
 import type { ActivityEvent, ActivityKind, NodeRoleStatus } from '@git-agent-harness/contracts';
@@ -1769,15 +1770,13 @@ export function createServer(
     const backend = typeof req.body?.backend === 'string' ? req.body.backend : '';
     const instance = typeof req.body?.instance === 'string' ? req.body.instance : undefined;
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
-    const skillIds = Array.isArray(req.body?.skillIds)
-      ? req.body.skillIds.filter((id: unknown): id is string => typeof id === 'string')
-      : null;
-    if (!profile || !backend || skillIds === null || skillIds.length !== req.body.skillIds.length) {
-      res.status(400).json({ error: 'Invalid skill binding', message: 'profile, backend, and string skillIds are required' });
+    if (!profile || !backend) {
+      res.status(400).json({ error: 'Invalid skill binding', message: 'profile and backend are required' });
       return;
     }
     try {
-      setSkillBindings(profile, backend, skillIds, { instance, sessionId });
+      const bindings = parseSkillSelections(req.body.bindings ?? req.body.skillIds);
+      setSkillBindings(profile, backend, bindings, { instance, sessionId });
       res.json(skillBindingSummary(profile, backend, { instance, sessionId }));
     } catch (error) {
       res.status(400).json({

@@ -280,6 +280,10 @@ impl TestLedger {
                     ));
                 }
             }
+            serde_json::from_value::<git_agent_harness::ledger::LedgerEntry>(entry.clone())
+                .map_err(|error| {
+                    format!("fixture entry {i} violates production schema: {error}")
+                })?;
         }
         Ok(())
     }
@@ -316,4 +320,21 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0]["work_id"], "TICKET-001");
     }
+}
+
+#[test]
+fn ledger_skill_schema_validation() {
+    let mut entry = ledger_entry_full("fix", "gah/test", None, "TICKET-1", "2026-10-24T00:00:00Z");
+    entry["schema_version"] = serde_json::json!(git_agent_harness::ledger::LEDGER_SCHEMA_VERSION);
+    entry["skills"] = serde_json::json!([{ "id": "review", "version": "1.0.0" }]);
+    TestLedger::new()
+        .with_entry(entry.clone())
+        .validate_production_schema()
+        .unwrap();
+    entry["skills"][0]["version"] = serde_json::Value::Null;
+    assert!(TestLedger::new()
+        .with_entry(entry)
+        .validate_production_schema()
+        .unwrap_err()
+        .contains("production schema"));
 }
