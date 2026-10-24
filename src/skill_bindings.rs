@@ -12,6 +12,15 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use url::Url;
 
+/// Dispatch behavior when neither the central skill bank nor its cache is usable.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolveFailurePolicy {
+    #[default]
+    FailClosed,
+    ProceedWithoutSkills,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ResolvedSkill {
     pub id: String,
@@ -314,6 +323,70 @@ pub fn resolve(
         );
     }
     resolve_local(profile, backend, instance)
+}
+
+/// Resolve dispatch skills, recording outages and the launch decision per attempt.
+/// Runners without native skill support always proceed after a resolution failure.
+pub(crate) fn resolve_for_dispatch(
+    defaults: &crate::config::Defaults,
+    profile: &str,
+    identity: &crate::execution_identity::ExecutionIdentity,
+    runner_kind: crate::backend_kind::BackendKind,
+    policy: ResolveFailurePolicy,
+    session_dir: &Path,
+) -> Result<Vec<ResolvedSkill>> {
+    match resolve(
+        defaults,
+        profile,
+        &identity.logical_backend,
+        identity
+            .explicit_instance
+            .then_some(identity.backend_instance.as_str()),
+    ) {
+        Ok(resolution) => Ok(resolution.skills),
+        Err(error) => {
+            // Keep this match exhaustive per src/backend_kind.rs's exhaustiveness rule.
+            let supports_skills = match runner_kind {
+                crate::backend_kind::BackendKind::Claude => false,
+                crate::backend_kind::BackendKind::Codex => false,
+                crate::backend_kind::BackendKind::Opencode => false,
+                crate::backend_kind::BackendKind::Openhands => true,
+                crate::backend_kind::BackendKind::Vibe => false,
+                crate::backend_kind::BackendKind::Agy => false,
+                crate::backend_kind::BackendKind::Hermes => true,
+            };
+            let fail_closed = supports_skills && policy == ResolveFailurePolicy::FailClosed;
+            let action = if fail_closed {
+                "fail_closed"
+            } else {
+                "proceed_without_skills"
+            };
+            let error_text = crate::redact::redact(&format!("{error:#}"));
+            eprintln!(
+                "gah: skill resolution failed for {} ({action}): {error_text}",
+                identity.logical_backend
+            );
+            let record = serde_json::json!({
+                "backend": identity.logical_backend,
+                "backend_instance": identity.backend_instance,
+                "runner_kind": runner_kind.as_str(),
+                "supports_skills": supports_skills,
+                "policy": policy,
+                "action": action,
+                "error": error_text,
+            });
+            if let Err(record_error) = std::fs::write(
+                session_dir.join("skill-resolution-failure.json"),
+                serde_json::to_vec_pretty(&record).expect("JSON values always serialize"),
+            ) {
+                eprintln!("gah: could not record skill resolution failure: {record_error}");
+            }
+            if fail_closed {
+                return Err(error.context("skill resolution failed (policy: fail_closed)"));
+            }
+            Ok(Vec::new())
+        }
+    }
 }
 
 fn resolve_local(profile: &str, backend: &str, instance: Option<&str>) -> Result<SkillResolution> {

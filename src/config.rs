@@ -166,6 +166,9 @@ pub struct Profile {
     /// OpenHands profile name (~/.openhands/profiles/<name>.json). Overrides default LLM config.
     #[serde(default)]
     pub oh_profile: Option<String>,
+    /// Hermes/OpenHands resolution failures: fail_closed (default) or proceed_without_skills.
+    #[serde(default)]
+    pub skill_resolve_failure_policy: crate::skill_bindings::ResolveFailurePolicy,
     /// Extra OpenHands CLI args; `--skills` is ignored in favor of central bindings.
     #[serde(default)]
     pub openhands_args: Vec<String>,
@@ -558,11 +561,7 @@ pub mod tests {
     };
     use crate::test_support::{clear_canonical_config_override, set_canonical_config_override};
 
-    /// Build a structurally complete `Profile` for unit tests in other modules
-    /// (e.g. `notifications`). Mirrors the shape of `dispatch::tests::profile`
-    /// so notification formatting tests can construct a real `Profile` without
-    /// duplicating every field.
-    #[cfg(test)]
+    /// Build a complete `Profile` for tests in other modules.
     pub fn test_profile_for_notifications() -> Profile {
         Profile {
             manager_wake_autonomy: crate::config::WakeAutonomy::default(),
@@ -579,6 +578,7 @@ pub mod tests {
             provider_api_base: None,
             provider_project_id: None,
             oh_profile: None,
+            skill_resolve_failure_policy: Default::default(),
             openhands_args: vec![],
             codex_args: vec![],
             codex_path: None,

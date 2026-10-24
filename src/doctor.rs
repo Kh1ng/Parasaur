@@ -1282,6 +1282,7 @@ mod tests {
             provider_api_base: api_base.map(str::to_string),
             provider_project_id: Some("42".into()),
             oh_profile: None,
+            skill_resolve_failure_policy: Default::default(),
             openhands_args: vec![],
             codex_args: vec![],
             codex_path: None,
