@@ -49,3 +49,35 @@ pub(super) fn should_notify_dispatch_failure(error: &anyhow::Error) -> bool {
                     }))
         })
 }
+
+/// Attribute terminal errors while keeping initial node rejection out of
+/// execution attempt counts. Real prior attempts retain their attribution.
+pub(super) fn attribute_terminal_failure(ledger: &mut LedgerEntry, err: &anyhow::Error) {
+    if super::node_capacity_deferred_error(err)
+        && super::post_attempt_capacity_deferral(err).is_none()
+    {
+        ledger.validation_result = Some("deferred_capacity".into());
+        ledger.attempts_started = Some(0);
+    }
+    if crate::policy::policy_blocked(err).is_some() {
+        crate::policy::stamp_refusal(ledger, err);
+    }
+    // Every terminal dispatch error must be attributable. More precise
+    // workflow boundaries set their own class/stage; this fallback marks
+    // uncaught orchestration/plumbing errors as harness-owned rather than
+    // sending an operationally useless class=unknown/stage=unknown alert.
+    ensure_terminal_failure_attribution(&mut ledger.failure_class, &mut ledger.failure_stage);
+    ledger.error_summary = Some(super::error::summarize_error(err));
+}
+
+pub(super) fn ensure_terminal_failure_attribution(
+    failure_class: &mut Option<String>,
+    failure_stage: &mut Option<String>,
+) {
+    failure_class.get_or_insert_with(|| {
+        crate::ledger::FailureClass::HarnessError
+            .as_str()
+            .to_string()
+    });
+    failure_stage.get_or_insert_with(|| crate::ledger::FailureStage::Dispatch.as_str().to_string());
+}

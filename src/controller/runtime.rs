@@ -880,7 +880,7 @@ fn run_parallel_once(
                             }
                         };
                         if node_capacity_lease.is_some() {
-                            node_capacity_reprobe.clear();
+                            node_capacity_reprobe.admitted(&action);
                         }
 
                         record_action_events(
@@ -1034,6 +1034,7 @@ fn run_parallel_once(
                 )? {
                     ReprobeWaitOutcome::WorkerCompleted(result) => result,
                     ReprobeWaitOutcome::RetryFill => {
+                        node_capacity_reprobe.readmit(&mut executed_work_ids);
                         fill_attempts_remaining = 1;
                         continue;
                     }
@@ -1049,6 +1050,9 @@ fn run_parallel_once(
             };
             admission_coordinator.complete_worker(sequence);
             active -= 1;
+            if active == 0 {
+                node_capacity_reprobe.readmit(&mut executed_work_ids);
+            }
             // A finished item's next step (the review of a new PR, the merge
             // after a review) may run in this batch rather than wait for the
             // slowest sibling.
@@ -1173,9 +1177,9 @@ fn update_parallel_refill_budget(
 /// Only agent work that ran to the end qualifies: it changes what the item
 /// needs next. A merge or other bookkeeping step has no follow-up, and its
 /// failures are reported in an ordinary outcome, so releasing it would retry
-/// a refused merge at once. Errors and capacity deferrals stay excluded too,
-/// and so does an item another worker or loop holds: re-selecting it would
-/// only lose the same claim again (issue #1430).
+/// a refused merge at once. Errors, route deferrals, and items held elsewhere
+/// stay excluded (issue #1430). Node deferrals are released separately by the
+/// capacity reprobe.
 fn has_follow_up_in_batch(action: &NextAction, outcome: &str) -> bool {
     matches!(
         action,

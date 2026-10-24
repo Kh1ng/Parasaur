@@ -1,3 +1,5 @@
+#[path = "controller_refill_regressions/node_recovery.rs"]
+mod node_recovery;
 mod support;
 
 use std::fs;
@@ -1478,4 +1480,16 @@ fn parallel_loop_reclaims_a_dead_owners_claim_and_releases_only_its_own() {
             serde_json::json!(std::process::id())
         )]
     );
+}
+
+#[test]
+fn parallel_loop_readmits_the_node_deferred_item_after_pressure_recovers() {
+    let _lock = serial();
+    node_recovery::readmits_deferred_item(true);
+}
+
+#[test]
+fn parallel_loop_readmits_the_node_deferred_item_while_a_sibling_is_active() {
+    let _lock = serial();
+    node_recovery::readmits_deferred_item(false);
 }

@@ -42,7 +42,7 @@ pub(super) fn record_capacity_deferral(
         work_id,
         args.run_id.as_deref(),
         format!("{label}: deferred_capacity: {error:#}{route_state}"),
-        None,
+        crate::dispatch::node_capacity_deferred_error(error).then_some("node_capacity_deferred"),
         error,
     )?;
     Ok(Some(capacity_deferral_outcome(label, error)))
