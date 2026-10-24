@@ -1,3 +1,5 @@
+import { framePolicy, forwardedPrefix, gitlabOrigins, webEntry } from './embed.js';
+import { readFile } from 'node:fs/promises';
 import { runningWorkers } from './runningWorkers.js';
 import express from 'express';
 import type { ActivityEvent, ActivityKind, NodeRoleStatus } from '@git-agent-harness/contracts';
@@ -379,6 +381,7 @@ export function createServer(
   app.set('trust proxy', 'loopback');
 
   // Middleware
+  app.use(framePolicy);
   app.use(cors());
   app.use(express.json());
   if (node.role === 'central') {
@@ -2958,9 +2961,10 @@ export function createServer(
     app.use(express.static(absoluteWebRoot, { index: false }));
     app.get('*', (req, res, next) => {
       if (req.path.startsWith('/api/') || req.path === '/api' || !req.accepts('html')) return next();
-      res.sendFile(join(absoluteWebRoot, 'index.html'), error => {
-        if (error) next(error);
-      });
+      res.setHeader('Cache-Control', 'no-store');
+      readFile(join(absoluteWebRoot, 'index.html'), 'utf8')
+        .then(html => res.type('html').send(webEntry(html, forwardedPrefix(req.get('X-Forwarded-Prefix')), gitlabOrigins())))
+        .catch(next);
     });
   }
 

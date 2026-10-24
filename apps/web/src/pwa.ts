@@ -1,3 +1,4 @@
+import { appUrl } from './lib/deployment.js';
 /*
  * Issue #534: PWA plumbing — service-worker registration, update prompt,
  * and offline state. The service worker itself (public/sw.js) enforces the
@@ -33,7 +34,7 @@ export function registerServiceWorker(onUpdateReady: (apply: () => void) => void
   }
   window.addEventListener('load', () => {
     navigator.serviceWorker
-      .register('/sw.js')
+      .register(appUrl('/sw.js'))
       .then((registration) => {
         // If a waiting worker exists at registration time (deploy happened
         // while the tab was closed), surface it immediately.

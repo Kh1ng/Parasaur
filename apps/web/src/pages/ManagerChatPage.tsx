@@ -467,14 +467,14 @@ function associatedWorkId(session: ChatSessionSummary): string | null {
   return session.issueNumber ? `#${session.issueNumber}` : null;
 }
 
-export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /** In the right sidebar: always the narrow layout. */ docked?: boolean; onNavigate?: (page: Page) => void; onOpenWork?: (workId: string) => void }) {
+export function ManagerChatPage({ docked = false, onNavigate, onOpenWork, scopedProfile, scopedSessionId, pageContext, contextAction }: { scopedProfile?: string; scopedSessionId?: string; pageContext?: string; contextAction?: { text: string; revision: number }; /** In the right sidebar: always the narrow layout. */ docked?: boolean; onNavigate?: (page: Page) => void; onOpenWork?: (workId: string) => void }) {
   const { sendMessage, messages, isConnected, reconnectSeq } = useWebSocket();
   const wsProfile = useWebSocket().profile;
   const profileOverride = useUiStore((s) => s.profileOverride);
   const setProfileOverride = useUiStore((s) => s.setProfileOverride);
   const chatRequest = useUiStore((s) => s.chatRequest);
   const clearChatRequest = useUiStore((s) => s.clearChatRequest);
-  const profile = profileOverride ?? wsProfile ?? 'gah';
+  const profile = scopedProfile ?? profileOverride ?? wsProfile ?? 'gah';
   const [availableProfiles, setAvailableProfiles] = useState<ChatProfile[]>([]);
   const [nodeChoice, setNodeChoice] = useState<{ profile: string; sessionId: string | null; nodeId: string } | null>(null);
   const fleetChange = [...messages].reverse().find(({ message }) => message.type === 'fleet.changed')?.id ?? 0;
@@ -483,6 +483,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
 
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [draft, setDraft] = useState('');
+  useEffect(() => { if (contextAction?.text) setDraft(contextAction.text); }, [contextAction]);
   const [pendingRequest, setPendingRequest] = useState<PendingRequest | null>(null);
   const [remoteTurnBusy, setRemoteTurnBusy] = useState(false);
   /** Live assistant turn (#959): a tee of the session log's chunks. The log
@@ -552,7 +553,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
     return { profile, sessionId: saved.profile === profile && saved.chat !== DEFAULT_CONVERSATION_ID ? saved.chat : null };
   });
   // A profile change must not request the previous project's conversation.
-  const sessionId = selection.profile === profile ? selection.sessionId : null;
+  const sessionId = scopedSessionId ?? (selection.profile === profile ? selection.sessionId : null);
   const setSessionId = (sessionId: string | null) => setSelection({ profile, sessionId });
   useEffect(() => updateNavigation({ profile, chat: sessionId }), [profile, sessionId]);
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
@@ -623,11 +624,11 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
         const projects = catalog.status === 'fulfilled'
           ? catalog.value.map(toChatProfile)
           : previous.filter(item => item.remote);
-        return [...new Map([...localProfiles, ...projects].map(project => [project.name, project])).values()];
+        return [...new Map([...localProfiles, ...projects].map(project => [project.name, project])).values()].filter(project => !scopedProfile || project.name === scopedProfile);
       });
     });
     return () => { cancelled = true; };
-  }, [reconnectSeq, fleetChange]);
+  }, [reconnectSeq, fleetChange, scopedProfile]);
 
   const loadGitData = async () => {
     const requestId = ++gitRequestIdRef.current;
@@ -720,7 +721,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
   }, [profile]);
   // After the [profile] effect, so a conversation opened in another project wins over its reset.
   useEffect(() => {
-    if (!chatRequest) return;
+    if (scopedSessionId || !chatRequest || (scopedProfile && chatRequest.profile !== scopedProfile)) return;
     setSelection({ profile: chatRequest.profile, sessionId: chatRequest.sessionId });
     // The new conversation is not in the list yet.
     refreshSessions(chatRequest.profile);
@@ -1294,7 +1295,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
         type: 'manager.chat.steer',
         requestId,
         profile,
-        message: text,
+        message: pageContext ? `${pageContext}\n${text}` : text,
         ...(sessionId ? { sessionId } : {})
       });
       return;
@@ -1305,7 +1306,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
       requestId,
       profile,
       nodeId: chosenNode,
-      message: text,
+      message: pageContext ? `${pageContext}\n${text}` : text,
       ...(sessionId ? { sessionId } : {})
     });
   };
@@ -1502,6 +1503,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
             <span className="sr-only">Project</span>
             <select
               aria-label="Project"
+              disabled={!!scopedProfile}
               value={profile}
               onChange={(event) => setProfileOverride(event.target.value)}
               className="min-h-11 w-full truncate rounded-md border border-subtle bg-raised px-2 text-sm text-primary"
@@ -1515,6 +1517,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
             <span className="sr-only">Chat</span>
             <select
               aria-label="Chat"
+              disabled={!!scopedSessionId}
               value={sessionId ?? ''}
               onChange={(event) => setSessionId(event.target.value || null)}
               className="min-h-11 w-full truncate rounded-md border border-subtle bg-raised px-2 text-sm text-primary"
@@ -1561,11 +1564,11 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
             )}
           </button>
         )}
-        <button type="button" onClick={() => setNewChatOpen(true)} disabled={!isConnected}
+        {!scopedSessionId && <button type="button" onClick={() => setNewChatOpen(true)} disabled={!isConnected}
           className="btn-secondary shrink-0 !px-2.5 text-xs" aria-label="New chat"
           title="New chat: choose project, node, and provider/model — starts in a fresh worktree">
           <Plus size={15} aria-hidden="true" /><span className="hidden sm:inline">New chat</span>
-        </button>
+        </button>}
         {activeSession && <button type="button" onClick={() => setSessionDetailOpen(true)} className="btn-secondary shrink-0 !px-2.5 text-xs" aria-label="Session details">
           <MessageSquare size={15} aria-hidden="true" /><span className="hidden sm:inline">Details</span>
         </button>}
@@ -1630,13 +1633,13 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
               >
                 <HardDrive size={14} aria-hidden="true" /> Storage
               </button>
-              <button
+              {!scopedProfile && <button
                 type="button"
                 onClick={() => { setNavigationOpen(true); closeTools(); }}
                 className="chat-menu-item wide:hidden"
               >
                 <GitBranch size={14} aria-hidden="true" /> Manage projects
-              </button>
+              </button>}
               {activeSession && activeSession.archivedAt === null && (
                 <button type="button" onClick={() => { closeTools(); void handleArchiveSession(true).catch((error) => setTurns((current) => [...current, { role: 'error', text: `Failed to archive session: ${error instanceof Error ? error.message : String(error)}` }])); }} disabled={turnBusy} className="chat-menu-item"
                   title="Archive this session (dirty work is saved as a patch; the branch survives)">

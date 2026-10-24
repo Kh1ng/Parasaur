@@ -67,7 +67,7 @@ test('service worker always shows valid pushes and opens a window when navigatio
   };
   const worker = {
     location: { origin: 'http://localhost:3000' },
-    registration: { showNotification: async (...args: unknown[]) => { shown.push(args); } },
+    registration: { scope: 'http://localhost:3000/', showNotification: async (...args: unknown[]) => { shown.push(args); } },
     clients: {
       matchAll: async () => [client],
       openWindow: async (url: string) => { opened.push(url); },

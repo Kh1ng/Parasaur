@@ -1,3 +1,4 @@
+import { appUrl } from '../lib/deployment.js';
 import { useGahStore } from '../store/gahStore.js';
 import { coordinatorWebSocketProtocols, TOKEN_CHANGED_EVENT } from '../api/coordinatorToken.js';
 import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from 'react';
@@ -80,7 +81,7 @@ const MAX_INBOX_MESSAGES = 100;
 
 // Vite injects import.meta.env - use type assertion for TypeScript
 const SERVER_WS_BASE = (import.meta as unknown as { env: { VITE_WS_URL?: string } }).env?.VITE_WS_URL ||
-  `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+  `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${appUrl('/ws')}`;
 
 function getWebSocketUrl(profile?: string | null): string {
   const url = new URL(SERVER_WS_BASE);

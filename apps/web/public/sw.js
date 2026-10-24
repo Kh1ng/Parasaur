@@ -16,8 +16,10 @@
  *   prompt and reloads on confirm (see src/pwa.ts).
  */
 
-const CACHE_VERSION = 'gah-shell-v1';
-const SHELL_ASSETS = ['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/favicon-32.png'];
+const SCOPE_PATH = new URL(self.registration.scope).pathname;
+const CACHE_PREFIX = `gah-shell:${SCOPE_PATH}:`;
+const CACHE_VERSION = `${CACHE_PREFIX}v2`;
+const SHELL_ASSETS = ['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/favicon-32.png'].map(path => SCOPE_PATH + path.slice(1));
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -32,7 +34,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_VERSION).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_VERSION).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });
@@ -81,25 +83,28 @@ self.addEventListener('notificationclick', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  if (event.request.method !== 'GET') return;
+  if (event.request.method !== 'GET' || url.origin !== self.location.origin || !url.pathname.startsWith(SCOPE_PATH)) return;
+  const path = '/' + url.pathname.slice(SCOPE_PATH.length);
   // Never touch API traffic — no cache, no fallback, no offline replay.
-  if (url.pathname.startsWith('/api/')) return;
+  if (path === '/api' || path.startsWith('/api/')) return;
+
+  if (path === '/embed') return;
 
   if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
           const copy = response.clone();
-          caches.open(CACHE_VERSION).then((cache) => cache.put('/', copy));
+          caches.open(CACHE_VERSION).then((cache) => cache.put(SCOPE_PATH, copy));
           return response;
         })
-        .catch(() => caches.match('/').then((cached) => cached ?? Response.error()))
+        .catch(() => caches.match(SCOPE_PATH).then((cached) => cached ?? Response.error()))
     );
     return;
   }
 
   // Hashed build assets: cache-first (a changed deploy produces new names).
-  if (url.pathname.startsWith('/assets/')) {
+  if (path.startsWith('/assets/')) {
     event.respondWith(
       caches.match(event.request).then(
         (cached) =>

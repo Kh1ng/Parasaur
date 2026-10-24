@@ -1,3 +1,4 @@
+import { appUrl, endpointUrl } from '../lib/deployment.js';
 import type { Session } from '@git-agent-harness/contracts';
 import { coordinatorToken } from './coordinatorToken.js';
 import type { ActivityEvent, ActivityNotificationPreferences, AuthHealthRow, LoginRepairView, PairedDevice, PairingOffer, PairingPreview, PairingAccessRequest } from '@git-agent-harness/contracts';
@@ -77,7 +78,11 @@ import type {
 
 const SERVER_URL =
   (import.meta as unknown as { env: { VITE_SERVER_URL?: string } }).env?.VITE_SERVER_URL ||
-  (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
+  (typeof window !== 'undefined' ? window.location.origin + appUrl('') : 'http://localhost:3000');
+
+function serverUrl(path: string): URL {
+  return endpointUrl(path, SERVER_URL);
+}
 
 function authHeaders(): Record<string, string> {
   const token = coordinatorToken();
@@ -125,7 +130,7 @@ export const authHealthApi = {
 /** A repair's key is returned once at start and authorizes every later call
  * for it; keep it in memory only. */
 async function repairRequest<T>(method: 'GET' | 'POST' | 'DELETE', path: string, key: string, body?: unknown): Promise<T> {
-  const res = await fetch(new URL(path, SERVER_URL).toString(), {
+  const res = await fetch(serverUrl(path).toString(), {
     method,
     headers: { ...authHeaders(), 'X-Login-Repair-Key': key, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
@@ -147,7 +152,7 @@ export const diagnosticsApi = {
   /** Gzipped JSON bundle: this server's memory timeline and host details. */
   exportBundle: async (): Promise<{ blob: Blob; filename: string }> => {
     const path = '/api/diagnostics/export';
-    const res = await fetch(new URL(path, SERVER_URL).toString(), { headers: authHeaders() });
+    const res = await fetch(serverUrl(path).toString(), { headers: authHeaders() });
     if (!res.ok) {
       const payload = await res.json().catch(() => null) as { message?: unknown } | null;
       throw new GahApiError(typeof payload?.message === 'string' ? payload.message : `${res.status} ${res.statusText}`, res.status, path);
@@ -167,7 +172,7 @@ export const activityApi = {
 };
 
 async function getJson<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
-  const url = new URL(path, SERVER_URL);
+  const url = serverUrl(path);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined) url.searchParams.set(key, value);
@@ -443,7 +448,7 @@ function mutationHeaders(): Record<string, string> {
 }
 
 async function postJson<T, U>(path: string, body: U): Promise<T> {
-  const url = new URL(path, SERVER_URL);
+  const url = serverUrl(path);
   const res = await fetch(url.toString(), {
     method: 'POST',
     headers: mutationHeaders(),
@@ -463,7 +468,7 @@ async function postJson<T, U>(path: string, body: U): Promise<T> {
 }
 
 async function patchJson<T, U>(path: string, body: U): Promise<T> {
-  const url = new URL(path, SERVER_URL);
+  const url = serverUrl(path);
   const res = await fetch(url.toString(), {
     method: 'PATCH',
     headers: mutationHeaders(),
@@ -483,7 +488,7 @@ async function patchJson<T, U>(path: string, body: U): Promise<T> {
 }
 
 async function putJson<T, U>(path: string, body: U): Promise<T> {
-  const url = new URL(path, SERVER_URL);
+  const url = serverUrl(path);
   const res = await fetch(url.toString(), {
     method: 'PUT',
     headers: mutationHeaders(),
@@ -501,7 +506,7 @@ async function putJson<T, U>(path: string, body: U): Promise<T> {
 }
 
 async function deleteJson<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
-  const url = new URL(path, SERVER_URL);
+  const url = serverUrl(path);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined) url.searchParams.set(key, value);
@@ -619,7 +624,7 @@ export const gahApi: GahDataSource = {
     // meaningful body -- "already running", with the existing pid -- not
     // just an error to throw, so this reads the JSON directly instead of
     // going through postJson's throw-on-!ok.
-    const url = new URL('/api/loop/start', SERVER_URL);
+    const url = serverUrl('/api/loop/start');
     const res = await fetch(url.toString(), {
       method: 'POST',
       headers: mutationHeaders(),
@@ -630,7 +635,7 @@ export const gahApi: GahDataSource = {
     return result as StartLoopResult;
   },
   async stopLoop(profile) {
-    const url = new URL('/api/loop/stop', SERVER_URL);
+    const url = serverUrl('/api/loop/stop');
     const res = await fetch(url.toString(), {
       method: 'POST',
       headers: mutationHeaders(),
@@ -889,7 +894,7 @@ export const gahApi: GahDataSource = {
   async startNodeUpdate(nodeId: string) {
     // 202 (started) and 409 (already updating) both carry the worker's
     // status as their body, mirroring startAdminUpdate's contract.
-    const url = new URL(`/api/registry/nodes/${encodeURIComponent(nodeId)}/update`, SERVER_URL);
+    const url = serverUrl(`/api/registry/nodes/${encodeURIComponent(nodeId)}/update`);
     const res = await fetch(url.toString(), { method: 'POST', headers: mutationHeaders() });
     if (res.status === 202 || res.status === 409) {
       return (await res.json()) as WorkerUpdateStatus;
@@ -918,7 +923,7 @@ export const gahApi: GahDataSource = {
     // other non-ok status (404 disabled, 403 unauthenticated, 500) is a
     // real error and goes through the same message extraction as
     // postJson/patchJson.
-    const url = new URL('/api/admin/update', SERVER_URL);
+    const url = serverUrl('/api/admin/update');
     const res = await fetch(url.toString(), {
       method: 'POST',
       headers: { ...mutationHeaders(), 'Content-Type': 'application/json' },

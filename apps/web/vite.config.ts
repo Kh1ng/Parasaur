@@ -13,6 +13,7 @@ try {
 }
 
 export default defineConfig({
+  base: './',
   define: {
     __GAH_VERSION__: JSON.stringify(pkgVersion),
     __GAH_COMMIT__: JSON.stringify(commitSha),

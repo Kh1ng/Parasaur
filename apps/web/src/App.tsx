@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { LoadingState } from './components/ui/EmptyState.js';
 import { useWebSocket } from './ws/WebSocketContext.js';
 import { OverviewPage } from './pages/OverviewPage.js';
@@ -48,8 +48,8 @@ const SIDE_VIEW_LABELS: Record<SideView, string> = { events: 'Activity', issues:
 const QUOTA_REFRESH_MS = 60 * 1000;
 const DEVICE_AGENTS_REFRESH_MS = 10 * 1000;
 
-export function App() {
-  const [currentPage, setCurrentPage] = useState<MainPage>(() => readNavigation().page);
+export function App({ contextView }: { contextView?: ReactNode }) {
+  const [currentPage, setCurrentPage] = useState<MainPage>(() => contextView ? 'chat' : readNavigation().page);
   const [sideView, setSideView] = useState<SideView | null>(() => (new URLSearchParams(window.location.hash.slice(1)).has('pair') || new URLSearchParams(window.location.search).has('pairingRequest')) ? 'settings' : readNavigation().side);
   // Chat lives in the right sidebar; `currentPage === 'chat'` is the same chat expanded over the main panel.
   const [chatDocked, setChatDocked] = useState(() => readNavigation().dock === 'chat');
@@ -149,7 +149,7 @@ export function App() {
       onClose={onClose} onRedispatch={redispatch} inline={inline} />
   );
   const chat = (docked: boolean) => (
-    <ManagerChatPage docked={docked} onNavigate={navigate} onOpenWork={setSelectedWorkId} />
+    contextView ?? <ManagerChatPage docked={docked} onNavigate={navigate} onOpenWork={setSelectedWorkId} />
   );
 
   const renderPage = () => {

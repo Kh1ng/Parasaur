@@ -336,7 +336,7 @@ test('GET /api/info advertises the configured coordinator port', async () => {
 test('an explicit web root serves the shared control surface and keeps unknown API routes as JSON 404s', async () => {
   const root = mkdtempSync(join(tmpdir(), 'gah-web-root-'));
   const saved = process.env.GAH_WEB_ROOT;
-  writeFileSync(join(root, 'index.html'), '<!doctype html><title>GAH desktop central</title>', 'utf8');
+  writeFileSync(join(root, 'index.html'), '<!doctype html><head><title>GAH desktop central</title><script src="/app.js"></script></head>', 'utf8');
   writeFileSync(join(root, 'app.js'), 'window.GAH = true;', 'utf8');
   process.env.GAH_WEB_ROOT = root;
   try {
@@ -344,6 +344,13 @@ test('an explicit web root serves the shared control surface and keeps unknown A
       assert.match(await (await fetch(base)).text(), /GAH desktop central/);
       assert.equal(await (await fetch(`${base}/app.js`)).text(), 'window.GAH = true;');
       assert.match(await (await fetch(`${base}/chat`, { headers: { Accept: 'text/html' } })).text(), /GAH desktop central/);
+      const prefixed = await fetch(`${base}/embed`, { headers: { Accept: 'text/html', 'X-Forwarded-Prefix': '/parasaur' } });
+      const entry = await prefixed.text();
+      assert.match(entry, /<base href="\/parasaur\/">/);
+      assert.match(entry, /src="\/parasaur\/app.js"/);
+      assert.match(entry, /"prefix":"\/parasaur"/);
+      assert.equal(prefixed.headers.get('cache-control'), 'no-store');
+      assert.equal((await fetch(base)).headers.get('x-frame-options'), 'DENY');
       const missing = await fetch(`${base}/api/not-real`);
       assert.equal(missing.status, 404);
       assert.equal((await missing.json() as { error: string }).error, 'Not Found');
