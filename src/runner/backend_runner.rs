@@ -83,6 +83,13 @@ pub enum WriteIntent {
     Implementation,
 }
 
+/// How dispatch delivers centrally bound skills to this runner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillDelivery {
+    Prompt,
+    Unsupported,
+}
+
 pub struct RunContext<'a> {
     pub executable: &'a Path,
     pub worktree: &'a Path,
@@ -100,6 +107,18 @@ pub struct RunContext<'a> {
 pub trait BackendRunner {
     fn kind(&self) -> BackendKind;
     fn run(&self, ctx: &RunContext) -> Result<RunResult>;
+
+    /// Select delivery at the backend boundary; new kinds must choose explicitly.
+    fn skill_delivery(&self) -> SkillDelivery {
+        match self.kind() {
+            BackendKind::Codex
+            | BackendKind::Claude
+            | BackendKind::Opencode
+            | BackendKind::Hermes
+            | BackendKind::Openhands => SkillDelivery::Prompt,
+            BackendKind::Vibe | BackendKind::Agy => SkillDelivery::Unsupported,
+        }
+    }
 
     /// Ask this backend instance what skills it currently has (#966).
     /// Defaults to `Unknown` -- a backend gains real self-report only by
