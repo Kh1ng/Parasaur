@@ -1039,24 +1039,30 @@ fn events_limit_keeps_only_the_newest_events_after_the_since_filter() {
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap()
     };
+    let seed = |events_path: &std::path::Path, rows: &[(i64, &str)]| {
+        let mut seeded = String::new();
+        for &(days_ago, work_id) in rows {
+            seeded.push_str(
+                &serde_json::to_string(&serde_json::json!({
+                    "timestamp": stamp(days_ago), "event_type": "action_decided",
+                    "profile": "real",
+                    "work_id": work_id,
+                    "details": "decided",
+                    "review_contract_version": 1
+                }))
+                .unwrap(),
+            );
+            seeded.push('\n');
+        }
+        fs::write(events_path, seeded).unwrap();
+    };
     let events_path = tmp.path().join("events.jsonl");
-    let mut seeded = String::new();
-    for (days_ago, work_id) in [(200, "#stale"), (3, "#1"), (2, "#2"), (1, "#3")] {
-        seeded.push_str(
-            &serde_json::to_string(&serde_json::json!({
-                "timestamp": stamp(days_ago), "event_type": "action_decided",
-                "profile": "real",
-                "work_id": work_id,
-                "details": "decided",
-                "review_contract_version": 1
-            }))
-            .unwrap(),
-        );
-        seeded.push('\n');
-    }
-    fs::write(&events_path, seeded).unwrap();
+    seed(
+        &events_path,
+        &[(200, "#stale"), (3, "#1"), (2, "#2"), (1, "#3")],
+    );
 
-    let run_events = |args: &[&str]| {
+    let run_events = |events_path: &std::path::Path, args: &[&str]| {
         let out = bin()
             .args([
                 "events",
@@ -1069,7 +1075,7 @@ fn events_limit_keeps_only_the_newest_events_after_the_since_filter() {
                 "--json",
             ])
             .args(args)
-            .env("GAH_EVENTS_PATH", &events_path)
+            .env("GAH_EVENTS_PATH", events_path)
             .assert()
             .success();
         let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
@@ -1079,25 +1085,55 @@ fn events_limit_keeps_only_the_newest_events_after_the_since_filter() {
             .unwrap()
             .clone()
     };
-
-    let limited = run_events(&["--limit", "2"]);
-    assert_eq!(
-        limited
+    fn work_ids(events: &[Value]) -> Vec<&str> {
+        events
             .iter()
             .map(|e| e["work_id"].as_str().unwrap())
-            .collect::<Vec<_>>(),
+            .collect()
+    }
+
+    let limited = run_events(&events_path, &["--limit", "2"]);
+    assert_eq!(
+        work_ids(&limited),
         vec!["#2", "#3"],
         "--limit must keep the newest N events after the since filter, in stream order"
     );
 
-    let unlimited = run_events(&[]);
+    let unlimited = run_events(&events_path, &[]);
     assert_eq!(
-        unlimited
-            .iter()
-            .map(|e| e["work_id"].as_str().unwrap())
-            .collect::<Vec<_>>(),
+        work_ids(&unlimited),
         vec!["#1", "#2", "#3"],
         "without --limit the whole filtered window is returned"
+    );
+
+    // #1616: the append-only stream is not guaranteed to be in timestamp
+    // order (a delayed writer lands an older event after a newer one), so
+    // the newest-N selection must be by timestamp, not append position --
+    // an append-order tail would otherwise displace the actual newest
+    // event. Selection by timestamp, emission still in stream order.
+    let out_of_order_path = tmp.path().join("events-out-of-order.jsonl");
+    seed(
+        &out_of_order_path,
+        &[
+            (200, "#stale"),
+            (1, "#newest"),
+            (2, "#middle"),
+            (3, "#oldest"),
+        ],
+    );
+
+    let limited_out_of_order = run_events(&out_of_order_path, &["--limit", "2"]);
+    assert_eq!(
+        work_ids(&limited_out_of_order),
+        vec!["#newest", "#middle"],
+        "--limit must select the newest by timestamp even when an older event is appended after a newer one, keeping stream order"
+    );
+
+    let unlimited_out_of_order = run_events(&out_of_order_path, &[]);
+    assert_eq!(
+        work_ids(&unlimited_out_of_order),
+        vec!["#newest", "#middle", "#oldest"],
+        "without --limit the out-of-order window is still returned in stream order"
     );
 }
 

@@ -456,11 +456,12 @@ test('a failing events refresh logs one warning per transition, not one per poll
   const wss = new WebSocketServer({ server });
   let failEvents = true;
   let loads = 0;
+  let errorMessage = 'gah events output exceeded 67108864 bytes (observed 67108966)';
   createWebSocketHandler(wss, {
     activityFeed: new ActivityFeed(null),
     runEvents: async () => {
       loads += 1;
-      if (failEvents) throw new Error('gah events output exceeded 67108864 bytes (observed 67108966)');
+      if (failEvents) throw new Error(errorMessage);
       return [];
     },
     runQuota: (async () => { throw new Error('quota unavailable'); }) as never,
@@ -483,13 +484,26 @@ test('a failing events refresh logs one warning per transition, not one per poll
     .filter((call) => typeof call.arguments[0] === 'string' && call.arguments[0].includes('Activity refresh for gah recovered')).length;
   try {
     await waitForLoads(3);
-    assert.equal(activityFailures(), 1, 'three failed polls must log the failure exactly once');
+    assert.equal(activityFailures(), 1, 'three failed polls with the same message must log the failure exactly once');
     failEvents = false;
     await waitForLoads(loads + 2);
     assert.equal(recoveries(), 1, 'a successful refresh after failures must log the recovery exactly once');
     failEvents = true;
     await waitForLoads(loads + 2);
     assert.equal(activityFailures(), 2, 'a second failing transition must log the failure again');
+    // #1616: the once-per-transition suppression must be keyed by the error
+    // message too -- a profile-only set suppressed every NEW error behind
+    // the first one until the profile happened to recover. A distinct
+    // message must be visible even while the profile never succeeds, while
+    // the same message repeating stays quiet.
+    errorMessage = 'authentication_error: credential expired';
+    await waitForLoads(loads + 2);
+    assert.equal(activityFailures(), 3, 'a distinct new error message must log again without an intervening recovery');
+    await waitForLoads(loads + 2);
+    assert.equal(activityFailures(), 3, 'the same message repeating must stay quiet');
+    errorMessage = 'gah events output exceeded 67108864 bytes (observed 67108966)';
+    await waitForLoads(loads + 2);
+    assert.equal(activityFailures(), 4, 'switching back to the first message is another change and must log again');
   } finally {
     failureLogs.mock.restore();
     recoveryLogs.mock.restore();

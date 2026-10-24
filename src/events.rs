@@ -397,6 +397,10 @@ pub fn reconcile_abandoned_dispatches(cfg: &GahConfig, profile_name: &str) -> Re
 /// since/profile filter (#1598): `context_built`/`dispatch_*` payloads are
 /// large enough that a long window can exceed a reader's output cap, so
 /// feed-style consumers ask for a bounded tail instead of the whole window.
+/// "Newest" is by timestamp, not append position (#1616): a delayed append
+/// can write an older event after a newer one, so an append-order tail
+/// could displace the actual newest events. The kept events are still
+/// emitted in stream (append) order.
 pub fn run(
     cfg: &GahConfig,
     since: &str,
@@ -411,8 +415,24 @@ pub fn run(
         events.retain(|e| e.profile.as_deref() == Some(profile));
     }
     if let Some(limit) = limit {
-        let excess = events.len().saturating_sub(limit);
-        events.drain(..excess);
+        // Stable sort by timestamp (ties keep append order -- the same
+        // string convention as the since filter above, since every
+        // recorder writes UTC RFC3339), keep the newest N, then emit the
+        // survivors in their original stream order. Index-based so the
+        // (potentially huge) payloads move once, no clones.
+        let mut order: Vec<usize> = (0..events.len()).collect();
+        order.sort_by_key(|&i| &events[i].timestamp);
+        order.drain(..events.len().saturating_sub(limit));
+        let mut keep = vec![false; events.len()];
+        for i in order {
+            keep[i] = true;
+        }
+        let mut index = 0;
+        events.retain(|_| {
+            let keep_event = keep[index];
+            index += 1;
+            keep_event
+        });
     }
 
     if json {

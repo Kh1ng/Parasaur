@@ -136,8 +136,12 @@ export function createWebSocketHandler(
   let gatewayPrimed = false;
   // #1598: an over-cap (or otherwise failing) events read used to log once
   // per poll -- 9,000+ lines over two boots on central. Log the failure once
-  // per failing -> ok -> failing transition instead.
-  const failingEventRefresh = new Set<string>();
+  // per failing -> ok -> failing transition, and once per distinct message
+  // (#1616): a profile-only set would hide every NEW error behind the first
+  // one until a successful refresh deleted the entry, which may never come.
+  // The map holds the last logged message per profile: the same message
+  // repeating stays quiet, a different one logs and replaces it.
+  const failingEventRefresh = new Map<string, string>();
   const syncActivity = (profile: string): Promise<void> => {
     const current = syncing.get(profile);
     if (current) return current;
@@ -145,9 +149,10 @@ export function createWebSocketHandler(
     if (quotaDue) quotaSyncedAt.set(profile, Date.now());
     const pending = Promise.all([
       loadEvents(profile, '30d', undefined, ACTIVITY_REFRESH_EVENT_LIMIT).catch((error) => {
-        if (!failingEventRefresh.has(profile)) {
-          failingEventRefresh.add(profile);
-          console.error(`Failed to refresh activity for ${profile}: ${error instanceof Error ? error.message : String(error)}`);
+        const message = error instanceof Error ? error.message : String(error);
+        if (failingEventRefresh.get(profile) !== message) {
+          failingEventRefresh.set(profile, message);
+          console.error(`Failed to refresh activity for ${profile}: ${message}`);
         }
         return null;
       }),
