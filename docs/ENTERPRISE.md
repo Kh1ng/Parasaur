@@ -15,3 +15,5 @@ The private repository contains the managed Supabase integration and its impleme
 Public core interfaces remain available for independent integrations. Existing local HTTP, live-message, and provider interfaces remain unchanged by this submodule reference.
 
 Keep enterprise source, deployment credentials, node credentials, and provider login files out of public changes and build artifacts. Git submodule access does not grant workspace membership, provider account permission, or a product entitlement.
+
+For Auth account creation, workspace owner bootstrap, invitations, and the hosted owner sign-off, use the [closed beta runbook](CLOSED_BETA.md).

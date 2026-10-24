@@ -20,13 +20,14 @@ port=$((40000 + $$ % 20000))
 sed -E "s/^project_id = .*/project_id = \"gah-auth-test-$$\"/; s/54322/$port/; s/54320/$((port + 1))/; s/54321/$((port + 2))/; s/54323/$((port + 3))/" \
   "$root/supabase/config.toml" > "$stack/supabase/config.toml"
 cd "$stack"
-supabase db start
+supabase start --exclude realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 supabase db reset --local
+supabase status -o json | node "$root/scripts/test-supabase-signup.mjs"
 # Read only the local DB URL; do not print the other status values or evaluate shell output.
 db_url="$(supabase status -o json | node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => { const url = JSON.parse(s).DB_URL; if (!url) process.exit(1); process.stdout.write(url); });')"
 failed=0
-for test in supabase/tests/authorization_null*.sql; do
+for test in supabase/tests/*.sql; do
   psql -X -q -v ON_ERROR_STOP=1 "$db_url" -f "$test" || failed=1
 done
 if ((failed)); then exit 1; fi
-printf 'Supabase local reset and authorization regression passed (%s migrations)\n' "$(find supabase/migrations -name '*.sql' | wc -l | tr -d ' ')"
+printf 'Supabase local reset, signup, and authorization regressions passed (%s migrations)\n' "$(find supabase/migrations -name '*.sql' | wc -l | tr -d ' ')"
