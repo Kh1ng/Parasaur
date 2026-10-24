@@ -1,0 +1,37 @@
+{
+  "project": {
+    "id": 42,
+    "path_with_namespace": "group/repo"
+  },
+  "user": {
+    "id": 1,
+    "username": "owner",
+    "name": "Owner"
+  },
+  "object_kind": "issue",
+  "event_type": "issue",
+  "object_attributes": {
+    "iid": 7,
+    "author_id": 1,
+    "action": "update",
+    "state": "opened",
+    "description": "Untrusted issue body"
+  },
+  "assignees": [
+    {
+      "id": 2,
+      "username": "parasaur"
+    }
+  ],
+  "changes": {
+    "assignees": {
+      "previous": [],
+      "current": [
+        {
+          "id": 2,
+          "username": "parasaur"
+        }
+      ]
+    }
+  }
+}

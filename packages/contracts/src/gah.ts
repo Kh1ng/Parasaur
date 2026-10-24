@@ -1226,6 +1226,8 @@ export interface NotificationSummary {
  * view. Values reflect inheritance through defaults + canonical + repo config
  * for the requested profile. */
 export interface ConfigProfileSummary {
+  trusted_issue_human_authors?: string[] | null;
+  trusted_issue_bot_authors?: string[] | null;
   profile: string;
   /** Named OpenHands credential profile; credential values are never returned. */
   oh_profile?: string | null;

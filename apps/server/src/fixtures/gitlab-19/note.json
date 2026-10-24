@@ -1,0 +1,22 @@
+{
+  "project": {
+    "id": 42,
+    "path_with_namespace": "group/repo"
+  },
+  "user": {
+    "id": 1,
+    "username": "owner",
+    "name": "Owner"
+  },
+  "object_kind": "note",
+  "event_type": "note",
+  "object_attributes": {
+    "id": 99,
+    "note": "@parasaur fix this",
+    "noteable_type": "Issue"
+  },
+  "issue": {
+    "iid": 9,
+    "author_id": 1
+  }
+}

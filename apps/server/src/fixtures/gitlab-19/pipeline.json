@@ -1,0 +1,17 @@
+{
+  "project": {
+    "id": 42,
+    "path_with_namespace": "group/repo"
+  },
+  "user": {
+    "id": 1,
+    "username": "owner",
+    "name": "Owner"
+  },
+  "object_kind": "pipeline",
+  "object_attributes": {
+    "id": 101,
+    "status": "failed",
+    "ref": "gah/repo-123"
+  }
+}

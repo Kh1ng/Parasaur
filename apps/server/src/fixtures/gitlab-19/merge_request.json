@@ -1,0 +1,29 @@
+{
+  "project": {
+    "id": 42,
+    "path_with_namespace": "group/repo"
+  },
+  "user": {
+    "id": 1,
+    "username": "owner",
+    "name": "Owner"
+  },
+  "object_kind": "merge_request",
+  "event_type": "merge_request",
+  "object_attributes": {
+    "iid": 8,
+    "action": "update",
+    "state": "opened"
+  },
+  "changes": {
+    "reviewers": {
+      "previous": [],
+      "current": [
+        {
+          "id": 2,
+          "username": "parasaur"
+        }
+      ]
+    }
+  }
+}

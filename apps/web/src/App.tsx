@@ -75,6 +75,11 @@ export function App() {
   const requestAction = useUiStore((state) => state.requestAction);
   const notificationPopups = useUiStore((state) => state.notificationPopups);
   const { isConnected, isConnecting, sessions, liveActivity, activityUnreadCount, profile, sendMessage, activityRevision, reconnectSeq, controllerActivity } = useWebSocket();
+  const [linkedSession, setLinkedSession] = useState(() => new URLSearchParams(window.location.search).get('session'));
+  useEffect(() => {
+    const session = sessions.find(candidate => candidate.id === linkedSession);
+    if (session) { setSelectedSession(session); setLinkedSession(null); }
+  }, [sessions, linkedSession]);
   // The quota snapshot feeds the navbar's subscription rings on every page.
   const quota = useGahStore((state) => state.quota);
   const fetchQuota = useGahStore((state) => state.fetchQuota);

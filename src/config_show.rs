@@ -214,6 +214,8 @@ pub struct PmOrchestrationSummary {
 #[derive(serde::Serialize)]
 pub struct ConfigProfileSummary {
     pub profile: String,
+    pub trusted_issue_human_authors: Option<Vec<String>>,
+    pub trusted_issue_bot_authors: Option<Vec<String>>,
     /// Named OpenHands credential profile. The profile name is safe to expose;
     /// its API key remains in ~/.openhands/profiles and is never serialized.
     pub oh_profile: Option<String>,
@@ -404,6 +406,8 @@ fn build_profile_summary(
 
     Ok(ConfigProfileSummary {
         profile: profile_name.to_string(),
+        trusted_issue_human_authors: profile.publishing.trusted_issue_human_authors.clone(),
+        trusted_issue_bot_authors: profile.publishing.trusted_issue_bot_authors.clone(),
         oh_profile: profile.oh_profile.clone(),
         delivery_mode: profile.delivery_mode.as_str().to_string(),
         merge_policy: routing
@@ -886,6 +890,34 @@ mod tests {
         );
         assert!(!raw.contains("abcdefghijklmnopqrstuvwxyz"));
         assert!(!raw.contains("Authorization"));
+    }
+
+    #[test]
+    fn config_show_preserves_missing_and_explicit_author_trust() {
+        let mut cfg = sample_config();
+        let missing = config_show_full(&cfg, Path::new("/tmp/config.toml"), Some("repo"))
+            .expect("config summary");
+        assert!(missing.profiles["repo"]
+            .trusted_issue_human_authors
+            .is_none());
+        assert!(missing.profiles["repo"].trusted_issue_bot_authors.is_none());
+        let profile = cfg.profiles.get_mut("repo").unwrap();
+        profile.publishing.trusted_issue_human_authors = Some(vec!["owner".into()]);
+        profile.publishing.trusted_issue_bot_authors = Some(vec![]);
+        let summary = config_show_full(&cfg, Path::new("/tmp/config.toml"), Some("repo"))
+            .expect("config summary");
+        assert_eq!(
+            summary.profiles["repo"]
+                .trusted_issue_human_authors
+                .as_deref(),
+            Some(["owner".to_string()].as_slice())
+        );
+        assert_eq!(
+            summary.profiles["repo"]
+                .trusted_issue_bot_authors
+                .as_deref(),
+            Some([].as_slice())
+        );
     }
 
     #[test]

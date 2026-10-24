@@ -1,3 +1,4 @@
+import { gitlabEventsRouter } from './gitlabEvents.js';
 import { runningWorkers } from './runningWorkers.js';
 import express from 'express';
 import type { ActivityEvent, ActivityKind, NodeRoleStatus } from '@git-agent-harness/contracts';
@@ -381,6 +382,9 @@ export function createServer(
   // Middleware
   app.use(cors());
   app.use(express.json());
+  if (node.role === 'central') app.use(gitlabEventsRouter({
+    startSession: options => getFleetDispatch().startSession(options)
+  }));
   if (node.role === 'central') {
     app.post('/api/manager-chat/bridge/telegram', async (req, res) => {
       if (!req.secure && !isLocalAddress(req.socket.remoteAddress ?? '')) {
