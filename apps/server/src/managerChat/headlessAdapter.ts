@@ -19,7 +19,8 @@
  * worktree binding (cwd per conversation), backend interchange, quota
  * handoff, and the event-sourced log — everything except streaming, native
  * slash commands, and the permission round-trip, which need a structured
- * protocol. AGY's CLI-native model/effort options are exposed.
+ * protocol. AGY's CLI-native model/effort options are exposed, and Vibe's
+ * config-native model selection is exposed through the gah CLI (#1510).
  */
 
 import { spawn, execFile as execFileCallback, execFileSync } from 'node:child_process';
@@ -27,7 +28,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { ChatTranscriptTurn } from '@git-agent-harness/contracts';
-import { runConfigShowProfile } from '../gahCli.js';
+import { runConfigShowProfile, runVibeModelSummary, runVibeSetModel } from '../gahCli.js';
 import type { ManagerAdapter, ManagerCommandInfo, ManagerModelInfo, ManagerReasoningEffortInfo } from './registry.js';
 import { isInsideWorkingDirectory } from './permissionPolicy.js';
 import { agentChildEnv } from './childEnv.js';
@@ -80,8 +81,21 @@ export interface HeadlessBackendSpec {
    * descriptive error. Default: trimmed stdout on exit 0, else an error
    * built from stderr. */
   parseReply?: (result: HeadlessProcessResult) => string;
-  /** Selectable CLI-native options for headless backends that expose them. */
-  modelOptions?: () => Promise<{ models: ManagerModelInfo[]; reasoningEfforts: ManagerReasoningEffortInfo[] }>;
+  /** Selectable CLI-native options for headless backends that expose them.
+   * Receives the GAH profile so a backend whose options come from a
+   * profile-scoped source (vibe's own config, per instance) can resolve it. */
+  modelOptions?: (gahProfile: string) => Promise<{
+    models: ManagerModelInfo[];
+    reasoningEfforts: ManagerReasoningEffortInfo[];
+    /** The backend's own current model, for backends whose selection lives
+     * outside this process (vibe's config file); in-memory selection still
+     * wins when one was made here. */
+    currentModelId?: string | null;
+  }>;
+  /** Persist a model selection for backends with no CLI flag to carry it
+   * (vibe writes `active_model` into its own config). Called by setModel
+   * after validation, and before a turn whose session pinned a model. */
+  applyModel?: (gahProfile: string, modelId: string) => Promise<void>;
   /** Detect a tool request the backend leaked into the reply text instead
    * of executing (#1041). Returns null for an ordinary reply; throws when
    * tool-request-shaped text cannot be decoded, so the turn ends with an
@@ -152,6 +166,15 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     async runTurn(gahProfile, input) {
       const state = stateFor(gahProfile);
       const cwd = input.cwd ?? process.cwd();
+
+      // A backend with no CLI flag for the pin (vibe) persists the
+      // selection through its own config before the turn, so the process
+      // it is about to spawn picks the pinned model up (#1510). Only an
+      // explicit pin writes; the in-memory fallback was already persisted
+      // by setModel.
+      if (input.model && spec.applyModel) {
+        await spec.applyModel(input.profile ?? gahProfile, input.model);
+      }
 
       // One non-interactive invocation: fixed argv, prompt over stdin.
       const invoke = async (prompt: string): Promise<string> => {
@@ -288,11 +311,11 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     },
 
     async listModels(gahProfile) {
-      const options = await spec.modelOptions?.();
+      const options = await spec.modelOptions?.(gahProfile);
       const state = stateFor(gahProfile);
       return {
         models: options?.models ?? [],
-        currentModelId: state.currentModelId,
+        currentModelId: state.currentModelId ?? options?.currentModelId ?? null,
         reasoningEfforts: options?.reasoningEfforts ?? [],
         currentReasoningEffortId: state.currentReasoningEffortId,
         contextUsage: null
@@ -300,14 +323,15 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     },
 
     async setModel(gahProfile, modelId): Promise<void> {
-      const options = await spec.modelOptions?.();
+      const options = await spec.modelOptions?.(gahProfile);
       if (!options) throw new Error(`${spec.displayName} doesn't support model selection in headless mode.`);
       if (!options.models.some((model) => model.id === modelId)) throw new Error(`Unknown model "${modelId}" for ${spec.displayName}`);
+      await spec.applyModel?.(gahProfile, modelId);
       stateFor(gahProfile).currentModelId = modelId;
     },
 
     async setReasoningEffort(gahProfile, effortId): Promise<void> {
-      const options = await spec.modelOptions?.();
+      const options = await spec.modelOptions?.(gahProfile);
       if (!options) throw new Error(`${spec.displayName} doesn't support reasoning-effort selection in headless mode.`);
       if (!options.reasoningEfforts.some((effort) => effort.id === effortId)) throw new Error(`Unknown reasoning effort "${effortId}" for ${spec.displayName}`);
       stateFor(gahProfile).currentReasoningEffortId = effortId;
@@ -372,15 +396,30 @@ function resolveVibeInterpreter(executable?: string): string {
  * so the replayed transcript never reaches process argv.
  * `resolveInterpreter` is overridable so tests can prove the argv/stdin
  * split against a fake interpreter instead of requiring a real vibe
- * install. */
-export function vibeBackendSpec(overrides: { resolveInterpreter?: () => string; executable?: string } = {}): HeadlessBackendSpec {
+ * install.
+ *
+ * Vibe's CLI has no model flag either: its config file holds the offered
+ * models and the active one. The picker reads both through the gah CLI
+ * (`config show-vibe-models`, no network), and choosing a model persists
+ * `active_model` there (`config set-vibe-model`) — scoped to `instance`'s
+ * isolated state when a backend instance is selected (#1510). */
+export function vibeBackendSpec(overrides: { resolveInterpreter?: () => string; executable?: string; instance?: string | null } = {}): HeadlessBackendSpec {
   const resolveInterpreter = overrides.resolveInterpreter ?? (() => resolveVibeInterpreter(overrides.executable));
   return {
     id: 'vibe',
     displayName: 'Vibe',
-    // vibe's CLI has no model/effort flag; the session's pin (if any) has
-    // nowhere to go here, unlike agyBackendSpec below.
+    // A pinned model never reaches argv; it reaches vibe through its own
+    // config via applyModel instead.
     turnArgs: () => [resolveInterpreter(), '-c', VIBE_STDIN_BRIDGE],
+    modelOptions: async (gahProfile) => {
+      const summary = await runVibeModelSummary(gahProfile, overrides.instance);
+      return {
+        models: summary.models,
+        reasoningEfforts: [],
+        currentModelId: summary.active_model
+      };
+    },
+    applyModel: (gahProfile, modelId) => runVibeSetModel(gahProfile, overrides.instance, modelId),
     encodeStdin: (prompt) => prompt,
     decodeToolRequest: decodeVibeToolRequest
   };

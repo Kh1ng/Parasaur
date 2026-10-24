@@ -303,7 +303,7 @@ test('OpenHands JSONL parser accepts finish actions and rejects tool-only output
   }), /no assistant reply/);
 });
 
-test('Vibe has no model/effort flag, so a session pin is silently ignored rather than threaded through (#1032 reopened)', () => {
+test('Vibe has no model/effort flag, so a session pin never reaches argv — it persists through the config instead (#1032 reopened, #1510)', () => {
   const spec = vibeBackendSpec({ resolveInterpreter: () => '/fake/python3' });
   const unpinned = spec.turnArgs();
   const pinned = spec.turnArgs({ model: 'claude-sonnet-4.6-thinking', reasoningEffort: 'high' });
@@ -706,4 +706,160 @@ test('a named Vibe instance derives its Python bridge from the selected launcher
     writeFileSync(selected, '#!/usr/bin/env python3\n');
     assert.throws(() => vibeBackendSpec({ executable: selected }).turnArgs(), /absolute Python interpreter/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+/** A fake `gah` for the Vibe picker (#1510): `config show-vibe-models`
+ * prints the models recorded in the config fixture with the active one
+ * read from the state file, and `config set-vibe-model` records the choice
+ * and the argv it arrived with — so tests prove the picker reads and
+ * persists through the real CLI surface, not a shortcut. */
+function fakeVibeGah(dir: string): { state: string; argv: string } {
+  const state = join(dir, 'active-model.txt');
+  const argv = join(dir, 'argv.txt');
+  const cli = join(dir, 'gah');
+  const config = JSON.stringify([
+    { id: 'glm-5.3', name: 'GLM 5.3' },
+    { id: 'mistral-medium-3.5', name: 'Mistral Medium 3.5' }
+  ]);
+  writeFileSync(state, 'mistral-medium-3.5');
+  writeFileSync(cli, `#!/bin/sh
+printf '%s\\n' "$@" > "${argv}"
+case "$1 $2" in
+  "config show-vibe-models")
+    printf '{"models":%s,"active_model":"%s"}\\n' '${config.replace(/'/g, "'\\''")}' "$(cat "${state}")"
+    ;;
+  "config set-vibe-model")
+    while [ $# -gt 1 ]; do
+      if [ "$1" = "--model" ]; then printf '%s' "$2" > "${state}"; fi
+      shift
+    done
+    ;;
+  *) echo "unexpected gah invocation: $*" >&2; exit 1 ;;
+esac
+`, { mode: 0o755 });
+  return { state, argv };
+}
+
+test('Vibe lists its configured models with the active one marked, read from its own config through the gah CLI (#1510)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-models-'));
+  const saved = { GAH_BINARY: process.env.GAH_BINARY };
+  try {
+    const { argv } = fakeVibeGah(dir);
+    process.env.GAH_BINARY = join(dir, 'gah');
+    const backend = createHeadlessBackend(vibeBackendSpec());
+
+    const summary = await backend.listModels('vibe-profile');
+    assert.deepEqual(summary.models, [
+      { id: 'glm-5.3', name: 'GLM 5.3' },
+      { id: 'mistral-medium-3.5', name: 'Mistral Medium 3.5' }
+    ]);
+    assert.equal(summary.currentModelId, 'mistral-medium-3.5', 'the config\'s active model is marked');
+    assert.deepEqual(summary.reasoningEfforts, []);
+    const requested = readFileSync(argv, 'utf8').trim().split('\n');
+    assert.ok(requested.includes('--profile') && requested.includes('vibe-profile'));
+    assert.ok(!requested.includes('--instance'), 'the ambient installation is the default scope');
+
+    await assert.rejects(backend.setModel('vibe-profile', 'not-configured'), /Unknown model/);
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('choosing a Vibe model persists active_model through the gah CLI and the mark survives a fresh adapter (#1510)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-setmodel-'));
+  const saved = { GAH_BINARY: process.env.GAH_BINARY };
+  try {
+    const { state, argv } = fakeVibeGah(dir);
+    process.env.GAH_BINARY = join(dir, 'gah');
+    const backend = createHeadlessBackend(vibeBackendSpec());
+
+    await backend.setModel('vibe-profile', 'glm-5.3');
+    assert.equal(readFileSync(state, 'utf8'), 'glm-5.3', 'the choice reached the config writer');
+    const requested = readFileSync(argv, 'utf8').trim().split('\n');
+    assert.deepEqual(
+      requested.filter((_, index) => index >= requested.indexOf('set-vibe-model')),
+      ['set-vibe-model', '--profile', 'vibe-profile', '--model', 'glm-5.3'],
+      'the write is a fixed argv: profile, model, nothing else'
+    );
+
+    // A fresh adapter has no in-memory selection: the active mark must
+    // come back from the persisted config.
+    const reloaded = await createHeadlessBackend(vibeBackendSpec()).listModels('vibe-profile');
+    assert.equal(reloaded.currentModelId, 'glm-5.3', 'the persisted active model is the one marked');
+    assert.ok(reloaded.models.some((model) => model.id === 'glm-5.3'));
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a named Vibe instance scopes its model reads and writes to the instance (#1510)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-instance-'));
+  const saved = { GAH_BINARY: process.env.GAH_BINARY };
+  try {
+    const { state, argv } = fakeVibeGah(dir);
+    process.env.GAH_BINARY = join(dir, 'gah');
+    const backend = createHeadlessBackend(vibeBackendSpec({ instance: 'mistral-tak-vibe' }));
+
+    const summary = await backend.listModels('vibe-profile');
+    assert.equal(summary.models.length, 2);
+    let requested = readFileSync(argv, 'utf8').trim().split('\n');
+    assert.ok(requested.includes('--instance') && requested.includes('mistral-tak-vibe'));
+
+    await backend.setModel('vibe-profile', 'glm-5.3');
+    assert.equal(readFileSync(state, 'utf8'), 'glm-5.3');
+    requested = readFileSync(argv, 'utf8').trim().split('\n');
+    assert.ok(requested.includes('--instance') && requested.includes('mistral-tak-vibe'), 'the write is scoped too');
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a pinned Vibe turn persists the pinned model before spawning, so the CLI picks it up from its config (#1510)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-pinned-'));
+  const saved = { GAH_BINARY: process.env.GAH_BINARY };
+  try {
+    const { state } = fakeVibeGah(dir);
+    process.env.GAH_BINARY = join(dir, 'gah');
+    const interpreter = join(dir, 'fake-python3');
+    writeFileSync(interpreter, '#!/bin/sh\ncat >/dev/null\necho vibe-reply\n', { mode: 0o755 });
+
+    const backend = createHeadlessBackend(vibeBackendSpec({ resolveInterpreter: () => interpreter }));
+    const result = await backend.runTurn('vibe-profile', {
+      prompt: 'go',
+      history: [],
+      profile: 'vibe-profile',
+      onChunk: () => {},
+      onToolResult: () => {},
+      model: 'glm-5.3'
+    });
+
+    assert.equal(result.reply, 'vibe-reply');
+    assert.equal(readFileSync(state, 'utf8'), 'glm-5.3', 'the pin was persisted before the turn ran');
+
+    // An unpinned turn never rewrites the config.
+    writeFileSync(state, 'mistral-medium-3.5');
+    await backend.runTurn('vibe-profile', {
+      prompt: 'go again',
+      history: [],
+      profile: 'vibe-profile',
+      onChunk: () => {},
+      onToolResult: () => {},
+      model: null
+    });
+    assert.equal(readFileSync(state, 'utf8'), 'mistral-medium-3.5', 'an unpinned session leaves the selection alone');
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

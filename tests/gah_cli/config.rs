@@ -980,3 +980,238 @@ fn routing_candidate_routine_list_holds_one_reviewer() {
 
     let _ = tmp;
 }
+
+#[test]
+fn show_vibe_models_and_set_vibe_model_read_and_write_vibes_own_config() {
+    let (tmp, config) = config_with_profile();
+    let home = tmp.path().join("home");
+    let vibe_config = home.join(".vibe/config.toml");
+    std::fs::create_dir_all(vibe_config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &vibe_config,
+        "theme = \"auto\"\nactive_model = \"mistral-medium-3.5\"\n[[models]]\nname = \"mistral-vibe-cli-latest\"\nalias = \"mistral-medium-3.5\"\ndisplay_name = \"Mistral Medium 3.5\"\n[[models]]\nname = \"devstral\"\nalias = \"local\"\n",
+    )
+    .unwrap();
+    // A dev shell exporting VIBE_HOME would redirect the ambient read, so
+    // every child here strips it and pins HOME.
+    let gah = || {
+        let mut command = bin();
+        command.env("HOME", &home);
+        command.env_unset("VIBE_HOME");
+        command
+    };
+
+    let show = |instance: Option<&str>| {
+        let mut command = gah();
+        command.args([
+            "config",
+            "show-vibe-models",
+            "--config",
+            config.to_str().unwrap(),
+            "--profile",
+            "test",
+        ]);
+        if let Some(instance) = instance {
+            command.args(["--instance", instance]);
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+
+    let summary = show(None);
+    let models: Vec<&str> = summary["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|model| model["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(models, vec!["mistral-medium-3.5", "local"]);
+    assert_eq!(summary["active_model"], "mistral-medium-3.5");
+
+    gah()
+        .args([
+            "config",
+            "set-vibe-model",
+            "--config",
+            config.to_str().unwrap(),
+            "--profile",
+            "test",
+            "--model",
+            "local",
+        ])
+        .assert()
+        .success();
+    let saved = std::fs::read_to_string(&vibe_config).unwrap();
+    assert_eq!(saved.matches("active_model").count(), 1);
+    assert!(saved.contains("active_model = \"local\""), "got: {saved}");
+    assert!(saved.contains("theme = \"auto\""), "got: {saved}");
+    assert_eq!(show(None)["active_model"], "local");
+
+    // An unconfigured model is refused without touching the file.
+    gah()
+        .args([
+            "config",
+            "set-vibe-model",
+            "--config",
+            config.to_str().unwrap(),
+            "--profile",
+            "test",
+            "--model",
+            "not-configured",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("not configured"));
+    assert_eq!(std::fs::read_to_string(&vibe_config).unwrap(), saved);
+
+    let _ = tmp;
+}
+
+#[test]
+fn vibe_model_commands_scope_to_a_declared_backend_instance() {
+    let (tmp, config) = config_with_profile();
+    let home = tmp.path().join("home");
+    let fake_bin = tmp.path().join("bin");
+    std::fs::create_dir_all(&fake_bin).unwrap();
+    make_fake_bin(&fake_bin, "vibe");
+    let path = prepend_path(&fake_bin);
+    let gah = || {
+        let mut command = bin();
+        command.env("HOME", &home);
+        command.env("PATH", &path);
+        command.env_unset("VIBE_HOME");
+        command
+    };
+
+    gah()
+        .args([
+            "config",
+            "add-backend-instance",
+            "--config",
+            config.to_str().unwrap(),
+            "--profile",
+            "test",
+            "--instance",
+            "vibe-work",
+            "--runner-kind",
+            "vibe",
+            "--account-label",
+            "Work",
+        ])
+        .assert()
+        .success();
+
+    // The instance's isolated config lists a different model than the
+    // ambient installation, so the scoping assertions cannot pass by
+    // reading the wrong file.
+    let instance_config = home.join(".config/gah/backend-instances/vibe-work/.vibe/config.toml");
+    std::fs::create_dir_all(instance_config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &instance_config,
+        "active_model = \"glm-5.3\"\n[[models]]\nname = \"glm-5.3\"\nalias = \"glm-5.3\"\n",
+    )
+    .unwrap();
+    let ambient_config = home.join(".vibe/config.toml");
+    std::fs::create_dir_all(ambient_config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &ambient_config,
+        "active_model = \"local\"\n[[models]]\nname = \"devstral\"\nalias = \"local\"\n",
+    )
+    .unwrap();
+
+    let output = gah()
+        .args([
+            "config",
+            "show-vibe-models",
+            "--config",
+            config.to_str().unwrap(),
+            "--profile",
+            "test",
+            "--instance",
+            "vibe-work",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["models"][0]["id"], "glm-5.3");
+    assert_eq!(summary["active_model"], "glm-5.3");
+
+    gah()
+        .args([
+            "config",
+            "set-vibe-model",
+            "--config",
+            config.to_str().unwrap(),
+            "--profile",
+            "test",
+            "--instance",
+            "vibe-work",
+            "--model",
+            "glm-5.3",
+        ])
+        .assert()
+        .success();
+    assert!(std::fs::read_to_string(&instance_config)
+        .unwrap()
+        .contains("active_model = \"glm-5.3\""));
+    assert!(
+        !std::fs::read_to_string(&ambient_config)
+            .unwrap()
+            .contains("glm-5.3"),
+        "the ambient installation is untouched"
+    );
+
+    // An instance of another runner kind never answers for Vibe.
+    let codex_bin = tmp.path().join("codex-bin");
+    std::fs::create_dir_all(&codex_bin).unwrap();
+    make_fake_bin(&codex_bin, "codex");
+    let codex_path = prepend_path(&codex_bin);
+    let codex_gah = || {
+        let mut command = bin();
+        command.env("HOME", &home).env("PATH", &codex_path);
+        command
+    };
+    codex_gah()
+        .args([
+            "config",
+            "add-backend-instance",
+            "--config",
+            config.to_str().unwrap(),
+            "--profile",
+            "test",
+            "--instance",
+            "codex-work",
+            "--runner-kind",
+            "codex",
+            "--account-label",
+            "Work",
+        ])
+        .assert()
+        .success();
+    codex_gah()
+        .args([
+            "config",
+            "show-vibe-models",
+            "--config",
+            config.to_str().unwrap(),
+            "--profile",
+            "test",
+            "--instance",
+            "codex-work",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("not a Vibe instance"));
+
+    let _ = tmp;
+}

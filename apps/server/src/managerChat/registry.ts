@@ -4,7 +4,7 @@
  * Hermes and OpenCode speak ACP natively; Codex and Claude use their
  * official ACP bridge packages. Vibe, AGY, and OpenHands use the headless adapter,
  * which preserves transcript replay; AGY also advertises its CLI-native
- * model and reasoning-effort options.
+ * model and reasoning-effort options, and Vibe its config-native models (#1510).
  */
 
 import {
@@ -163,7 +163,7 @@ export async function resolveInstanceAdapter(profile: string, backendId: string,
     case 'vibe':
     case 'agy':
     case 'openhands': {
-      const spec = runtime.runner_kind === 'vibe' ? vibeBackendSpec({ executable: runtime.executable })
+      const spec = runtime.runner_kind === 'vibe' ? vibeBackendSpec({ executable: runtime.executable, instance })
         : runtime.runner_kind === 'agy' ? agyBackendSpec() : openhandsBackendSpec({ instanceCredential: Boolean(runtime.credential_id) });
       adapter = { ...createHeadlessBackend(instanceHeadlessSpec(profile, runtime, spec)), displayName: label } as ManagerAdapter;
       break;
