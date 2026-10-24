@@ -156,7 +156,7 @@ Open `~/.config/gah/config.toml`. Set the mode under `[defaults]`:
 orchestration_mode = "self_hosted"
 ```
 
-Export the credentials in each shell that runs Parasaur:
+Export the credentials in each interactive shell that runs Parasaur:
 
 ```bash
 export GAH_SUPABASE_URL="<your-project-url>"
@@ -165,10 +165,27 @@ export GAH_SUPABASE_ANON_KEY="<your-anon-key>"
 
 A blank value counts as unset.
 
-Services do not read your shell. Add the same two lines to:
+Services do not read your shell. Each one loads a fixed env file, and the
+`export` lines above are for your shell only. In a service env file, the two
+lines must be plain assignments:
 
-- `~/.config/gah/gah-loop.env`, for the controller loop. Run `chmod 600` on it.
-- `/etc/gah/server.env`, for the server on Linux. The installer creates it.
+```bash
+GAH_SUPABASE_URL="<your-project-url>"
+GAH_SUPABASE_ANON_KEY="<your-anon-key>"
+```
+
+Add them to the file your service reads:
+
+- `~/.config/gah/gah-loop.env` — the controller loop. On Linux,
+  `gah-loop@.service` loads it as a systemd `EnvironmentFile`; the macOS
+  worker LaunchAgent sources it in bash. Run `chmod 600` on it.
+- `/etc/gah/server.env` — the central server on Linux.
+  `gah-server.service` loads it as a systemd `EnvironmentFile`. The
+  installer creates it.
+- `~/.config/gah/server.env` — the central server on macOS. The server
+  LaunchAgent sources this file, not `gah-loop.env`. Without the
+  credentials here, the server's CLI calls fail cloud-mode validation. Run
+  `chmod 600` on it.
 
 ## 7. Start a central node and a worker
 
