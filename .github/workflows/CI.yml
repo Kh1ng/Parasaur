@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -157,10 +161,44 @@ jobs:
           printf '%s' "$role_json" | grep -Eq '"role":[[:space:]]*"standalone"' \
             || fail "gah status does not report the standalone role: $role_json"
 
-  test:
+  node:
     runs-on: ubuntu-latest
-    # A normal run takes about 12 minutes; a hung test must not hold the
-    # runner for GitHub's 6-hour default.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check memory hook setup
+        run: |
+          python3 -m venv "$RUNNER_TEMP/gah-memory-hooks-python"
+          "$RUNNER_TEMP/gah-memory-hooks-python/bin/pip" install ruamel.yaml==0.18.17
+          "$RUNNER_TEMP/gah-memory-hooks-python/bin/python" scripts/test-memory-hooks.py
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check the edge release trust gate
+        run: node --test scripts/release-edge-gate.test.mjs
+
+      # The prebuild hook runs all server and mock-control-plane tests.
+      - name: Build frontend assets
+        run: npm run build:web
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gah-web-dist
+          path: apps/web/dist
+          if-no-files-found: error
+
+  rust:
+    runs-on: ubuntu-latest
+    # A hung test must not hold the runner for GitHub's 6-hour default.
     timeout-minutes: 60
     permissions:
       contents: read
@@ -195,26 +233,17 @@ jobs:
       - name: Check CI test selection
         run: bash scripts/test-ci-test-scope.sh
 
-      - name: Check memory hook setup
-        run: |
-          python3 -m venv "$RUNNER_TEMP/gah-memory-hooks-python"
-          "$RUNNER_TEMP/gah-memory-hooks-python/bin/pip" install ruamel.yaml==0.18.17
-          "$RUNNER_TEMP/gah-memory-hooks-python/bin/python" scripts/test-memory-hooks.py
-
       - name: Install Node.js
+        if: steps.rust-test-scope.outputs.has_rust_changes == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
 
-      - name: Install frontend dependencies
+      # paid_route_http invokes the TypeScript adapter against the real CLI.
+      - name: Install dependencies for the Rust HTTP integration test
+        if: steps.rust-test-scope.outputs.has_rust_changes == 'true'
         run: npm ci
-
-      - name: Check the edge release trust gate
-        run: node --test scripts/release-edge-gate.test.mjs
-
-      - name: Build frontend assets
-        run: npm run build:web
 
       - name: Install Tauri Linux dependencies
         if: steps.rust-test-scope.outputs.has_desktop_changes == 'true'
