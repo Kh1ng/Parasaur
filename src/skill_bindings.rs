@@ -345,11 +345,16 @@ pub(crate) fn resolve_for_dispatch(
     ) {
         Ok(resolution) => Ok(resolution.skills),
         Err(error) => {
-            let supports_skills = matches!(
-                runner_kind,
-                crate::backend_kind::BackendKind::Hermes
-                    | crate::backend_kind::BackendKind::Openhands
-            );
+            // Keep this match exhaustive per src/backend_kind.rs's exhaustiveness rule.
+            let supports_skills = match runner_kind {
+                crate::backend_kind::BackendKind::Claude => false,
+                crate::backend_kind::BackendKind::Codex => false,
+                crate::backend_kind::BackendKind::Opencode => false,
+                crate::backend_kind::BackendKind::Openhands => true,
+                crate::backend_kind::BackendKind::Vibe => false,
+                crate::backend_kind::BackendKind::Agy => false,
+                crate::backend_kind::BackendKind::Hermes => true,
+            };
             let fail_closed = supports_skills && policy == ResolveFailurePolicy::FailClosed;
             let action = if fail_closed {
                 "fail_closed"
@@ -372,7 +377,7 @@ pub(crate) fn resolve_for_dispatch(
             });
             if let Err(record_error) = std::fs::write(
                 session_dir.join("skill-resolution-failure.json"),
-                serde_json::to_vec_pretty(&record)?,
+                serde_json::to_vec_pretty(&record).expect("JSON values always serialize"),
             ) {
                 eprintln!("gah: could not record skill resolution failure: {record_error}");
             }

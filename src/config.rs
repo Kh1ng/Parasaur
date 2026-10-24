@@ -201,8 +201,12 @@ pub struct Profile {
     /// Optional absolute/relative path to the Hermes CLI executable.
     #[serde(default)]
     pub hermes_path: Option<String>,
-    /// Seconds OpenCode can go without a durable worktree change before GAH kills it.
-    /// Narration and malformed tool output do not reset this window. Defaults to 300s.
+    /// How long OpenCode can go without a durable worktree change before GAH
+    /// considers it stalled and kills it, in seconds. OpenCode's narration
+    /// and malformed tool-call output deliberately do not reset this window:
+    /// only repository progress does. This retains an activity-based guard
+    /// rather than imposing a flat dispatch deadline. Defaults to 300s when
+    /// unset.
     #[serde(default)]
     pub opencode_idle_timeout_seconds: Option<u64>,
     /// Per-model override for `opencode_idle_timeout_seconds`, keyed by the
