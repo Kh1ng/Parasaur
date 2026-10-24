@@ -302,6 +302,7 @@ pub fn run_once(
     skip_validation_gate: bool,
     run_periodic_probes: bool,
 ) -> Result<()> {
+    crate::node_register::cloud_advisory(cfg, None);
     log_node_capacity_settings(cfg.defaults.node_capacity);
     let mut ledger_entries = crate::ledger::read_entries(cfg)?;
     reconcile_abandoned_dispatches(cfg, profile_name, &mut ledger_entries)?;

@@ -44,6 +44,43 @@ pub fn request_with_idempotency_key(
     }) {
         anyhow::bail!("invalid idempotency key")
     }
+    let headers: Vec<(&str, &str)> = idempotency_key
+        .map(|key| vec![("Idempotency-Key", key)])
+        .unwrap_or_default();
+    request_inner(method, url, body, token, timeout_secs, &headers, true)
+}
+
+/// Sends a request with extra headers and normal TLS verification. Coordinator
+/// TLS overrides do not apply to cloud credentials. Secrets stay off argv.
+pub fn request_with_headers(
+    method: &str,
+    url: &str,
+    body: Option<&str>,
+    token: Option<&str>,
+    timeout_secs: u32,
+    headers: &[(&str, &str)],
+) -> Result<CurlResponse> {
+    request_inner(method, url, body, token, timeout_secs, headers, false)
+}
+
+fn request_inner(
+    method: &str,
+    url: &str,
+    body: Option<&str>,
+    token: Option<&str>,
+    timeout_secs: u32,
+    headers: &[(&str, &str)],
+    coordinator_tls: bool,
+) -> Result<CurlResponse> {
+    if token.is_some_and(|value| value.contains(['\r', '\n']))
+        || headers.iter().any(|(name, value)| {
+            name.is_empty()
+                || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                || value.contains(['\r', '\n'])
+        })
+    {
+        anyhow::bail!("invalid HTTP header")
+    }
     let mut cmd = Command::new("curl");
     cmd.args([
         "-q",
@@ -74,10 +111,12 @@ pub fn request_with_idempotency_key(
         }
         if let Some(ca) = std::env::var("GAH_COORDINATOR_CA_CERT")
             .ok()
-            .filter(|value| !value.is_empty())
+            .filter(|value| coordinator_tls && !value.is_empty())
         {
             config.push_str(&format!("cacert = \"{}\"\n", config_value(&ca)));
-        } else if std::env::var("GAH_COORDINATOR_INSECURE_TLS").as_deref() == Ok("1") {
+        } else if coordinator_tls
+            && std::env::var("GAH_COORDINATOR_INSECURE_TLS").as_deref() == Ok("1")
+        {
             config.push_str("insecure\n");
         }
         if let Some(token) = token {
@@ -86,10 +125,11 @@ pub fn request_with_idempotency_key(
                 config_value(token)
             ));
         }
-        if let Some(key) = idempotency_key {
+        for (name, value) in headers {
             config.push_str(&format!(
-                "header = \"Idempotency-Key: {}\"\n",
-                config_value(key)
+                "header = \"{}: {}\"\n",
+                config_value(name),
+                config_value(value)
             ));
         }
         stdin.write_all(config.as_bytes())?;
@@ -142,6 +182,27 @@ mod tests {
     #[test]
     fn curl_config_values_cannot_inject_directives() {
         assert_eq!(config_value("a\nheader = \"x\""), "a\\nheader = \\\"x\\\"");
+    }
+
+    #[test]
+    fn extra_headers_cannot_inject_http_headers() {
+        for headers in [
+            vec![("apikey", "key\r\nInjected: value")],
+            vec![("bad:name", "key")],
+        ] {
+            assert!(
+                request_with_headers("POST", "http://unused", None, None, 1, &headers).is_err()
+            );
+        }
+        assert!(request_with_headers(
+            "POST",
+            "http://unused",
+            None,
+            Some("token\nInjected: value"),
+            1,
+            &[]
+        )
+        .is_err());
     }
 
     #[test]
