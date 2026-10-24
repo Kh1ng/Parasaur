@@ -321,7 +321,9 @@ fn setup_fix_dispatch_repo(
 }
 
 #[test]
-fn parallel_loop_refills_immediately_after_a_fast_completion() {
+// #1539: spawn_bin points availability at /nonexistent-availability-path.json.
+// A loop tick must still dispatch and refill when maintenance cannot write there.
+fn parallel_loop_refills_with_missing_availability_after_a_fast_completion() {
     let _lock = serial();
     let tmp = test_tempdir();
     let (repo, home, cfg) = setup_fix_dispatch_repo(&tmp, "validation_commands = [\"true\"]\n");
@@ -341,6 +343,10 @@ fn parallel_loop_refills_immediately_after_a_fast_completion() {
         .unwrap();
     }
 
+    // Also force a real maintenance read failure, so this covers the warning
+    // path rather than relying only on missing-file short-circuiting.
+    let blocked_store = tmp.path().join("quota-store-is-a-directory");
+    fs::create_dir(&blocked_store).unwrap();
     let fake_bin = tmp.path().join("bin");
     fs::create_dir_all(&fake_bin).unwrap();
     let slow_release = tmp.path().join("slow-release");
@@ -423,6 +429,7 @@ fn parallel_loop_refills_immediately_after_a_fast_completion() {
             .env("GITHUB_TOKEN", "token")
             .env("GAH_LEDGER_PATH", &ledger_path)
             .env("GAH_EVENTS_PATH", &events_path)
+            .env("GAH_QUOTA_STORE_PATH", &blocked_store)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -455,6 +462,13 @@ fn parallel_loop_refills_immediately_after_a_fast_completion() {
         output.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr)
+            .matches("global state retention failed")
+            .count(),
+        1,
+        "maintenance failures warn once and do not prevent dispatch"
     );
 }
 

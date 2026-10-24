@@ -295,6 +295,38 @@ pub(crate) fn run_locked_export(
     })
 }
 
+/// Serialize retention exports with scheduled exports and propagate export errors
+/// to prune. The quota lock is already held; scheduled export never takes it.
+pub(crate) fn export_for_retention(
+    cfg: &GahConfig,
+    quota: &[crate::quota_store::QuotaObservationRecord],
+) -> Result<()> {
+    let path = export_repo_path(cfg);
+    with_locked_health(&path, |_| export_snapshot(cfg, &path, quota))??;
+    Ok(())
+}
+
+/// Export the authoritative ledger and the supplied quota snapshot. Retention
+/// passes its locked snapshot here rather than reopening the quota store.
+pub(crate) fn export_snapshot(
+    cfg: &GahConfig,
+    repo_path: &Path,
+    quota: &[crate::quota_store::QuotaObservationRecord],
+) -> Result<(usize, Option<String>)> {
+    let entries = crate::ledger::read_entries(cfg)?;
+    let watermark = entries.iter().map(|entry| entry.timestamp.clone()).max();
+    let mut exporter = super::exporter::TelemetryExporter::new(super::exporter::TelemetryConfig {
+        telemetry_repo_path: repo_path.to_path_buf(),
+        format: super::exporter::ExportFormat::Jsonl,
+        generate_manifests: true,
+        commit_batch_size: None,
+    })?;
+    exporter.load_exported_ids()?;
+    exporter.export_from_entries(&entries)?;
+    exporter.export_store_quota_observations(quota)?;
+    Ok((exporter.records_exported(), watermark))
+}
+
 /// Operator-visible projection of export health, suitable for `gah status
 /// --json`, the control-plane read API, and the dashboard.
 #[derive(Debug, Clone, Serialize)]

@@ -25,12 +25,14 @@ mod agy;
 mod compatibility_tests;
 mod identity;
 mod instances;
+mod retention;
 pub use agy::{launch as agy_launch, refresh_and_store as refresh_agy_and_store};
 pub(crate) use identity::current_source_records;
 pub use identity::{
     latest_windows_for_backend, latest_windows_for_identity,
     latest_windows_for_identity_and_credential,
 };
+pub use retention::{compact, RetentionPolicy};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(from = "QuotaObservationRecordRaw")]
@@ -288,6 +290,8 @@ pub fn append(state_path: &Path, rec: &QuotaObservationRecord) -> Result<()> {
 
 /// Append several records in one write, so a failure never leaves part of a
 /// multi-window observation in the store.
+///
+/// Appends and prune share a sidecar lock acquired before opening the data file.
 pub(crate) fn append_all(state_path: &Path, records: &[QuotaObservationRecord]) -> Result<()> {
     let mut lines = String::new();
     for rec in records {
@@ -308,16 +312,24 @@ pub(crate) fn append_all(state_path: &Path, records: &[QuotaObservationRecord]) 
     if let Some(parent) = state_path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(state_path)
-        .context("open quota store")?;
-    file.lock_exclusive()
-        .with_context(|| format!("locking {}", state_path.display()))?;
-    file.write_all(lines.as_bytes())
-        .context("write quota observation")?;
-    let _ = file.unlock();
+    let lock_file = retention::lock_state_file(state_path)?;
+    let write_result = (|| -> Result<()> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(state_path)
+            .context("open quota store")?;
+        file.lock_exclusive()
+            .with_context(|| format!("locking {}", state_path.display()))?;
+        let write = file
+            .write_all(lines.as_bytes())
+            .context("write quota observation");
+        let _ = file.unlock();
+        write
+    })();
+    FileExt::unlock(&lock_file).ok();
+    drop(lock_file);
+    write_result?;
     Ok(())
 }
 

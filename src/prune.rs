@@ -14,6 +14,7 @@ pub fn run(
     dry_run: bool,
 ) -> Result<()> {
     let cfg = config::load(config_path)?;
+    prune_global_state(&cfg, older_than_days, dry_run)?;
     let profiles = selected_profiles(&cfg, profile_name)?;
 
     for (name, profile) in profiles {
@@ -31,6 +32,20 @@ pub fn run_automatic(
     ledger_entries: &[crate::ledger::LedgerEntry],
     snapshot: &crate::status::StatusSnapshot,
 ) -> Result<()> {
+    // Maintenance failures must not prevent dispatch. Warn once when the
+    // failure changes, and reset after recovery so a recurrence is visible.
+    static LAST_ERROR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    let error = prune_global_state(cfg, None, false)
+        .err()
+        .map(|error| format!("{error:#}"));
+    if let Ok(mut last) = LAST_ERROR.lock() {
+        if error != *last {
+            if let Some(error) = &error {
+                eprintln!("gah loop: WARNING global state retention failed: {error}");
+            }
+            *last = error;
+        }
+    }
     let profile = config::get_profile(cfg, profile_name)?;
     let active_mrs =
         (snapshot.observations.sync.status == "ok").then_some(snapshot.merge_requests.as_slice());
@@ -62,6 +77,45 @@ struct AutomaticWorktreeSets {
     done: HashSet<String>,
     abandoned_open: HashSet<String>,
     protected: HashSet<String>,
+}
+
+/// Global stores are maintained once per prune pass. Explicit --older-than
+/// overrides the quota max_age; automatic prune keeps fourteen days by default.
+fn prune_global_state(cfg: &GahConfig, days: Option<u64>, dry_run: bool) -> Result<()> {
+    let policy = days
+        .map(|days| crate::quota_store::RetentionPolicy {
+            max_age: time::Duration::days(days.min(i64::MAX as u64 / 86_400) as i64),
+        })
+        .unwrap_or_default();
+    prune_global_state_at(
+        cfg,
+        &crate::availability::resolve_state_path(),
+        &crate::quota_store::store_path(),
+        policy,
+        dry_run,
+    )
+}
+
+fn prune_global_state_at(
+    cfg: &GahConfig,
+    availability_path: &Path,
+    store_path: &Path,
+    policy: crate::quota_store::RetentionPolicy,
+    dry_run: bool,
+) -> Result<()> {
+    if dry_run {
+        println!("  would prune global availability and quota history");
+        return Ok(());
+    }
+    let dropped = crate::availability::compact_expired(availability_path)?;
+    if dropped > 0 {
+        println!("  availability: dropped {dropped} superseded records");
+    }
+    let dropped = crate::quota_store::compact(store_path, policy, cfg)?;
+    if dropped > 0 {
+        println!("  quota store: compacted {dropped} observations");
+    }
+    Ok(())
 }
 
 fn automatic_worktree_sets(
@@ -1297,3 +1351,6 @@ mod tests {
         assert!(remote_gah_branches_to_delete(&mrs).is_empty());
     }
 }
+
+#[cfg(test)]
+mod retention_tests;

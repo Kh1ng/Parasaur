@@ -1015,31 +1015,16 @@ fn calculate_totals(
 /// the same output files.
 pub fn schedule_export_after_terminal_attempt(cfg: &GahConfig) {
     let repo_path = health::export_repo_path(cfg);
-    let result = health::run_locked_export(&repo_path, || export_once(cfg, &repo_path));
+    let result = health::run_locked_export(&repo_path, || {
+        health::export_snapshot(
+            cfg,
+            &repo_path,
+            &crate::quota_store::load_account_observations(),
+        )
+    });
     if let Err(err) = result {
         log::warn!("telemetry export health tracking failed: {err:#}");
     }
-}
-
-/// Re-read the authoritative ledger and export any records not already
-/// present in the telemetry repo (dedup by record id), returning the
-/// number of newly exported records and the latest ledger entry timestamp
-/// observed, for export health bookkeeping.
-fn export_once(cfg: &GahConfig, repo_path: &std::path::Path) -> Result<(usize, Option<String>)> {
-    let entries = read_entries(cfg)?;
-    let watermark = entries.iter().map(|e| e.timestamp.clone()).max();
-
-    let mut exporter = exporter::TelemetryExporter::new(exporter::TelemetryConfig {
-        telemetry_repo_path: repo_path.to_path_buf(),
-        format: exporter::ExportFormat::Jsonl,
-        generate_manifests: true,
-        commit_batch_size: None,
-    })?;
-    exporter.load_exported_ids()?;
-    exporter.export_from_entries(&entries)?;
-    // #1341: account quota readings come from the quota store, not the ledger.
-    exporter.export_store_quota_observations(&crate::quota_store::load_account_observations())?;
-    Ok((exporter.records_exported(), watermark))
 }
 
 /// Main telemetry export function that handles the full workflow

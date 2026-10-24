@@ -22,6 +22,7 @@
 use anyhow::{Context, Result};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -306,7 +307,12 @@ pub fn load_state(state_path: &Path) -> Result<AvailabilityState> {
 /// `mutate` is only called after the current state has been loaded
 /// successfully; if loading fails (malformed file, bad version), this
 /// returns that error without calling `mutate` or touching the file.
-pub fn update_state<F>(state_path: &Path, mutate: F) -> Result<()>
+///
+/// #1539: this is the single write path for the append-only availability
+/// history, so it also applies bounded retention to the state before
+/// persisting it (see [`apply_retention`]). Returns how many records
+/// retention dropped.
+pub fn update_state<F>(state_path: &Path, mutate: F) -> Result<usize>
 where
     F: FnOnce(&mut AvailabilityState),
 {
@@ -326,6 +332,7 @@ where
 
     let mut state = load_state(state_path)?;
     mutate(&mut state);
+    let dropped = apply_retention(&mut state, OffsetDateTime::now_utc());
 
     let mut value = serde_json::to_value(&state).context("serializing availability state")?;
     crate::redact::redact_json_value(&mut value);
@@ -354,7 +361,15 @@ where
     })?;
 
     FileExt::unlock(&lock_file).ok();
-    Ok(())
+    Ok(dropped)
+}
+
+/// Drop superseded expired entries using the same locked write path as updates.
+pub fn compact_expired(state_path: &Path) -> Result<usize> {
+    if !state_path.try_exists()? {
+        return Ok(0);
+    }
+    update_state(state_path, |_| {})
 }
 
 fn now_rfc3339(now: OffsetDateTime) -> String {
@@ -393,7 +408,7 @@ pub fn record_unavailable(
         source,
         last_error_summary,
     };
-    update_state(state_path, |state| state.records.push(record))
+    update_state(state_path, |state| state.records.push(record)).map(|_| ())
 }
 
 /// Append a record explicitly marking (backend, model) available again.
@@ -421,7 +436,7 @@ pub fn record_available(
         source,
         last_error_summary: None,
     };
-    update_state(state_path, |state| state.records.push(record))
+    update_state(state_path, |state| state.records.push(record)).map(|_| ())
 }
 
 /// Append unavailability for the exact selected execution identity.
@@ -456,7 +471,7 @@ pub fn record_unavailable_for_identity(
         source,
         last_error_summary,
     };
-    update_state(state_path, |state| state.records.push(record))
+    update_state(state_path, |state| state.records.push(record)).map(|_| ())
 }
 
 /// Append an exact-instance availability override.
@@ -487,7 +502,7 @@ pub fn record_available_for_identity(
         source,
         last_error_summary: None,
     };
-    update_state(state_path, |state| state.records.push(record))
+    update_state(state_path, |state| state.records.push(record)).map(|_| ())
 }
 
 fn is_active(record: &AvailabilityRecord, now: OffsetDateTime) -> bool {
@@ -503,6 +518,45 @@ fn is_active(record: &AvailabilityRecord, now: OffsetDateTime) -> bool {
             Err(_) => true,
         },
     }
+}
+
+/// A blocking record whose expiry has passed. An unparsable expiry is NOT
+/// expired: `is_active` treats it as still blocking, so retention must keep
+/// treating it that way too.
+fn is_expired_unavailable(record: &AvailabilityRecord, now: OffsetDateTime) -> bool {
+    record.status == Status::Unavailable
+        && record
+            .unavailable_until
+            .as_deref()
+            .and_then(|until| OffsetDateTime::parse(until, &Rfc3339).ok())
+            .is_some_and(|until| until <= now)
+}
+
+/// Drop only expired unavailable records superseded within their exact scope.
+/// Keep each scope's last record, including an expired one, so selectors cannot
+/// revive an older block. Preserve file order for overlapping pool/model scopes.
+fn apply_retention(state: &mut AvailabilityState, now: OffsetDateTime) -> usize {
+    let mut latest = BTreeMap::new();
+    for (index, record) in state.records.iter().enumerate() {
+        latest.insert(
+            ScopeKey {
+                backend: record.backend.clone(),
+                backend_instance: record.backend_instance.clone(),
+                model: record.model.clone(),
+                quota_pool: record.quota_pool.clone(),
+            },
+            index,
+        );
+    }
+    let latest: std::collections::BTreeSet<_> = latest.into_values().collect();
+    let before = state.records.len();
+    let mut index = 0;
+    state.records.retain(|record| {
+        let keep = !is_expired_unavailable(record, now) || latest.contains(&index);
+        index += 1;
+        keep
+    });
+    before - state.records.len()
 }
 
 /// The last record in file order matching this exact scope (backend, and
