@@ -1031,6 +1031,7 @@ fn needs_fix_mr(branch: &str, work_id: &str) -> crate::sync::SyncMrJson {
         effective_model: None,
         review_verdict: Some("NEEDS_FIX".into()),
         review_gate_reason: None,
+        last_reviewed_head: None,
         source_sha: None,
         merge_commit_sha: None,
         review_contract_version: crate::ledger::REVIEW_CONTRACT_VERSION,

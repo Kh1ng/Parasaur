@@ -42,6 +42,8 @@ mod quota;
 mod report;
 #[path = "gah_cli/review_format_retry.rs"]
 mod review_format_retry;
+#[path = "gah_cli/review_head.rs"]
+mod review_head;
 #[path = "gah_cli/route_approval.rs"]
 mod route_approval;
 #[path = "gah_cli/setup.rs"]

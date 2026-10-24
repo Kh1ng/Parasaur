@@ -122,6 +122,9 @@ pub struct SyncMrJson {
     /// to decide whether historical review-derived gates remain authoritative.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_sha: Option<String>,
+    /// Last completed head receipt; suppresses review calls without granting merge authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_reviewed_head: Option<String>,
     /// Provider-created commit that landed a merged PR. Kept separate from
     /// `source_sha`, which remains the reviewed head/source identity.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -365,6 +368,7 @@ pub fn sync_mr_to_json(
         review_verdict,
         review_gate_reason,
         source_sha: mr.source_sha.clone(),
+        last_reviewed_head: None,
         merge_commit_sha: mr.merge_commit_sha.clone(),
         review_contract_version: crate::ledger::REVIEW_CONTRACT_VERSION,
         review_generation,

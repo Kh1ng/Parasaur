@@ -56,6 +56,7 @@ mod tests {
             effective_model: None,
             review_verdict: None,
             review_gate_reason: None,
+            last_reviewed_head: None,
             source_sha: None,
             merge_commit_sha: None,
             review_contract_version: crate::ledger::CURRENT_REVIEW_CONTRACT_VERSION,

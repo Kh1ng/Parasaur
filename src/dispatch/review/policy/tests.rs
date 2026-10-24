@@ -10,6 +10,7 @@ mod allowed_models;
 mod budget_reservation;
 mod external_acceptance;
 mod format_retry;
+mod head;
 mod parsing;
 mod reset;
 

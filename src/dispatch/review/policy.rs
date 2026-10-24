@@ -10,6 +10,8 @@ use std::collections::HashSet;
 use std::fmt;
 use time::OffsetDateTime;
 
+mod ci_wait;
+
 /// Typed, terminal refusal used when a ticket has exhausted its configured
 /// review budget. Keeping this distinct from backend failures lets the
 /// controller close the run cleanly and makes the operator-visible event
@@ -131,7 +133,7 @@ pub(in crate::dispatch) fn check_review_budget(
                 && entry.repo_id == profile.repo_id
                 && JobKind::parse(&entry.mode) == Ok(JobKind::Review)
                 && entry.review_contract_version == Some(ledger::CURRENT_REVIEW_CONTRACT_VERSION)
-                && entry.review_generation.as_deref() == review_generation
+                && super::head::same_head(entry, review_generation)
                 && !matches!(
                     entry.validation_result.as_deref(),
                     Some("review_budget_exhausted")
@@ -221,7 +223,7 @@ pub(in crate::dispatch) fn review_escalation_reason(
                 && JobKind::parse(&e.mode) == Ok(JobKind::Review)
                 && e.branch.as_deref() == Some(branch)
                 && e.review_contract_version == Some(ledger::CURRENT_REVIEW_CONTRACT_VERSION)
-                && e.review_generation.as_deref() == review_generation
+                && super::head::same_head(e, review_generation)
                 // Legacy reviews written before reviewed-SHA persistence
                 // cannot support a safe repair and must be re-runnable. Do
                 // not let them trigger escalation before that migration
@@ -364,7 +366,7 @@ pub(in crate::dispatch) fn next_review_candidate(
                 && JobKind::parse(&entry.mode) == Ok(JobKind::Review)
                 && entry.branch.as_deref() == Some(branch)
                 && entry.review_contract_version == Some(ledger::CURRENT_REVIEW_CONTRACT_VERSION)
-                && entry.review_generation.as_deref() == review_generation
+                && super::head::same_head(entry, review_generation)
                 && entry.review_source_sha.is_some()
                 && entry.validation_result.as_deref() != Some("skipped_duplicate_review")
                 && entry.validation_result.as_deref() != Some("cancelled_shutdown")
@@ -418,7 +420,7 @@ pub(in crate::dispatch) fn next_escalatory_reviewer(
                 && entry.branch.as_deref() == Some(branch)
                 && entry.review_contract_version
                     == Some(ledger::CURRENT_REVIEW_CONTRACT_VERSION)
-                && entry.review_generation.as_deref() == review_generation
+                && super::head::same_head(entry, review_generation)
                 // A SHA-less legacy opinion is not reusable repair context.
                 // Treating its backend as spent would skip directly to the
                 // next (possibly paid) reviewer instead of migrating it.
@@ -523,6 +525,7 @@ pub(in crate::dispatch) fn reviewer_dedup_class(
 pub(in crate::dispatch) struct ReviewGateContext {
     changed_files: Vec<String>,
     ci_passed: bool,
+    ci_failed: bool,
     contract_files: Vec<String>,
     compatibility_mechanisms: Vec<&'static str>,
     acceptance_criteria: Vec<String>,
@@ -582,6 +585,8 @@ impl ReviewGateContext {
                     "passed" | "success" | "green"
                 )
             }),
+            ci_failed: ci_status
+                .is_some_and(|status| matches!(status, "failed" | "failure" | "red")),
             contract_files,
             compatibility_mechanisms,
             acceptance_criteria: Vec::new(),
@@ -940,7 +945,9 @@ pub(in crate::dispatch) fn parse_review_verdict_with_context(
     let json = extract_first_json_object(review_text)
         .ok_or_else(|| anyhow::anyhow!("reviewer did not return verdict JSON"))?;
     let mut verdict = serde_json::from_str::<crate::models::ReviewVerdict>(&json)?;
-    normalize_actionable_findings(&mut verdict, gate_context)?;
+    if !ci_wait::defer(&mut verdict, gate_context) {
+        normalize_actionable_findings(&mut verdict, gate_context)?;
+    }
     enforce_review_evidence_gate(
         &mut verdict,
         review_text,

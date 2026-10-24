@@ -298,6 +298,7 @@ default_target_branch = "main"
             effective_model: None,
             review_verdict: None,
             review_gate_reason: None,
+            last_reviewed_head: None,
             source_sha: None,
             merge_commit_sha: None,
             review_contract_version: ledger::REVIEW_CONTRACT_VERSION,

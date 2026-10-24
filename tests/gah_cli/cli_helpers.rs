@@ -57,7 +57,7 @@ pub(crate) fn make_fake_github_review_api(dir: &Path) {
 case "$1 $2 $3 $4" in
   "api --method GET repos/owner/real/pulls") printf '[{"number":7}]\n' ;;
   "pr view 7 --repo") printf '{"number":7,"url":"https://github.com/owner/real/pull/7","title":"Draft: [GAH] Fix","body":"MR body","headRefName":"feature/review","baseRefName":"main","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}\n' ;;
-  "api --method GET repos/owner/real/issues/7/comments") printf '[]\n' ;;
+  "api --method GET repos/owner/real/issues/7/comments" | "api --method GET repos/owner/real/issues/7/comments?per_page=100&page=1") printf '[]\n' ;;
   "api --method POST repos/owner/real/issues/7/comments") exit 0 ;;
   "api repos/owner/real/issues/7/labels --jq "*) exit 0 ;;
   "api repos/owner/real/issues/7/labels -f "*) exit 0 ;;
