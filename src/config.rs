@@ -160,6 +160,9 @@ pub struct Profile {
     /// OpenHands profile name (~/.openhands/profiles/<name>.json). Overrides default LLM config.
     #[serde(default)]
     pub oh_profile: Option<String>,
+    /// Hermes/OpenHands resolution failures: fail_closed (default) or proceed_without_skills.
+    #[serde(default)]
+    pub skill_resolve_failure_policy: crate::skill_bindings::ResolveFailurePolicy,
     /// Extra OpenHands CLI args; `--skills` is ignored in favor of central bindings.
     #[serde(default)]
     pub openhands_args: Vec<String>,
@@ -198,12 +201,8 @@ pub struct Profile {
     /// Optional absolute/relative path to the Hermes CLI executable.
     #[serde(default)]
     pub hermes_path: Option<String>,
-    /// How long OpenCode can go without a durable worktree change before GAH
-    /// considers it stalled and kills it, in seconds. OpenCode's narration
-    /// and malformed tool-call output deliberately do not reset this window:
-    /// only repository progress does. This retains an activity-based guard
-    /// rather than imposing a flat dispatch deadline. Defaults to 300s when
-    /// unset.
+    /// Seconds OpenCode can go without a durable worktree change before GAH kills it.
+    /// Narration and malformed tool output do not reset this window. Defaults to 300s.
     #[serde(default)]
     pub opencode_idle_timeout_seconds: Option<u64>,
     /// Per-model override for `opencode_idle_timeout_seconds`, keyed by the
@@ -605,6 +604,7 @@ pub mod tests {
             provider_api_base: None,
             provider_project_id: None,
             oh_profile: None,
+            skill_resolve_failure_policy: Default::default(),
             openhands_args: vec![],
             codex_args: vec![],
             codex_path: None,

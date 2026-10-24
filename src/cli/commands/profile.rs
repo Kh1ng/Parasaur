@@ -107,6 +107,7 @@ pub fn run(command: ProfileCommands) -> Result<()> {
                 provider_api_base,
                 provider_project_id,
                 oh_profile: None,
+                skill_resolve_failure_policy: Default::default(),
                 openhands_args,
                 codex_args,
                 codex_path,

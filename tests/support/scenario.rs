@@ -66,6 +66,7 @@ pub struct ScenarioHarness {
     ledger: TestLedger,
     gah_bin: PathBuf,
     config_append: String,
+    defaults_append: String,
 }
 
 impl ScenarioHarness {
@@ -161,6 +162,7 @@ impl ScenarioHarness {
             ledger: TestLedger::new(),
             gah_bin,
             config_append: String::new(),
+            defaults_append: String::new(),
         }
     }
 
@@ -203,6 +205,12 @@ impl ScenarioHarness {
         if !extra_toml.ends_with('\n') {
             self.config_append.push('\n');
         }
+        self
+    }
+
+    pub fn with_defaults_append(mut self, extra_toml: &str) -> Self {
+        self.defaults_append.push_str(extra_toml);
+        self.defaults_append.push('\n');
         self
     }
 
@@ -670,6 +678,7 @@ impl ScenarioHarness {
             r#"[defaults]
 artifact_root = "{artifacts}"
 worktree_base = "{worktree}"
+{defaults_extra}
 
 [profiles.{name}]
 display_name = "Test Repo"
@@ -692,6 +701,7 @@ default_target_branch = "main"
             },
             local = self.local_repo_dir.display(),
             extra = self.config_append,
+            defaults_extra = self.defaults_append,
         );
         fs::write(&self.config_path, toml).unwrap();
     }

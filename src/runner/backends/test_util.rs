@@ -117,6 +117,7 @@ pub(crate) fn test_profile() -> Profile {
         provider_api_base: None,
         provider_project_id: None,
         oh_profile: None,
+        skill_resolve_failure_policy: Default::default(),
         openhands_args: vec![],
         codex_args: vec![],
         codex_path: None,

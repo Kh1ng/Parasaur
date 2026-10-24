@@ -464,13 +464,13 @@ pub(super) fn run_backend_with_reserved_route(
         Ok(kind) => kind,
         Err(_) => anyhow::bail!("unsupported runner kind '{runner_kind}' for backend '{backend}'"),
     };
-    let skill_resolution = crate::skill_bindings::resolve(
+    let skills = crate::skill_bindings::resolve_for_dispatch(
         &cfg.defaults,
         profile_name,
-        backend,
-        identity
-            .explicit_instance
-            .then_some(identity.backend_instance.as_str()),
+        identity,
+        backend_kind,
+        profile.skill_resolve_failure_policy,
+        session_dir,
     )?;
 
     // Issue #832: the runner invocation itself goes through the uniform
@@ -536,7 +536,7 @@ pub(super) fn run_backend_with_reserved_route(
             skill_args = crate::skill_bindings::materialize_args(
                 "openhands",
                 &profile.openhands_args,
-                &skill_resolution.skills,
+                &skills,
             );
             LaunchShape {
                 model: None,
@@ -547,11 +547,8 @@ pub(super) fn run_backend_with_reserved_route(
             }
         }
         BackendKind::Hermes => {
-            skill_args = crate::skill_bindings::materialize_args(
-                "hermes",
-                &profile.hermes_args,
-                &skill_resolution.skills,
-            );
+            skill_args =
+                crate::skill_bindings::materialize_args("hermes", &profile.hermes_args, &skills);
             LaunchShape {
                 model: effective_model,
                 llm: None,
@@ -815,10 +812,7 @@ pub(super) fn preflight_identity(
 fn ensure_supported_runner_kind(
     identity: &crate::execution_identity::ExecutionIdentity,
 ) -> Result<()> {
-    if matches!(
-        identity.runner_kind.as_str(),
-        "agy" | "claude" | "codex" | "openhands" | "opencode" | "vibe"
-    ) {
+    if BackendKind::parse(&identity.runner_kind).is_ok() {
         Ok(())
     } else {
         anyhow::bail!(

@@ -868,10 +868,14 @@ normal turn, then records the exact applied versions in that chat's event log.
 
 Workers resolve bindings from the central `/api/skills/resolve` endpoint and
 cache the last successful response under `~/.config/gah/skill-cache`. A worker
-uses that cache when the central node is temporarily unreachable and fails the
-dispatch when neither source is usable. Resolved IDs become native `--skills`
-arguments for Hermes and OpenHands; other runners record the binding without a
-provider-specific flag. Legacy `--skills` values in
+uses that cache when the central node is temporarily unreachable. If neither
+source is usable, runners without native skill support log the error and proceed.
+Hermes and OpenHands follow the profile's `skill_resolve_failure_policy`:
+`"fail_closed"` blocks launch by default; `"proceed_without_skills"` permits launch
+without skills. Each failure writes the policy, decision, and error to
+`skill-resolution-failure.json` in the attempt's session directory.
+Resolved IDs become native `--skills` arguments for Hermes and OpenHands.
+Legacy `--skills` values in
 `hermes_args` and `openhands_args` are ignored with a warning; configure the
 central binding instead.
 
