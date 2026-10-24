@@ -295,6 +295,17 @@ pub(crate) fn run_locked_export(
     })
 }
 
+/// #1539: one idempotent telemetry export with errors surfaced, for the
+/// quota-store retention path: prune compacts `quota_observations.jsonl`,
+/// and compaction must never drop records that were never exported, so the
+/// prune path exports first and aborts compaction when this fails. Uses the
+/// same repo-level export lock as every other export; the health-tracked
+/// scheduled path remains `schedule_export_after_terminal_attempt`.
+pub(crate) fn export_for_retention(cfg: &GahConfig) -> Result<()> {
+    let repo_path = export_repo_path(cfg);
+    super::export_once(cfg, &repo_path).map(|_| ())
+}
+
 /// Operator-visible projection of export health, suitable for `gah status
 /// --json`, the control-plane read API, and the dashboard.
 #[derive(Debug, Clone, Serialize)]

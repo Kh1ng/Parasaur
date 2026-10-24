@@ -23,6 +23,7 @@ static PATH_LOCK: Mutex<()> = Mutex::new(());
 static EXEC_LOCK: Mutex<()> = Mutex::new(());
 static AVAILABILITY_LOCK: Mutex<()> = Mutex::new(());
 static QUOTA_STORE_LOCK: Mutex<()> = Mutex::new(());
+static QUOTA_RETENTION_LOCK: Mutex<()> = Mutex::new(());
 static CLAIM_STATE_LOCK: Mutex<()> = Mutex::new(());
 static MISTRAL_ADMIN_KEY_LOCK: Mutex<()> = Mutex::new(());
 
@@ -194,6 +195,46 @@ impl Drop for QuotaStoreEnvGuard {
         match &self.original {
             Some(path) => std::env::set_var("GAH_QUOTA_STORE_PATH", path),
             None => std::env::remove_var("GAH_QUOTA_STORE_PATH"),
+        }
+    }
+}
+
+/// Scoped override for the quota store retention bounds (#1539). The lock is
+/// process-wide for the same reason as `QUOTA_STORE_LOCK`: the policy env
+/// vars are read on every append, so a parallel test observing the override
+/// would compact with the wrong bounds.
+pub struct QuotaRetentionEnvGuard {
+    _lock: MutexGuard<'static, ()>,
+    original_window: Option<OsString>,
+    original_bytes: Option<OsString>,
+}
+
+impl QuotaRetentionEnvGuard {
+    pub fn set(max_per_window: usize, max_bytes: usize) -> Self {
+        let lock = QUOTA_RETENTION_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let original_window = std::env::var_os("GAH_QUOTA_STORE_MAX_PER_WINDOW");
+        let original_bytes = std::env::var_os("GAH_QUOTA_STORE_MAX_BYTES");
+        std::env::set_var("GAH_QUOTA_STORE_MAX_PER_WINDOW", max_per_window.to_string());
+        std::env::set_var("GAH_QUOTA_STORE_MAX_BYTES", max_bytes.to_string());
+        Self {
+            _lock: lock,
+            original_window,
+            original_bytes,
+        }
+    }
+}
+
+impl Drop for QuotaRetentionEnvGuard {
+    fn drop(&mut self) {
+        match &self.original_window {
+            Some(value) => std::env::set_var("GAH_QUOTA_STORE_MAX_PER_WINDOW", value),
+            None => std::env::remove_var("GAH_QUOTA_STORE_MAX_PER_WINDOW"),
+        }
+        match &self.original_bytes {
+            Some(value) => std::env::set_var("GAH_QUOTA_STORE_MAX_BYTES", value),
+            None => std::env::remove_var("GAH_QUOTA_STORE_MAX_BYTES"),
         }
     }
 }

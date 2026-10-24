@@ -1056,3 +1056,259 @@ fn reprobe_never_touches_a_manual_or_no_expiry_record() {
             .eligible
     );
 }
+
+// ── #1539: retention and rotation for availability.json ───────────────────
+
+fn retention_base() -> OffsetDateTime {
+    OffsetDateTime::parse("2026-10-20T00:00:00Z", &Rfc3339).unwrap()
+}
+
+/// #1539: the write path bounds the append-only history itself — old
+/// records beyond the per-scope cap are dropped, the newest are kept.
+#[test]
+fn update_state_drops_history_beyond_the_per_scope_cap() {
+    let tmp = TempDir::new().unwrap();
+    let p = path(&tmp);
+    let base = retention_base();
+
+    for second in 0..105 {
+        record_unavailable(
+            &p,
+            "claude",
+            None,
+            Reason::RateLimited,
+            Source::BackendError,
+            None,
+            None,
+            base + time::Duration::seconds(second),
+        )
+        .unwrap();
+    }
+
+    let state = load_state(&p).unwrap();
+    assert_eq!(
+        state.records.len(),
+        super::DEFAULT_MAX_PER_SCOPE,
+        "only the newest per-scope records survive"
+    );
+    assert_eq!(
+        state.records.first().unwrap().observed_at,
+        super::now_rfc3339(base + time::Duration::seconds(5)),
+        "the oldest records are dropped"
+    );
+    assert_eq!(
+        state.records.last().unwrap().observed_at,
+        super::now_rfc3339(base + time::Duration::seconds(104)),
+        "the newest records are kept"
+    );
+}
+
+/// #1539: a superseded *expired* unavailable record can never change a
+/// decision — the scope's latest record decides — so it is dropped however
+/// recent it is.
+#[test]
+fn update_state_drops_superseded_expired_unavailable_records() {
+    let tmp = TempDir::new().unwrap();
+    let p = path(&tmp);
+    let base = retention_base();
+
+    record_unavailable(
+        &p,
+        "claude",
+        None,
+        Reason::RateLimited,
+        Source::BackendError,
+        Some(base - time::Duration::hours(1)),
+        None,
+        base - time::Duration::hours(2),
+    )
+    .unwrap();
+    record_available(&p, "claude", None, Source::BackendError, base).unwrap();
+
+    let state = load_state(&p).unwrap();
+    assert_eq!(state.records.len(), 1, "the expired entry is dropped");
+    assert_eq!(state.records[0].status, Status::Available);
+    assert!(
+        availability_for(&p, "claude", None, base).unwrap().eligible,
+        "dropping the expired record must not change the decision"
+    );
+}
+
+/// #1539: the latest record of a scope always survives, even when expired.
+/// Dropping it could flip a decision: an older still-active block would
+/// become the scope's latest again. The fixture is written directly because
+/// the write path itself already drops superseded expired records, so a
+/// state that *aged into* expiry can only exist on disk between writes.
+#[test]
+fn compact_expired_keeps_the_latest_record_of_a_scope_even_when_expired() {
+    let tmp = TempDir::new().unwrap();
+    let p = path(&tmp);
+    let base = retention_base();
+
+    let record = |reason: Reason, observed: &str, until: Option<&str>| AvailabilityRecord {
+        backend: "claude".to_string(),
+        backend_instance: None,
+        model: None,
+        quota_pool: None,
+        status: Status::Unavailable,
+        reason,
+        observed_at: observed.to_string(),
+        unavailable_until: until.map(str::to_string),
+        source: Source::BackendError,
+        last_error_summary: None,
+    };
+    // An older block whose expiry has since passed...
+    let older = record(
+        Reason::QuotaExhausted,
+        "2026-10-18T21:00:00Z",
+        Some("2026-10-18T22:00:00Z"),
+    );
+    // ...superseded by an expired block: the scope reads eligible.
+    let latest = record(
+        Reason::RateLimited,
+        "2026-10-19T23:00:00Z",
+        Some("2026-10-19T23:30:00Z"),
+    );
+    fs::write(
+        &p,
+        serde_json::to_string_pretty(&AvailabilityState {
+            version: CURRENT_VERSION,
+            records: vec![older, latest],
+        })
+        .unwrap(),
+    )
+    .unwrap();
+
+    let before = availability_for(&p, "claude", None, base).unwrap();
+    assert!(before.eligible, "the expired latest record must decide");
+
+    let dropped = super::compact_expired(&p).unwrap();
+    assert_eq!(
+        dropped, 1,
+        "the superseded expired entry drops, the scope's latest never does"
+    );
+    let state = load_state(&p).unwrap();
+    assert_eq!(state.records.len(), 1);
+    assert_eq!(state.records[0].observed_at, "2026-10-19T23:00:00Z");
+    assert_eq!(
+        state.records[0].unavailable_until.as_deref(),
+        Some("2026-10-19T23:30:00Z"),
+        "the surviving record is the expired latest, not the older block"
+    );
+    let after = availability_for(&p, "claude", None, base).unwrap();
+    assert_eq!(
+        (after.eligible, after.reason, after.scope),
+        (before.eligible, before.reason, before.scope),
+        "compaction must not change the scope's decision"
+    );
+}
+
+/// #1539 acceptance: run the selectors before and after compaction and
+/// require identical answers for every scope. The fixture is written
+/// directly (see the test above) so an expired non-latest record is still
+/// present when compaction runs.
+#[test]
+fn compact_expired_preserves_every_scopes_decision() {
+    let tmp = TempDir::new().unwrap();
+    let p = path(&tmp);
+    let base = retention_base();
+
+    let unavailable = |backend: &str,
+                       model: Option<&str>,
+                       reason: Reason,
+                       source: Source,
+                       observed_at: &str,
+                       unavailable_until: Option<&str>| AvailabilityRecord {
+        backend: backend.to_string(),
+        backend_instance: None,
+        model: model.map(str::to_string),
+        quota_pool: None,
+        status: Status::Unavailable,
+        reason,
+        observed_at: observed_at.to_string(),
+        unavailable_until: unavailable_until.map(str::to_string),
+        source,
+        last_error_summary: None,
+    };
+    let available = |backend: &str, observed_at: &str| AvailabilityRecord {
+        backend: backend.to_string(),
+        backend_instance: None,
+        model: None,
+        quota_pool: None,
+        status: Status::Available,
+        reason: Reason::Unknown,
+        observed_at: observed_at.to_string(),
+        unavailable_until: None,
+        source: Source::Manual,
+        last_error_summary: None,
+    };
+    // Backend-wide manual disable (never expires).
+    let claude = unavailable(
+        "claude",
+        None,
+        Reason::ManualDisable,
+        Source::Manual,
+        "2026-10-19T22:00:00Z",
+        None,
+    );
+    // Active model-specific block on another backend.
+    let codex = unavailable(
+        "codex",
+        Some("gpt-6"),
+        Reason::RateLimited,
+        Source::BackendError,
+        "2026-10-19T23:00:00Z",
+        Some("2026-10-20T01:00:00Z"),
+    );
+    // Expired block, superseded by an explicit available record.
+    let openhands_block = unavailable(
+        "openhands",
+        None,
+        Reason::BackendOutage,
+        Source::BackendError,
+        "2026-10-19T21:00:00Z",
+        Some("2026-10-19T22:00:00Z"),
+    );
+    let openhands_clear = available("openhands", "2026-10-20T00:00:00Z");
+    fs::write(
+        &p,
+        serde_json::to_string_pretty(&AvailabilityState {
+            version: CURRENT_VERSION,
+            records: vec![claude, codex, openhands_block, openhands_clear],
+        })
+        .unwrap(),
+    )
+    .unwrap();
+
+    let scopes = [
+        ("claude", None),
+        ("codex", Some("gpt-6")),
+        ("openhands", None),
+    ];
+    let decision_key =
+        |decision: AvailabilityDecision| (decision.eligible, decision.reason, decision.scope);
+    let decisions_before: Vec<_> = scopes
+        .iter()
+        .map(|(backend, model)| decision_key(availability_for(&p, backend, *model, base).unwrap()))
+        .collect();
+    let rows_before: Vec<(String, bool, Option<Reason>)> = list_scopes(&p, base)
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.backend.clone(), row.eligible, row.reason))
+        .collect();
+
+    let dropped = super::compact_expired(&p).unwrap();
+    assert_eq!(dropped, 1, "only the superseded expired entry is dropped");
+
+    let decisions_after: Vec<_> = scopes
+        .iter()
+        .map(|(backend, model)| decision_key(availability_for(&p, backend, *model, base).unwrap()))
+        .collect();
+    let rows_after: Vec<(String, bool, Option<Reason>)> = list_scopes(&p, base)
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.backend.clone(), row.eligible, row.reason))
+        .collect();
+    assert_eq!(decisions_after, decisions_before);
+    assert_eq!(rows_after, rows_before);
+}
