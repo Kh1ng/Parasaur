@@ -32,22 +32,6 @@ use time::OffsetDateTime;
 pub const CURRENT_VERSION: u32 = 2;
 const LEGACY_VERSION: u32 = 1;
 
-/// #1539: availability history kept per (backend, instance, model, pool)
-/// scope, counting the scope's latest record. Every consumer derives its
-/// answer from that latest record (see `latest_for_scope` /
-/// `latest_for_pool`), so history beyond it is diagnostic only. Operator
-/// knob: `GAH_AVAILABILITY_MAX_PER_SCOPE` (an absent or unparsable value
-/// falls back to this default; values below 1 are ignored).
-pub const DEFAULT_MAX_PER_SCOPE: usize = 100;
-
-fn max_per_scope() -> usize {
-    std::env::var("GAH_AVAILABILITY_MAX_PER_SCOPE")
-        .ok()
-        .and_then(|value| value.trim().parse().ok())
-        .filter(|&value| value >= 1)
-        .unwrap_or(DEFAULT_MAX_PER_SCOPE)
-}
-
 /// Issue #765: nothing re-verifies a `BackendError` record's `unavailable_until`
 /// once written -- a mis-parsed or genuinely-wrong ETA (observed live: 6 and
 /// 4+ day spans that turned out to be false) permanently starves a healthy
@@ -348,7 +332,7 @@ where
 
     let mut state = load_state(state_path)?;
     mutate(&mut state);
-    let dropped = apply_retention(&mut state, OffsetDateTime::now_utc(), max_per_scope());
+    let dropped = apply_retention(&mut state, OffsetDateTime::now_utc());
 
     let mut value = serde_json::to_value(&state).context("serializing availability state")?;
     crate::redact::redact_json_value(&mut value);
@@ -380,11 +364,11 @@ where
     Ok(dropped)
 }
 
-/// #1539: prune entry point — drop superseded expired availability entries
-/// (and per-scope history beyond the cap) exactly as the write path does,
-/// for files whose scopes have gone quiet and would otherwise never be
-/// rewritten. Returns how many records were dropped.
+/// Drop superseded expired entries using the same locked write path as updates.
 pub fn compact_expired(state_path: &Path) -> Result<usize> {
+    if !state_path.try_exists()? {
+        return Ok(0);
+    }
     update_state(state_path, |_| {})
 }
 
@@ -548,53 +532,29 @@ fn is_expired_unavailable(record: &AvailabilityRecord, now: OffsetDateTime) -> b
             .is_some_and(|until| until <= now)
 }
 
-/// #1539: bounded retention for the append-only availability history.
-///
-/// Every consumer (`availability_for*`, `list_scopes`, `reprobe_stale`)
-/// derives its answer from the LAST record of a scope, so that record is
-/// always kept and compaction preserves every selector's answer. Beyond it:
-/// - a superseded *expired* `unavailable` record is dead weight — the
-///   scope's latest record already decides — and is dropped however recent
-///   it is (the issue's "drops expired availability entries");
-/// - each scope keeps at most `max_per_scope` newest records.
-///
-/// Pure over `state.records`; file order of the kept records is unchanged.
-/// Returns how many records were dropped.
-fn apply_retention(
-    state: &mut AvailabilityState,
-    now: OffsetDateTime,
-    max_per_scope: usize,
-) -> usize {
-    let mut per_scope: BTreeMap<ScopeKey, Vec<usize>> = BTreeMap::new();
+/// Drop only expired unavailable records superseded within their exact scope.
+/// Keep each scope's last record, including an expired one, so selectors cannot
+/// revive an older block. Preserve file order for overlapping pool/model scopes.
+fn apply_retention(state: &mut AvailabilityState, now: OffsetDateTime) -> usize {
+    let mut latest = BTreeMap::new();
     for (index, record) in state.records.iter().enumerate() {
-        let key = ScopeKey {
-            backend: record.backend.clone(),
-            backend_instance: record.backend_instance.clone(),
-            model: record.model.clone(),
-            quota_pool: record.quota_pool.clone(),
-        };
-        per_scope.entry(key).or_default().push(index);
+        latest.insert(
+            ScopeKey {
+                backend: record.backend.clone(),
+                backend_instance: record.backend_instance.clone(),
+                model: record.model.clone(),
+                quota_pool: record.quota_pool.clone(),
+            },
+            index,
+        );
     }
-    let mut keep = vec![false; state.records.len()];
-    for indices in per_scope.values() {
-        // The latest record of the scope is what every selector reads.
-        let latest = *indices.last().unwrap();
-        keep[latest] = true;
-        for &index in indices.iter().rev().take(max_per_scope.max(1)) {
-            keep[index] = true;
-        }
-        for &index in indices {
-            if index != latest && is_expired_unavailable(&state.records[index], now) {
-                keep[index] = false;
-            }
-        }
-    }
+    let latest: std::collections::BTreeSet<_> = latest.into_values().collect();
     let before = state.records.len();
     let mut index = 0;
-    state.records.retain(|_| {
-        let keep_record = keep[index];
+    state.records.retain(|record| {
+        let keep = !is_expired_unavailable(record, now) || latest.contains(&index);
         index += 1;
-        keep_record
+        keep
     });
     before - state.records.len()
 }

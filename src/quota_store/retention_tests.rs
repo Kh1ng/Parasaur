@@ -1,474 +1,303 @@
-//! #1539: retention and rotation for the durable account quota store.
-//!
-//! These pin the acceptance criteria: compaction keeps the latest N
-//! observations per identity and window, drops old ones, preserves the
-//! reading every selector returns (run before and after), never drops a
-//! credential lifecycle marker, enforces the size backstop, and rotates
-//! safely against concurrent appenders.
-
 use super::*;
 use crate::execution_identity::ExecutionIdentity;
-use crate::quota_store::{
-    append, latest_for_identity, latest_windows_for_backend,
-    latest_windows_for_identity_and_credential, load, QuotaObservationRecord,
-};
-use std::path::PathBuf;
-use time::format_description::well_known::Rfc3339;
-use time::OffsetDateTime;
-
-fn tmp_store() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("quota_observations.jsonl");
-    (dir, path)
-}
-
-fn ts(minutes: i64) -> String {
-    let base = OffsetDateTime::parse("2026-10-20T00:00:00Z", &Rfc3339).unwrap();
-    let time = base + time::Duration::minutes(minutes);
-    time.format(&Rfc3339).unwrap()
-}
+use crate::quota_store::{append, load};
 
 fn observation(
-    backend: &str,
-    instance: Option<&str>,
+    credential: Option<&str>,
     window: Option<&str>,
-    checked_at: &str,
-    remaining: f64,
+    minute: i64,
 ) -> QuotaObservationRecord {
+    let timestamp = (OffsetDateTime::parse("2026-01-01T00:00:00Z", &Rfc3339).unwrap()
+        + Duration::minutes(minute))
+    .format(&Rfc3339)
+    .unwrap();
     QuotaObservationRecord {
-        backend: backend.to_string(),
-        credential_id: None,
-        backend_instance: instance.map(str::to_string),
+        backend: "codex".into(),
+        credential_id: credential.map(str::to_string),
+        backend_instance: Some("account".into()),
+        quota_pool: Some("account".into()),
         model: None,
-        quota_pool: None,
         quota_window: window.map(str::to_string),
-        quota_remaining_percent: Some(remaining),
+        quota_remaining_percent: Some(50.0),
         quota_reset_at: None,
-        observed_at: Some(checked_at.to_string()),
-        checked_at: Some(checked_at.to_string()),
+        observed_at: Some(timestamp.clone()),
+        checked_at: Some(timestamp),
         check_error: None,
-        usage_source: Some("test_refresh".to_string()),
+        usage_source: Some("test_refresh".into()),
         account_usage: None,
     }
 }
 
-/// A credential-scoped record; `usage_source` selects lifecycle markers.
-fn credential_observation(
-    credential_id: &str,
-    instance: &str,
-    window: Option<&str>,
-    checked_at: &str,
-    remaining: Option<f64>,
-    usage_source: Option<&str>,
-) -> QuotaObservationRecord {
+fn marker(credential: &str, minute: i64, source: &str) -> QuotaObservationRecord {
     QuotaObservationRecord {
-        backend: "mistral-dashboard".to_string(),
-        credential_id: Some(credential_id.to_string()),
-        backend_instance: Some(instance.to_string()),
-        model: None,
-        quota_pool: Some(instance.to_string()),
-        quota_window: window.map(str::to_string),
-        quota_remaining_percent: remaining,
-        quota_reset_at: None,
-        observed_at: Some(checked_at.to_string()),
-        checked_at: Some(checked_at.to_string()),
-        check_error: None,
-        usage_source: usage_source.map(str::to_string),
-        account_usage: None,
+        usage_source: Some(source.into()),
+        quota_remaining_percent: None,
+        ..observation(Some(credential), None, minute)
     }
 }
 
-fn reading_summary(records: &[&QuotaObservationRecord]) -> Vec<(Option<String>, Option<f64>)> {
+fn compact_fixture(
+    records: &[QuotaObservationRecord],
+    cutoff: OffsetDateTime,
+) -> Vec<QuotaObservationRecord> {
+    let keep = plan_retention(records, cutoff);
     records
         .iter()
-        .map(|record| (record.checked_at.clone(), record.quota_remaining_percent))
+        .enumerate()
+        .filter(|(index, _)| keep.contains(index))
+        .map(|(_, record)| record.clone())
         .collect()
 }
 
-/// #1539: old observations are dropped, the latest N per identity and
-/// window are kept, and the surviving file order is unchanged.
-#[test]
-fn compact_drops_old_observations_and_keeps_the_latest_per_window() {
-    let (_dir, path) = tmp_store();
-    for minute in 0..6 {
-        append(
-            &path,
-            &observation(
-                "codex",
-                None,
-                Some("five-hour"),
-                &ts(minute),
-                50.0 + minute as f64,
-            ),
-        )
-        .unwrap();
-    }
-
-    let dropped = compact(
-        &path,
-        RetentionPolicy {
-            max_per_window: 2,
-            max_bytes: usize::MAX,
-        },
-        None,
-    )
-    .unwrap();
-
-    assert_eq!(dropped, 4, "only the newest two observations survive");
-    let records = load(&path).unwrap();
+// Compare complete records from every public selector, including credential,
+// explicit-instance and model scopes, rather than only timestamps/percentages.
+fn assert_equivalent(before: &[QuotaObservationRecord], after: &[QuotaObservationRecord]) {
+    use crate::quota_store::*;
+    let json = |records: Vec<&QuotaObservationRecord>| serde_json::to_value(records).unwrap();
     assert_eq!(
-        reading_summary(&records.iter().collect::<Vec<_>>()),
-        vec![(Some(ts(4)), Some(54.0)), (Some(ts(5)), Some(55.0))],
-        "the newest readings survive in file order"
+        json(latest_windows_for_backend(before, "codex")),
+        json(latest_windows_for_backend(after, "codex"))
     );
-}
-
-/// #1539 acceptance: run the selectors before and after compaction and
-/// require identical answers, across several series (windows and instances).
-#[test]
-fn compact_preserves_the_reading_every_selector_returns() {
-    let (_dir, path) = tmp_store();
-    for (window, base) in [("five-hour", 0i64), ("weekly", 10i64)] {
-        for step in 0..3 {
-            append(
-                &path,
-                &observation(
-                    "codex",
-                    Some("codex"),
-                    Some(window),
-                    &ts(base + step),
-                    50.0 + (base + step) as f64,
-                ),
-            )
-            .unwrap();
+    for model in [None, Some("model-a"), Some("model-b")] {
+        for explicit in [false, true] {
+            let mut identity = ExecutionIdentity::legacy_candidate("codex", model, None::<&str>);
+            identity.backend_instance = "account".into();
+            identity.quota_pool = Some("account".into());
+            identity.explicit_instance = explicit;
+            assert_eq!(
+                json(latest_windows_for_identity(before, &identity)),
+                json(latest_windows_for_identity(after, &identity))
+            );
+            assert_eq!(
+                serde_json::to_value(latest_for_identity(before, &identity)).unwrap(),
+                serde_json::to_value(latest_for_identity(after, &identity)).unwrap()
+            );
+            for credential in [None, Some("cred-a"), Some("cred-b")] {
+                assert_eq!(
+                    json(latest_windows_for_identity_and_credential(
+                        before, &identity, credential
+                    )),
+                    json(latest_windows_for_identity_and_credential(
+                        after, &identity, credential
+                    ))
+                );
+            }
         }
     }
-    for step in 0..3 {
-        append(
-            &path,
-            &observation(
-                "codex",
-                Some("codex-alt"),
-                Some("five-hour"),
-                &ts(20 + step),
-                70.0,
-            ),
-        )
-        .unwrap();
-    }
-
-    let before = load(&path).unwrap();
-    let backend_before = latest_windows_for_backend(&before, "codex");
-    let identity = ExecutionIdentity::legacy_candidate("codex", None::<&str>, None::<&str>);
-    let identity_before = latest_for_identity(&before, &identity);
-
-    let dropped = compact(
-        &path,
-        RetentionPolicy {
-            max_per_window: 1,
-            max_bytes: usize::MAX,
-        },
-        None,
-    )
-    .unwrap();
-    assert!(dropped > 0, "compaction must actually drop something here");
-
-    let after = load(&path).unwrap();
-    assert_eq!(
-        reading_summary(&latest_windows_for_backend(&after, "codex")),
-        reading_summary(&backend_before),
-        "the backend-wide selector must return the same readings after compaction"
-    );
-    assert_eq!(
-        reading_summary(
-            &latest_for_identity(&after, &identity)
-                .into_iter()
-                .collect::<Vec<_>>()
-        ),
-        reading_summary(&identity_before.into_iter().collect::<Vec<_>>()),
-        "the identity selector must return the same reading after compaction"
-    );
-    // Exactly one observation per series survives: its newest.
-    assert_eq!(after.len(), 3);
-    assert_eq!(after[0].checked_at.as_deref(), Some(ts(2).as_str()));
-    assert_eq!(after[1].checked_at.as_deref(), Some(ts(12).as_str()));
-    assert_eq!(after[2].checked_at.as_deref(), Some(ts(22).as_str()));
 }
 
-/// #1539: credential lifecycle markers survive compaction even beyond the
-/// per-window cap, so a rotated source's binding keeps resolving the same:
-/// without the marker, the pre-rotation account's future-dated reading
-/// would come back as current.
 #[test]
-fn compact_preserves_credential_lifecycle_markers() {
-    let (_dir, path) = tmp_store();
-    // Pre-rotation reading under the SAME labels the source will keep after
-    // rotation, future-dated so freshness selection alone cannot save us.
-    append(
-        &path,
-        &credential_observation(
-            "cred-a",
-            "mistral-dashboard:customer-two",
-            Some("monthly"),
-            &ts(90),
-            Some(40.0),
-            Some("mistral_dashboard"),
-        ),
-    )
-    .unwrap();
-    // Rotation marker.
-    append(
-        &path,
-        &credential_observation(
-            "cred-a",
-            "mistral-dashboard:customer-two",
-            None,
-            &ts(1),
-            None,
-            Some("credential_updated"),
-        ),
-    )
-    .unwrap();
-    // Post-rotation reading.
-    append(
-        &path,
-        &credential_observation(
-            "cred-a",
-            "mistral-dashboard:customer-two",
-            Some("monthly"),
-            &ts(2),
-            Some(80.0),
-            Some("mistral_dashboard"),
-        ),
-    )
-    .unwrap();
-    // Two newer window-less readings in the marker's series, so the marker
-    // is beyond a cap of 2 unless lifecycle protection keeps it.
-    for minute in 3..5 {
-        append(
-            &path,
-            &credential_observation(
-                "cred-a",
-                "mistral-dashboard:customer-two",
-                None,
-                &ts(minute),
-                Some(60.0),
-                Some("mistral_dashboard"),
-            ),
-        )
-        .unwrap();
-    }
-
-    let identity =
-        ExecutionIdentity::legacy_candidate("mistral-dashboard", None::<&str>, None::<&str>);
-    let before = load(&path).unwrap();
-    let selected_before = reading_summary(&latest_windows_for_identity_and_credential(
-        &before,
-        &identity,
-        Some("cred-a"),
-    ));
-
-    compact(
-        &path,
-        RetentionPolicy {
-            max_per_window: 2,
-            max_bytes: usize::MAX,
-        },
-        None,
-    )
-    .unwrap();
-
-    let after = load(&path).unwrap();
-    assert!(
-        after.iter().any(
-            |record| record.usage_source.as_deref() == Some("credential_updated")
-                && record.checked_at.as_deref() == Some(ts(1).as_str())
-        ),
-        "the rotation marker must survive compaction"
-    );
-    let selected_after = reading_summary(&latest_windows_for_identity_and_credential(
-        &after,
-        &identity,
-        Some("cred-a"),
-    ));
+fn keeps_recent_history_and_newest_old_window_without_a_count_or_byte_gate() {
+    let now = OffsetDateTime::now_utc();
+    let mut records: Vec<_> = (0..600)
+        .map(|minute| observation(None, Some("weekly"), minute))
+        .collect();
+    let mut recent = observation(None, Some("weekly"), 0);
+    recent.checked_at = Some(now.format(&Rfc3339).unwrap());
+    recent.observed_at = recent.checked_at.clone();
+    records.extend((0..600).map(|_| recent.clone()));
+    records.push(observation(None, Some("five-hour"), 1));
+    let after = compact_fixture(&records, now - RetentionPolicy::default().max_age);
     assert_eq!(
-        selected_after, selected_before,
-        "the credential selector must be unchanged by compaction"
+        after.len(),
+        601,
+        "all recent readings and each old window's newest survive"
     );
-    assert!(
-        !selected_before
-            .iter()
-            .any(|(checked_at, remaining)| *checked_at == Some(ts(90)) && *remaining == Some(40.0)),
-        "the future-dated pre-rotation reading must stay excluded (sanity)"
-    );
+    assert_equivalent(&records, &after);
 }
 
-/// #1539: the size backstop trims the oldest history until the file fits,
-/// but never a series' newest reading.
 #[test]
-fn compact_enforces_the_size_backstop_without_dropping_a_series_latest() {
-    let (_dir, path) = tmp_store();
-    for series in 0..5 {
-        for step in 0..4 {
-            append(
-                &path,
-                &observation(
-                    "codex",
-                    Some(&format!("codex-{series}")),
-                    Some("five-hour"),
-                    &ts(series * 10 + step),
-                    (series * 10 + step) as f64,
-                ),
-            )
-            .unwrap();
+fn rotation_keeps_current_windows_despite_future_dated_retired_readings() {
+    let records = vec![
+        observation(Some("cred-a"), Some("weekly"), 59),
+        marker("cred-a", 0, "credential_updated"),
+        marker("cred-a", 1, "credential_updated"),
+        observation(Some("cred-a"), Some("weekly"), 2),
+        observation(Some("cred-a"), Some("five-hour"), 1),
+        observation(Some("cred-b"), Some("weekly"), 4),
+    ];
+    let after = compact_fixture(&records, OffsetDateTime::now_utc());
+    assert_eq!(
+        after.len(),
+        4,
+        "only the latest lifecycle marker and current windows are dependencies"
+    );
+    assert_equivalent(&records, &after);
+    let removed = [records, vec![marker("cred-a", 0, "credential_removed")]].concat();
+    let after = compact_fixture(&removed, OffsetDateTime::now_utc());
+    assert_equivalent(&removed, &after);
+    assert!(after
+        .iter()
+        .any(|record| record.usage_source.as_deref() == Some("credential_removed")));
+}
+
+#[test]
+fn last_append_binding_survives_account_changes_and_clock_rollback() {
+    let first = observation(Some("cred-a"), Some("weekly"), 90);
+    let fresh = observation(Some("cred-a"), Some("five-hour"), 100);
+    let mut other = observation(Some("cred-a"), Some("weekly"), 1);
+    other.backend_instance = Some("other-account".into());
+    other.checked_at = Some(OffsetDateTime::now_utc().format(&Rfc3339).unwrap());
+    let mut binding = observation(Some("cred-a"), Some("five-hour"), 0);
+    binding.quota_remaining_percent = Some(40.0);
+    let records = vec![first, fresh, other, binding];
+    let after = compact_fixture(&records, OffsetDateTime::now_utc() - Duration::days(1));
+    assert_eq!(
+        after.len(),
+        4,
+        "the old binding append must survive despite newer readings"
+    );
+    assert_equivalent(&records, &after);
+}
+
+#[test]
+fn failures_cannot_revive_windows_after_later_successes_or_timestamp_ties() {
+    for window in [None, Some("weekly")] {
+        for equal_time in [false, true] {
+            for model in [None, Some("model-a"), Some("model-b")] {
+                let success = observation(Some("cred-a"), Some("weekly"), 1);
+                let mut failure = observation(Some("cred-a"), window, 2);
+                failure.check_error = Some("failed".into());
+                failure.model = model.map(str::to_string);
+                let later = observation(Some("cred-a"), window, if equal_time { 2 } else { 3 });
+                let records = vec![
+                    success,
+                    failure,
+                    later,
+                    observation(Some("cred-b"), Some("weekly"), 1),
+                ];
+                let after = compact_fixture(&records, OffsetDateTime::now_utc());
+                assert_equivalent(&records, &after);
+                assert!(after.iter().any(|record| record.check_error.is_some()));
+            }
         }
     }
-    let line_len = fs::read_to_string(&path)
-        .unwrap()
-        .lines()
-        .next()
-        .unwrap()
-        .len()
-        + 1;
+    let mut untimed = observation(None, Some("weekly"), 1);
+    untimed.checked_at = None;
+    untimed.observed_at = None;
+    let mut failure = untimed.clone();
+    failure.check_error = Some("untimed failure".into());
+    let records = vec![untimed, failure];
+    assert_equivalent(
+        &records,
+        &compact_fixture(&records, OffsetDateTime::now_utc()),
+    );
+}
 
-    let policy = RetentionPolicy {
-        max_per_window: 10,
-        max_bytes: 4 * line_len,
+#[test]
+fn failed_export_leaves_store_byte_identical_and_append_never_deletes_history() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("quota.jsonl");
+    for minute in 0..600 {
+        append(&path, &observation(None, Some("weekly"), minute)).unwrap();
+    }
+    let before = fs::read(&path).unwrap();
+    assert_eq!(load(&path).unwrap().len(), 600);
+    assert!(
+        compact_with_export(&path, RetentionPolicy::default(), |_| anyhow::bail!(
+            "export failed"
+        ))
+        .is_err()
+    );
+    assert_eq!(fs::read(&path).unwrap(), before);
+    let blocked = root.path().join("not-a-directory");
+    fs::write(&blocked, "blocked").unwrap();
+    let cfg = crate::config::GahConfig {
+        defaults: crate::config::Defaults {
+            artifact_root: blocked.to_string_lossy().into_owned(),
+            ..Default::default()
+        },
+        profiles: Default::default(),
+        context: Default::default(),
     };
-    let dropped = compact(&path, policy, None).unwrap();
+    assert!(compact(&path, RetentionPolicy::default(), &cfg).is_err());
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        before,
+        "real exporter failure also aborts replacement"
+    );
+}
 
-    assert_eq!(dropped, 15, "only the newest reading of each series fits");
-    let records = load(&path).unwrap();
-    assert_eq!(records.len(), 5);
-    for (series, record) in records.iter().enumerate() {
-        assert_eq!(
-            record.checked_at.as_deref(),
-            Some(ts(series as i64 * 10 + 3).as_str()),
-            "series {series} must keep its newest reading"
+#[test]
+fn export_and_replace_share_one_snapshot_while_appends_wait() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("quota.jsonl");
+    for minute in 0..4 {
+        append(&path, &observation(None, Some("weekly"), minute)).unwrap();
+    }
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let writer_path = path.clone();
+    let mut writer = None;
+    compact_with_export(&path, RetentionPolicy::default(), |snapshot| {
+        assert_eq!(snapshot.len(), 4);
+        writer = Some(std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            append(&writer_path, &observation(None, Some("weekly"), 4)).unwrap();
+            done_tx.send(()).unwrap();
+        }));
+        started_rx.recv().unwrap();
+        assert!(done_rx
+            .recv_timeout(std::time::Duration::from_millis(50))
+            .is_err());
+        let probe = OpenOptions::new()
+            .write(true)
+            .open(lock_path_for(&path))
+            .unwrap();
+        assert!(
+            probe.try_lock_exclusive().is_err(),
+            "export holds the append lock"
         );
-    }
-}
-
-#[test]
-fn compaction_due_only_past_the_size_bound() {
-    let (_dir, path) = tmp_store();
-    append(&path, &observation("codex", None, None, &ts(0), 50.0)).unwrap();
-    let policy = RetentionPolicy {
-        max_per_window: 500,
-        max_bytes: 8 * 1024,
-    };
-    assert!(!compaction_due(&path, policy));
-    assert!(compaction_due(
-        &path,
-        RetentionPolicy {
-            max_per_window: 500,
-            max_bytes: 8,
-        }
-    ));
-}
-
-/// #1539: the append site itself enforces the size bound — the file grows
-/// every refresh, so bounding it only at prune time is not enough.
-#[test]
-fn appending_enforces_the_size_bound_at_the_write_site() {
-    let _guard = crate::test_support::QuotaRetentionEnvGuard::set(usize::MAX, 8 * 1024);
-    let (_dir, path) = tmp_store();
-    for minute in 0..60 {
-        append(
-            &path,
-            &observation("codex", None, Some("five-hour"), &ts(minute), 50.0),
-        )
-        .unwrap();
-    }
-
-    let policy = RetentionPolicy::from_env();
-    assert!(
-        !compaction_due(&path, policy),
-        "the append site must have compacted the store back under the bound"
-    );
-    let lines = read_store_lines(&path).unwrap();
-    assert!(
-        lines.iter().all(|line| line.record.is_some()),
-        "the compacted store must still parse line by line"
-    );
-    let records = load(&path).unwrap();
-    assert!(
-        !records
-            .iter()
-            .any(|record| record.checked_at.as_deref() == Some(ts(0).as_str())),
-        "the oldest observation must be dropped"
-    );
+        Ok(())
+    })
+    .unwrap();
+    writer.unwrap().join().unwrap();
+    let after = load(&path).unwrap();
+    assert_eq!(after.len(), 2);
     assert_eq!(
-        records.last().unwrap().checked_at.as_deref(),
-        Some(ts(59).as_str()),
-        "the newest observation must be kept"
+        after[1].checked_at,
+        observation(None, Some("weekly"), 4).checked_at
     );
 }
 
-/// #1539: rotation (read-rewrite-rename) runs under the same lock as
-/// appends, so concurrent writers can never lose a record or tear a line.
 #[test]
 fn rotation_never_loses_a_concurrent_append() {
-    let (_dir, path) = tmp_store();
-    let path = std::sync::Arc::new(path);
-    let policy = RetentionPolicy {
-        max_per_window: 5,
-        max_bytes: usize::MAX,
-    };
-    let handles: Vec<_> = (0..4)
-        .map(|series| {
-            let path = std::sync::Arc::clone(&path);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("quota.jsonl");
+    for step in 0..2 {
+        append(&path, &observation(None, Some("history"), step)).unwrap();
+    }
+    let writers: Vec<_> = (0..4)
+        .map(|writer| {
+            let path = path.clone();
             std::thread::spawn(move || {
-                for step in 0..25 {
-                    append(
+                for step in 0..100 {
+                    // Each append has its own protected window. Losing any old inode
+                    // write therefore loses a required winner, not disposable history.
+                    crate::quota_store::append_all(
                         &path,
-                        &observation(
-                            "codex",
-                            Some(&format!("codex-{series}")),
-                            Some("five-hour"),
-                            &ts(series * 100 + step),
-                            50.0,
-                        ),
+                        &[
+                            observation(None, Some(&format!("{writer}-{step}")), step),
+                            observation(None, Some("history"), step),
+                        ],
                     )
                     .unwrap();
                 }
             })
         })
         .collect();
-    // Rotate while the appenders run: a lost lock would show up as a torn
-    // line or a missing newest reading below.
+    let mut dropped = 0;
     for _ in 0..10 {
-        compact(&path, policy, None).unwrap();
+        dropped += compact_with_export(&path, RetentionPolicy::default(), |_| Ok(())).unwrap();
     }
-    for handle in handles {
-        handle.join().unwrap();
+    for writer in writers {
+        writer.join().unwrap();
     }
-    compact(&path, policy, None).unwrap();
-
-    let lines = read_store_lines(&path).unwrap();
-    assert!(
-        lines.iter().all(|line| line.record.is_some()),
-        "no line may be torn by a concurrent rotation"
-    );
-    let records = load(&path).unwrap();
-    assert_eq!(records.len(), 20, "5 newest observations per series");
-    for series in 0..4i64 {
-        let series_records: Vec<_> = records
-            .iter()
-            .filter(|record| {
-                record.backend_instance.as_deref() == Some(format!("codex-{series}").as_str())
-            })
-            .collect();
-        let checked: Vec<_> = series_records
-            .iter()
-            .map(|record| record.checked_at.clone())
-            .collect();
-        assert_eq!(
-            checked,
-            (20..25)
-                .map(|step| Some(ts(series * 100 + step)))
-                .collect::<Vec<_>>(),
-            "series {series} must hold exactly its five newest appends"
-        );
-    }
+    compact_with_export(&path, RetentionPolicy::default(), |_| Ok(())).unwrap();
+    assert!(dropped > 0, "exercise replacement while appenders run");
+    assert_eq!(load(&path).unwrap().len(), 401);
+    assert!(read_store_lines(&path)
+        .unwrap()
+        .iter()
+        .all(|line| line.record.is_some()));
 }

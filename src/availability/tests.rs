@@ -1063,46 +1063,6 @@ fn retention_base() -> OffsetDateTime {
     OffsetDateTime::parse("2026-10-20T00:00:00Z", &Rfc3339).unwrap()
 }
 
-/// #1539: the write path bounds the append-only history itself — old
-/// records beyond the per-scope cap are dropped, the newest are kept.
-#[test]
-fn update_state_drops_history_beyond_the_per_scope_cap() {
-    let tmp = TempDir::new().unwrap();
-    let p = path(&tmp);
-    let base = retention_base();
-
-    for second in 0..105 {
-        record_unavailable(
-            &p,
-            "claude",
-            None,
-            Reason::RateLimited,
-            Source::BackendError,
-            None,
-            None,
-            base + time::Duration::seconds(second),
-        )
-        .unwrap();
-    }
-
-    let state = load_state(&p).unwrap();
-    assert_eq!(
-        state.records.len(),
-        super::DEFAULT_MAX_PER_SCOPE,
-        "only the newest per-scope records survive"
-    );
-    assert_eq!(
-        state.records.first().unwrap().observed_at,
-        super::now_rfc3339(base + time::Duration::seconds(5)),
-        "the oldest records are dropped"
-    );
-    assert_eq!(
-        state.records.last().unwrap().observed_at,
-        super::now_rfc3339(base + time::Duration::seconds(104)),
-        "the newest records are kept"
-    );
-}
-
 /// #1539: a superseded *expired* unavailable record can never change a
 /// decision — the scope's latest record decides — so it is dropped however
 /// recent it is.

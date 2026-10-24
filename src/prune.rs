@@ -14,7 +14,7 @@ pub fn run(
     dry_run: bool,
 ) -> Result<()> {
     let cfg = config::load(config_path)?;
-    prune_global_state(&cfg, dry_run)?;
+    prune_global_state(&cfg, older_than_days, dry_run)?;
     let profiles = selected_profiles(&cfg, profile_name)?;
 
     for (name, profile) in profiles {
@@ -32,10 +32,20 @@ pub fn run_automatic(
     ledger_entries: &[crate::ledger::LedgerEntry],
     snapshot: &crate::status::StatusSnapshot,
 ) -> Result<()> {
-    // #1539: the recurring prune pass also enforces retention on the global
-    // per-account state files (size-gated, so a quiet tick costs one
-    // metadata call).
-    prune_global_state(cfg, false)?;
+    // Maintenance failures must not prevent dispatch. Warn once when the
+    // failure changes, and reset after recovery so a recurrence is visible.
+    static LAST_ERROR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    let error = prune_global_state(cfg, None, false)
+        .err()
+        .map(|error| format!("{error:#}"));
+    if let Ok(mut last) = LAST_ERROR.lock() {
+        if error != *last {
+            if let Some(error) = &error {
+                eprintln!("gah loop: WARNING global state retention failed: {error}");
+            }
+            *last = error;
+        }
+    }
     let profile = config::get_profile(cfg, profile_name)?;
     let active_mrs =
         (snapshot.observations.sync.status == "ok").then_some(snapshot.merge_requests.as_slice());
@@ -69,18 +79,19 @@ struct AutomaticWorktreeSets {
     protected: HashSet<String>,
 }
 
-/// #1539: retention for the global per-account state files that
-/// `prune_profile` never touches because they are not per-profile:
-/// `quota_observations.jsonl` (append-only, grows on every quota refresh)
-/// and `availability.json` (append-only scope history). Runs once per
-/// prune pass; both stores bound themselves on every write too, so this is
-/// the scheduled backstop for stores whose writers went quiet.
-fn prune_global_state(cfg: &GahConfig, dry_run: bool) -> Result<()> {
+/// Global stores are maintained once per prune pass. Explicit --older-than
+/// overrides the quota max_age; automatic prune keeps fourteen days by default.
+fn prune_global_state(cfg: &GahConfig, days: Option<u64>, dry_run: bool) -> Result<()> {
+    let policy = days
+        .map(|days| crate::quota_store::RetentionPolicy {
+            max_age: time::Duration::days(days.min(i64::MAX as u64 / 86_400) as i64),
+        })
+        .unwrap_or_default();
     prune_global_state_at(
         cfg,
         &crate::availability::resolve_state_path(),
         &crate::quota_store::store_path(),
-        crate::quota_store::RetentionPolicy::from_env(),
+        policy,
         dry_run,
     )
 }
@@ -93,23 +104,16 @@ fn prune_global_state_at(
     dry_run: bool,
 ) -> Result<()> {
     if dry_run {
-        if crate::quota_store::compaction_due(store_path, policy) {
-            println!("  would compact {}", store_path.display());
-        }
+        println!("  would prune global availability and quota history");
         return Ok(());
     }
     let dropped = crate::availability::compact_expired(availability_path)?;
     if dropped > 0 {
         println!("  availability: dropped {dropped} superseded records");
     }
-    if crate::quota_store::compaction_due(store_path, policy) {
-        // compact() runs the telemetry export before dropping records
-        // (#1539: export runs before compaction) and leaves the store
-        // untouched when that export fails.
-        let dropped = crate::quota_store::compact(store_path, policy, Some(cfg))?;
-        if dropped > 0 {
-            println!("  quota store: compacted {dropped} observations");
-        }
+    let dropped = crate::quota_store::compact(store_path, policy, cfg)?;
+    if dropped > 0 {
+        println!("  quota store: compacted {dropped} observations");
     }
     Ok(())
 }
@@ -657,9 +661,8 @@ fn is_older_than(path: &PathBuf, cutoff: SystemTime) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        automatic_worktree_sets, done_worktree_names_from_mrs, is_older_than,
-        prune_global_state_at, prune_worktrees, remote_gah_branches_to_delete,
-        worktree_name_for_branch, worktree_name_matches_profile,
+        automatic_worktree_sets, done_worktree_names_from_mrs, is_older_than, prune_worktrees,
+        remote_gah_branches_to_delete, worktree_name_for_branch, worktree_name_matches_profile,
     };
     use crate::config::{tests::test_profile_for_notifications, Defaults, GahConfig};
     use crate::sync::SyncMr;
@@ -1347,193 +1350,7 @@ mod tests {
         let mrs = vec![mr("not-gah/foo", true, None)];
         assert!(remote_gah_branches_to_delete(&mrs).is_empty());
     }
-
-    // ── #1539: retention for the global per-account state files ──────────────
-
-    fn rfc3339(moment: time::OffsetDateTime) -> String {
-        moment
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap()
-    }
-
-    fn telemetry_quota_export_text(telemetry_root: &std::path::Path) -> String {
-        let mut text = String::new();
-        let mut pending = vec![telemetry_root.join("raw").join("quota")];
-        while let Some(dir) = pending.pop() {
-            let Ok(entries) = fs::read_dir(&dir) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    pending.push(path);
-                } else if path.extension().is_some_and(|ext| ext == "jsonl") {
-                    text.push_str(&fs::read_to_string(&path).unwrap_or_default());
-                }
-            }
-        }
-        text
-    }
-
-    /// #1539: the prune pass also enforces retention on the global (not
-    /// per-profile) state files: the quota store past its size bound — old
-    /// observations dropped, newest kept, telemetry exported before compaction —
-    /// and the availability state's superseded expired entries.
-    #[test]
-    fn prune_compacts_global_quota_and_availability_state() {
-        let root = tempfile::tempdir().unwrap();
-        let store_path = root.path().join("quota_observations.jsonl");
-        let availability_path = root.path().join("availability.json");
-        // The pre-compaction telemetry export reads the store through its
-        // canonical path, so point that at the fixture store too.
-        let _store_guard = crate::test_support::QuotaStoreEnvGuard::set(&store_path);
-
-        let base = time::OffsetDateTime::parse(
-            "2026-10-20T00:00:00Z",
-            &time::format_description::well_known::Rfc3339,
-        )
-        .unwrap();
-        let observation = |minute: i64| crate::quota_store::QuotaObservationRecord {
-            backend: "codex".to_string(),
-            credential_id: None,
-            backend_instance: None,
-            model: None,
-            quota_pool: None,
-            quota_window: Some("five-hour".to_string()),
-            quota_remaining_percent: Some(50.0),
-            quota_reset_at: None,
-            observed_at: Some(rfc3339(base + time::Duration::minutes(minute))),
-            checked_at: Some(rfc3339(base + time::Duration::minutes(minute))),
-            check_error: None,
-            usage_source: Some("test_refresh".to_string()),
-            account_usage: None,
-        };
-        for minute in 0..8 {
-            crate::quota_store::append(&store_path, &observation(minute)).unwrap();
-        }
-
-        let now = time::OffsetDateTime::now_utc();
-        crate::availability::record_unavailable(
-            &availability_path,
-            "claude",
-            None,
-            None,
-            crate::availability::Reason::RateLimited,
-            crate::availability::Source::BackendError,
-            Some(now - time::Duration::hours(1)),
-            None,
-            now - time::Duration::hours(2),
-        )
-        .unwrap();
-        crate::availability::record_available(
-            &availability_path,
-            "claude",
-            None,
-            None,
-            crate::availability::Source::Manual,
-            now,
-        )
-        .unwrap();
-
-        let cfg = GahConfig {
-            defaults: Defaults {
-                artifact_root: root.path().to_string_lossy().to_string(),
-                ..Default::default()
-            },
-            profiles: HashMap::new(),
-            context: Default::default(),
-        };
-        let policy = crate::quota_store::RetentionPolicy {
-            max_per_window: 2,
-            max_bytes: 512,
-        };
-
-        prune_global_state_at(&cfg, &availability_path, &store_path, policy, false).unwrap();
-
-        // Old observations dropped, the newest kept.
-        let records = crate::quota_store::load(&store_path).unwrap();
-        assert!(!records.is_empty());
-        assert!(
-            records
-                .iter()
-                .all(|record| record.checked_at.as_deref() != Some(rfc3339(base).as_str())),
-            "the oldest observations must be compacted away"
-        );
-        assert_eq!(
-            records.last().unwrap().checked_at.as_deref(),
-            Some(rfc3339(base + time::Duration::minutes(7)).as_str()),
-            "the newest observation must be kept"
-        );
-
-        // Availability: the superseded expired entry is dropped, the latest stays.
-        let state = crate::availability::load_state(&availability_path).unwrap();
-        assert_eq!(state.records.len(), 1);
-        assert_eq!(
-            state.records[0].status,
-            crate::availability::Status::Available
-        );
-
-        // #1539 acceptance: the telemetry export ran BEFORE compaction — the
-        // oldest observation is gone from the store but present in the export.
-        let exported = telemetry_quota_export_text(&root.path().join("telemetry"));
-        assert!(
-            exported.contains(&rfc3339(base)),
-            "records dropped by compaction must already be exported"
-        );
-    }
-
-    /// #1539: --dry-run never rewrites the global state files.
-    #[test]
-    fn prune_dry_run_never_compacts_global_state() {
-        let root = tempfile::tempdir().unwrap();
-        let store_path = root.path().join("quota_observations.jsonl");
-        let availability_path = root.path().join("availability.json");
-        let base = time::OffsetDateTime::parse(
-            "2026-10-20T00:00:00Z",
-            &time::format_description::well_known::Rfc3339,
-        )
-        .unwrap();
-        for minute in 0..8 {
-            let record = crate::quota_store::QuotaObservationRecord {
-                observed_at: Some(rfc3339(base + time::Duration::minutes(minute))),
-                checked_at: Some(rfc3339(base + time::Duration::minutes(minute))),
-                backend: "codex".to_string(),
-                credential_id: None,
-                backend_instance: None,
-                model: None,
-                quota_pool: None,
-                quota_window: Some("five-hour".to_string()),
-                quota_remaining_percent: Some(50.0),
-                quota_reset_at: None,
-                check_error: None,
-                usage_source: Some("test_refresh".to_string()),
-                account_usage: None,
-            };
-            crate::quota_store::append(&store_path, &record).unwrap();
-        }
-        let before = fs::read_to_string(&store_path).unwrap();
-
-        let cfg = GahConfig {
-            defaults: Default::default(),
-            profiles: HashMap::new(),
-            context: Default::default(),
-        };
-        prune_global_state_at(
-            &cfg,
-            &availability_path,
-            &store_path,
-            crate::quota_store::RetentionPolicy {
-                max_per_window: 2,
-                max_bytes: 512,
-            },
-            true,
-        )
-        .unwrap();
-
-        assert_eq!(
-            fs::read_to_string(&store_path).unwrap(),
-            before,
-            "a dry run must not rewrite the store"
-        );
-    }
 }
+
+#[cfg(test)]
+mod retention_tests;
