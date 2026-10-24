@@ -245,6 +245,8 @@ pub struct ConfigShowSummary {
 
 #[derive(serde::Serialize)]
 pub struct ConfigShowFull {
+    pub orchestration_mode: config::OrchestrationMode,
+    pub supabase: SupabaseSummary,
     pub factory_enabled: bool,
     pub node: crate::node_role::NodeRoleStatus,
     pub schema_version: u32,
@@ -257,6 +259,31 @@ pub struct ConfigShowFull {
     /// webhook URLs live in the environment).
     pub notifications: NotificationSettingsSummary,
     pub profiles: BTreeMap<String, ConfigProfileSummary>,
+}
+
+/// Only credential presence crosses the CLI boundary, including the project URL.
+#[derive(serde::Serialize)]
+pub struct SupabaseSummary {
+    pub url: Option<&'static str>,
+    pub anon_key: Option<&'static str>,
+}
+
+impl SupabaseSummary {
+    pub fn from_environment() -> Self {
+        Self::from_env(|name| std::env::var(name).ok())
+    }
+
+    fn from_env(env: impl Fn(&str) -> Option<String>) -> Self {
+        let redacted = |name| {
+            env(name)
+                .filter(|value| !value.trim().is_empty())
+                .map(|_| "[REDACTED]")
+        };
+        Self {
+            url: redacted("GAH_SUPABASE_URL"),
+            anon_key: redacted("GAH_SUPABASE_ANON_KEY"),
+        }
+    }
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -492,6 +519,8 @@ pub fn config_show_full(
     }
 
     Ok(ConfigShowFull {
+        orchestration_mode: cfg.defaults.orchestration_mode,
+        supabase: SupabaseSummary::from_environment(),
         factory_enabled: if !config_path.exists() {
             false
         } else {
@@ -521,6 +550,27 @@ pub fn config_show_full_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_show_supabase_redacts_values_before_serialization() {
+        let summary = SupabaseSummary::from_env(|name| match name {
+            "GAH_SUPABASE_URL" => Some("https://supabase.example.invalid".into()),
+            "GAH_SUPABASE_ANON_KEY" => Some("fake".into()),
+            _ => panic!("CLI must not read the service-role key"),
+        });
+        assert_eq!(summary.url, Some("[REDACTED]"));
+        assert_eq!(summary.anon_key, Some("[REDACTED]"));
+        assert_eq!(
+            serde_json::to_string(&summary).unwrap(),
+            r#"{"url":"[REDACTED]","anon_key":"[REDACTED]"}"#
+        );
+        for missing in [None, Some(""), Some(" \t ")] {
+            let summary = SupabaseSummary::from_env(|_| missing.map(String::from));
+            assert!(summary.url.is_none());
+            assert!(summary.anon_key.is_none());
+        }
+    }
+
     use crate::config::{
         self, tests::test_profile_for_notifications, CandidateConfig, MergePolicy, TaskRoutingRule,
         WakeAutonomy,

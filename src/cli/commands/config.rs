@@ -46,6 +46,13 @@ pub fn run(command: ConfigCommands) -> Result<()> {
                     println!("{}", config_show::config_show_json(&cfg)?);
                 }
             } else {
+                println!("orchestration_mode: {}", cfg.defaults.orchestration_mode);
+                let supabase = config_show::SupabaseSummary::from_environment();
+                println!("GAH_SUPABASE_URL: {}", supabase.url.unwrap_or("(unset)"));
+                println!(
+                    "GAH_SUPABASE_ANON_KEY: {}",
+                    supabase.anon_key.unwrap_or("(unset)")
+                );
                 println!(
                     "current_manager: {}",
                     cfg.defaults.current_manager.as_deref().unwrap_or("(unset)")
