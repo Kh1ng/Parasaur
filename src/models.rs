@@ -537,6 +537,9 @@ pub struct PmPlan {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ActionableReviewFinding {
+    /// Replacement for the single new-side line, rendered as a GitLab suggestion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
     pub summary: String,
     pub file: String,
     #[serde(default, deserialize_with = "deserialize_optional_flexible_string")]

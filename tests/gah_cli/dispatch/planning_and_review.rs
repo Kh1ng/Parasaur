@@ -1133,7 +1133,7 @@ fn review_shutdown_records_cancelled_shutdown_and_dispatch_finished_event() {
 }
 
 #[test]
-fn review_gitlab_uses_host_scoped_glab_session_without_pat() {
+fn review_gitlab_requires_bot_pat_instead_of_interactive_session() {
     let tmp = test_tempdir();
     let repo = tmp.path().join("repo");
     fs::create_dir_all(&repo).unwrap();
@@ -1180,9 +1180,13 @@ fn review_gitlab_uses_host_scoped_glab_session_without_pat() {
         ])
         .env_remove("GITLAB_PAT")
         .env_remove("GITLAB_PAT2")
+        .env("GITLAB_TOKEN", "requesting-user-token")
         .env("PATH", prepend_path(&fake_bin))
         .assert()
-        .success()
+        .failure()
+        .stderr(predicate::str::contains(
+            "GitLab reviews require the bot GITLAB_PAT2 or GITLAB_PAT",
+        ))
         .stdout(predicate::str::contains(
             "Resolved MR: https://gitlab.example.com/owner/real/-/merge_requests/7",
         ));
@@ -1190,6 +1194,7 @@ fn review_gitlab_uses_host_scoped_glab_session_without_pat() {
     let glab_log = fs::read_to_string(glab_log).unwrap();
     assert!(glab_log.contains("--hostname gitlab.example.com"));
     assert!(!glab_log.contains("PRIVATE-TOKEN"));
+    assert!(!glab_log.contains("/7/notes"));
 
     let session_dir = latest_child_dir(&tmp.path().join("artifacts/real/sessions"));
     let verdict = fs::read_to_string(session_dir.join("review-verdict.json")).unwrap();
@@ -1242,7 +1247,8 @@ fn review_by_mr_uses_provider_metadata_even_when_repo_is_on_main() {
             cfg.to_str().unwrap(),
         ])
         .env("PATH", prepend_path(&fake_bin))
-        .env_remove("GITLAB_PAT")
+        .env("GITLAB_PAT", "test-bot-token")
+        .env_remove("GITLAB_PAT2")
         .assert()
         .success();
 

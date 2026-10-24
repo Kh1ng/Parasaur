@@ -13,6 +13,15 @@ pub(super) fn canonicalize_review_ledger_identity(
     }
 }
 
+pub(super) fn print_resolved_gitlab_mr(profile: &crate::config::Profile, branch: &str) {
+    if profile.provider == "gitlab" {
+        match crate::provider::gitlab_find_mr_by_branch(profile, branch) {
+            Ok(mr) => println!("Resolved MR: {}", mr.url),
+            Err(err) => eprintln!("warning: failed to resolve GitLab MR for branch: {:#}", err),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

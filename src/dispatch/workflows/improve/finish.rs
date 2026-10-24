@@ -33,6 +33,8 @@ pub(super) fn finish_improve_workflow(
     already_satisfied: &AlreadySatisfiedRun,
     validation_failed: bool,
     backend_summary: &str,
+    review_discussions: &[crate::provider::ReviewDiscussion],
+    repair_base_sha: Option<&str>,
     wip_checkpoints: &[String],
     route_effective_backend: &str,
     route_effective_model: Option<&str>,
@@ -212,6 +214,31 @@ pub(super) fn finish_improve_workflow(
         ),
     )?;
     ledger.push_succeeded = true;
+    if !validation_failed
+        && ledger.validation_result.as_deref() == Some("passed")
+        && profile.publishing.allow_issue_comments
+        && !review_discussions.is_empty()
+    {
+        let changed_files = worktree::git(
+            &[
+                "diff",
+                "--name-only",
+                repair_base_sha.ok_or_else(|| anyhow::anyhow!("missing repair base SHA"))?,
+                "HEAD",
+            ],
+            wt,
+        )?
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+        crate::provider::resolve_addressed_discussions(
+            profile,
+            branch,
+            review_discussions,
+            backend_summary,
+            &changed_files,
+        )?;
+    }
 
     let mr_title = build_mr_title(mode, &profile.repo_id, validation_failed, ticket_meta);
     let mr_ctx = MrRenderContext {

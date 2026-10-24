@@ -997,6 +997,17 @@ gh auth status
 - Env: `GITLAB_PAT` (or `GITLAB_PAT2` for a second account), and/or
   `glab auth login --hostname <host>`.
 - PAT scope: `api` (covers push, MR create/merge, and MR preflight via `glab`).
+- Review discussions, suggestions, and fix-thread replies require the bot user's
+  `GITLAB_PAT2` (preferred) or `GITLAB_PAT`. These operations override the
+  interactive `glab` token; a requesting user's login is not a fallback.
+  Reviews post one summary note plus inline findings on available diff lines.
+  Concrete single-line replacements are published as GitLab suggestion blocks.
+- Fixing an existing MR snapshots its unresolved discussions into the session's
+  `review-discussions.json` and includes them in the repair prompt. After a
+  successful validation and push, only explicitly reported addressed threads
+  are replied to and resolved. Inline threads also require a change to their
+  file during that repair; threads with new replies during the run remain open.
+  Weak/fallback reviews still require human review, and this flow never merges.
 - Self-hosted: set `provider_api_base` in the profile
   (`https://gitlab.example.com/api/v4`); Parasaur derives pushes from that base.
 

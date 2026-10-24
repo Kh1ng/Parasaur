@@ -168,7 +168,13 @@ fn gitlab_fix_dispatch_resolves_manual_mr_source_branch_and_work_identity() {
     let _agy_fake = install_change_making_worker(&mut harness, "agy");
 
     let result = harness
-        .run_dispatch(&["--mode", "fix", "--mr", "269", "--existing-branch", branch])
+        .run_dispatch_with_env(
+            &["--mode", "fix", "--mr", "269", "--existing-branch", branch],
+            &[
+                ("GITLAB_PAT", "test-bot-token"),
+                ("GITLAB_PAT2", "test-bot-token"),
+            ],
+        )
         .unwrap();
     assert_eq!(result.exit_code, Some(0), "stderr was {}", result.stderr);
 

@@ -233,16 +233,7 @@ pub(crate) fn improve(
         )?;
         (branch, wt)
     };
-    // Issue #537: the repair branch's remote tip at worktree creation, used
-    // by the retry-reset loop below to detect whether the remote source
-    // advanced concurrently instead of blindly resetting to it (or, worse,
-    // to `main`). `wt`'s HEAD is exactly `origin/<branch>` at this point --
-    // `worktree::create_existing` just checked it out.
-    let repair_base_sha: Option<String> = if manual_fix.existing_branch.is_some() {
-        Some(worktree::git(&["rev-parse", "HEAD"], &wt)?)
-    } else {
-        None
-    };
+    let repair_base_sha = repair::base_sha(manual_fix.existing_branch.is_some(), &wt)?;
     ledger.branch = Some(branch.clone());
     println!("Worktree: {}", wt.display());
     println!("Branch:   {}", branch);
@@ -282,6 +273,13 @@ pub(crate) fn improve(
     if let Some(repair_context) = repair_context.as_ref() {
         repair_context::append_to_prompt(&mut base_task, repair_context);
     }
+    let review_discussions = repair::append_discussions(
+        profile,
+        &branch,
+        session_dir,
+        manual_fix.existing_branch.is_some(),
+        &mut base_task,
+    )?;
     conflict_session.append_prompt(&mut base_task);
     let timeout = std::time::Duration::from_secs(profile.validation_timeout_seconds());
 
@@ -1485,6 +1483,8 @@ pub(crate) fn improve(
         &already_satisfied,
         validation_failed,
         &backend_summary,
+        &review_discussions,
+        repair_base_sha.as_deref(),
         &wip_checkpoints,
         &route.effective_backend,
         route.effective_model.as_deref(),

@@ -510,6 +510,14 @@ impl ScenarioHarness {
     }
 
     pub fn run_dispatch(&mut self, args: &[&str]) -> Result<CommandResult, String> {
+        self.run_dispatch_with_env(args, &[])
+    }
+
+    pub fn run_dispatch_with_env(
+        &mut self,
+        args: &[&str],
+        environment: &[(&str, &str)],
+    ) -> Result<CommandResult, String> {
         self.setup_env();
         self.install_fakes();
         let temp_dir = self
@@ -519,6 +527,7 @@ impl ScenarioHarness {
         let mut cmd = self.gah_command();
         cmd.args(["dispatch", "--profile", &self.profile_name]);
         cmd.args(args);
+        cmd.envs(environment.iter().copied());
         let out = cmd
             .env("TMPDIR", temp_dir)
             .output()

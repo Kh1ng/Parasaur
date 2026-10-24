@@ -335,7 +335,7 @@ impl FakeBackend {
         // $2 is the endpoint: ".../merge_requests" (list), ".../merge_requests/<iid>"
         // (single), or ".../merge_requests/<iid>/pipelines" (pipelines) -- check
         // the most specific suffix first since it also matches the broader ones.
-        script.push_str("case \"$2\" in\n  */pipelines)\n");
+        script.push_str("case \"$2\" in\n  */discussions\\?*) printf '[]\\n' ;;\n  */pipelines)\n");
         script.push_str(&Self::render_case_body(&pipelines));
         script.push_str("    ;;\n  */merge_requests)\n");
         script.push_str(&Self::render_case_body(&list));

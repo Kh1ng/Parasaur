@@ -1252,3 +1252,224 @@ mod comment_tests;
 mod parallel_tests;
 #[path = "tests/publication_tests.rs"]
 mod publication_tests;
+
+mod gitlab_review_discussions {
+    use super::*;
+    use crate::provider::{
+        post_review_findings, resolve_addressed_discussions, unresolved_review_discussions,
+    };
+
+    struct BotToken;
+    impl Drop for BotToken {
+        fn drop(&mut self) {
+            crate::provider::review_discussions::TEST_BOT_TOKEN.with(|t| *t.borrow_mut() = None);
+        }
+    }
+
+    fn fixture() -> (TempDir, PathOverride, BotToken, Profile) {
+        let tmp = TempDir::new().unwrap();
+        make_fake_bin(
+            tmp.path(),
+            "glab",
+            r#"#!/bin/sh
+[ "$GITLAB_TOKEN" = "test-bot" ] || exit 91
+[ "$GITLAB_ACCESS_TOKEN" = "test-bot" ] || exit 92
+printf '%s\n' "$*" >> "${0%/*}/calls"
+case "$2" in
+projects/42/merge_requests) echo '[{"iid":7}]' ;;
+projects/42/merge_requests/7)
+ echo '{"diff_refs":{"base_sha":"base","start_sha":"start","head_sha":"head"}}' ;;
+projects/42/merge_requests/7/diffs\?*)
+ printf '%s\n' '[{"old_path":"src/old.rs","new_path":"src/a.rs","diff":"@@ -11,1 +11,2 @@\n context\n+added"}]' ;;
+projects/42/merge_requests/7/discussions\?*)
+ echo '[{"id":"abc","notes":[{"body":"fix this","resolvable":true,"resolved":false,"position":{"new_path":"src/a.rs"}}]},{"id":"resolved","notes":[{"body":"done","resolvable":true,"resolved":true}]}]' ;;
+projects/42/merge_requests/7/discussions/abc)
+ echo '{"notes":[{"body":"fix this","resolvable":true,"resolved":false}]}' ;;
+*) echo '{}' ;;
+esac
+"#,
+        );
+        let path = PathOverride::set(tmp.path().to_str().unwrap().into());
+        crate::provider::review_discussions::TEST_BOT_TOKEN
+            .with(|t| *t.borrow_mut() = Some("test-bot".into()));
+        let mut profile = github_profile();
+        profile.provider = "gitlab".into();
+        profile.provider_api_base = Some("https://gitlab.example.com/api/v4".into());
+        profile.provider_project_id = Some("42".into());
+        (tmp, path, BotToken, profile)
+    }
+
+    #[test]
+    fn bot_review_posts_position_suggestion_and_one_summary() {
+        let (tmp, _path, _token, profile) = fixture();
+        let finding = serde_json::from_value(serde_json::json!({
+            "summary": "Use the correct value", "file": "src/a.rs", "line": 12,
+            "status": "confirmed", "evidence": ["diff:src/a.rs:wrong value"],
+            "suggestion": "let value = 42;"
+        }))
+        .unwrap();
+        post_review_findings(
+            &profile,
+            "feature",
+            "summary",
+            &["gah-human-review"],
+            &[finding],
+            Some("head"),
+        )
+        .unwrap();
+        let calls = fs::read_to_string(tmp.path().join("calls")).unwrap();
+        for field in [
+            "position[base_sha]=base",
+            "position[start_sha]=start",
+            "position[head_sha]=head",
+            "position[new_line]=12",
+            "position[new_path]=src/a.rs",
+            "position[old_path]=src/old.rs",
+            "suggestion\nlet value = 42;",
+        ] {
+            assert!(calls.contains(field), "missing {field}: {calls}");
+        }
+        assert_eq!(calls.matches("/7/notes ").count(), 1);
+        assert!(calls.contains("add_labels=gah-human-review"));
+        assert!(!calls.contains("test-bot"));
+    }
+
+    #[test]
+    fn fix_only_resolves_explicitly_addressed_changed_threads() {
+        let (tmp, _path, _token, profile) = fixture();
+        let discussions = unresolved_review_discussions(&profile, "feature").unwrap();
+        assert_eq!(discussions.len(), 1);
+        let report = "GAH_ADDRESSED_DISCUSSION: abc | Replaced the incorrect value.";
+        resolve_addressed_discussions(
+            &profile,
+            "feature",
+            &discussions,
+            report,
+            &["other.rs".into()],
+        )
+        .unwrap();
+        resolve_addressed_discussions(
+            &profile,
+            "feature",
+            &discussions,
+            "fixed",
+            &["src/a.rs".into()],
+        )
+        .unwrap();
+        let calls = fs::read_to_string(tmp.path().join("calls")).unwrap();
+        assert!(!calls.contains("resolved=true"));
+        resolve_addressed_discussions(
+            &profile,
+            "feature",
+            &discussions,
+            report,
+            &["src/a.rs".into()],
+        )
+        .unwrap();
+        let calls = fs::read_to_string(tmp.path().join("calls")).unwrap();
+        assert_eq!(calls.matches("resolved=true").count(), 1);
+        let reply = calls.find("/abc/notes").unwrap();
+        assert!(reply < calls.find("resolved=true").unwrap());
+        assert!(!calls.contains("/resolved/notes"));
+    }
+
+    #[test]
+    fn unresolved_discussions_are_paginated() {
+        let (tmp, _path, _token, profile) = fixture();
+        let first_page = vec![
+            serde_json::json!({
+                "id": "page-one", "notes": [{"body": "fix", "resolvable": true, "resolved": false}]
+            });
+            100
+        ];
+        fs::write(
+            tmp.path().join("page1"),
+            serde_json::to_vec(&first_page).unwrap(),
+        )
+        .unwrap();
+        let script = fs::read_to_string(tmp.path().join("glab")).unwrap()
+            .replace("projects/42/merge_requests/7/discussions\\?*)",
+                "projects/42/merge_requests/7/discussions\\?per_page=100\\&page=1) /bin/cat \"${0%/*}/page1\" ;;\nprojects/42/merge_requests/7/discussions\\?*)");
+        make_fake_bin(tmp.path(), "glab", &script);
+        let discussions = unresolved_review_discussions(&profile, "feature").unwrap();
+        assert_eq!(discussions.len(), 101);
+        let calls = fs::read_to_string(tmp.path().join("calls")).unwrap();
+        assert!(calls.contains("per_page=100&page=2"));
+    }
+
+    #[test]
+    fn stale_review_head_cannot_publish_suggestions() {
+        let (tmp, _path, _token, profile) = fixture();
+        let finding = serde_json::from_value(serde_json::json!({
+            "summary": "Fix", "file": "src/a.rs", "line": "12",
+            "status": "confirmed", "evidence": ["diff:src/a.rs:wrong"]
+        }))
+        .unwrap();
+        assert!(post_review_findings(
+            &profile,
+            "feature",
+            "summary",
+            &[],
+            &[finding],
+            Some("old-head")
+        )
+        .is_err());
+        let calls = fs::read_to_string(tmp.path().join("calls")).unwrap();
+        assert!(!calls.contains("--method POST"));
+    }
+
+    #[test]
+    fn failed_reply_leaves_thread_open() {
+        let (tmp, _path, _token, profile) = fixture();
+        let discussions = unresolved_review_discussions(&profile, "feature").unwrap();
+        let script = fs::read_to_string(tmp.path().join("glab"))
+            .unwrap()
+            .replace(
+                "*) echo '{}' ;;",
+                "projects/42/merge_requests/7/discussions/abc/notes) exit 1 ;;\n*) echo '{}' ;;",
+            );
+        make_fake_bin(tmp.path(), "glab", &script);
+        assert!(resolve_addressed_discussions(
+            &profile,
+            "feature",
+            &discussions,
+            "GAH_ADDRESSED_DISCUSSION: abc | Fixed value.",
+            &["src/a.rs".into()]
+        )
+        .is_err());
+        let calls = fs::read_to_string(tmp.path().join("calls")).unwrap();
+        assert!(!calls.contains("resolved=true"));
+    }
+
+    #[test]
+    fn concurrent_discussion_reply_leaves_thread_open() {
+        let (tmp, _path, _token, profile) = fixture();
+        let mut discussions = unresolved_review_discussions(&profile, "feature").unwrap();
+        discussions[0].notes.clear();
+        resolve_addressed_discussions(
+            &profile,
+            "feature",
+            &discussions,
+            "GAH_ADDRESSED_DISCUSSION: abc | Fixed value.",
+            &["src/a.rs".into()],
+        )
+        .unwrap();
+        let calls = fs::read_to_string(tmp.path().join("calls")).unwrap();
+        assert!(!calls.contains("resolved=true"));
+    }
+
+    #[test]
+    fn missing_bot_token_and_handoff_fail_closed() {
+        let (_tmp, _path, _token, mut profile) = fixture();
+        crate::provider::review_discussions::TEST_BOT_TOKEN
+            .with(|t| *t.borrow_mut() = Some(String::new()));
+        assert!(
+            post_review_findings(&profile, "feature", "summary", &[], &[], None)
+                .unwrap_err()
+                .to_string()
+                .contains("bot GITLAB_PAT")
+        );
+        profile.delivery_mode = crate::config::DeliveryMode::Handoff;
+        assert!(post_review_findings(&profile, "feature", "summary", &[], &[], None).is_err());
+    }
+}

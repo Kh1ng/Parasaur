@@ -299,7 +299,7 @@ pub(in crate::dispatch) fn review(
          Review this diff for correctness, test coverage, and safety. \
          Return a JSON object. You may precede it only with the inert heading `Review notes`; put every substantive finding in the JSON arrays, never in prose.\n\
          The JSON object fields are: verdict, confidence, human_required, actionable_findings, non_blocking_findings, risk_notes, evidence, compatibility_evidence.\n\
-         actionable_findings must be an array of objects with exactly: summary (string), file (an exact path copied from Changed files), line (string or null), status (the literal confirmed), and evidence (an array containing at least one diff:<same-file>:<specific observation> string). non_blocking_findings, risk_notes, evidence, and compatibility_evidence must be JSON arrays of strings, even when empty or when only one item exists.\n\
+         actionable_findings must be an array of objects with: summary (string), file (an exact path copied from Changed files), line (positive new-side diff line as a string, or null), status (the literal confirmed), optional suggestion (a replacement for the single new-side line, without fences; omit unless a concrete replacement is known), and evidence (an array containing at least one diff:<same-file>:<specific observation> string). non_blocking_findings, risk_notes, evidence, and compatibility_evidence must be JSON arrays of strings, even when empty or when only one item exists.\n\
          NEEDS_FIX and REJECT require at least one actionable_findings object. Never put a withdrawn, speculative, unverified, contradicted, or explicitly non-blocking concern in actionable_findings; put uncertainty in non_blocking_findings. GAH rejects invalid actionable findings and reroutes to another reviewer instead of dispatching a repair.\n\
          For an APPROVE, evidence must include exactly one or more file:<changed-path> entries copied from Changed files below. You may include ci:passed only when the displayed control-plane CI status is passed. An APPROVE without grounded file evidence is invalid.\n\
          Every source acceptance criterion is blocking until verified. The canonical Source Issue Contract numbers them explicitly; criterion N is numbered item N in that list. For criterion N, put a separate string directly inside the existing `evidence` array using `ac:N:file:<changed-path>` or `ac:N:test:<command and result>`. Each string must contain exactly one mapping: never append a second `ac:N:` mapping, prose, or a test result to an `ac:N:file:<changed-path>` entry, because the complete suffix is validated as the path. Do not create an `ac_evidence` field, `actionable_findings_ac` field, or any other JSON field; extra fields are ignored and cannot satisfy the gate. Before returning APPROVE, audit the `evidence` array for a contiguous `ac:1:` through `ac:N:` set; ordinary unprefixed file/test evidence does not satisfy this gate. If the criterion claims current, live, latest, exact, open/closed, queued, or other external provider state, file/test evidence alone is insufficient: use `ac:N:provider:<provider>:<queried reference and result>` or `ac:N:snapshot:<changed-path>:<verification command and result>`. The provider must match this profile. If any criterion remains unmet or materially unverified, return NEEDS_FIX with a concrete blocking finding; never hide that admission in non_blocking_findings or risk_notes while approving.\n\
@@ -1038,19 +1038,9 @@ pub(in crate::dispatch) fn review(
             }
             let mr_body = render_review_comment(&verdict, session_dir);
             let labels = review_labels(&verdict);
-            if profile.provider == "gitlab" {
-                match provider::gitlab_find_mr_by_branch(profile, &target.source_branch) {
-                    Ok(mr) => println!("Resolved MR: {}", mr.url),
-                    Err(err) => {
-                        eprintln!("warning: failed to resolve GitLab MR for branch: {:#}", err)
-                    }
-                }
-            }
-            // TICKET-128: a restricted profile forbids agent-authored issue/MR
-            // comments. The reviewer still ran and produced a deterministic
-            // verdict (APPROVE/REJECT) retained locally; we simply do not
-            // publish it to the tracker. This is independent of reviewer
-            // routing and merge policy.
+            identity::print_resolved_gitlab_mr(profile, &target.source_branch);
+            // TICKET-128: restricted profiles retain the verdict locally.
+            // Comment publication is independent of routing and merge policy.
             if !profile.publishing.allow_issue_comments {
                 println!(
                     "Publishing policy forbids agent-authored issue/MR comments; review verdict ({} confidence={}) written locally only.",
@@ -1058,8 +1048,15 @@ pub(in crate::dispatch) fn review(
                 );
             } else {
                 pr_claim.ensure_held()?;
-                provider::post_review_comment(profile, &target.source_branch, &mr_body, &labels)
-                    .context("publishing review comment and labels")?;
+                provider::post_review_findings(
+                    profile,
+                    &target.source_branch,
+                    &mr_body,
+                    &labels,
+                    &verdict.actionable_findings,
+                    ledger.review_source_sha.as_deref(),
+                )
+                .context("publishing review comment and labels")?;
             }
             if verdict.human_required {
                 println!("Review requires human attention.");
@@ -1360,11 +1357,13 @@ fn record_review_output_invalid(
             session_dir.file_name().and_then(|name| name.to_str()).unwrap_or("unknown")
         );
         pr_claim.ensure_held()?;
-        provider::post_review_comment(
+        provider::post_review_findings(
             profile,
             &target.source_branch,
             &body,
             &["gah-review-escalating"],
+            &[],
+            None,
         )
         .context("publishing invalid-review reroute state")?;
     } else {
@@ -1435,11 +1434,13 @@ fn stop_for_exhausted_review_escalation(
         },
     );
     if profile.publishing.allow_issue_comments {
-        provider::post_review_comment(
+        provider::post_review_findings(
             profile,
             &target.source_branch,
             &format!("GAH review handoff: `{message}`"),
             &["gah-human-review"],
+            &[],
+            None,
         )?;
     }
     bail!("{message}")

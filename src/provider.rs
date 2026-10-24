@@ -8,6 +8,11 @@ use std::time::Duration;
 use url::Url;
 
 mod comments;
+mod review_discussions;
+pub use review_discussions::{
+    post_review_findings, resolve_addressed_discussions, unresolved_review_discussions,
+    ReviewDiscussion,
+};
 mod publication;
 mod relations;
 pub use comments::{delete_comment, update_comment, CommentThread};

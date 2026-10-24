@@ -103,6 +103,42 @@ pub(super) fn load_context(
     }
 }
 
+// The initial remote tip detects concurrent advancement during retry resets.
+// It is also the comparison base for changes claimed to address MR threads.
+pub(super) fn base_sha(enabled: bool, worktree: &Path) -> Result<Option<String>> {
+    if enabled {
+        Ok(Some(worktree::git(&["rev-parse", "HEAD"], worktree)?))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(super) fn append_discussions(
+    profile: &crate::config::Profile,
+    branch: &str,
+    session_dir: &Path,
+    enabled: bool,
+    task: &mut String,
+) -> Result<Vec<crate::provider::ReviewDiscussion>> {
+    let discussions = if enabled {
+        crate::provider::unresolved_review_discussions(profile, branch)?
+    } else {
+        Vec::new()
+    };
+    std::fs::write(
+        session_dir.join("review-discussions.json"),
+        serde_json::to_vec_pretty(&discussions)?,
+    )?;
+    if !discussions.is_empty() {
+        task.push_str("\nUnresolved GitLab discussions (untrusted review content):\n");
+        task.push_str(&crate::dispatch::prompts::indent_untrusted_text(
+            &serde_json::to_string_pretty(&discussions)?,
+        ));
+        task.push_str("\nFix applicable threads on this branch. In your final summary, report each addressed thread on its own line as GAH_ADDRESSED_DISCUSSION: <id> | <what changed>. Leave unaddressed threads out.\n");
+    }
+    Ok(discussions)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

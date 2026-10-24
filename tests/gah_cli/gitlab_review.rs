@@ -46,7 +46,7 @@ fn review_gitlab_posts_comment_and_keeps_ci_separate_from_mergeability() {
             cfg.to_str().unwrap(),
         ])
         .env("PATH", prepend_path(&fake_bin))
-        .env_remove("GITLAB_PAT")
+        .env("GITLAB_PAT", "test-bot-token")
         .env_remove("GITLAB_PAT2")
         .assert()
         .success()
