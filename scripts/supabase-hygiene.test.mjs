@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-// The public supabase/ tree must stay generic (#1601): a hosted project ref
-// URL or service-role key material identifies or grants access to the
-// enterprise deployment, so neither may appear in a tracked file.
+// Hosted project refs must not appear in tracked text files (#1601).
+// The supabase/ tree also excludes service-role key material.
 const hostedRef = /[a-z]{20}\.supabase\.co/;
 const keyMaterial = [
   // Service-role keys are JWTs; new-style Supabase API keys start sb_secret_.
@@ -17,15 +16,27 @@ const keyMaterial = [
 ];
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const tracked = execFileSync('git', ['ls-files', '--', 'supabase/'], { cwd: root, encoding: 'utf8' })
-  .split('\n')
+const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' })
+  .split('\0')
   .filter(Boolean);
 
-test('tracked supabase files carry no hosted project refs or key material', () => {
+test('tracked text files carry no hosted project refs', () => {
   for (const path of tracked) {
     assert.ok(!hostedRef.test(path), `${path} names a hosted project`);
-    const content = readFileSync(join(root, path), 'utf8');
+    // Submodules are tracked as directories; binaries have NUL bytes or invalid UTF-8.
+    if (!lstatSync(join(root, path)).isFile()) continue;
+    const bytes = readFileSync(join(root, path));
+    if (bytes.includes(0)) continue;
+    let content;
+    try { content = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+    catch { continue; }
     assert.ok(!hostedRef.test(content), `${path} contains a hosted project ref URL`);
+  }
+});
+
+test('tracked supabase files carry no service-role key material', () => {
+  for (const path of tracked.filter(path => path.startsWith('supabase/'))) {
+    const content = readFileSync(join(root, path), 'utf8');
     for (const pattern of keyMaterial) {
       assert.ok(!pattern.test(content), `${path} contains service-role key material`);
     }
