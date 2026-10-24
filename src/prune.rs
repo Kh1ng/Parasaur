@@ -253,21 +253,35 @@ pub(crate) fn worktree_name_for_branch(branch: &str) -> String {
     branch.replace('/', "-")
 }
 
-/// Whether a worktree directory under the shared worktree base belongs to
-/// this profile's own workflows. `worktree::create` writes the dispatch
-/// branch with '/' replaced by '-', so the shapes are
-/// (dispatch/identity.rs `timestamp()` is `"{unix seconds}-{uuid}"`):
-/// - `gah-{repo_id}-{seconds}-{uuid}`     dispatch (workflows/improve.rs)
-/// - `gah-exp-{repo_id}-{seconds}-{uuid}` experiments (workflows/experiment.rs)
-/// - `gah-chat-{repo_id}-{session}`        chat sessions (apps/server
-///   chatSessions.ts: 8 hex chars or a coordinator-issued UUID)
+/// Whether a worktree directory under the shared worktree base carries
+/// this profile's repo id in the name. `worktree::create` writes the
+/// dispatch branch with '/' replaced by '-', so the shapes are:
+/// - `gah-{repo_id}-{seconds}-...`     dispatch (workflows/improve.rs)
+/// - `gah-exp-{repo_id}-{seconds}-...` experiments (workflows/experiment.rs)
+/// - `gah-chat-{repo_id}-{session}`    chat sessions (apps/server
+///   chatSessions.ts: generated 8-hex/UUID, or any supplied
+///   `[a-zA-Z0-9_-]{1,128}` id)
 ///
-/// The suffix shape is what makes the `{repo_id}` segment exact: repo ids
-/// may themselves contain '-' (profiles `app` vs `app-web`), so a plain
-/// `starts_with("gah-{repo_id}-")` also swept another profile's worktrees
-/// and applied this profile's retention to them, with no chance to see the
-/// other profile's live-claim protection (#1547). Names that do not fit a
-/// known shape are retained rather than guessed at.
+/// The `{repo_id}` segment is exact: repo ids may themselves contain '-'
+/// (profiles `app` vs `app-web`), and the old plain
+/// `starts_with("gah-{repo_id}-")` sweep applied this profile's retention
+/// to another profile's worktrees, with no chance to see the other
+/// profile's live-claim protection (#1547). For dispatch and experiment
+/// names the generator's leading `{unix seconds}-` digit run is what makes
+/// the segment exact: `gah-app-web-...` cannot parse as profile `app`'s
+/// worktree because `web-` starts no timestamp.
+///
+/// Name matching is deliberately necessary but not sufficient. A name
+/// like `gah-exp-app-{seconds}-...` is a valid experiment worktree of
+/// profile `app` and a valid dispatch worktree of profile `exp-app`, and a
+/// chat name matches every repo id the string could be split around --
+/// so `prune_worktrees` additionally requires every candidate to resolve
+/// to this profile's repository before removing it (see
+/// `classify_worktree_ownership`).
+// ponytail: two profiles like `app` and `exp-app` configured on the SAME
+// repository remain ambiguous by name even after the ownership check --
+// their worktrees share one common git dir. The upgrade path is
+// recording the owning profile in the worktree metadata at creation.
 pub(crate) fn worktree_name_matches_profile(name: &str, repo_id: &str) -> bool {
     profile_scoped_suffix(name, "gah-", repo_id).is_some_and(is_dispatch_timestamp)
         || profile_scoped_suffix(name, "gah-exp-", repo_id).is_some_and(is_dispatch_timestamp)
@@ -282,35 +296,107 @@ fn profile_scoped_suffix<'a>(name: &'a str, prefix: &str, repo_id: &str) -> Opti
         .strip_prefix('-')
 }
 
-/// dispatch/identity.rs `timestamp()`: `{unix seconds}-{uuid v4 simple}`.
+/// The dispatch/identity.rs `timestamp()` generator always emits
+/// `"{unix seconds}-..."`, so the only invariant prune relies on is a
+/// non-empty run of ASCII digits followed by '-'. The tail after that
+/// separator is deliberately unconstrained: production worktrees exist
+/// with 25, 29, 30 and 33 character hex tails (observed on central), so
+/// requiring today's 32-char simple-UUID tail would silently disable
+/// their cleanup. Cross-profile collisions a loose tail cannot rule out
+/// are closed by the repository-ownership check, not by shape.
 fn is_dispatch_timestamp(suffix: &str) -> bool {
-    let Some((seconds, uuid)) = suffix.split_once('-') else {
-        return false;
-    };
-    !seconds.is_empty()
-        && seconds.bytes().all(|byte| byte.is_ascii_digit())
-        && uuid.len() == 32
-        && uuid.bytes().all(|byte| byte.is_ascii_hexdigit())
+    match suffix.split_once('-') {
+        Some((seconds, _)) => {
+            !seconds.is_empty() && seconds.bytes().all(|byte| byte.is_ascii_digit())
+        }
+        None => false,
+    }
 }
 
-/// chatSessions.ts session ids: `newSessionId()` emits hex
-/// (`randomBytes(4).toString('hex')`); the coordinator issues
-/// `randomUUID()` for fleet sessions. Both are dash-free hex or the
-/// canonical 8-4-4-4-12 UUID shape, which is what keeps a longer repo id's
-/// tail from parsing as this profile's session: `gah-chat-app-web-<id>`
-/// must never look like profile `app`'s session `web-<id>` (#1547).
+/// chatSessions.ts session ids: `newSessionId()` emits hex, the
+/// coordinator issues `randomUUID()`, and callers may supply any
+/// `[a-zA-Z0-9_-]{1,128}` id (e.g. `test-session`). The only total rule
+/// is therefore "non-empty"; any shape constraint would make valid
+/// current session ids permanently ineligible for prune. Cross-profile
+/// safety for chat names comes from the repository-ownership check, not
+/// from the session id.
 fn is_chat_session_id(suffix: &str) -> bool {
-    (!suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        || is_uuid_shaped(suffix)
+    !suffix.is_empty()
 }
 
-/// Canonical UUID shape: five all-hex groups of 8-4-4-4-12 characters.
-fn is_uuid_shaped(value: &str) -> bool {
-    let groups: Vec<&str> = value.split('-').collect();
-    groups.iter().map(|group| group.len()).collect::<Vec<_>>() == [8, 4, 4, 4, 12]
-        && groups
-            .iter()
-            .all(|group| group.bytes().all(|byte| byte.is_ascii_hexdigit()))
+/// What `git rev-parse --git-common-dir` says about a candidate worktree
+/// directory's relationship to this profile's repository. Mandatory for
+/// every candidate before removal (#1547): the naming rules above cannot
+/// separate every cross-profile collision (`gah-exp-app-...` belongs to
+/// both profiles `app` and `exp-app`; a chat name matches every repo id
+/// the string could be split around), but two profiles on different
+/// repositories can never share one common git dir.
+enum WorktreeOwnership {
+    /// A linked worktree of this profile's own repository: eligible for
+    /// removal under the existing age/clean/terminal rules.
+    Owned,
+    /// A linked worktree of a different repository -- another profile's
+    /// worktree sharing the worktree base. Retained and logged once;
+    /// this profile's retention, live-claim view and the
+    /// `remove_dir_all` fallback must never reach it.
+    Foreign,
+    /// Not a linked worktree at all: a plain non-git directory, a
+    /// standalone `git init` left behind by an interrupted removal, or a
+    /// worktree whose git admin metadata is already gone. Today's orphan
+    /// handling applies unchanged.
+    Orphan,
+}
+
+/// `git -C <dir> rev-parse --path-format=absolute <selector>`, or `None`
+/// when git does not resolve it (not a repository, broken admin metadata).
+/// Same invocation `worktree::lock_repo_git_state` uses, so linked-worktree
+/// profile checkouts resolve to their main repository's `.git` here too.
+fn rev_parse_absolute(dir: &Path, selector: &str) -> Option<PathBuf> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--path-format=absolute", selector])
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!value.is_empty()).then(|| PathBuf::from(value))
+}
+
+/// Path equality that symlinks (macOS `/tmp`, `/var`) cannot fool. Falls
+/// back to the raw comparison when either side cannot be canonicalized.
+fn same_repository_path(a: &Path, b: &Path) -> bool {
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+fn classify_worktree_ownership(
+    worktree: &Path,
+    profile_common_dir: Option<&Path>,
+) -> WorktreeOwnership {
+    let Some(common_dir) = rev_parse_absolute(worktree, "--git-common-dir") else {
+        return WorktreeOwnership::Orphan;
+    };
+    // A linked worktree keeps its admin state under the main repository's
+    // `.git/worktrees/`, so its common dir lies outside itself. A directory
+    // whose common dir is its own `.git` is a standalone repository -- the
+    // orphaned state an interrupted removal leaves behind.
+    if same_repository_path(&common_dir, &worktree.join(".git")) {
+        return WorktreeOwnership::Orphan;
+    }
+    let Some(profile_common_dir) = profile_common_dir else {
+        // This profile's repository itself cannot be resolved; fail closed
+        // rather than guess that a resolvable worktree belongs to it.
+        return WorktreeOwnership::Foreign;
+    };
+    if same_repository_path(&common_dir, profile_common_dir) {
+        WorktreeOwnership::Owned
+    } else {
+        WorktreeOwnership::Foreign
+    }
 }
 
 /// Returns the set of worktree directory names that correspond to branches
@@ -334,9 +420,10 @@ pub(crate) fn done_worktree_names_from_mrs(mrs: &[SyncMr]) -> HashSet<String> {
         if class == "MERGED" || class == "CLOSED_UNMERGED" {
             // Worktree directory names are the branch name with '/' replaced by '-'
             // (see worktree::create / worktree::create_existing). The prune
-            // profile-segment filter (`worktree_name_matches_profile`) already
-            // scopes results to this profile's `gah-{repo_id}-` /
-            // `gah-exp-{repo_id}-` names, so the bare transformed branch is enough.
+            // filters (`worktree_name_matches_profile` plus the repository
+            // ownership check) already scope results to this profile's own
+            // `gah-{repo_id}-` / `gah-exp-{repo_id}-` worktrees, so the bare
+            // transformed branch is enough.
             done.insert(worktree_name_for_branch(&mr.branch));
         }
     }
@@ -389,12 +476,17 @@ fn prune_worktrees(
     // `worktree_name_matches_profile`): repo ids may contain '-' themselves
     // (`app` vs `app-web`), so a plain `gah-{repo_id}-` prefix would also
     // sweep another profile's worktrees and apply this profile's retention
-    // to them (#1547). Chat-session worktrees (apps/server
-    // chatSessions.ts) share the base and the same age+clean rules: an
-    // idle-but-clean chat worktree is safe to reclaim because the
-    // session's durable state (log + branch) survives and the worktree
-    // rematerializes on resume; a dirty one is retained for the session's
-    // own archive-with-patch step, never force-removed.
+    // to them (#1547). Names that pass the filter are still not trusted
+    // blindly: `gah-exp-app-...` is a valid name for both profiles `app`
+    // and `exp-app`, so every removal candidate must additionally resolve
+    // to THIS profile's repository (`classify_worktree_ownership`).
+    // Chat-session worktrees (apps/server chatSessions.ts) share the base
+    // and the same age+clean rules: an idle-but-clean chat worktree is safe
+    // to reclaim because the session's durable state (log + branch)
+    // survives and the worktree rematerializes on resume; a dirty one is
+    // retained for the session's own archive-with-patch step, never
+    // force-removed.
+    let profile_common_dir = rev_parse_absolute(Path::new(&profile.local_path), "--git-common-dir");
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let path = entry.path();
@@ -414,6 +506,21 @@ fn prune_worktrees(
         let is_abandoned_open = abandoned_open.contains(name.as_str());
         let is_old = is_older_than(&path, cutoff);
         if !is_done && !is_abandoned_open && !is_old {
+            continue;
+        }
+        // Ownership check (#1547): a name-matched candidate that is a
+        // linked worktree of a different repository is another profile's
+        // worktree -- this profile's retention and the remove_dir_all
+        // fallback must not touch it. Orphaned directories keep today's
+        // handling below.
+        if matches!(
+            classify_worktree_ownership(&path, profile_common_dir.as_deref()),
+            WorktreeOwnership::Foreign
+        ) {
+            println!(
+                "  retained worktree {} (owned by another repository)",
+                path.display()
+            );
             continue;
         }
         // Never force-remove a dirty worktree. A terminal PR can still have
@@ -507,14 +614,98 @@ mod tests {
     use crate::sync::SyncMr;
     use std::collections::{HashMap, HashSet};
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime};
 
     /// A realistic dispatch/identity.rs `timestamp()`:
-    /// `"{unix seconds}-{uuid v4 simple}"`. Prune only considers exact
-    /// profile-shape names (#1547), so test fixtures must use the real
+    /// `"{unix seconds}-{uuid v4 simple}"`. Prune only considers
+    /// profile-shaped names (#1547), so test fixtures must use the real
     /// dispatch shape, not shorthand like `gah-repo-orphaned`.
     const TEST_DISPATCH_TS: &str = "1730000000-0123456789abcdef0123456789abcdef";
+
+    fn git(dir: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} in {} failed: {}",
+            args,
+            dir.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// A repository with one commit, so `git worktree add` can check out
+    /// HEAD.
+    fn init_repo_with_commit(path: &Path) {
+        git(path, &["init", "--quiet", "-b", "main"]);
+        git(
+            path,
+            &[
+                "-c",
+                "user.email=prune@test",
+                "-c",
+                "user.name=prune test",
+                "commit",
+                "--allow-empty",
+                "--quiet",
+                "-m",
+                "init",
+            ],
+        );
+    }
+
+    /// A linked worktree of `repo` at `dir` -- the shape
+    /// `worktree::create` produces: registered under the repository's
+    /// `.git/worktrees/`, sharing its common git dir. Prune is
+    /// directory-name driven, so the checked-out branch is irrelevant
+    /// to these regressions and the worktree is detached.
+    fn add_linked_worktree(repo: &Path, dir: &Path) {
+        git(
+            repo,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "--detach",
+                dir.to_str().unwrap(),
+            ],
+        );
+    }
+
+    fn touch_old(path: &Path) {
+        std::process::Command::new("touch")
+            .args(["-t", "202401010000", path.to_str().unwrap()])
+            .output()
+            .unwrap();
+    }
+
+    fn config_with_worktree_base(worktree_base: &Path) -> GahConfig {
+        GahConfig {
+            defaults: Defaults {
+                worktree_base: worktree_base.to_string_lossy().to_string(),
+                ..Default::default()
+            },
+            profiles: HashMap::new(),
+            context: Default::default(),
+        }
+    }
+
+    fn profile_on_repo(repo_id: &str, local_path: &Path) -> crate::config::Profile {
+        let mut profile = test_profile_for_notifications();
+        profile.repo_id = repo_id.to_string();
+        profile.local_path = local_path.to_string_lossy().to_string();
+        profile
+    }
+
+    fn day_ago_cutoff() -> SystemTime {
+        SystemTime::now()
+            .checked_sub(Duration::from_secs(86_400))
+            .unwrap()
+    }
 
     /// Regression for the "removed worktree" log lying about success: a
     /// worktree directory whose git admin metadata is already gone (e.g.
@@ -522,52 +713,30 @@ mod tests {
     /// remove -f` fail with "is not a working tree" every single run. The
     /// old code discarded that error and printed "removed" unconditionally,
     /// so the directory (and its disk usage) never actually went away.
+    /// The orphan classification (`classify_worktree_ownership`) must keep
+    /// this directory on today's handling, not retain it as foreign.
     #[test]
     fn prune_worktrees_falls_back_to_direct_removal_when_git_no_longer_tracks_it() {
         let worktree_base = tempfile::tempdir().unwrap();
-        let repo_id = "repo";
         let stale = worktree_base
             .path()
-            .join(format!("gah-{repo_id}-{TEST_DISPATCH_TS}"));
+            .join(format!("gah-repo-{TEST_DISPATCH_TS}"));
         fs::create_dir_all(&stale).unwrap();
-        std::process::Command::new("git")
-            .args(["init", "--quiet"])
-            .current_dir(&stale)
-            .output()
-            .unwrap();
         // Old enough to be eligible for pruning, and not registered as a
         // linked worktree of any repo -- reproducing the real orphaned state.
-        std::process::Command::new("touch")
-            .args(["-t", "202401010000", stale.to_str().unwrap()])
-            .output()
-            .unwrap();
+        git(&stale, &["init", "--quiet"]);
+        touch_old(&stale);
 
         let local_path = tempfile::tempdir().unwrap();
-        std::process::Command::new("git")
-            .args(["init", "--quiet"])
-            .current_dir(local_path.path())
-            .output()
-            .unwrap();
+        git(local_path.path(), &["init", "--quiet"]);
 
-        let cfg = GahConfig {
-            defaults: Defaults {
-                worktree_base: worktree_base.path().to_string_lossy().to_string(),
-                ..Default::default()
-            },
-            profiles: HashMap::new(),
-            context: Default::default(),
-        };
-        let mut profile = test_profile_for_notifications();
-        profile.repo_id = repo_id.to_string();
-        profile.local_path = local_path.path().to_string_lossy().to_string();
+        let cfg = config_with_worktree_base(worktree_base.path());
+        let profile = profile_on_repo("repo", local_path.path());
 
-        let cutoff = SystemTime::now()
-            .checked_sub(Duration::from_secs(86_400))
-            .unwrap();
         prune_worktrees(
             &cfg,
             &profile,
-            cutoff,
+            day_ago_cutoff(),
             false,
             &HashSet::new(),
             &HashSet::new(),
@@ -605,50 +774,24 @@ mod tests {
     #[test]
     fn prune_worktrees_reclaims_idle_chat_worktrees_and_ignores_foreign_dirs() {
         let worktree_base = tempfile::tempdir().unwrap();
-        let repo_id = "repo";
-        let chat = worktree_base
-            .path()
-            .join(format!("gah-chat-{repo_id}-abc123"));
+        let chat = worktree_base.path().join("gah-chat-repo-abc123");
         let foreign = worktree_base.path().join("someone-elses-worktree");
         for dir in [&chat, &foreign] {
             fs::create_dir_all(dir).unwrap();
-            std::process::Command::new("git")
-                .args(["init", "--quiet"])
-                .current_dir(dir)
-                .output()
-                .unwrap();
-            std::process::Command::new("touch")
-                .args(["-t", "202401010000", dir.to_str().unwrap()])
-                .output()
-                .unwrap();
+            git(dir, &["init", "--quiet"]);
+            touch_old(dir);
         }
 
         let local_path = tempfile::tempdir().unwrap();
-        std::process::Command::new("git")
-            .args(["init", "--quiet"])
-            .current_dir(local_path.path())
-            .output()
-            .unwrap();
+        git(local_path.path(), &["init", "--quiet"]);
 
-        let cfg = GahConfig {
-            defaults: Defaults {
-                worktree_base: worktree_base.path().to_string_lossy().to_string(),
-                ..Default::default()
-            },
-            profiles: HashMap::new(),
-            context: Default::default(),
-        };
-        let mut profile = test_profile_for_notifications();
-        profile.repo_id = repo_id.to_string();
-        profile.local_path = local_path.path().to_string_lossy().to_string();
+        let cfg = config_with_worktree_base(worktree_base.path());
+        let profile = profile_on_repo("repo", local_path.path());
 
-        let cutoff = SystemTime::now()
-            .checked_sub(Duration::from_secs(86_400))
-            .unwrap();
         prune_worktrees(
             &cfg,
             &profile,
-            cutoff,
+            day_ago_cutoff(),
             false,
             &HashSet::new(),
             &HashSet::new(),
@@ -667,9 +810,12 @@ mod tests {
     /// `app` vs `app-web`), so the old plain `starts_with("gah-{repo_id}-")`
     /// sweep for `app` also matched -- and removed -- `app-web`'s worktrees
     /// in the shared base, applying `app`'s retention to another profile's
-    /// work and ignoring `app-web`'s own live-claim protection. The match
-    /// must be exact on the profile segment: only this profile's own
-    /// dispatch/experiment/chat shapes are eligible.
+    /// work and ignoring `app-web`'s own live-claim protection. Dispatch
+    /// and experiment names are separated by the exact profile segment plus
+    /// the generator's leading `{unix seconds}-` digit run. The chat name
+    /// `gah-chat-app-web-...` still name-matches profile `app` (session ids
+    /// have no protective shape), so only the repository-ownership check
+    /// keeps it safe -- hence two distinct repositories in this fixture.
     #[test]
     fn prune_worktrees_does_not_sweep_a_longer_repo_ids_worktrees() {
         let worktree_base = tempfile::tempdir().unwrap();
@@ -683,51 +829,32 @@ mod tests {
             .path()
             .join(format!("gah-exp-app-web-{TEST_DISPATCH_TS}"));
         let foreign_chat = worktree_base.path().join("gah-chat-app-web-1a2b3c4d");
+
+        let app_repo = tempfile::tempdir().unwrap();
+        init_repo_with_commit(app_repo.path());
+        let app_web_repo = tempfile::tempdir().unwrap();
+        init_repo_with_commit(app_web_repo.path());
+
+        add_linked_worktree(app_repo.path(), &own);
+        for dir in [&foreign_dispatch, &foreign_experiment, &foreign_chat] {
+            add_linked_worktree(app_web_repo.path(), dir);
+        }
         for dir in [&own, &foreign_dispatch, &foreign_experiment, &foreign_chat] {
-            fs::create_dir_all(dir).unwrap();
-            std::process::Command::new("git")
-                .args(["init", "--quiet"])
-                .current_dir(dir)
-                .output()
-                .unwrap();
-            std::process::Command::new("touch")
-                .args(["-t", "202401010000", dir.to_str().unwrap()])
-                .output()
-                .unwrap();
+            touch_old(dir);
         }
 
-        let local_path = tempfile::tempdir().unwrap();
-        std::process::Command::new("git")
-            .args(["init", "--quiet"])
-            .current_dir(local_path.path())
-            .output()
-            .unwrap();
+        let app = profile_on_repo("app", app_repo.path());
+        let app_web = profile_on_repo("app-web", app_web_repo.path());
+        let mut cfg = config_with_worktree_base(worktree_base.path());
+        cfg.profiles = HashMap::from([
+            ("app".to_string(), app.clone()),
+            ("app-web".to_string(), app_web),
+        ]);
 
-        let mut app = test_profile_for_notifications();
-        app.repo_id = "app".to_string();
-        app.local_path = local_path.path().to_string_lossy().to_string();
-        let mut app_web = test_profile_for_notifications();
-        app_web.repo_id = "app-web".to_string();
-        app_web.local_path = local_path.path().to_string_lossy().to_string();
-        let cfg = GahConfig {
-            defaults: Defaults {
-                worktree_base: worktree_base.path().to_string_lossy().to_string(),
-                ..Default::default()
-            },
-            profiles: HashMap::from([
-                ("app".to_string(), app.clone()),
-                ("app-web".to_string(), app_web),
-            ]),
-            context: Default::default(),
-        };
-
-        let cutoff = SystemTime::now()
-            .checked_sub(Duration::from_secs(86_400))
-            .unwrap();
         prune_worktrees(
             &cfg,
             &app,
-            cutoff,
+            day_ago_cutoff(),
             false,
             &HashSet::new(),
             &HashSet::new(),
@@ -751,9 +878,156 @@ mod tests {
         }
     }
 
-    /// The pure core of the regression above, per prefix: this profile's own
-    /// shapes match, a longer repo id's never do, and the longer profile
-    /// still matches its own.
+    /// #1547: `gah-exp-app-{seconds}-...` is a valid experiment name for
+    /// profile `app` (via the `gah-exp-` prefix) and a valid dispatch name
+    /// for profile `exp-app` (via `gah-`); the naming rules alone cannot
+    /// separate the two. With the profiles on different repositories the
+    /// mandatory ownership check can: pruning `app` must retain
+    /// `exp-app`'s worktree, and the owning profile must still reclaim it.
+    #[test]
+    fn prune_worktrees_owns_colliding_exp_names_by_repository() {
+        let worktree_base = tempfile::tempdir().unwrap();
+        let colliding = worktree_base
+            .path()
+            .join(format!("gah-exp-app-{TEST_DISPATCH_TS}"));
+
+        let app_repo = tempfile::tempdir().unwrap();
+        init_repo_with_commit(app_repo.path());
+        let exp_app_repo = tempfile::tempdir().unwrap();
+        init_repo_with_commit(exp_app_repo.path());
+
+        add_linked_worktree(exp_app_repo.path(), &colliding);
+        touch_old(&colliding);
+
+        let app = profile_on_repo("app", app_repo.path());
+        let exp_app = profile_on_repo("exp-app", exp_app_repo.path());
+        let mut cfg = config_with_worktree_base(worktree_base.path());
+        cfg.profiles = HashMap::from([
+            ("app".to_string(), app.clone()),
+            ("exp-app".to_string(), exp_app.clone()),
+        ]);
+
+        prune_worktrees(
+            &cfg,
+            &app,
+            day_ago_cutoff(),
+            false,
+            &HashSet::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        )
+        .unwrap();
+        assert!(
+            colliding.exists(),
+            "profile app must not apply its retention to exp-app's worktree just because the name collides (#1547)"
+        );
+
+        prune_worktrees(
+            &cfg,
+            &exp_app,
+            day_ago_cutoff(),
+            false,
+            &HashSet::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        )
+        .unwrap();
+        assert!(
+            !colliding.exists(),
+            "the owning profile must still reclaim its own worktree"
+        );
+    }
+
+    /// Production regression (#1547 review): central carries existing
+    /// dispatch worktrees whose tails are not the current 32-char simple
+    /// UUID, e.g. the exact name `gah-gah-1785867579-c6a81b07cce4497f496a04981ffd7`
+    /// (29 hex chars). A 32-hex requirement silently disabled their
+    /// cleanup; the name rule only requires the generator's
+    /// `{unix seconds}-` segment, and the real worktree of this profile's
+    /// repository must stay prunable.
+    #[test]
+    fn prune_worktrees_reclaims_production_worktrees_with_non_uuid_tails() {
+        let worktree_base = tempfile::tempdir().unwrap();
+        let production = worktree_base
+            .path()
+            .join("gah-gah-1785867579-c6a81b07cce4497f496a04981ffd7");
+
+        let repo = tempfile::tempdir().unwrap();
+        init_repo_with_commit(repo.path());
+        add_linked_worktree(repo.path(), &production);
+        touch_old(&production);
+
+        let cfg = config_with_worktree_base(worktree_base.path());
+        let profile = profile_on_repo("gah", repo.path());
+
+        prune_worktrees(
+            &cfg,
+            &profile,
+            day_ago_cutoff(),
+            false,
+            &HashSet::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        )
+        .unwrap();
+
+        assert!(
+            !production.exists(),
+            "the exact production-shaped name observed on central must stay prunable"
+        );
+    }
+
+    /// #1547: chat session ids may be any supplied `[a-zA-Z0-9_-]{1,128}`
+    /// string (apps/server chatSessions.ts, e.g. `test-session`), so the
+    /// chat name rule accepts any non-empty session and cannot separate
+    /// profiles by shape at all. Ownership must carry that: this
+    /// repository's chat worktree is reclaimed, a name-matching chat
+    /// worktree of another repository is retained.
+    #[test]
+    fn prune_worktrees_owns_chat_worktrees_by_repository_not_session_shape() {
+        let worktree_base = tempfile::tempdir().unwrap();
+        let own = worktree_base.path().join("gah-chat-app-test-session");
+        let foreign = worktree_base.path().join("gah-chat-app-coordinator-issued");
+
+        let app_repo = tempfile::tempdir().unwrap();
+        init_repo_with_commit(app_repo.path());
+        let other_repo = tempfile::tempdir().unwrap();
+        init_repo_with_commit(other_repo.path());
+
+        add_linked_worktree(app_repo.path(), &own);
+        add_linked_worktree(other_repo.path(), &foreign);
+        touch_old(&own);
+        touch_old(&foreign);
+
+        let cfg = config_with_worktree_base(worktree_base.path());
+        let profile = profile_on_repo("app", app_repo.path());
+
+        prune_worktrees(
+            &cfg,
+            &profile,
+            day_ago_cutoff(),
+            false,
+            &HashSet::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        )
+        .unwrap();
+
+        assert!(
+            !own.exists(),
+            "a chat worktree of this repository with a custom dashed session id must be reclaimed"
+        );
+        assert!(
+            foreign.exists(),
+            "a name-matching chat worktree of another repository must be retained (#1547)"
+        );
+    }
+
+    /// The pure core of the regressions above, per prefix: this profile's
+    /// own shapes match, a longer repo id's dispatch/experiment names
+    /// never do, and chat names -- whose session ids have no protective
+    /// shape -- match every repo id the name could be split around,
+    /// leaving cross-profile retention to the ownership check.
     #[test]
     fn worktree_match_is_exact_on_the_profile_segment() {
         assert!(worktree_name_matches_profile(
@@ -772,6 +1046,11 @@ mod tests {
             "gah-chat-app-3f2a1c0d-9b8e-4c21-8d5a-2f1e0a9b7c6d",
             "app"
         ));
+        // A supplied custom id (chatSessions.ts `[a-zA-Z0-9_-]{1,128}`).
+        assert!(worktree_name_matches_profile(
+            "gah-chat-app-test-session",
+            "app"
+        ));
 
         assert!(!worktree_name_matches_profile(
             &format!("gah-app-web-{TEST_DISPATCH_TS}"),
@@ -781,10 +1060,30 @@ mod tests {
             &format!("gah-exp-app-web-{TEST_DISPATCH_TS}"),
             "app"
         ));
-        assert!(!worktree_name_matches_profile(
+
+        // The chat segment cannot separate profiles: `web-1a2b3c4d` is a
+        // valid non-empty session for `app` and the real session for
+        // `app-web`. Retaining the foreign one is the ownership check's
+        // job (prune_worktrees_does_not_sweep_a_longer_repo_ids_worktrees).
+        assert!(worktree_name_matches_profile(
             "gah-chat-app-web-1a2b3c4d",
             "app"
         ));
+        assert!(worktree_name_matches_profile(
+            "gah-chat-app-web-1a2b3c4d",
+            "app-web"
+        ));
+        // The exp-app/app collision the ownership check must carry:
+        // `gah-exp-app-...` is `app`'s experiment and `exp-app`'s
+        // dispatch name at once.
+        assert!(worktree_name_matches_profile(
+            &format!("gah-exp-app-{TEST_DISPATCH_TS}"),
+            "exp-app"
+        ));
+
+        // No session segment at all is never a session.
+        assert!(!worktree_name_matches_profile("gah-chat-app-", "app"));
+        assert!(!worktree_name_matches_profile("gah-chat-app", "app"));
 
         assert!(worktree_name_matches_profile(
             &format!("gah-app-web-{TEST_DISPATCH_TS}"),
@@ -800,30 +1099,44 @@ mod tests {
         ));
     }
 
-    /// The dispatch suffix must be the exact identity.rs timestamp shape;
-    /// anything else is another repo's (or a human's) directory and is
-    /// retained.
+    /// The dispatch suffix only has to start with the generator's
+    /// `{unix seconds}-` segment; the tail after it is unconstrained
+    /// because production worktrees carry 25, 29, 30 and 33 character
+    /// hex tails. Without the leading digit run the name is another
+    /// repo's (or a human's) directory and is retained.
     #[test]
-    fn worktree_match_requires_the_dispatch_timestamp_shape() {
+    fn worktree_match_requires_the_dispatch_timestamp_segment() {
         for name in [
-            format!("gah-app-{TEST_DISPATCH_TS}-extra"),
-            "gah-app-1730000000".to_string(),
+            format!("gah-app-{TEST_DISPATCH_TS}"),
             "gah-app-1730000000-deadbeef".to_string(),
-            format!(
-                "gah-app-1730000000-{}",
-                "0123456789abcdef0123456789abcde" // 31 hex, not a uuid
-            ),
+            format!("gah-app-1730000000-{TEST_DISPATCH_TS}-extra"),
+            // The exact production name observed on central (29-hex tail).
+            "gah-gah-1785867579-c6a81b07cce4497f496a04981ffd7".to_string(),
+            // The other observed tail lengths: 25, 30 and 33 hex chars.
+            format!("gah-gah-1785867579-{}", "a".repeat(25)),
+            format!("gah-gah-1785867579-{}", "b".repeat(30)),
+            format!("gah-gah-1785867579-{}", "c".repeat(33)),
+        ] {
+            let repo_id = if name.starts_with("gah-gah-") {
+                "gah"
+            } else {
+                "app"
+            };
+            assert!(
+                worktree_name_matches_profile(&name, repo_id),
+                "{name} must match profile {repo_id}"
+            );
+        }
+        for name in [
+            "gah-app-1730000000".to_string(),
             "gah-app-not-a-timestamp".to_string(),
+            "gah-app-web-1730000000-x".to_string(),
         ] {
             assert!(
                 !worktree_name_matches_profile(&name, "app"),
                 "{name} must not match profile app"
             );
         }
-        assert!(worktree_name_matches_profile(
-            &format!("gah-app-{TEST_DISPATCH_TS}"),
-            "app"
-        ));
     }
 
     #[test]

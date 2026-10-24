@@ -733,7 +733,11 @@ fn loop_once_prunes_terminal_and_abandoned_open_worktrees_but_retains_live_claim
     // Realistic dispatch branches (`{seconds}-{uuid v4 simple}`, see
     // src/dispatch/identity.rs): prune only considers exact profile-shape
     // worktree names (src/prune.rs, #1547). The trailing 913/914/915 keeps
-    // the tickets distinguishable inside the 32-hex uuid.
+    // the tickets distinguishable inside the 32-hex uuid. The fake gh
+    // head.ref values below must mirror these full branch names:
+    // automatic_worktree_sets compares full branch names, so a stale short
+    // ref would reclassify the abandoned-open case as terminal and let
+    // this test pass with the abandoned-open path broken.
     let terminal_branch = "gah/real-1730000000-11111111111111111111111111111913";
     let abandoned_branch = "gah/real-1730000000-11111111111111111111111111111914";
     let active_branch = "gah/real-1730000000-11111111111111111111111111111915";
@@ -821,7 +825,7 @@ fn loop_once_prunes_terminal_and_abandoned_open_worktrees_but_retains_live_claim
     make_fake_bin_with_body(
         &fake_bin,
         "gh",
-        "#!/bin/sh\ncase \"$4\" in\n  */pulls?*) echo '[{\"title\":\"[GAH] Fix: TICKET-914\",\"body\":\"\",\"head\":{\"ref\":\"gah/real-914\",\"sha\":\"abandoned-sha\"},\"html_url\":\"https://github.com/owner/real/pull/2\",\"labels\":[{\"name\":\"gah-ready-for-human\"}],\"number\":2,\"state\":\"open\",\"draft\":false,\"updated_at\":\"2099-01-01T00:00:00Z\"},{\"title\":\"[GAH] Fix: TICKET-915\",\"body\":\"\",\"head\":{\"ref\":\"gah/real-915\",\"sha\":\"active-sha\"},\"html_url\":\"https://github.com/owner/real/pull/3\",\"labels\":[{\"name\":\"gah-ready-for-human\"}],\"number\":3,\"state\":\"open\",\"draft\":false,\"updated_at\":\"2099-01-01T00:00:00Z\"}]'; exit 0;;\n  */check-runs?*) echo '{\"total_count\":0,\"check_runs\":[]}'; exit 0;;\n  */issues?*) echo '[]'; exit 0;;\nesac\necho \"unexpected gh invocation: $@\" >&2\nexit 1\n",
+        "#!/bin/sh\ncase \"$4\" in\n  */pulls?*) echo '[{\"title\":\"[GAH] Fix: TICKET-914\",\"body\":\"\",\"head\":{\"ref\":\"gah/real-1730000000-11111111111111111111111111111914\",\"sha\":\"abandoned-sha\"},\"html_url\":\"https://github.com/owner/real/pull/2\",\"labels\":[{\"name\":\"gah-ready-for-human\"}],\"number\":2,\"state\":\"open\",\"draft\":false,\"updated_at\":\"2099-01-01T00:00:00Z\"},{\"title\":\"[GAH] Fix: TICKET-915\",\"body\":\"\",\"head\":{\"ref\":\"gah/real-1730000000-11111111111111111111111111111915\",\"sha\":\"active-sha\"},\"html_url\":\"https://github.com/owner/real/pull/3\",\"labels\":[{\"name\":\"gah-ready-for-human\"}],\"number\":3,\"state\":\"open\",\"draft\":false,\"updated_at\":\"2099-01-01T00:00:00Z\"}]'; exit 0;;\n  */check-runs?*) echo '{\"total_count\":0,\"check_runs\":[]}'; exit 0;;\n  */issues?*) echo '[]'; exit 0;;\nesac\necho \"unexpected gh invocation: $@\" >&2\nexit 1\n",
     );
 
     bin()
