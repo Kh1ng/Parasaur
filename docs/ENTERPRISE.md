@@ -12,6 +12,8 @@ GitHub access to the private repository is required. A recursive clone attempts 
 
 The private repository contains the managed Supabase integration and its implementation tickets. Its [handoff](https://github.com/Kh1ng/git-agent-harness-enterprise/blob/main/docs/tickets/README.md) describes the private work. Public backlog items belong in GitHub issues.
 
+The public migrations and config are enough to run your own Supabase project. See [Self-hosted Supabase setup](SELF_HOSTED_SUPABASE.md).
+
 Public core interfaces remain available for independent integrations. Existing local HTTP, live-message, and provider interfaces remain unchanged by this submodule reference.
 
 Keep enterprise source, deployment credentials, node credentials, and provider login files out of public changes and build artifacts. Git submodule access does not grant workspace membership, provider account permission, or a product entitlement.
