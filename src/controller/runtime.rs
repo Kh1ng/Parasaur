@@ -1261,17 +1261,18 @@ pub(crate) fn run_dispatch_and_record(
             } else {
                 crate::events::EventType::DispatchFinished
             };
-            let reason_code = if matches!(event_type, crate::events::EventType::DispatchFinished)
-                && e.chain().any(|cause| {
-                    cause
-                        .downcast_ref::<crate::routing::RouteError>()
-                        .is_some_and(|route_error| {
-                            matches!(
-                                route_error,
-                                crate::routing::RouteError::ApprovalRequired { .. }
-                            )
-                        })
-                }) {
+            let reason_code = if crate::policy::policy_blocked(&e).is_some()
+                || (matches!(event_type, crate::events::EventType::DispatchFinished)
+                    && e.chain().any(|cause| {
+                        cause
+                            .downcast_ref::<crate::routing::RouteError>()
+                            .is_some_and(|route_error| {
+                                matches!(
+                                    route_error,
+                                    crate::routing::RouteError::ApprovalRequired { .. }
+                                )
+                            })
+                    })) {
                 Some(HumanRequiredReason::PolicyApproval.as_str())
             } else {
                 None
@@ -1302,3 +1303,7 @@ mod capacity_tests;
 #[cfg(test)]
 #[path = "runtime/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "runtime/policy_tests.rs"]
+mod policy_tests;

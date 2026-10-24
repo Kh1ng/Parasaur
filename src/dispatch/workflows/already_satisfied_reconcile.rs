@@ -133,8 +133,7 @@ fn reconcile_already_satisfied_publish(context: AlreadySatisfiedContext<'_>) -> 
     ) {
         AlreadySatisfiedPublishOutcome::Proceed => Ok(false),
         AlreadySatisfiedPublishOutcome::CloseIdempotently(evidence) => {
-            if let Err(error) = super::super::mutation_policy::enforce_policy(profile, "edit-issue")
-            {
+            if let Err(error) = crate::policy::enforce_policy(profile, "edit-issue") {
                 let reason = format!(
                     "already_satisfied was grounded, but source issue mutation policy denied closure: {error:#}"
                 );

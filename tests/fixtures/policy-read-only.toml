@@ -1,0 +1,7 @@
+[repo]
+trust_mode = "read_only"
+allow_provider_mutation = true
+allow_push = true
+allow_draft_pr = true
+allow_issue_write = true
+allow_project_write = true

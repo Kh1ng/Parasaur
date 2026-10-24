@@ -1252,3 +1252,6 @@ mod comment_tests;
 mod parallel_tests;
 #[path = "tests/publication_tests.rs"]
 mod publication_tests;
+
+#[path = "tests/policy_tests.rs"]
+mod policy_tests;

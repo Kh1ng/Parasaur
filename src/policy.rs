@@ -22,12 +22,61 @@ fn repo_allows_action(repo: &RepoPolicy, action: &str) -> bool {
                 repo.allow_provider_mutation && repo.allow_push && repo.allow_draft_pr
             }
             "edit-issue" => repo.allow_issue_write,
+            "merge" | "review" | "mark-ready" => repo.allow_provider_mutation,
             "git-push" => repo.allow_push,
             "git-push-prod" => repo.allow_project_write,
             _ => false,
         },
         _ => false,
     }
+}
+
+/// Refuse a repository mutation unless the profile's current policy permits it.
+pub(crate) fn enforce_policy(profile: &crate::config::Profile, action: &str) -> Result<()> {
+    let Some(policy_path) = &profile.policy_path else {
+        return Ok(()); // no policy file = trust the user
+    };
+    let allowed = config_allows_action(Path::new(policy_path), action)
+        .map_err(|error| PolicyBlocked(format!("POLICY BLOCKED: {error:#}")))?;
+    if allowed {
+        Ok(())
+    } else {
+        Err(PolicyBlocked(format!(
+            "POLICY BLOCKED: action={action:?} is not allowed by {policy_path}. \
+             Set the matching permission in that policy or pass --override-policy if you know what you're doing."
+        )).into())
+    }
+}
+
+/// A durable policy refusal, distinct from a retryable provider failure.
+#[derive(Debug, Clone)]
+pub(crate) struct PolicyBlocked(String);
+
+impl std::fmt::Display for PolicyBlocked {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for PolicyBlocked {}
+
+pub(crate) fn policy_blocked(error: &anyhow::Error) -> Option<&PolicyBlocked> {
+    error.chain().find_map(|cause| cause.downcast_ref())
+}
+
+/// Reuse the ledger's durable human gate so a refusal is not retried each tick.
+pub(crate) fn stamp_refusal(entry: &mut crate::ledger::LedgerEntry, error: &anyhow::Error) {
+    entry.work_id = entry.work_id.take().or_else(|| entry.branch.clone());
+    entry.dispatch_reason = Some("repo_policy_blocked".into());
+    entry.human_required = true;
+    entry.human_required_reason_code = Some("policy_approval".into());
+    entry.set_failure(
+        crate::ledger::FailureClass::HumanBlocked,
+        crate::ledger::FailureStage::Dispatch,
+    );
+    entry.validation_result = Some("policy_blocked".into());
+    entry.review_contract_version = Some(crate::ledger::REVIEW_CONTRACT_VERSION);
+    entry.error_summary = Some(format!("{error:#}"));
 }
 
 pub fn run(config: &str, action: &str) -> Result<()> {
@@ -63,6 +112,9 @@ mod tests {
         assert!(!repo_allows_action(&policy, "edit-issue"));
         assert!(!repo_allows_action(&policy, "git-push-prod"));
         assert!(!repo_allows_action(&policy, "unknown"));
+        for action in ["merge", "review", "mark-ready"] {
+            assert!(repo_allows_action(&policy, action));
+        }
     }
 
     #[test]
@@ -71,5 +123,22 @@ mod tests {
         policy.trust_mode = "future_mode".into();
         assert!(!repo_allows_action(&policy, "edit-issue"));
         assert!(!repo_allows_action(&policy, "open-draft-pr"));
+    }
+
+    #[test]
+    fn provider_actions_require_provider_permission_and_known_write_trust() {
+        let mut policy = policy();
+        for trust in ["read_only", "future_mode", "draft_pr_allowed"] {
+            for allowed in [true, false] {
+                policy.trust_mode = trust.into();
+                policy.allow_provider_mutation = allowed;
+                for action in ["merge", "review", "mark-ready"] {
+                    assert_eq!(
+                        repo_allows_action(&policy, action),
+                        trust == "draft_pr_allowed" && allowed
+                    );
+                }
+            }
+        }
     }
 }

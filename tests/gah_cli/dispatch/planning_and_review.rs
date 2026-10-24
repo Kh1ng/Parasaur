@@ -1257,3 +1257,79 @@ fn review_by_mr_uses_provider_metadata_even_when_repo_is_on_main() {
     let verdict = fs::read_to_string(session_dir.join("review-verdict.json")).unwrap();
     assert!(verdict.contains("\"verdict\": \"APPROVE\""));
 }
+
+#[test]
+fn review_policy_refusal_records_a_durable_hold_without_posting() {
+    let tmp = test_tempdir();
+    let (repo, fake_bin, _) = setup_review_repo_and_gh(&tmp);
+    let policy = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/policy-read-only.toml");
+    let cfg = write_real_repo_config_with_extra(
+        &tmp,
+        &repo,
+        "github",
+        &format!(
+            "policy_path = '{}'\n[profiles.real.routing]\nreview_backend = 'claude'\n",
+            policy.display()
+        ),
+        "",
+    );
+    make_fake_bin_with_body(
+        &fake_bin,
+        "claude",
+        r#"#!/bin/sh
+cat <<'EOF'
+Review notes
+{"verdict":"APPROVE","confidence":"high","human_required":false,"blocking_findings":[],"non_blocking_findings":[],"risk_notes":[],"evidence":["file:src.txt"]}
+EOF
+"#,
+    );
+    let gh = fake_bin.join("gh");
+    let calls = tmp.path().join("gh-calls");
+    let script = fs::read_to_string(&gh).unwrap().replacen(
+        "#!/bin/sh\n",
+        &format!("#!/bin/sh\necho \"$*\" >> '{}'\n", calls.display()),
+        1,
+    );
+    make_fake_bin_with_body(&fake_bin, "gh", &script);
+    let ledger = tmp.path().join("ledger.jsonl");
+    let events = tmp.path().join("events.jsonl");
+    bin()
+        .args([
+            "dispatch",
+            "--profile",
+            "real",
+            "--mode",
+            "review",
+            "--branch",
+            "feature/review",
+            "--config-path",
+            cfg.to_str().unwrap(),
+        ])
+        .env("PATH", prepend_path(&fake_bin))
+        .env("GAH_LEDGER_PATH", &ledger)
+        .env("GAH_EVENTS_PATH", &events)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("POLICY BLOCKED"));
+    let entries: Vec<Value> = fs::read_to_string(ledger)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let terminal = entries.last().unwrap();
+    assert_eq!(terminal["human_required"], true);
+    assert_eq!(terminal["human_required_reason_code"], "policy_approval");
+    assert_eq!(terminal["dispatch_reason"], "repo_policy_blocked");
+    assert_eq!(terminal["failure_class"], "human_blocked");
+    let events = fs::read_to_string(events).unwrap();
+    assert!(events.contains("dispatch_finished"));
+    assert!(events.contains("policy_approval"));
+    let calls = fs::read_to_string(calls).unwrap();
+    assert!(
+        calls
+            .lines()
+            .all(|call| call.starts_with("api --method GET ") || call.starts_with("pr view ")),
+        "{calls}"
+    );
+}

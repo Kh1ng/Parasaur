@@ -358,11 +358,17 @@ pub(super) struct IssueLease {
 #[derive(Debug)]
 struct LeaseState {
     /// Why the lease is lost, once it is. Never cleared.
-    lost: Option<String>,
+    lost: Option<LeaseLoss>,
     /// When the claim expires unless a renewal is confirmed first. A renewal
     /// moves it to a TTL after the renewal began, which is no later than the
     /// time the provider records for it.
     deadline: Instant,
+}
+
+#[derive(Debug, Clone)]
+enum LeaseLoss {
+    Claim(String),
+    Policy(crate::policy::PolicyBlocked),
 }
 
 impl IssueLease {
@@ -420,6 +426,13 @@ impl IssueLease {
                         return;
                     }
                     Err(error) => {
+                        if let Some(blocked) = crate::policy::policy_blocked(&error) {
+                            lock(&thread_state).lost = Some(LeaseLoss::Policy(blocked.clone()));
+                            eprintln!(
+                                "warning: stopped renewing the claim on {claimed}: {error:#}"
+                            );
+                            return;
+                        }
                         failed = true;
                         eprintln!(
                             "warning: could not renew the claim on {claimed}; \
@@ -445,10 +458,13 @@ impl IssueLease {
     fn ensure_held(&self) -> Result<()> {
         let mut state = lock(&self.state);
         if state.lost.is_none() && Instant::now() >= state.deadline {
-            state.lost = Some("the claim expired before a renewal was confirmed".to_string());
+            state.lost = Some(LeaseLoss::Claim(
+                "the claim expired before a renewal was confirmed".to_string(),
+            ));
         }
         match state.lost.clone() {
-            Some(reason) => Err(IssueClaimLost {
+            Some(LeaseLoss::Policy(error)) => Err(error.into()),
+            Some(LeaseLoss::Claim(reason)) => Err(IssueClaimLost {
                 target: self.target.clone(),
                 reason,
             }
@@ -463,7 +479,9 @@ fn lock(state: &Mutex<LeaseState>) -> std::sync::MutexGuard<'_, LeaseState> {
 }
 
 fn lose(state: &Mutex<LeaseState>, reason: &str) {
-    lock(state).lost.get_or_insert_with(|| reason.to_string());
+    lock(state)
+        .lost
+        .get_or_insert_with(|| LeaseLoss::Claim(reason.to_string()));
 }
 
 /// Record a renewal that succeeded, observed at `now`: move the deadline to
@@ -475,7 +493,9 @@ fn lose(state: &Mutex<LeaseState>, reason: &str) {
 fn confirm_renewal(state: &Mutex<LeaseState>, extended: Instant, now: Instant) -> bool {
     let mut state = lock(state);
     if state.lost.is_none() && now >= state.deadline {
-        state.lost = Some("the claim expired before its renewal was confirmed".to_string());
+        state.lost = Some(LeaseLoss::Claim(
+            "the claim expired before its renewal was confirmed".to_string(),
+        ));
     }
     if state.lost.is_some() {
         return false;
@@ -850,6 +870,7 @@ impl<'a> GithubBoard<'a> {
     }
 
     fn for_writing(profile: &'a Profile) -> Result<Self> {
+        crate::policy::enforce_policy(profile, "edit-issue")?;
         if !profile.publishing.allow_issue_comments {
             anyhow::bail!(
                 "issue_claim.mode = \"github_assignee\" posts claim comments, \
@@ -977,6 +998,7 @@ impl IssueBoard for GithubBoard<'_> {
     /// Editing the claim comment moves its `updated_at`, which is the
     /// renewal. An edit notifies nobody, unlike a fresh comment.
     fn renew_claim(&self, comment_id: u64, body: &str) -> Result<()> {
+        crate::policy::enforce_policy(self.profile, "edit-issue")?;
         let endpoint = format!("repos/{}/issues/comments/{comment_id}", self.profile.repo);
         let body = format!("body={body}");
         self.gh(

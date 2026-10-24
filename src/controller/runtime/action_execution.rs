@@ -58,7 +58,18 @@ pub(crate) fn execute_action(
             Ok(deferred.unwrap_or_else(|| format!("Dispatched review for branch '{branch}'")))
         }
         NextAction::MarkReadyForReview { branch, .. } => {
-            crate::provider::mark_ready_for_review(profile, branch)?;
+            if let Err(error) = crate::provider::mark_ready_for_review(profile, branch) {
+                if crate::policy::policy_blocked(&error).is_some() {
+                    return dispatch_policy::record_policy_refusal(
+                        cfg,
+                        profile_name,
+                        action,
+                        None,
+                        &error,
+                    );
+                }
+                return Err(error);
+            }
             Ok(format!("Marked MR on branch '{branch}' ready for review"))
         }
         NextAction::FixMr {

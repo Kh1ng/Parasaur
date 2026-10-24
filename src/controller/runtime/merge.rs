@@ -30,6 +30,15 @@ pub(super) fn execute(
         Some(&run_id),
         "merge",
     )?;
+    if let Err(error) = crate::policy::enforce_policy(profile, "merge") {
+        return super::dispatch_policy::record_policy_refusal(
+            cfg,
+            profile_name,
+            action,
+            Some(&run_id),
+            &error,
+        );
+    }
     let gitlab_mwps =
         merge_policy == crate::config::MergePolicy::GitlabMwps && profile.provider == "gitlab";
     let expected_generation = review_generation.as_deref().ok_or_else(|| {

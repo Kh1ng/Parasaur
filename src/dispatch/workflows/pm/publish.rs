@@ -130,7 +130,7 @@ pub(crate) fn publish_plan(
         profile.publishing.pm_max_children()
     );
     if !dry_run {
-        crate::dispatch::mutation_policy::enforce_policy(profile, "edit-issue")?;
+        crate::policy::enforce_policy(profile, "edit-issue")?;
     }
 
     let source_issue_number = parse_issue_number(&artifact.target)?;

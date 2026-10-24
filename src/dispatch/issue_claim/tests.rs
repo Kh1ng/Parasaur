@@ -428,7 +428,7 @@ fn a_lost_lease_stops_the_dispatch_with_a_claim_lost_error() {
     let lease = IssueLease {
         target: issue_7(),
         state: Arc::new(Mutex::new(LeaseState {
-            lost: Some(format!("lease taken over by {MICHAEL}")),
+            lost: Some(LeaseLoss::Claim(format!("lease taken over by {MICHAEL}"))),
             deadline: Instant::now() + Duration::from_secs(3600),
         })),
         stop: None,
@@ -1095,4 +1095,88 @@ fn a_lost_claim_does_not_count_as_an_attempt_on_the_issue() {
     assert_eq!(scan.available_tickets.len(), 1);
     assert_eq!(scan.available_tickets[0].prior_attempt_count, 0);
     assert_eq!(scan.available_tickets[0].last_failure_class, None);
+}
+
+#[test]
+fn claim_writes_refused_when_repo_policy_disallows_issue_writes() {
+    let _exec = ExecGuard::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let calls = install_renewal_gh(&bin, "echo called >> \"$marker\"; exit 1");
+    let _path = PathGuard::set(&bin);
+    let path = tmp.path().join("policy.toml");
+    let read_only = include_str!("../../../tests/fixtures/policy-read-only.toml");
+    for text in [
+        read_only.to_string(),
+        read_only
+            .replace("read_only", "draft_pr_allowed")
+            .replace("allow_issue_write = true", "allow_issue_write = false"),
+    ] {
+        std::fs::write(&path, text).unwrap();
+        let mut prof = profile(tmp.path());
+        prof.publishing.issue_claim = policy(&[]);
+        prof.policy_path = Some(path.display().to_string());
+        for target in [issue_7(), pull_request_12()] {
+            let error = claim_or_lose(&prof, &target, &mut ledger_entry(&prof)).unwrap_err();
+            assert!(crate::policy::policy_blocked(&error).is_some(), "{error:#}");
+        }
+        let board = GithubBoard::for_reading(&prof).unwrap();
+        let error = board.renew_claim(1, "renewed").unwrap_err();
+        assert!(crate::policy::policy_blocked(&error).is_some(), "{error:#}");
+        assert!(
+            !calls.exists(),
+            "a policy refusal must not call the provider"
+        );
+    }
+}
+
+#[test]
+fn policy_blocked_renewal_stops_and_preserves_the_policy_refusal() {
+    let _exec = ExecGuard::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let now = OffsetDateTime::now_utc().format(&Rfc3339).unwrap();
+    let calls = install_renewal_gh(
+        &bin,
+        &format!(
+            r#"
+case "$*" in
+  *PATCH*) echo write >> "$marker"; exit 1 ;;
+  *comments*) echo '{{"id":1,"login":"me","created_at":"{now}","updated_at":"{now}"}}' ;;
+  *) echo me ;;
+esac
+"#
+        ),
+    );
+    let _path = PathGuard::set(&bin);
+    let policy_file = tmp.path().join("policy.toml");
+    let read_only = include_str!("../../../tests/fixtures/policy-read-only.toml");
+    std::fs::write(
+        &policy_file,
+        read_only.replace("read_only", "draft_pr_allowed"),
+    )
+    .unwrap();
+    let mut prof = profile(tmp.path());
+    prof.publishing.issue_claim = policy(&[]);
+    prof.policy_path = Some(policy_file.display().to_string());
+    let board = GithubBoard::for_writing(&prof).unwrap();
+    // An existing claim must recheck the file before its next renewal.
+    std::fs::write(&policy_file, read_only).unwrap();
+    assert!(crate::policy::policy_blocked(&board.renew_claim(1, "renewed").unwrap_err()).is_some());
+    let lease = IssueLease::start(
+        &prof,
+        &issue_7(),
+        "me".into(),
+        Instant::now() + Duration::from_secs(30),
+        claim_ttl(&prof.publishing.issue_claim),
+    );
+    assert!(wait_for(
+        || lease.ensure_held().is_err(),
+        Duration::from_secs(2)
+    ));
+    let error = lease.ensure_held().unwrap_err();
+    assert!(crate::policy::policy_blocked(&error).is_some(), "{error:#}");
+    assert!(issue_claim_lost(&error).is_none());
+    drop(lease);
+    assert!(!calls.exists(), "a refused renewal must never write");
 }
