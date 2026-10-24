@@ -1,5 +1,90 @@
 use super::*;
 
+#[test]
+fn config_orchestration_startup_validation_and_redacted_show() {
+    let tmp = test_tempdir();
+    let path = tmp.path().join("config.toml");
+    let gah = || {
+        let mut command = bin();
+        command
+            .env("GAH_CONFIG", &path)
+            .env_remove("GAH_SUPABASE_URL")
+            .env_remove("GAH_SUPABASE_ANON_KEY")
+            .env(
+                "GAH_SUPABASE_SERVICE_ROLE_KEY",
+                "obviously-fake-service-key",
+            );
+        command
+    };
+    // This is also the server's startup config-validation path.
+    for config in ["", "[defaults]\norchestration_mode = \"local\"\n"] {
+        fs::write(&path, config).unwrap();
+        gah()
+            .args(["status", "--role", "--json"])
+            .assert()
+            .success();
+    }
+    for mode in ["hosted", "self_hosted"] {
+        fs::write(
+            &path,
+            format!("[defaults]\norchestration_mode = \"{mode}\"\n"),
+        )
+        .unwrap();
+        gah()
+            .args(["status", "--role", "--json"])
+            .assert()
+            .failure()
+            .stderr(predicates::str::contains("GAH_SUPABASE_URL"));
+        gah()
+            .env("GAH_SUPABASE_URL", "https://supabase.example.invalid")
+            .args(["status", "--role", "--json"])
+            .assert()
+            .failure()
+            .stderr(predicates::str::contains("GAH_SUPABASE_ANON_KEY"));
+        for json in [false, true] {
+            let mut command = gah();
+            command
+                .env("GAH_SUPABASE_URL", "https://supabase.example.invalid")
+                .env("GAH_SUPABASE_ANON_KEY", "obviously-fake-anon-key")
+                .args(["config", "show"]);
+            if json {
+                command.args(["--json", "--full"]);
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            assert!(stdout.contains(mode), "{stdout}");
+            assert!(stdout.contains("[REDACTED]"), "{stdout}");
+            for secret in [
+                "https://supabase.example.invalid",
+                "obviously-fake-anon-key",
+                "obviously-fake-service-key",
+                "GAH_SUPABASE_SERVICE_ROLE_KEY",
+            ] {
+                assert!(!stdout.contains(secret), "{stdout}");
+                assert!(!String::from_utf8_lossy(&output.stderr).contains(secret));
+            }
+            if json {
+                let payload: Value = serde_json::from_str(&stdout).unwrap();
+                assert_eq!(payload["orchestration_mode"], mode);
+                assert_eq!(payload["supabase"]["url"], "[REDACTED]");
+                assert_eq!(payload["supabase"]["anon_key"], "[REDACTED]");
+            }
+        }
+        gah()
+            .env("GAH_SUPABASE_URL", "https://supabase.example.invalid")
+            .env("GAH_SUPABASE_ANON_KEY", "obviously-fake-anon-key")
+            .env_remove("GAH_SUPABASE_SERVICE_ROLE_KEY")
+            .args(["status", "--role", "--json"])
+            .assert()
+            .success();
+    }
+}
+
 pub(super) fn config_with_profile() -> (tempfile::TempDir, std::path::PathBuf) {
     let tmp = test_tempdir();
     let config = tmp.path().join("config.toml");
