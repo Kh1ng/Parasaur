@@ -580,6 +580,12 @@ fn install_release_artifacts(
 }
 
 pub fn run_release(args: ReleaseArgs) -> Result<()> {
+    super::ownership::preflight(
+        &args.repo,
+        args.role,
+        &args.server_service,
+        args.repair_ownership,
+    )?;
     let manifest_location = resolve_manifest_location(&args.repo, args.manifest.as_deref())?;
     let manifest_bytes = read_manifest(&manifest_location)?;
     let manifest: ReleaseManifest =

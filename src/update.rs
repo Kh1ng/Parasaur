@@ -56,6 +56,12 @@ pub fn run(args: UpdateArgs) -> Result<()> {
     }
 
     let repo = resolve_repo(args.repo.as_deref())?;
+    ownership::preflight(
+        &repo,
+        args.role,
+        &args.server_service,
+        args.repair_ownership,
+    )?;
     let update_lock = acquire_update_lock(&repo)?;
     // Set when this process is the newly installed CLI finishing an update
     // the previous binary started; the plan was already accepted.
@@ -513,57 +519,7 @@ fn install_server_unit_template_into(
     units_dir: &Path,
     repair_ownership: bool,
 ) -> Result<Option<PathBuf>> {
-    let mut components = Path::new(server_service).components();
-    if !server_service.ends_with(".service")
-        || !matches!(components.next(), Some(Component::Normal(_)))
-        || components.next().is_some()
-    {
-        bail!("invalid systemd service name '{server_service}'");
-    }
-    if !systemd_available() {
-        return Ok(None);
-    }
-    let source = repo.join("packaging/systemd/gah-server.service");
-    if !source.is_file() {
-        bail!("systemd unit template is missing: {}", source.display());
-    }
-    let target = units_dir.join(server_service);
-    // #1322: render for this account; the tracked template has placeholders.
-    let template = std::fs::read_to_string(&source)
-        .with_context(|| format!("reading systemd unit template {}", source.display()))?;
-    let values = units::UnitValues::resolve(repo)?;
-    let rendered = units::render(&template, &values).context("rendering gah-server.service")?;
-    // #1626: rendering for the installing account can change `User=`; repair
-    // the server-managed paths' ownership (or refuse) BEFORE the new unit
-    // replaces the old one, so the service never restarts into an account
-    // that cannot read its state and config. A failed chown aborts with the
-    // previous unit still installed and running.
-    let change = ownership::account_change(
-        ownership::previous_account(&target),
-        ownership::unit_user(&rendered),
-    );
-    if let Some(change) = change {
-        let managed = ownership::server_managed_paths(repo, values.config_path())?;
-        ownership::repair_or_refuse(repo, &change, &managed, repair_ownership)?;
-    }
-    let staged = tempfile::NamedTempFile::new().context("staging gah-server.service")?;
-    std::fs::write(staged.path(), rendered).context("staging gah-server.service")?;
-    let source = staged
-        .path()
-        .to_str()
-        .context("staged systemd unit path is not UTF-8")?;
-    let target_arg = target
-        .to_str()
-        .context("systemd unit target path is not UTF-8")?;
-    run_command(
-        repo,
-        "sudo",
-        &[
-            "install", "-o", "root", "-g", "root", "-m", "0644", source, target_arg,
-        ],
-    )?;
-    run_command(repo, "sudo", &["systemctl", "daemon-reload"])?;
-    Ok(Some(target))
+    ownership::install_server_unit_into(repo, server_service, units_dir, repair_ownership)
 }
 
 /// Where to copy the built dashboard for a separate web server (issue #896),
