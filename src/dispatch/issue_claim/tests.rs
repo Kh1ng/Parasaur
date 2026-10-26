@@ -785,44 +785,45 @@ fn a_hung_renewal_cannot_keep_a_lease_past_its_confirmed_expiry() {
 
 #[test]
 fn an_aging_claim_is_renewed_at_once_and_keeps_its_authority() {
-    let _exec_guard = ExecGuard::new();
-    let tmp = tempfile::tempdir().unwrap();
-    let bin_dir = tmp.path().join("bin");
-    let posted = (OffsetDateTime::now_utc() - time::Duration::minutes(59))
-        .format(&Rfc3339)
-        .unwrap();
-    let claim =
-        serde_json::json!({"id": 21, "login": "me", "created_at": posted, "updated_at": posted});
-    let marker = install_renewal_gh(
-        &bin_dir,
-        &format!(
-            "case \"$*\" in\n  *PATCH*) echo renewed >> \"$marker\" ;;\n  *'/comments'*) echo '{claim}' ;;\n  *'issues/7 '*) echo me ;;\n  *) exit 2 ;;\nesac"
-        ),
-    );
-    let _guard = PathGuard::set(&bin_dir);
-    let mut prof = profile(tmp.path());
-    prof.publishing.issue_claim = policy(&[]);
+    let issue = Rc::new(RefCell::new(Issue {
+        view: view(&[COLTON], vec![claim(21, COLTON, 0)]),
+        ..Default::default()
+    }));
+    let policy = policy(&[]);
+    let (_, colton) = two_loops(&issue, 59);
+    let ttl = claim_ttl(&policy);
+    // Put the old expiry in the past and confirm at a simulated earlier time.
+    // No subprocess or scheduler must finish inside a three-second lease.
+    let deadline = Instant::now() - Duration::from_secs(1);
+    let began = deadline - Duration::from_secs(3);
+    let lease = IssueLease {
+        target: issue_7(),
+        state: Arc::new(Mutex::new(LeaseState {
+            lost: None,
+            deadline,
+        })),
+        stop: None,
+        renewer: None,
+    };
 
-    // 59 of the claim's 60 minutes are used up; scaled here to 3 seconds left.
-    let deadline = Instant::now() + Duration::from_secs(3);
-    let lease = IssueLease::start(
-        &prof,
-        &issue_7(),
-        "me".into(),
-        deadline,
-        claim_ttl(&prof.publishing.issue_claim),
+    assert_eq!(
+        next_renewal_wait(deadline - began, ttl, false),
+        Duration::ZERO
     );
+    assert_eq!(
+        renew(&colton, &policy, COLTON, &issue_7(), at(59)).unwrap(),
+        None
+    );
+    assert!(confirm_renewal(&lease.state, began + ttl, began));
 
-    assert!(
-        wait_for(|| marker.exists(), Duration::from_millis(2900)),
-        "the claim must be renewed before it expires"
-    );
-    std::thread::sleep(
-        deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(100),
-    );
-
-    // The confirmed renewal moved the deadline a TTL on.
+    // Even past the old expiry, both the local lease and provider claim hold.
     assert!(lease.ensure_held().is_ok());
+    assert_eq!(lock(&lease.state).deadline, began + ttl);
+    assert_eq!(
+        standing(&issue.borrow().view, MICHAEL, &policy, at(61)),
+        Standing::Theirs(COLTON.into())
+    );
+    assert_eq!(issue.borrow().view.claims[0].id, 21);
 }
 
 /// A `gh` that answers the reads intake makes: the signed-in login, the

@@ -352,6 +352,7 @@ fn parallel_loop_refills_with_missing_availability_after_a_fast_completion() {
     let fake_bin = tmp.path().join("bin");
     fs::create_dir_all(&fake_bin).unwrap();
     let slow_release = tmp.path().join("slow-release");
+    let slow_started = tmp.path().join("slow-started");
     let call_count_file = tmp.path().join("codex-call-count");
     let active_count_file = tmp.path().join("codex-active-count");
     let active_lock_dir = tmp.path().join("codex-active-count.lock");
@@ -360,6 +361,8 @@ fn parallel_loop_refills_with_missing_availability_after_a_fast_completion() {
         "gh",
         "#!/bin/sh\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"list\" ]; then echo '[]'; exit 0; fi\nif [ \"$1\" = \"api\" ]; then echo '[]'; exit 0; fi\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"create\" ]; then printf 'https://github.com/owner/real/pull/1\\n'; exit 0; fi\nexit 0\n",
     );
+    // The third worker releases the first, proving refill without a wall-clock
+    // deadline. Collect output immediately so a full pipe cannot stall dispatch.
     make_fake_bin_with_body(
         &fake_bin,
         "codex",
@@ -395,9 +398,9 @@ fn parallel_loop_refills_with_missing_availability_after_a_fast_completion() {
              inc_active\n\
              printf 'agent edit %s\\n' \"$n\" > \"refill-$n.txt\"\n\
              case \"$n\" in\n\
-             \x20\x201) while [ ! -f \"$slow_release\" ]; do sleep 0.05; done ;;\n\
-             \x20\x202) : ;;\n\
-             \x20\x203) : ;;\n\
+             \x20\x201) echo started > '{slow_started}'; while [ ! -f \"$slow_release\" ]; do sleep 0.05; done ;;\n\
+             \x20\x202) while [ ! -f '{slow_started}' ]; do sleep 0.05; done ;;\n\
+             \x20\x203) printf 'release\\n' > \"$slow_release\" ;;\n\
              \x20\x20*) : ;;\n\
              esac\n\
              printf 'codex call %s\\n' \"$n\"\n\
@@ -406,12 +409,13 @@ fn parallel_loop_refills_with_missing_availability_after_a_fast_completion() {
             active_count_file = active_count_file.display(),
             active_lock_dir = active_lock_dir.display(),
             slow_release = slow_release.display(),
+            slow_started = slow_started.display(),
         ),
     );
 
     let ledger_path = tmp.path().join("ledger.jsonl");
     let events_path = tmp.path().join("events.jsonl");
-    let mut child = ProcessGroupGuard::new(
+    let child = ProcessGroupGuard::new(
         spawn_bin(tmp.path())
             .args([
                 "loop",
@@ -438,33 +442,17 @@ fn parallel_loop_refills_with_missing_availability_after_a_fast_completion() {
             .unwrap(),
     );
 
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while fs::read_to_string(&call_count_file)
-        .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(0)
-        < 3
-    {
-        if let Some(status) = child.try_wait().unwrap() {
-            panic!("controller exited before the third slot started: {status:?}");
-        }
-        if Instant::now() >= deadline {
-            panic!("timed out waiting for the third slot to start");
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-    assert!(
-        !slow_release.exists(),
-        "third action should start before the slow worker is released"
-    );
-    fs::write(&slow_release, "release\n").unwrap();
-
     let output = child.wait_with_output().unwrap();
     assert!(
         output.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(
+        slow_release.exists(),
+        "the third worker must release its sibling"
+    );
+    assert_eq!(read_u32_file(&call_count_file), 3);
     assert_eq!(
         String::from_utf8_lossy(&output.stderr)
             .matches("global state retention failed")
@@ -630,6 +618,7 @@ fn parallel_loop_reviews_a_finished_ticket_while_a_slow_sibling_still_runs() {
     let fake_bin = tmp.path().join("bin");
     fs::create_dir_all(&fake_bin).unwrap();
     let slow_release = tmp.path().join("slow-release");
+    let slow_started = tmp.path().join("slow-started");
     let call_count_dir = tmp.path().join("codex-calls");
     let created_pr = tmp.path().join("created-pr");
     let review_started = tmp.path().join("review-started");
@@ -646,7 +635,7 @@ fn parallel_loop_reviews_a_finished_ticket_while_a_slow_sibling_still_runs() {
              created='{created_pr}'\n\
              case \"$4\" in\n\
                */pulls\\?*)\n\
-                 if [ -f \"$created\" ]; then head=$(sed -n 1p \"$created\"); title=$(sed -n 2p \"$created\"); printf '[{{\"title\":\"%s\",\"body\":\"Follow-up fixture\",\"head\":{{\"ref\":\"%s\",\"sha\":\"source-sha\"}},\"html_url\":\"https://github.com/owner/real/pull/9\",\"labels\":[],\"number\":9,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]\\n' \"$title\" \"$head\"; else echo '[]'; fi\n\
+                 if [ -f \"$created\" ] && [ ! -f '{review_started}' ]; then head=$(sed -n 1p \"$created\"); title=$(sed -n 2p \"$created\"); printf '[{{\"title\":\"%s\",\"body\":\"Follow-up fixture\",\"head\":{{\"ref\":\"%s\",\"sha\":\"source-sha\"}},\"html_url\":\"https://github.com/owner/real/pull/9\",\"labels\":[],\"number\":9,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]\\n' \"$title\" \"$head\"; else echo '[]'; fi\n\
                  exit 0 ;;\n\
                */pulls) echo '[{{\"number\":9}}]'; exit 0 ;;\n\
                */check-runs\\?*) echo '{{\"total_count\":1,\"check_runs\":[{{\"status\":\"completed\",\"conclusion\":\"success\"}}]}}'; exit 0 ;;\n\
@@ -661,6 +650,7 @@ fn parallel_loop_reviews_a_finished_ticket_while_a_slow_sibling_still_runs() {
              if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then head=$(sed -n 1p \"$created\"); title=$(sed -n 2p \"$created\"); printf '{{\"number\":9,\"url\":\"https://github.com/owner/real/pull/9\",\"title\":\"%s\",\"body\":\"Follow-up fixture\",\"headRefName\":\"%s\",\"baseRefName\":\"main\",\"headRefOid\":\"source-sha\",\"statusCheckRollup\":[{{\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}}]}}\\n' \"$title\" \"$head\"; exit 0; fi\n\
              exit 0\n",
             created_pr = created_pr.display(),
+            review_started = review_started.display(),
         ),
     );
     // The first implementation call holds its slot until released; the
@@ -673,22 +663,24 @@ fn parallel_loop_reviews_a_finished_ticket_while_a_slow_sibling_still_runs() {
              mkdir -p '{calls}'\n\
              n=1; while ! mkdir '{calls}'/$n 2>/dev/null; do n=$((n + 1)); done\n\
              printf 'agent edit %s\\n' \"$n\" > \"followup-$n.txt\"\n\
-             if [ \"$n\" = 1 ]; then while [ ! -f '{slow_release}' ]; do sleep 0.05; done; fi\n\
+             if [ \"$n\" = 1 ]; then echo started > '{slow_started}'; while [ ! -f '{slow_release}' ]; do sleep 0.05; done; else while [ ! -f '{slow_started}' ]; do sleep 0.05; done; fi\n\
              exit 0\n",
             calls = call_count_dir.display(),
             slow_release = slow_release.display(),
+            slow_started = slow_started.display(),
         ),
     );
     make_fake_bin_with_body(
         &fake_bin,
         "claude",
         &format!(
-            "#!/bin/sh\necho started > '{}'\ncat <<'EOF'\nReview notes\n{{\"verdict\":\"APPROVE\",\"confidence\":\"high\",\"human_required\":false,\"blocking_findings\":[],\"non_blocking_findings\":[],\"risk_notes\":[],\"evidence\":[\"file:followup-2.txt\"]}}\nEOF\n",
-            review_started.display()
+            "#!/bin/sh\necho started > '{}'\nprintf 'release\\n' > '{}'\ncat <<'EOF'\nReview notes\n{{\"verdict\":\"APPROVE\",\"confidence\":\"high\",\"human_required\":false,\"blocking_findings\":[],\"non_blocking_findings\":[],\"risk_notes\":[],\"evidence\":[\"file:followup-2.txt\"]}}\nEOF\n",
+            review_started.display(),
+            slow_release.display()
         ),
     );
 
-    let mut child = ProcessGroupGuard::new(
+    let child = ProcessGroupGuard::new(
         spawn_bin(tmp.path())
             .args([
                 "loop",
@@ -714,34 +706,18 @@ fn parallel_loop_reviews_a_finished_ticket_while_a_slow_sibling_still_runs() {
             .unwrap(),
     );
 
-    // Two real dispatches and a review: generous, because a busy runner is slow, not wrong.
-    let deadline = Instant::now() + Duration::from_secs(90);
-    while !review_started.exists() {
-        if let Some(status) = child.try_wait().unwrap() {
-            panic!("controller exited before the finished ticket was reviewed: {status:?}");
-        }
-        if Instant::now() >= deadline {
-            fs::write(&slow_release, "release\n").unwrap();
-            let output = child.wait_with_output().unwrap();
-            panic!(
-                "the finished ticket's review did not start while its sibling was running\nstdout: {}\nstderr: {}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-    assert!(
-        !slow_release.exists(),
-        "the review must start before the slow worker is released"
-    );
-    fs::write(&slow_release, "release\n").unwrap();
-
+    // The reviewer releases the slow sibling itself. Draining output while
+    // waiting avoids blocking either dispatch on the controller's pipe buffer.
     let output = child.wait_with_output().unwrap();
     assert!(
         output.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(review_started.exists(), "the fast ticket must be reviewed");
+    assert!(
+        slow_release.exists(),
+        "the reviewer must release its sibling"
     );
 }
 

@@ -401,18 +401,35 @@ mod tests {
     fn observe_skills_targets_the_instance_working_directory_and_environment() {
         let _exec_guard = crate::test_support::ExecGuard::new();
         let f = fixture();
-        make_recording_bin(&f.bin_dir, "hermes", &f.record_dir, 0);
+        // Record only the contract under test with shell builtins. A full
+        // env | sort dump adds child scheduling and can be killed mid-write.
+        make_fake_bin(&f.bin_dir, "hermes", &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$HOME\" \"$PWD\" > '{}'\nprintf '│ Name │ Category │ Source │ Trust │ Status │\\n'\n",
+            f.record_dir.join("instance.txt").display()
+        ));
         let env_vars = vec![("HOME".to_string(), "/instance/isolated/home".to_string())];
 
-        observe_skills_with_executable(
+        let observed = observe_skills_with_executable(
             &f.bin_dir.join("hermes"),
             Some(f.worktree.as_path()),
             &env_vars,
             Duration::from_secs(5),
         );
 
-        let env = recorded_env(&f.record_dir);
-        assert!(env.contains("HOME=/instance/isolated/home"));
+        // The response is emitted after both values are written, so success
+        // acknowledges the complete recording before it is read.
+        assert_eq!(observed, ObservedSkills::Skills(vec![]));
+        let recorded = fs::read_to_string(f.record_dir.join("instance.txt")).unwrap();
+        assert_eq!(
+            recorded.lines().collect::<Vec<_>>(),
+            vec![
+                "/instance/isolated/home".to_string(),
+                fs::canonicalize(&f.worktree)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+            ]
+        );
     }
 
     #[test]

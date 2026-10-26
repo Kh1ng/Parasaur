@@ -19,6 +19,8 @@ pub(super) static FAIL_HELPER_NONBLOCKING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 #[cfg(test)]
 thread_local! {
+    /// Arm a timeout only after the selected test helper has a live descendant.
+    pub(super) static HELPER_READY: std::cell::RefCell<Option<(&'static str, std::sync::mpsc::Receiver<()>)>> = const { std::cell::RefCell::new(None) };
     /// Make this thread's next helper exit check report ECHILD and record
     /// the pid it lost.
     static LOSE_NEXT_HELPER_CHECK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -149,6 +151,19 @@ pub(super) fn bounded_command_output(
     let mut child = command
         .spawn()
         .with_context(|| format!("starting {context}"))?;
+    #[cfg(test)]
+    HELPER_READY.with(|ready| {
+        if ready
+            .borrow()
+            .as_ref()
+            .is_some_and(|(waiting, _)| *waiting == context)
+        {
+            let (_, receive) = ready.borrow_mut().take().unwrap();
+            receive
+                .recv()
+                .expect("helper descendant must announce readiness");
+        }
+    });
     let deadline = Instant::now() + timeout;
     let cleanup_deadline = deadline + CLEANUP_GRACE;
     let mut stdout_reader = Some(child.stdout.take().expect("piped helper stdout"));
