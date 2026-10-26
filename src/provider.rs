@@ -693,6 +693,17 @@ pub fn merge_mr(
             gitlab_merge_mr(profile, &target.id, target.source_sha.as_deref())
         }
         Ok(ProviderKind::Github) => {
+            let head = target
+                .source_sha
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("missing PR head for merge review gate"))?;
+            let blockers =
+                crate::sync::requested_changes::verdicts::blockers(profile, &target.id, head)?;
+            anyhow::ensure!(
+                blockers.is_empty(),
+                "merge blocked by current-head review veto from {}",
+                blockers.join(", ")
+            );
             github_mark_ready_for_review(profile, &target.id)?;
             github_merge_mr(profile, &target.id, target.source_sha.as_deref())
         }

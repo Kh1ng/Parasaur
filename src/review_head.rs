@@ -31,6 +31,24 @@ pub(crate) fn stamp(body: &mut String, entry: &LedgerEntry) -> Result<()> {
     Ok(())
 }
 
+/// Read the immutable head marker; malformed markers cannot become legacy verdicts.
+pub(crate) fn comment_head(body: &str) -> Result<Option<String>> {
+    let mut head = None;
+    for line in body.lines().filter(|line| line.starts_with(MARKER)) {
+        let receipt: Receipt = serde_json::from_str(
+            line.strip_prefix(MARKER)
+                .and_then(|line| line.strip_suffix(" -->"))
+                .ok_or_else(|| anyhow::anyhow!("malformed review head receipt"))?,
+        )?;
+        anyhow::ensure!(
+            head.is_none() && !receipt.head.trim().is_empty() && !receipt.backend.trim().is_empty(),
+            "invalid or duplicate review head receipt"
+        );
+        head = Some(receipt.head);
+    }
+    Ok(head)
+}
+
 fn has_receipt(body: &str, head: &str) -> bool {
     let verdict = body.lines().next().and_then(|line| {
         line.strip_prefix("GAH review verdict: `")?
@@ -42,11 +60,7 @@ fn has_receipt(body: &str, head: &str) -> bool {
     ) {
         return false;
     }
-    body.lines()
-        .filter_map(|line| {
-            serde_json::from_str::<Receipt>(line.strip_prefix(MARKER)?.strip_suffix(" -->")?).ok()
-        })
-        .any(|receipt| receipt.head == head && !receipt.backend.trim().is_empty())
+    comment_head(body).ok().flatten().as_deref() == Some(head)
 }
 
 /// A completed opinion is a head-level stop, even when metadata or routing changes.

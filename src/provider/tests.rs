@@ -637,6 +637,7 @@ fn merge_mr_github_un_drafts_then_merges() {
 case "$1 $2 $3 $4" in
   "api --method GET repos/owner/repo/pulls") printf '[{"number":42}]\n' ;;
   "pr view 42 --repo") printf '{"number":42,"url":"https://github.com/owner/repo/pull/42","title":"test","body":"body","isDraft":false,"headRefName":"gah/test","baseRefName":"main","headRefOid":"source-github-sha"}\n' ;;
+  "api --method GET repos/owner/repo/issues/42/comments?per_page=100&page=1" | "api --method GET repos/owner/repo/pulls/42/comments?per_page=100&page=1" | "api --method GET repos/owner/repo/pulls/42/reviews?per_page=100&page=1") printf '[]\n' ;;
   "pr ready 42 --repo") exit 0 ;;
   "pr merge 42 --squash") echo "$@" > "${0%/*}/merge_call.txt"; exit 0 ;;
   *) echo "unexpected gh invocation: $@" >&2; exit 1 ;;
@@ -708,6 +709,7 @@ fn merge_mr_accepts_generation_computed_before_mark_ready_for_review() {
 case "$1 $2 $3 $4" in
   "api --method GET repos/owner/repo/pulls") printf '[{"number":42}]\n' ;;
   "pr view 42 --repo") printf '{"number":42,"url":"https://github.com/owner/repo/pull/42","title":"test","body":"body","isDraft":false,"headRefName":"gah/test","baseRefName":"main","headRefOid":"source-github-sha"}\n' ;;
+  "api --method GET repos/owner/repo/issues/42/comments?per_page=100&page=1" | "api --method GET repos/owner/repo/pulls/42/comments?per_page=100&page=1" | "api --method GET repos/owner/repo/pulls/42/reviews?per_page=100&page=1") printf '[]\n' ;;
   "pr ready 42 --repo") exit 0 ;;
   "pr merge 42 --squash") echo "$@" > "${0%/*}/merge_call.txt"; exit 0 ;;
   *) echo "unexpected gh invocation: $@" >&2; exit 1 ;;
@@ -773,7 +775,8 @@ fn merge_mr_github_fails_loudly_when_merge_rejected() {
         r#"#!/bin/sh
 case "$1 $2 $3 $4" in
   "api --method GET repos/owner/repo/pulls") printf '[{"number":42}]\n' ;;
-  "pr view 42 --repo") printf '{"number":42,"url":"https://github.com/owner/repo/pull/42","headRefName":"gah/test","baseRefName":"main"}\n' ;;
+  "pr view 42 --repo") printf '{"number":42,"url":"https://github.com/owner/repo/pull/42","headRefName":"gah/test","baseRefName":"main","headRefOid":"head"}\n' ;;
+  "api --method GET repos/owner/repo/issues/42/comments?per_page=100&page=1" | "api --method GET repos/owner/repo/pulls/42/comments?per_page=100&page=1" | "api --method GET repos/owner/repo/pulls/42/reviews?per_page=100&page=1") printf '[]\n' ;;
   "pr ready 42 --repo") exit 0 ;;
   "pr merge 42 --squash") echo "not mergeable: review required" >&2; exit 1 ;;
   *) echo "unexpected gh invocation: $@" >&2; exit 1 ;;

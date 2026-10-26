@@ -38,6 +38,7 @@ fn setup_fake_gh_merge(bin_dir: &Path) {
 case "$1 $2 $3 $4" in
   "api --method GET repos/owner/repo/pulls") printf '[{"number":7}]' ;;
   "pr view 7 --repo") printf '{"number":7,"url":"https://github.com/owner/repo/pull/7","title":"Fix","body":"body","isDraft":false,"headRefName":"gah/merge-work","baseRefName":"main","headRefOid":"source-sha"}' ;;
+  "api --method GET repos/owner/repo/issues/7/comments?per_page=100&page=1" | "api --method GET repos/owner/repo/pulls/7/comments?per_page=100&page=1" | "api --method GET repos/owner/repo/pulls/7/reviews?per_page=100&page=1") printf '[]\n' ;;
   "pr ready 7 --repo") exit 0 ;;
   "pr merge 7 --squash") exit 0 ;;
   *) echo "unexpected gh invocation: $@" >&2; exit 1 ;;
