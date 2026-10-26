@@ -1,6 +1,5 @@
 const TOKEN_KEY = 'gah.coordinatorToken';
 export const TOKEN_CHANGED_EVENT = 'gah.coordinatorTokenChanged';
-
 export function coordinatorToken(): string {
   try { return typeof window === 'undefined' ? '' : window.sessionStorage.getItem(TOKEN_KEY) ?? ''; }
   catch { return ''; }

@@ -19,6 +19,7 @@ import { gahApi } from '../api/client.js';
 import { useAutoRefresh } from '../hooks/useAutoRefresh.js';
 import { useWsReconnectRefresh } from '../hooks/useWsReconnectRefresh.js';
 import { generateRequestId } from '@git-agent-harness/shared';
+import { embedContextPreamble, embedContextSignature, type EmbedContext } from '../lib/embed.js';
 import type {
   ManagerChatTurn,
   ManagerCommandInfo,
@@ -467,7 +468,10 @@ function associatedWorkId(session: ChatSessionSummary): string | null {
   return session.issueNumber ? `#${session.issueNumber}` : null;
 }
 
-export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /** In the right sidebar: always the narrow layout. */ docked?: boolean; onNavigate?: (page: Page) => void; onOpenWork?: (workId: string) => void }) {
+export function ManagerChatPage({ docked = false, onNavigate, onOpenWork, gitlabContext = null }: { /** In the right sidebar: always the narrow layout. */ docked?: boolean; onNavigate?: (page: Page) => void; onOpenWork?: (workId: string) => void; /** The GitLab panel's page context (#1593): rides along with the
+  * conversation's outgoing turns, the same resolved context the embed view's
+  * seeded issue/MR chats carry. Absent outside the embed surfaces. */
+  gitlabContext?: EmbedContext | null }) {
   const { sendMessage, messages, isConnected, reconnectSeq } = useWebSocket();
   const wsProfile = useWebSocket().profile;
   const profileOverride = useUiStore((s) => s.profileOverride);
@@ -561,6 +565,15 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
   /** A new chat created for another project lands in the same render batch
    * as the profile switch; the [profile] effect restores its session id. */
   const pendingSessionRef = useRef<string | null>(null);
+  /** The GitLab panel's context actions (#1593) open a conversation with a
+   * first turn attached; it is held until that conversation is on screen
+   * with its history loaded and no turn in flight, then sent once. */
+  const pendingIntroRef = useRef<{ profile: string; sessionId: string; message: string } | null>(null);
+  /** The GitLab page context already delivered to this conversation (#1593
+   * round 2): the context block rides the first outgoing turn — and the
+   * first turn after the panel reports a different page. */
+  const deliveredContextRef = useRef<string | null>(null);
+  useEffect(() => { deliveredContextRef.current = null; }, [profile, sessionId]);
   const [storageOpen, setStorageOpen] = useState(false);
   const [storage, setStorage] = useState<ChatReclaimResult | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
@@ -722,7 +735,12 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
   useEffect(() => {
     if (!chatRequest) return;
     setSelection({ profile: chatRequest.profile, sessionId: chatRequest.sessionId });
-    // The new conversation is not in the list yet.
+    // A context action (#1593) may carry the conversation's first turn; it is
+    // sent once that conversation's history has loaded (see the pending-intro
+    // effect below `sendBlocked`).
+    pendingIntroRef.current = chatRequest.message != null
+      ? { profile: chatRequest.profile, sessionId: chatRequest.sessionId, message: chatRequest.message }
+      : null;
     refreshSessions(chatRequest.profile);
     clearChatRequest();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1133,6 +1151,28 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
   const turnBusy = pendingRequest !== null || remoteTurnBusy || streaming !== null;
   const sendBlocked = !historyLoaded || (!turnBusy && !nodeReady);
 
+  // The stashed first turn goes out only when the requested conversation is
+  // the one on screen, its history has loaded, and no turn is in flight —
+  // the same guard the composer's send button uses. Anything else drops it.
+  useEffect(() => {
+    const intro = pendingIntroRef.current;
+    if (!intro || sendBlocked || turnBusy) return;
+    if (intro.profile !== profile || intro.sessionId !== sessionId) return;
+    pendingIntroRef.current = null;
+    const requestId = generateRequestId();
+    setTurns((prev) => [...prev, { role: 'user', text: intro.message }]);
+    setPendingRequest({ id: requestId, profile, nodeId: chosenNode, nodeName: selectedNode?.displayName });
+    sendMessage({
+      type: 'manager.chat.send',
+      requestId,
+      profile,
+      nodeId: chosenNode,
+      message: intro.message,
+      sessionId
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sendBlocked, turnBusy, profile, sessionId]);
+
   const refreshSkillBinding = async () => {
     if (!skillBackend) return;
     setSkillBinding(await gahApi.getSkillBindings(profile, skillBackend, skillSessionId));
@@ -1280,10 +1320,23 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
   const handleSend = () => {
     const text = draft.trim();
     if (!text || sendBlocked) return;
+    // The embed view's ordinary chat carries the resolved GitLab page
+    // context (#1593): the same project/kind/iid/ref/path the seeded
+    // issue/MR chats carry, as the opening block of the first outgoing
+    // turn (and the first turn after a context update). The composed text
+    // is what the transcript and the server both see.
+    let message = text;
+    if (gitlabContext !== null) {
+      const signature = embedContextSignature(gitlabContext);
+      if (deliveredContextRef.current !== signature) {
+        message = `${embedContextPreamble(gitlabContext)}\n\n${text}`;
+        deliveredContextRef.current = signature;
+      }
+    }
     const requestId = generateRequestId();
     setTurns((prev) => [...prev, {
       role: 'user',
-      text,
+      text: message,
       ...(turnBusy ? { steeringRequestId: requestId } : {})
     }]);
     setDraft('');
@@ -1294,7 +1347,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
         type: 'manager.chat.steer',
         requestId,
         profile,
-        message: text,
+        message,
         ...(sessionId ? { sessionId } : {})
       });
       return;
@@ -1305,7 +1358,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork }: { /*
       requestId,
       profile,
       nodeId: chosenNode,
-      message: text,
+      message,
       ...(sessionId ? { sessionId } : {})
     });
   };

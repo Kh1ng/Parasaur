@@ -22,6 +22,7 @@ import type {
 } from '@git-agent-harness/contracts';
 import { notifiableActivity } from '@git-agent-harness/contracts';
 import { gahApi } from '../api/client.js';
+import { withBasePath } from '../lib/basePath.js';
 import { deliverSystemNotification, mergeActivityEvents } from '../lib/activityNotifications.js';
 
 export interface WebSocketInboxEntry {
@@ -80,7 +81,7 @@ const MAX_INBOX_MESSAGES = 100;
 
 // Vite injects import.meta.env - use type assertion for TypeScript
 const SERVER_WS_BASE = (import.meta as unknown as { env: { VITE_WS_URL?: string } }).env?.VITE_WS_URL ||
-  `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+  `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${withBasePath('/ws')}`;
 
 function getWebSocketUrl(profile?: string | null): string {
   const url = new URL(SERVER_WS_BASE);

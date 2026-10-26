@@ -13,6 +13,12 @@ try {
 }
 
 export default defineConfig({
+  // Relative asset URLs so one build serves the root deployment and the
+  // GitLab panel's path-prefixed proxy (https://gitlab.example/parasaur/,
+  // issue #1593) without rebuilding. Entry assets resolve against the
+  // document (plus the server-injected <base> when proxied); runtime API
+  // and WebSocket paths are prefixed by lib/basePath.ts instead.
+  base: './',
   define: {
     __GAH_VERSION__: JSON.stringify(pkgVersion),
     __GAH_COMMIT__: JSON.stringify(commitSha),

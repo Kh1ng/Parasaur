@@ -20,6 +20,7 @@ import { Maximize2, PanelRight, X } from 'lucide-react';
 import { WorkDetailDrawer } from './components/WorkDetailDrawer.js';
 import { generateProviderInstanceId } from '@git-agent-harness/shared';
 import { useUiStore } from './store/uiStore.js';
+import type { EmbedContext } from './lib/embed.js';
 
 const AgentsPage = lazy(() => import('./pages/AgentsPage.js').then((module) => ({ default: module.AgentsPage })));
 const WorkPage = lazy(() => import('./pages/WorkPage.js').then((module) => ({ default: module.WorkPage })));
@@ -34,6 +35,7 @@ const NodesPage = lazy(() => import('./pages/NodesPage.js').then((module) => ({ 
 const PlanningPage = lazy(() => import('./pages/PlanningPage.js').then((module) => ({ default: module.PlanningPage })));
 const RunningAgentsPanel = lazy(() => import('./pages/RunningAgentsPanel.js').then((module) => ({ default: module.RunningAgentsPanel })));
 const IssuesPanel = lazy(() => import('./pages/IssuesPanel.js').then((module) => ({ default: module.IssuesPanel })));
+const EmbedSurface = lazy(() => import('./pages/EmbedPage.js').then((module) => ({ default: module.EmbedSurface })));
 const ProfilePanel = lazy(() => import('./pages/ProfilePanel.js').then((module) => ({ default: module.ProfilePanel })));
 
 export type { Page } from './lib/navigationState.js';
@@ -48,9 +50,11 @@ const SIDE_VIEW_LABELS: Record<SideView, string> = { events: 'Activity', issues:
 const QUOTA_REFRESH_MS = 60 * 1000;
 const DEVICE_AGENTS_REFRESH_MS = 10 * 1000;
 
-export function App() {
+export function App({ standaloneEmbedContext = null }: { /** A standalone link (`/?gitlab=…`, the panel's pop-out) opens the
+  * same context view the embed route shows, inside this app shell. */ standaloneEmbedContext?: EmbedContext | null }) {
   const [currentPage, setCurrentPage] = useState<MainPage>(() => readNavigation().page);
-  const [sideView, setSideView] = useState<SideView | null>(() => (new URLSearchParams(window.location.hash.slice(1)).has('pair') || new URLSearchParams(window.location.search).has('pairingRequest')) ? 'settings' : readNavigation().side);
+  const [embedContext, setEmbedContext] = useState<EmbedContext | null>(standaloneEmbedContext);
+  const [sideView, setSideView] = useState<SideView | null>(() => (new URLSearchParams(window.location.hash.slice(1)).has('pair') || new URLSearchParams(window.location.hash.slice(1)).has('gah_signin') || new URLSearchParams(window.location.search).has('pairingRequest')) ? 'settings' : readNavigation().side);
   // Chat lives in the right sidebar; `currentPage === 'chat'` is the same chat expanded over the main panel.
   const [chatDocked, setChatDocked] = useState(() => readNavigation().dock === 'chat');
   const [pageBehindChat, setPageBehindChat] = useState<MainPage>('overview');
@@ -124,8 +128,10 @@ export function App() {
   const working = useMemo(() => workingNow({ status: statusSnapshot, quota: quota.data, controllerRuns: controllerActivity, factoryAgents: deviceAgents.data?.factory_agents ?? [], loopRunning, now: Date.now() }),
     [statusSnapshot, quota.data, controllerActivity, deviceAgents.data, loopRunning]);
 
-  /** Pages link to each other by name; a sidebar view opens in the sidebar. */
+  /** Pages link to each other by name; a sidebar view opens in the sidebar.
+   * Any page navigation leaves the GitLab context view first. */
   const navigate = (page: Page) => {
+    setEmbedContext(null);
     if (isSideView(page)) return setSideView(page);
     const split = window.matchMedia(SPLIT_LAYOUT).matches;
     if (!split) { setSideView(null); setChatDocked(false); }
@@ -164,6 +170,13 @@ export function App() {
   );
 
   const renderPage = () => {
+    if (embedContext) {
+      return (
+        <Suspense fallback={<LoadingState label="Loading…" />}>
+          <EmbedSurface context={embedContext} standalone onDismiss={() => setEmbedContext(null)} />
+        </Suspense>
+      );
+    }
     switch (currentPage) {
       case 'nodes':
         return <NodesPage />;

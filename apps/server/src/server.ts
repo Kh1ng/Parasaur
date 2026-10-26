@@ -3,6 +3,7 @@ import { gitLabEventsRouter, type GitLabRouteDeps } from './integrations/gitlab/
 import { gitLabRunsRouter } from './integrations/gitlab/runsRoute.js';
 import { parseSkillSelections } from './skillSelections.js';
 import { runningWorkers } from './runningWorkers.js';
+import { documentRouter } from './integrations/gitlab/embedView.js';
 import express from 'express';
 import type { ActivityEvent, ActivityKind, NodeRoleStatus } from '@git-agent-harness/contracts';
 import { workerRouteGuard, validateNodeRole } from './nodeRole.js';
@@ -2972,13 +2973,11 @@ export function createServer(
   const webRoot = process.env.GAH_WEB_ROOT;
   if (webRoot) {
     const absoluteWebRoot = resolve(webRoot);
-    app.use(express.static(absoluteWebRoot, { index: false }));
-    app.get('*', (req, res, next) => {
-      if (req.path.startsWith('/api/') || req.path === '/api' || !req.accepts('html')) return next();
-      res.sendFile(join(absoluteWebRoot, 'index.html'), error => {
-        if (error) next(error);
-      });
-    });
+    // The document router owns framing, prefix bootstrap, and rate limiting.
+    // Only /embed allows the configured GitLab origins to frame it; ordinary
+    // documents (including encoded /index.html URLs) receive DENY. Assets use
+    // express.static, while every document reads the configured index.html.
+    app.use(documentRouter({ webRoot: absoluteWebRoot }));
   }
 
   // 404 handler

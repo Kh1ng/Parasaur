@@ -23,10 +23,12 @@ interface UiStoreState {
   pendingAction: 'import' | 'create' | null;
   requestAction: (action: 'import' | 'create' | null) => void;
   /** A page opened a conversation. A chat already on screen only reads the URL
-   * when it mounts, so it takes this instead and clears it. */
-  chatRequest: { profile: string; sessionId: string } | null;
+   * when it mounts, so it takes this instead and clears it. The optional
+   * message (the GitLab panel's context actions, #1593) is sent as the
+   * conversation's first turn once its history has loaded. */
+  chatRequest: { profile: string; sessionId: string; message?: string } | null;
   /** Switch to `profile` and show `sessionId` in the chat; the caller then navigates to it. */
-  openChatSession: (profile: string, sessionId: string) => void;
+  openChatSession: (profile: string, sessionId: string, message?: string) => void;
   clearChatRequest: () => void;
 }
 
@@ -55,10 +57,10 @@ export const useUiStore = create<UiStoreState>((set) => ({
   pendingAction: null,
   requestAction: (pendingAction) => set({ pendingAction }),
   chatRequest: null,
-  openChatSession: (profile, sessionId) => {
+  openChatSession: (profile, sessionId, message) => {
     updateNavigation({ profile, chat: sessionId, epic: null, map: null });
     // One update, so the chat sees the new profile and the session in the same render.
-    set({ profileOverride: profile, chatRequest: { profile, sessionId } });
+    set({ profileOverride: profile, chatRequest: { profile, sessionId, ...(message ? { message } : {}) } });
   },
   clearChatRequest: () => set({ chatRequest: null })
 }));
