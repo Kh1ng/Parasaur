@@ -27,6 +27,27 @@ fn unit_user_reads_only_service_assignments() {
 }
 
 #[test]
+fn unit_user_reads_continued_assignments_and_skips_comment_blocks() {
+    for unit in [
+        "[Service]\nUser\\\n=agent\n",
+        "[Service]\nUser \\\n = agent\n",
+        "[Service]\nUser=\\\n agent\n",
+        "[Service]\\\n\nUser=agent\n",
+        "[Service]\nUser\\\n# ignored\\\n; ignored too\n =\\\n agent\n",
+        "[Service]\nDescription=escaped\\\\\nUser=agent\n",
+        "[Service]\nDescription=trailing whitespace\\ \nUser=agent\n",
+        "\u{feff}[Service]\nUser\\\n=agent",
+        "[Service]\nUser=agent\\",
+    ] {
+        assert_eq!(unit_user(unit).as_deref(), Some("agent"), "{unit:?}");
+    }
+    assert_eq!(
+        unit_user("[Service]\nDescription=continued\\\nUser=ignored\n"),
+        None
+    );
+}
+
+#[test]
 fn previous_account_distinguishes_missing_root_and_user_units() {
     let dir = ownership_tempdir();
     assert!(matches!(
@@ -373,8 +394,9 @@ fn unit_install_shims(unit_target: &Path) -> TempDir {
             (
                 "sudo",
                 format!(
-                    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = install ]; then cp \"$8\" '{}'; fi\nexit 0\n",
+                    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = install ]; then cp \"$8\" '{}'; fi\nexit 0\n",
                     sudo_log.display(),
+                    bin.path().join("steps.log").display(),
                     unit_target.display()
                 )
                 .as_str(),
@@ -385,6 +407,7 @@ fn unit_install_shims(unit_target: &Path) -> TempDir {
 printf '%s\n' "$*" >> '{log}'
 if [ "$1" = --version ]; then echo 'systemd 255'; exit 0; fi
 if [ "$1" = show ]; then
+  printf 'preflight: %s\n' "$*" >> '{steps}'
   case "$3" in
     LoadState) if [ -f '{target}' ]; then echo loaded; else echo not-found; fi ;;
     FragmentPath) echo '{target}' ;;
@@ -393,7 +416,7 @@ if [ "$1" = show ]; then
   esac
 fi
 exit 0
-"#, target=unit_target.display(), log=bin.path().join("systemctl.log").display()).as_str(),
+"#, target=unit_target.display(), log=bin.path().join("systemctl.log").display(), steps=bin.path().join("steps.log").display()).as_str(),
             ),
             ("node", "#!/bin/sh\nexit 0\n"),
         ] {
@@ -486,6 +509,19 @@ fn rendering_over_a_unit_with_a_different_user_repairs_ownership() {
     let install_at = record.find("install -o").expect("install ran");
     assert!(chown_at < install_at, "{record}");
     assert!(record.contains("daemon-reload"), "{record}");
+    let steps = std::fs::read_to_string(bin.path().join("steps.log")).unwrap();
+    let phases: Vec<_> = steps
+        .lines()
+        .map(|line| line.split_whitespace().next().unwrap())
+        .collect();
+    let repair_at = phases.iter().position(|phase| *phase == "chown").unwrap();
+    assert!(phases[..repair_at]
+        .iter()
+        .all(|phase| *phase == "preflight:"));
+    assert_eq!(
+        &phases[repair_at..],
+        ["chown", "chown", "chown", "install", "systemctl"]
+    );
     // The installed unit now runs as the new account.
     let unit = std::fs::read_to_string(target).unwrap();
     assert!(unit.contains(&format!("\nUser={user}\n")), "{unit}");
@@ -535,7 +571,12 @@ fn no_repair_flag_refuses_the_account_change_without_touching_the_unit() {
 #[test]
 fn matching_or_missing_previous_account_never_chowns() {
     let _exec = crate::test_support::ExecGuard::new();
-    for installed in [Some(current_user()), None] {
+    for (installed, drop_in) in [
+        (Some(current_user()), false),
+        (None, false),
+        (Some(current_user()), true),
+        (None, true),
+    ] {
         let dir = ownership_tempdir();
         let (repo, config, _state) = repair_fixture(dir.path());
         let units = dir.path().join("units");
@@ -546,6 +587,11 @@ fn matching_or_missing_previous_account_never_chowns() {
                 format!("[Service]\nUser={user}\n"),
             )
             .unwrap();
+        }
+        if drop_in {
+            let path = units.join("gah-server.service.d/override.conf");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, format!("[Service]\nUser\\\n={}\n", current_user())).unwrap();
         }
         let bin = unit_install_shims(&units.join("gah-server.service"));
         let _path = crate::test_support::PathGuard::set(bin.path().to_str().unwrap());
@@ -1022,11 +1068,89 @@ fn ownership_persistent_user_drop_in_refuses_before_any_chown() {
 }
 
 #[test]
+fn ownership_continued_agent_drop_in_halts_at_preflight_before_khing_repair() {
+    let _exec = crate::test_support::ExecGuard::new();
+    for (body, discovery) in [
+        ("[Service]\nUser\\\n=agent\n", "disk"),
+        ("[Service]\nUser=agent\n", "disk"),
+        ("[Service]\nUser\\\n# comment\n =agent\n", "reported"),
+        ("[Service]\\\n\nUser=agent\n", "reported"),
+        ("[Service]\nDescription=escaped\\\\\nUser=agent\n", "disk"),
+        ("[Service]\nDescription=space\\ \nUser=agent\n", "reported"),
+        ("[Service]\nUser=agent\nUser=khing\n", "disk"),
+    ] {
+        let dir = ownership_tempdir();
+        let (repo, config, _) = repair_fixture(dir.path());
+        let template = repo.join("packaging/systemd/gah-server.service");
+        let rendered = std::fs::read_to_string(&template)
+            .unwrap()
+            .replace("User=@USER@", "User=khing");
+        std::fs::write(&template, rendered).unwrap();
+        let units = dir.path().join("units");
+        let target = units.join("gah-server.service");
+        std::fs::create_dir_all(&units).unwrap();
+        let installed = "[Service]\nUser=agent\n";
+        std::fs::write(&target, installed).unwrap();
+        let drop_in = if discovery == "disk" {
+            units.join("gah-server.service.d/override.conf")
+        } else {
+            dir.path().join("reported/override.conf")
+        };
+        std::fs::create_dir_all(drop_in.parent().unwrap()).unwrap();
+        std::fs::write(&drop_in, body).unwrap();
+        let bin = unit_install_shims(&target);
+        let systemctl = bin.path().join("systemctl");
+        let shim = std::fs::read_to_string(&systemctl).unwrap();
+        let shim = shim
+            .lines()
+            .map(|line| {
+                if line.trim_start().starts_with("DropInPaths)") {
+                    if discovery == "reported" {
+                        format!("    DropInPaths) echo '{}' ;;", drop_in.display())
+                    } else {
+                        "    DropInPaths) ;;".into()
+                    }
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&systemctl, shim).unwrap();
+        let _path = crate::test_support::PathGuard::set(bin.path().to_str().unwrap());
+        let _env = ManagedPathsEnvGuard::set(Some(""), Some(&config));
+        let error = super::super::install_server_unit_template_into(
+            &repo,
+            "gah-server.service",
+            &units,
+            true,
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        for expected in [drop_in.to_str().unwrap(), "User=agent", "User=khing"] {
+            assert!(message.contains(expected), "{body:?}: {message}");
+        }
+        let steps = std::fs::read_to_string(bin.path().join("steps.log")).unwrap();
+        assert!(steps.contains("show -p DropInPaths"), "{steps}");
+        assert!(
+            steps.lines().all(|step| step.starts_with("preflight: ")),
+            "sequence must halt at preflight: {steps}"
+        );
+        assert!(!bin.path().join("sudo-argv.log").exists());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), installed);
+        assert_eq!(std::fs::read_to_string(&drop_in).unwrap(), body);
+    }
+}
+
+#[test]
 fn ownership_preflight_refuses_source_and_release_before_mutation() {
     use std::os::unix::fs::PermissionsExt;
     let _exec = crate::test_support::ExecGuard::new();
     let dir = ownership_tempdir();
     let (repo, config, _) = repair_fixture(dir.path());
+    let template = repo.join("packaging/systemd/gah-server.service");
+    let body = std::fs::read_to_string(&template).unwrap();
+    std::fs::write(&template, body.replace("User=@USER@", "User=khing")).unwrap();
     let target = dir.path().join("installed.service");
     std::fs::write(&target, "[Service]\nUser=agent\n").unwrap();
     let bin = unit_install_shims(&target);
@@ -1052,39 +1176,62 @@ exit 91
     let _path = crate::test_support::PathGuard::set(bin.path().to_str().unwrap());
     let _env = ManagedPathsEnvGuard::set(Some(""), Some(&config));
     let before = std::fs::read(repo.join("apps/server/dist/bin.js")).unwrap();
-    for from_release in [false, true] {
-        let error = super::super::run(super::super::UpdateArgs {
-            repo: Some(repo.clone()),
-            pull: true,
-            agents: vec![],
-            yes: true,
+    struct RestoreReexec(Option<std::ffi::OsString>);
+    impl Drop for RestoreReexec {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var(super::super::reexec::ENV, value),
+                None => std::env::remove_var(super::super::reexec::ENV),
+            }
+        }
+    }
+    let _reexec = RestoreReexec(std::env::var_os(super::super::reexec::ENV));
+    for repair_ownership in [false, true] {
+        let drop_in = target
+            .with_file_name("installed.service.d")
+            .join("override.conf");
+        if repair_ownership {
+            std::fs::create_dir_all(drop_in.parent().unwrap()).unwrap();
+            std::fs::write(&drop_in, "[Service]\nUser\\\n=agent\n").unwrap();
+        }
+        let expected = if repair_ownership {
+            drop_in.to_str().unwrap()
+        } else {
+            "--no-repair-ownership"
+        };
+        for (from_release, resumed) in [(false, false), (true, false), (false, true)] {
+            if resumed {
+                std::env::set_var(super::super::reexec::ENV, "1");
+            } else {
+                std::env::remove_var(super::super::reexec::ENV);
+            }
+            let error = super::super::run(super::super::UpdateArgs {
+                repo: Some(repo.clone()),
+                pull: true,
+                agents: vec![],
+                yes: true,
+                role: super::super::HostRole::Central,
+                restart_server: false,
+                server_service: "gah-server.service".into(),
+                from_release,
+                release_manifest: Some("must-not-read-manifest".into()),
+                repair_ownership,
+            })
+            .unwrap_err();
+            assert!(error.to_string().contains(expected), "{error:#}");
+        }
+        // The release entry point must enforce the gate when called directly too.
+        let error = super::super::release::run_release(super::super::release::ReleaseArgs {
+            repo: repo.clone(),
             role: super::super::HostRole::Central,
             restart_server: false,
             server_service: "gah-server.service".into(),
-            from_release,
-            release_manifest: Some("must-not-read-manifest".into()),
-            repair_ownership: false,
+            manifest: Some("must-not-read-manifest".into()),
+            repair_ownership,
         })
         .unwrap_err();
-        assert!(
-            error.to_string().contains("--no-repair-ownership"),
-            "{error:#}"
-        );
+        assert!(error.to_string().contains(expected), "{error:#}");
     }
-    // The release entry point must enforce the gate when called directly too.
-    let error = super::super::release::run_release(super::super::release::ReleaseArgs {
-        repo: repo.clone(),
-        role: super::super::HostRole::Central,
-        restart_server: false,
-        server_service: "gah-server.service".into(),
-        manifest: Some("must-not-read-manifest".into()),
-        repair_ownership: false,
-    })
-    .unwrap_err();
-    assert!(
-        error.to_string().contains("--no-repair-ownership"),
-        "{error:#}"
-    );
     assert!(!bin.path().join("sudo-argv.log").exists());
     assert_eq!(
         std::fs::read(repo.join("apps/server/dist/bin.js")).unwrap(),
@@ -1096,7 +1243,7 @@ exit 91
             .lines()
             .filter(|line| line.ends_with("rev-parse --show-toplevel"))
             .count(),
-        2
+        6
     );
     assert!(
         commands

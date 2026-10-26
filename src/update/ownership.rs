@@ -57,20 +57,40 @@ pub(super) enum PreviousAccount {
 /// Read the last User assignment in the Service section. An empty assignment
 /// resets systemd to root; directives in other sections have no effect.
 pub(super) fn unit_user(unit: &str) -> Option<String> {
+    unit_users(unit).pop()
+}
+
+/// Read logical systemd lines, including continuations across comment blocks.
+/// Keep every assignment so a conflicting drop-in cannot hide behind a reset.
+fn unit_users(unit: &str) -> Vec<String> {
+    let mut logical = String::new();
+    for line in unit.trim_start_matches('\u{feff}').lines() {
+        if line.trim_start().starts_with(['#', ';']) {
+            continue;
+        }
+        let trailing_slashes = line.bytes().rev().take_while(|byte| *byte == b'\\').count();
+        if trailing_slashes % 2 == 1 {
+            logical.push_str(&line[..line.len() - 1]);
+            logical.push(' ');
+        } else {
+            logical.push_str(line);
+            logical.push('\n');
+        }
+    }
     let mut service = false;
-    let mut user = None;
-    for line in unit.lines().map(str::trim) {
+    let mut users = Vec::new();
+    for line in logical.lines().map(str::trim) {
         if line.starts_with('[') {
             service = line == "[Service]";
         } else if service {
             if let Some((key, value)) = line.split_once('=') {
                 if key.trim() == "User" {
-                    user = Some(value.trim().to_string());
+                    users.push(value.trim().to_string());
                 }
             }
         }
     }
-    user
+    users
 }
 
 fn account(value: &str) -> Result<PreviousAccount> {
@@ -123,9 +143,13 @@ pub(super) fn account_change(
     Ok((previous != new).then_some(AccountChange { previous, new }))
 }
 
-/// Ask systemd for the effective account and its drop-ins. Refuse any User
-/// override that will survive the base-unit swap, naming the responsible file.
-fn effective_previous_account(target: &Path, service: &str) -> Result<PreviousAccount> {
+/// Ask systemd for the effective account and its drop-ins. Refuse conflicting
+/// User overrides before planning any repair, naming the file and both users.
+fn effective_previous_account(
+    target: &Path,
+    service: &str,
+    rendered_user: &UserName,
+) -> Result<PreviousAccount> {
     let on_disk = previous_account(target)?;
     let show = |property: &str| -> Result<String> {
         let output = std::process::Command::new("systemctl")
@@ -198,8 +222,12 @@ fn effective_previous_account(target: &Path, service: &str) -> Result<PreviousAc
     for path in drop_ins {
         let body = std::fs::read_to_string(&path)
             .with_context(|| format!("reading systemd drop-in {}", path.display()))?;
-        if unit_user(&body).is_some() {
-            bail!("refusing to change the service account: systemd drop-in {} overrides User= and survives the base unit update; adjust that drop-in first", path.display());
+        for value in unit_users(&body) {
+            let user = UserName::parse(if value.is_empty() { "root" } else { &value })
+                .with_context(|| format!("reading User= in systemd drop-in {}", path.display()))?;
+            if user != *rendered_user {
+                bail!("refusing to change the service account: systemd drop-in {} sets User={user} but the rendered unit sets User={rendered_user}; the drop-in survives the base unit update; adjust that drop-in first", path.display());
+            }
         }
     }
     if load_state == "not-found" && matches!(on_disk, PreviousAccount::NotInstalled) {
@@ -230,53 +258,96 @@ struct ServerUnit {
     managed: ServerManagedPaths,
 }
 
-fn prepare_server_unit(
-    repo: &Path,
-    service: &str,
-    units_dir: &Path,
-    repair: bool,
-) -> Result<Option<ServerUnit>> {
-    let mut components = Path::new(service).components();
-    if !service.ends_with(".service")
-        || !matches!(components.next(), Some(std::path::Component::Normal(_)))
-        || components.next().is_some()
-    {
-        bail!("invalid systemd service name '{service}'");
-    }
-    if !super::systemd_available() {
-        return Ok(None);
-    }
-    let source = repo.join("packaging/systemd/gah-server.service");
-    let template = std::fs::read_to_string(&source)
-        .with_context(|| format!("reading systemd unit template {}", source.display()))?;
-    let values = super::units::UnitValues::resolve(repo)?;
-    let rendered =
-        super::units::render(&template, &values).context("rendering gah-server.service")?;
-    let target = units_dir.join(service);
-    let previous = effective_previous_account(&target, service)?;
-    // No User= drop-in is allowed above, so the rendered base account is also
-    // the effective new account after daemon-reload.
-    let change = account_change(previous, unit_user(&rendered))
-        .with_context(|| format!("planning ownership repair for {service}"))?;
-    let managed = if change.is_some() {
-        server_managed_paths(repo, values.config_path())?
-    } else {
-        ServerManagedPaths {
-            paths: vec![],
-            anchors: vec![],
+impl ServerUnit {
+    /// Validate the complete account transition without changing any artifacts.
+    fn preflight(
+        repo: &Path,
+        service: &str,
+        units_dir: &Path,
+        repair: bool,
+    ) -> Result<Option<ServerUnit>> {
+        let mut components = Path::new(service).components();
+        if !service.ends_with(".service")
+            || !matches!(components.next(), Some(std::path::Component::Normal(_)))
+            || components.next().is_some()
+        {
+            bail!("invalid systemd service name '{service}'");
         }
-    };
-    if let Some(change) = &change {
-        if !repair {
-            repair_or_refuse(repo, change, &managed, false)?;
+        if !super::systemd_available() {
+            return Ok(None);
         }
+        let source = repo.join("packaging/systemd/gah-server.service");
+        let template = std::fs::read_to_string(&source)
+            .with_context(|| format!("reading systemd unit template {}", source.display()))?;
+        let values = super::units::UnitValues::resolve(repo)?;
+        let rendered =
+            super::units::render(&template, &values).context("rendering gah-server.service")?;
+        let target = units_dir.join(service);
+        let new_user = unit_user(&rendered);
+        let rendered_user = UserName::parse(
+            new_user
+                .as_deref()
+                .filter(|user| !user.is_empty())
+                .unwrap_or("root"),
+        )?;
+        let previous = effective_previous_account(&target, service, &rendered_user)?;
+        // Every drop-in User= agrees with the rendered account after reload.
+        let change = account_change(previous, new_user)
+            .with_context(|| format!("planning ownership repair for {service}"))?;
+        let managed = if change.is_some() {
+            server_managed_paths(repo, values.config_path())?
+        } else {
+            ServerManagedPaths {
+                paths: vec![],
+                anchors: vec![],
+            }
+        };
+        if let Some(change) = &change {
+            if !repair {
+                repair_or_refuse(repo, change, &managed, false)?;
+            }
+        }
+        Ok(Some(ServerUnit {
+            target,
+            rendered,
+            change,
+            managed,
+        }))
     }
-    Ok(Some(ServerUnit {
-        target,
-        rendered,
-        change,
-        managed,
-    }))
+
+    fn repair(&self, repo: &Path, repair: bool) -> Result<()> {
+        if let Some(change) = &self.change {
+            repair_or_refuse(repo, change, &self.managed, repair)?;
+        }
+        Ok(())
+    }
+
+    fn install(self, repo: &Path) -> Result<PathBuf> {
+        let staged = tempfile::NamedTempFile::new().context("staging gah-server.service")?;
+        std::fs::write(staged.path(), self.rendered).context("staging gah-server.service")?;
+        super::run_command(
+            repo,
+            "sudo",
+            &[
+                "install",
+                "-o",
+                "root",
+                "-g",
+                "root",
+                "-m",
+                "0644",
+                staged
+                    .path()
+                    .to_str()
+                    .context("staged systemd unit path is not UTF-8")?,
+                self.target
+                    .to_str()
+                    .context("systemd unit target path is not UTF-8")?,
+            ],
+        )?;
+        super::run_command(repo, "sudo", &["systemctl", "daemon-reload"])?;
+        Ok(self.target)
+    }
 }
 
 /// Decide whether this update may proceed before fetching, installing assets,
@@ -288,7 +359,7 @@ pub(super) fn preflight(
     repair: bool,
 ) -> Result<()> {
     if matches!(role, super::HostRole::Central | super::HostRole::Standalone) {
-        prepare_server_unit(repo, service, Path::new("/etc/systemd/system"), repair)?;
+        ServerUnit::preflight(repo, service, Path::new("/etc/systemd/system"), repair)?;
     }
     Ok(())
 }
@@ -299,36 +370,11 @@ pub(super) fn install_server_unit_into(
     units_dir: &Path,
     repair: bool,
 ) -> Result<Option<PathBuf>> {
-    let Some(unit) = prepare_server_unit(repo, service, units_dir, repair)? else {
+    let Some(unit) = ServerUnit::preflight(repo, service, units_dir, repair)? else {
         return Ok(None);
     };
-    if let Some(change) = &unit.change {
-        repair_or_refuse(repo, change, &unit.managed, repair)?;
-    }
-    let staged = tempfile::NamedTempFile::new().context("staging gah-server.service")?;
-    std::fs::write(staged.path(), unit.rendered).context("staging gah-server.service")?;
-    super::run_command(
-        repo,
-        "sudo",
-        &[
-            "install",
-            "-o",
-            "root",
-            "-g",
-            "root",
-            "-m",
-            "0644",
-            staged
-                .path()
-                .to_str()
-                .context("staged systemd unit path is not UTF-8")?,
-            unit.target
-                .to_str()
-                .context("systemd unit target path is not UTF-8")?,
-        ],
-    )?;
-    super::run_command(repo, "sudo", &["systemctl", "daemon-reload"])?;
-    Ok(Some(unit.target))
+    unit.repair(repo, repair)?;
+    unit.install(repo).map(Some)
 }
 
 /// Candidate paths and a closed set of trusted checkout/config boundaries.
