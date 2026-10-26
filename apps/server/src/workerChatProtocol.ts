@@ -186,7 +186,7 @@ export function parseWorkerChatReply(value: unknown, request: Record<string, unk
       return { name: entry.name, description: entry.description, ...(entry.argsHint === undefined ? {} : { argsHint: entry.argsHint }) };
     });
   }
-  if ((request.action === 'cancel' || request.action === 'steer' || request.action === 'permission') && object(value) && value.success === true) return { success: true };
+  if ((request.action === 'set-model' || request.action === 'set-effort' || request.action === 'cancel' || request.action === 'steer' || request.action === 'permission') && object(value) && value.success === true) return { success: true };
   throw invalid();
 }
 

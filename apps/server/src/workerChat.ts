@@ -42,7 +42,7 @@ export function createWorkerChatRouter(deps: {
     if (!body || typeof body.profile !== 'string' || !body.profile || typeof body.action !== 'string') {
       return void res.status(400).json({ error: 'A profile and worker chat action are required.' });
     }
-    const actions = ['quota-routes', 'quota-failure', 'create', 'prepare', 'handoff', 'archive', 'restore', 'models', 'commands', 'run', 'cancel', 'steer', 'permission', 'git-status', 'git-review', 'git-commit', 'git-publish', 'git-update', 'helper-task'];
+    const actions = ['quota-routes', 'quota-failure', 'create', 'prepare', 'handoff', 'archive', 'restore', 'models', 'set-model', 'set-effort', 'commands', 'run', 'cancel', 'steer', 'permission', 'git-status', 'git-review', 'git-commit', 'git-publish', 'git-update', 'helper-task'];
     if (!actions.includes(body.action)) return void res.status(400).json({ error: 'Unknown worker chat action.' });
     const sessionId = body.sessionId;
     if (sessionId !== undefined && (typeof sessionId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(sessionId))) {
@@ -198,6 +198,13 @@ export function createWorkerChatRouter(deps: {
         return void res.status(400).json({ error: 'Invalid backend instance.' });
       }
       const adapter = await adapterFor(backend, body.profile, backendInstance);
+      if (body.action === 'set-model' || body.action === 'set-effort') {
+        const value = body.action === 'set-model' ? body.model : body.reasoningEffort;
+        if (typeof value !== 'string' || !value.trim() || value.length > 256) return void res.status(400).json({ error: 'A valid model or reasoning effort is required.' });
+        if (body.action === 'set-model') await adapter.setModel({ key, profile: body.profile }, value);
+        else await adapter.setReasoningEffort({ key, profile: body.profile }, value);
+        return void res.json({ success: true });
+      }
       if (body.action === 'models') return void res.json(await adapter.listModels({ key, profile: body.profile }));
       if (body.action === 'commands') return void res.json(await adapter.listCommands(key));
       const settings = {

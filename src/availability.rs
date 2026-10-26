@@ -45,6 +45,7 @@ const LEGACY_VERSION: u32 = 1;
 pub(crate) const UNAVAILABLE_UNTIL_CEILING_SECONDS: i64 = 2 * 60 * 60;
 
 pub(crate) mod agy;
+pub use agy::Catalog as AgyCatalog;
 mod quota_failures;
 pub(crate) use quota_failures::{clear_quota_failure, notify_quota_exhausted};
 
@@ -152,28 +153,25 @@ impl Default for AvailabilityState {
 
 /// Resolve or derive the quota pool for a candidate given its backend, model,
 /// and optional configured pool tag.
-pub fn resolve_candidate_quota_pool(
-    backend: &str,
-    model: Option<&str>,
-    configured_pool: Option<&str>,
-) -> Option<String> {
-    resolve_candidate_quota_pool_for_runtime(backend, model, configured_pool, None)
-}
-
 pub(crate) fn resolve_candidate_quota_pool_for_runtime(
     backend: &str,
     model: Option<&str>,
     configured_pool: Option<&str>,
     runtime: Option<(&str, Option<&Path>)>,
 ) -> Option<String> {
-    let derive = || match runtime {
-        Some((executable, home)) => {
-            let account = agy_account(backend)?;
-            let model = model?.trim();
-            (!model.is_empty()).then(|| agy::pool(account, model, executable, home))
-        }
-        None => derive_quota_pool(backend, model),
-    };
+    let catalog = runtime
+        .filter(|_| agy_account(backend).is_some() && model.is_some())
+        .map(|(executable, home)| agy::catalog(executable, home));
+    resolve_candidate_quota_pool(backend, model, configured_pool, catalog.as_ref())
+}
+
+pub fn resolve_candidate_quota_pool(
+    backend: &str,
+    model: Option<&str>,
+    configured_pool: Option<&str>,
+    catalog: Option<&AgyCatalog>,
+) -> Option<String> {
+    let derive = || derive_quota_pool(backend, model, catalog);
     if let Some(pool) = configured_pool {
         // Only reinterpret the legacy account-wide tag for this AGY
         // instance. Custom pools (including names beginning with `agy-`) and
@@ -201,15 +199,22 @@ pub(crate) fn agy_account(backend: &str) -> Option<&str> {
     }
 }
 
-/// Derive an account-scoped pool from the live AGY catalog and usage groups.
-pub fn derive_quota_pool(backend: &str, model: Option<&str>) -> Option<String> {
+/// Derive a pool without I/O. Missing membership uses the legacy family rule.
+pub fn derive_quota_pool(
+    backend: &str,
+    model: Option<&str>,
+    catalog: Option<&AgyCatalog>,
+) -> Option<String> {
     let account = agy_account(backend)?;
     let model = model?.trim();
     if model.is_empty() {
         return None;
     }
-    let executable = if account == "agy" { "agy" } else { backend };
-    Some(agy::pool(account, model, executable, None))
+    Some(
+        catalog
+            .unwrap_or(&AgyCatalog::default())
+            .pool(account, model),
+    )
 }
 
 /// Which scope a blocking record matched, for callers that want to explain

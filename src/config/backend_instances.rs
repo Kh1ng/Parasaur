@@ -164,11 +164,15 @@ impl RoutingPolicy {
                 .and_then(|name| self.backend_instances.get(name))
                 .and_then(|instance| instance.quota_pool.clone())
         });
-        let quota_pool = self.candidate_quota_pool(
-            &candidate.backend,
-            candidate.model.as_deref(),
-            configured_pool.as_deref(),
-        );
+        let quota_pool = if candidate.instance.is_some() {
+            configured_pool.clone()
+        } else {
+            self.candidate_quota_pool(
+                &candidate.backend,
+                candidate.model.as_deref(),
+                configured_pool.as_deref(),
+            )
+        };
         let mut identity = crate::execution_identity::ExecutionIdentity::legacy_candidate(
             candidate.backend.clone(),
             candidate.model.clone(),

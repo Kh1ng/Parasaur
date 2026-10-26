@@ -61,6 +61,7 @@ async function createTestServer(opts: TestServerOptions = {}) {
   app.use('/api', authMiddleware);
   const mutation = mutationSafety('cli-router-test', directory);
   app.use('/api/cli-router', cliRouterRouter(mutation, {
+    agyScopesPath: join(directory, "agy-scopes.json"),
     fetchFn: opts.mockFetch,
     readSettingsFn: readFn,
     writeSettingsFn: writeFn,
@@ -168,7 +169,7 @@ test('a partial router outage still observes accounts and failure checks never r
       assert.deepEqual(records.slice(count).map(check => check.backend_instance), ['agy:gemini-weekly']);
       for (const check of records.slice(count)) {
         assert.equal(check.quota_remaining_percent, undefined);
-        assert.equal(check.quota_window, undefined);
+        assert.equal(check.quota_window, "weekly");
         assert.equal(check.observed_at, undefined);
         assert.ok(check.backend_instance === 'agy:gemini-weekly');
         if (failure === 'failed') assert.equal(check.check_error, 'Failed to refresh quota from provider');
@@ -1013,4 +1014,30 @@ test('unrecognized Claude windows preserve prior routing readings', async () => 
     await observer.refresh();
     assert.equal(records.length, 1, 'a response without account windows must not invalidate prior readings');
   }
+});
+
+test('AGY failure after observer restart invalidates the persisted provider pools and windows', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'gah-router-restart-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const stored = { url: 'https://restart.example.com', apiKey: 'k', managementKey: 'm', accountBackends: { restart: 'agy-second' } };
+  const account = { ...file({ id: 'restart', provider: 'antigravity', project_id: 'p1' }), quota: null, model_quotas: null };
+  const records: Record<string, unknown>[] = [];
+  let failed = false;
+  const rec = recordingFetch(c => {
+    if (c.url.endsWith('/api-call')) return failed ? { status: 500, body: {} } : { status: 200, body: { status_code: 200, body: { groups: [
+      { buckets: [{ bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: .5 }] },
+      { buckets: [{ bucketId: '3p-5h', window: '5h', remainingFraction: .7 }, { bucketId: '3p-weekly', window: 'weekly', remainingFraction: .8 }] }
+    ] } } };
+  });
+  const deps = { agyScopesPath: join(root, 'scopes.json'), readSettingsFn: () => stored, fetchFn: rec.fn,
+    recordQuotaFn: async (record: Record<string, unknown>) => { records.push(record); } };
+  await createCliRouterQuotaObserver(deps).observeAccount(account, stored, true);
+  assert.equal(records.length, 3);
+  records.length = 0;
+  failed = true;
+  await createCliRouterQuotaObserver(deps).observeAccount(account, stored, true);
+  assert.deepEqual(records.map(record => [record.quota_pool, record.quota_window]), [
+    ['agy-second:gemini-weekly', 'weekly'], ['agy-second:3p-5h', '5h'], ['agy-second:3p-5h', 'weekly']
+  ]);
+  assert.ok(records.every(record => record.check_error && record.quota_remaining_percent === undefined));
 });

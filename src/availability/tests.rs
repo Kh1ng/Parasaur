@@ -680,19 +680,29 @@ fn cli_clear_without_model_marks_backend_wide_available() {
 #[test]
 fn derive_quota_pool_separates_pools_per_account_and_ignores_non_agy() {
     let _fixture = super::agy::fixture();
-    let d = |b, m| super::derive_quota_pool(b, Some(m)).unwrap();
+    let d = |b, m| super::derive_quota_pool(b, Some(m), Some(&_fixture.catalog)).unwrap();
     assert_eq!(d("agy", "Gemini 3.8 Flash (Medium)"), "agy:gemini-weekly");
     assert_eq!(d("agy-main", "gemini-3.8-flash-high"), "agy:gemini-weekly");
     assert_eq!(
         d("agy-second", "Claude Sonnet 4.6 (Thinking)"),
         "agy-second:3p-weekly"
     );
-    assert_eq!(d("agy-third", "unknown"), "agy-third:default");
-    assert_eq!(d("agy", "Gemini retired model"), "agy:default");
-    assert_eq!(super::derive_quota_pool("claude", Some("Gemini 3.8")), None);
-    assert_eq!(super::derive_quota_pool("agy", None), None);
-    assert_eq!(super::derive_quota_pool("agy", Some("   ")), None);
-    let r = |b, m, p| super::resolve_candidate_quota_pool(b, m, p).unwrap();
+    assert_eq!(d("agy-third", "unknown"), "agy-third:external");
+    assert_eq!(d("agy", "Gemini retired model"), "agy:google-native");
+    assert_eq!(
+        super::derive_quota_pool("claude", Some("Gemini 3.8"), Some(&_fixture.catalog)),
+        None
+    );
+    assert_eq!(
+        super::derive_quota_pool("agy", None, Some(&_fixture.catalog)),
+        None
+    );
+    assert_eq!(
+        super::derive_quota_pool("agy", Some("   "), Some(&_fixture.catalog)),
+        None
+    );
+    let r =
+        |b, m, p| super::resolve_candidate_quota_pool(b, m, p, Some(&_fixture.catalog)).unwrap();
     assert_eq!(
         r("agy", Some("gemini-3.8-flash-high"), Some("agy")),
         "agy:gemini-weekly"
@@ -717,8 +727,18 @@ fn agy_pool_isolation_blocks_only_same_pool_on_same_account() {
     let tmp = TempDir::new().unwrap();
     let p = path(&tmp);
     let now = OffsetDateTime::now_utc();
-    let ag = super::derive_quota_pool("agy", Some("Gemini 3.8 Flash (Medium)")).unwrap();
-    let ae = super::derive_quota_pool("agy", Some("Claude Sonnet 4.6 (Thinking)")).unwrap();
+    let ag = super::derive_quota_pool(
+        "agy",
+        Some("Gemini 3.8 Flash (Medium)"),
+        Some(&_fixture.catalog),
+    )
+    .unwrap();
+    let ae = super::derive_quota_pool(
+        "agy",
+        Some("Claude Sonnet 4.6 (Thinking)"),
+        Some(&_fixture.catalog),
+    )
+    .unwrap();
     super::record_unavailable(
         &p,
         "agy",

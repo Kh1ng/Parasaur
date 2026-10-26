@@ -147,7 +147,11 @@ mod tests {
             let identity = crate::execution_identity::ExecutionIdentity::legacy_candidate(
                 backend,
                 Some("Gemini 3.8 Flash (High)"),
-                crate::availability::derive_quota_pool(backend, Some("Gemini 3.8 Flash (High)")),
+                crate::availability::derive_quota_pool(
+                    backend,
+                    Some("Gemini 3.8 Flash (High)"),
+                    Some(&_fixture.catalog),
+                ),
             );
             let windows = crate::quota_store::latest_windows_for_identity(&records, &identity);
             assert_eq!(windows.len(), 1);
@@ -156,7 +160,11 @@ mod tests {
         let second = crate::execution_identity::ExecutionIdentity::legacy_candidate(
             "agy-second",
             Some("Gemini 3.8 Flash (High)"),
-            crate::availability::derive_quota_pool("agy-second", Some("Gemini 3.8 Flash (High)")),
+            crate::availability::derive_quota_pool(
+                "agy-second",
+                Some("Gemini 3.8 Flash (High)"),
+                Some(&_fixture.catalog),
+            ),
         );
         assert!(crate::quota_store::latest_windows_for_identity(&records, &second).is_empty());
     }

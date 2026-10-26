@@ -403,10 +403,20 @@ impl RoutingPolicy {
         let home = (backend == "agy-second")
             .then_some(self.agy_second_home.as_deref())
             .flatten();
-        let runtime = (self.agy_path.is_some() || home.is_some())
-            .then(|| (self.agy_path.as_deref().unwrap_or("agy"), home));
+        let instance = self.backend_instances.get(backend);
+        let executable = instance
+            .and_then(|instance| instance.executable.as_deref())
+            .or(self.agy_path.as_deref())
+            .unwrap_or("agy");
+        let home = instance
+            .and_then(|instance| instance.state_root.as_deref())
+            .map(std::path::Path::new)
+            .or(home);
         crate::availability::resolve_candidate_quota_pool_for_runtime(
-            backend, model, configured, runtime,
+            backend,
+            model,
+            configured,
+            Some((executable, home)),
         )
     }
 

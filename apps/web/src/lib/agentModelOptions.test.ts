@@ -27,3 +27,13 @@ test('AGY task pickers group only provider-advertised effort variants, including
   expect(options[1].variants).toBeUndefined();
   expect(options[2].variants).toBeUndefined();
 });
+
+test('AGY variant order uses effort metadata from every member of a group', () => {
+  const options = agentModelOptions('agy-second', [
+    { id: 'nova-turbo', name: 'Nova (Turbo)', reasoningEfforts: levels(['low', 'medium', 'turbo']) },
+    { id: 'nova-medium', name: 'Nova (Medium)', reasoningEfforts: levels(['medium']) },
+    { id: 'nova-low', name: 'Nova (Low)', reasoningEfforts: levels(['low']) },
+  ], []);
+  expect(options[0].value).toBe('Nova (Medium)');
+  expect(options[0].variants?.map(variant => variant.effort)).toEqual(['low', 'medium', 'turbo']);
+});

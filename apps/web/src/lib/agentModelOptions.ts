@@ -43,7 +43,10 @@ export function agentModelOptions(backend: string, models: ManagerModelInfo[], a
     options.push({ value: /^agy(?:[:_-]|$)/i.test(backend) ? model.name : model.id, label: agentModelLabel(backend, model, resolved), details });
   }
   for (const option of options) {
-    const effortOrder = models.find(model => model.name === option.value)?.reasoningEfforts?.map(effort => effort.id) ?? [];
+    const members = models.filter(model => option.variants?.some(variant => variant.value === model.name));
+    // Prefer the most complete advertised order, then append other members' levels.
+    const effortOrder = [...new Set(members.sort((a, b) => (b.reasoningEfforts?.length ?? 0) - (a.reasoningEfforts?.length ?? 0))
+      .flatMap(model => model.reasoningEfforts?.map(effort => effort.id) ?? []))];
     option.variants?.sort((a, b) => effortOrder.indexOf(a.effort) - effortOrder.indexOf(b.effort));
   }
   return options;

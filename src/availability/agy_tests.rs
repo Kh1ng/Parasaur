@@ -7,10 +7,14 @@ thread_local! {
     pub(super) static FIXTURE: std::cell::RefCell<Option<Catalog>> = const { std::cell::RefCell::new(None) };
 }
 
-pub(crate) struct Fixture;
+pub(crate) struct Fixture {
+    pub catalog: Catalog,
+}
 pub(crate) fn fixture() -> Fixture {
     FIXTURE.with(|cell| *cell.borrow_mut() = Some(Catalog::parse(MODELS, USAGE).unwrap()));
-    Fixture
+    Fixture {
+        catalog: Catalog::parse(MODELS, USAGE).unwrap(),
+    }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -35,7 +39,7 @@ fn agy_fixture_maps_native_models_and_accounts_to_reported_buckets() {
     );
     assert_eq!(catalog.pool("agy", "claude-sonnet-4-6"), "agy:3p-weekly");
     assert_eq!(catalog.pool("agy", "gpt-oss-120b-medium"), "agy:3p-weekly");
-    assert_eq!(catalog.pool("agy", "not-listed"), "agy:default");
+    assert_eq!(catalog.pool("agy", "not-listed"), "agy:external");
 }
 
 #[test]
@@ -60,7 +64,10 @@ fn agy_retired_model_disappears_when_inventory_is_replaced() {
         .collect::<Vec<_>>()
         .join("\n");
     let catalog = Catalog::parse(&models, USAGE).unwrap();
-    assert_eq!(catalog.pool("agy", "gemini-3.8-flash-low"), "agy:default");
+    assert_eq!(
+        catalog.pool("agy", "gemini-3.8-flash-low"),
+        "agy:google-native"
+    );
     assert_eq!(
         catalog.pool("agy", "gemini-3.8-flash-high"),
         "agy:gemini-weekly"
@@ -68,7 +75,7 @@ fn agy_retired_model_disappears_when_inventory_is_replaced() {
 }
 
 #[test]
-fn agy_unknown_shapes_and_ambiguous_membership_use_default() {
+fn agy_unknown_shapes_and_ambiguous_membership_use_family_fallback() {
     for usage in [
         b"{}".as_slice(),
         b"not json",
@@ -80,7 +87,10 @@ fn agy_unknown_shapes_and_ambiguous_membership_use_default() {
     ambiguous["command"]["data"]["groups"][1]["description"] =
         "Models within this group: Gemini Flash".into();
     let catalog = Catalog::parse(MODELS, &serde_json::to_vec(&ambiguous).unwrap()).unwrap();
-    assert_eq!(catalog.pool("agy", "gemini-3.8-flash-high"), "agy:default");
+    assert_eq!(
+        catalog.pool("agy", "gemini-3.8-flash-high"),
+        "agy:google-native"
+    );
     ambiguous["command"]["data"]["groups"][1]["buckets"][0]["id"] = "gemini-weekly".into();
     assert!(Catalog::parse(MODELS, &serde_json::to_vec(&ambiguous).unwrap()).is_err());
     assert!(Catalog::parse("changed format", USAGE).is_err());
@@ -90,7 +100,7 @@ fn agy_unknown_shapes_and_ambiguous_membership_use_default() {
     assert!(Catalog::parse(MODELS, changed.as_bytes()).is_err());
     assert_eq!(
         Catalog::default().pool("agy-two", "anything"),
-        "agy-two:default"
+        "agy-two:external"
     );
 }
 
@@ -109,7 +119,7 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
     let executable = script.to_str().unwrap();
     assert_eq!(
-        pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
+        settled_pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
         "agy-one:gemini-weekly"
     );
     // Keep an exhausted reading attached to the same pool through failures.
@@ -136,7 +146,7 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
         "#!/bin/sh\necho models >> \"$HOME/calls\"\nexit 1\n",
     )
     .unwrap();
-    let retained = pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home));
+    let retained = settled_pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home));
     assert_eq!(retained, "agy-one:gemini-weekly");
     let identity = crate::execution_identity::ExecutionIdentity::legacy_candidate(
         "agy-one",
@@ -148,13 +158,13 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     assert_eq!(windows[0].quota_remaining_percent, Some(0.0));
     let calls = std::fs::read_to_string(home.join("calls")).unwrap();
     assert_eq!(
-        pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
+        settled_pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
         "agy-one:gemini-weekly"
     );
     assert_eq!(std::fs::read_to_string(home.join("calls")).unwrap(), calls);
     retry();
     assert_eq!(
-        pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
+        settled_pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
         "agy-one:gemini-weekly"
     );
     assert_eq!(
@@ -167,7 +177,7 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     retry();
     std::fs::remove_file(&script).unwrap();
     assert_eq!(
-        pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
+        settled_pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
         "agy-one:gemini-weekly"
     );
     std::fs::write(&script, original).unwrap();
@@ -178,7 +188,7 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     std::fs::write(home.join("usage"), recovered).unwrap();
     retry();
     assert_eq!(
-        pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
+        settled_pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
         "agy-one:recovered-pool"
     );
     assert!(CACHE
@@ -193,7 +203,7 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     std::fs::write(home.join("usage"), USAGE).unwrap();
     std::fs::write(home.join("models"), "").unwrap();
     assert_eq!(
-        pool("agy-two", "gemini-3.8-flash-high", executable, Some(&home)),
+        settled_pool("agy-two", "gemini-3.8-flash-high", executable, Some(&home)),
         "agy-two:recovered-pool"
     );
     assert_eq!(
@@ -205,8 +215,8 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     );
     expire();
     assert_eq!(
-        pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
-        "agy-one:default"
+        settled_pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
+        "agy-one:google-native"
     );
     // The candidate identity carries the installation that actually executes,
     // even when several accounts share the logical backend and binary.
@@ -232,6 +242,12 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
             ..Default::default()
         })
     };
+    settled_pool(
+        "agy-primary",
+        "gemini-3.8-flash-high",
+        executable,
+        Some(&home),
+    );
     assert_eq!(
         identity("agy-primary").quota_pool.as_deref(),
         Some("agy-primary:gemini-weekly")
@@ -243,7 +259,7 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     let mut profile = crate::config::tests::test_profile_for_notifications();
     profile.agy_path = Some(executable.into());
     profile.agy_second_home = Some(home.to_string_lossy().into_owned());
-    let routing = profile.effective_routing(&crate::config::Defaults::default());
+    let mut routing = profile.effective_routing(&crate::config::Defaults::default());
     let candidate = crate::config::CandidateConfig {
         backend: "agy-second".into(),
         model: Some("gemini-3.8-flash-high".into()),
@@ -256,12 +272,95 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
             .as_deref(),
         Some("agy-second:gemini-weekly")
     );
+    routing.agy_path = Some("/missing-legacy-agy".into());
+    routing.backend_instances.insert(
+        "agy-second".into(),
+        crate::config::BackendInstanceConfig {
+            runner_kind: "agy".into(),
+            executable: Some(executable.into()),
+            state_root: Some(home.to_string_lossy().into_owned()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        routing
+            .find_quota_pool("improve", "agy-second", Some("gemini-3.8-flash-high"))
+            .as_deref(),
+        Some("agy-second:gemini-weekly")
+    );
     let other = dir.path().join("other");
     std::fs::create_dir(&other).unwrap();
     std::fs::write(other.join("models"), MODELS).unwrap();
     std::fs::write(other.join("usage"), USAGE).unwrap();
     assert_eq!(
-        pool("agy-two", "gemini-3.8-flash-high", executable, Some(&other)),
+        settled_pool("agy-two", "gemini-3.8-flash-high", executable, Some(&other)),
         "agy-two:gemini-weekly"
     );
+}
+
+#[cfg(unix)]
+fn settled_pool(account: &str, model: &str, executable: &str, home: Option<&Path>) -> String {
+    let _ = pool(account, model, executable, home);
+    let key = (executable.to_string(), home.map(Path::to_path_buf));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let cache = CACHE.get().unwrap().lock().unwrap();
+        let cached = cache.get(&key).unwrap();
+        if !cached.refreshing {
+            return cached.catalog.pool(account, model);
+        }
+        drop(cache);
+        assert!(Instant::now() < deadline, "metadata refresh did not finish");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn agy_missing_metadata_keeps_gemini_and_third_party_pools_separate() {
+    for (model, pool) in [
+        ("Gemini 9 Flash", "google-native"),
+        ("gemini-new", "google-native"),
+        ("Nova", "external"),
+        ("Claude", "external"),
+    ] {
+        assert_eq!(
+            super::super::derive_quota_pool("agy-second", Some(model), None),
+            Some(format!("agy-second:{pool}"))
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn agy_slow_probe_never_blocks_routing_or_another_installation() {
+    use std::os::unix::fs::PermissionsExt;
+    let _exec = crate::test_support::ExecGuard::new();
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("slow-agy");
+    std::fs::write(&script, "#!/bin/sh\ntouch \"$HOME/started\"\nwhile [ ! -f \"$HOME/release\" ]; do sleep 0.05; done\nexit 1\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let executable = script.to_str().unwrap();
+    let start = Instant::now();
+    assert_eq!(
+        pool("agy", "Gemini future", executable, Some(dir.path())),
+        "agy:google-native"
+    );
+    assert!(start.elapsed() < Duration::from_millis(200));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !dir.path().join("started").exists() {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let start = Instant::now();
+    assert_eq!(
+        pool("agy", "Gemini future", executable, Some(dir.path())),
+        "agy:google-native"
+    );
+    assert_eq!(
+        pool("agy-second", "Nova", "/missing-agy", None),
+        "agy-second:external"
+    );
+    assert!(start.elapsed() < Duration::from_millis(200));
+    std::fs::write(dir.path().join("release"), "").unwrap();
+    settled_pool("agy", "Gemini future", executable, Some(dir.path()));
 }

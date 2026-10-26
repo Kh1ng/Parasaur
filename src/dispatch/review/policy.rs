@@ -297,17 +297,14 @@ fn effective_model_for(candidate: &CandidateConfig, profile: &Profile) -> Option
 /// state store `routing::decide_route` consults. Fails open (treats the
 /// candidate as available) if the store can't be read -- unknown state
 /// should not itself stall the escalation chain.
-fn candidate_is_available(state_path: &std::path::Path, candidate: &CandidateConfig) -> bool {
-    let quota_pool = availability::resolve_candidate_quota_pool(
-        &candidate.backend,
-        candidate.model.as_deref(),
-        candidate.quota_pool.as_deref(),
-    );
-    let identity = crate::execution_identity::ExecutionIdentity::legacy_candidate(
-        &candidate.backend,
-        candidate.model.as_deref(),
-        quota_pool.as_deref(),
-    );
+fn candidate_is_available(
+    state_path: &std::path::Path,
+    candidate: &CandidateConfig,
+    profile: &Profile,
+) -> bool {
+    let identity = profile
+        .effective_routing(&crate::config::Defaults::default())
+        .execution_identity_for_candidate(candidate);
     availability::availability_for_identity(state_path, &identity, OffsetDateTime::now_utc())
         .map(|decision| decision.eligible)
         .unwrap_or(true)
@@ -336,7 +333,7 @@ fn pick_next_untried(
         .collect();
     if let Some(available) = untried
         .iter()
-        .find(|candidate| candidate_is_available(state_path, candidate))
+        .find(|candidate| candidate_is_available(state_path, candidate, profile))
     {
         return Some(available.clone());
     }

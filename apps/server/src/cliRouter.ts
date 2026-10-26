@@ -1,3 +1,4 @@
+import { AgyQuotaScopes } from './agyQuotaScopes.js';
 import { agyGroupPool } from './agyQuota.js';
 import { Router } from 'express';
 import type { Request, Response } from 'express';
@@ -498,6 +499,7 @@ async function recordQuota(record: Record<string, unknown>): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export interface CliRouterDeps {
+  agyScopesPath?: string;
   fetchFn?: typeof globalThis.fetch;
   readSettingsFn?: typeof readSettings;
   writeSettingsFn?: typeof writeSettings;
@@ -518,7 +520,7 @@ export function createCliRouterQuotaObserver(deps: CliRouterDeps = {}) {
   const refreshThrottle = refreshInterval - 60_000;
   let batch: Promise<void> | undefined;
   let stopped = false;
-  const agyScopes = new Map<string, { quotaPool?: string; window?: string }[]>();
+  const agyScopes = new AgyQuotaScopes(deps.agyScopesPath ?? `${settingsPath()}.agy-scopes.json`);
 
   async function observeAccount(account: UpstreamAuthFile, stored: CliRouterStoredSettings, force = false): Promise<QuotaCache | undefined> {
     const origin = stored.url.replace(/\/$/, '');
@@ -558,8 +560,8 @@ export function createCliRouterQuotaObserver(deps: CliRouterDeps = {}) {
         await doRecord({
           backend, backend_instance: instance,
           ...(pool ? { quota_pool: pool } : {}),
+          ...(quota?.window ? { quota_window: quota.window } : {}),
           ...(hasReading && quota ? {
-            ...(quota.window ? { quota_window: quota.window } : {}),
             ...(typeof quota.remainingPercent === 'number' ? { quota_remaining_percent: quota.remainingPercent } : {}),
             ...(quota.resetAt ? { quota_reset_at: quota.resetAt } : {}),
             observed_at: quota.observedAt ?? result.observedAt,

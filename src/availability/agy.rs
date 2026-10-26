@@ -81,13 +81,13 @@ fn label(value: &str) -> bool {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct Catalog {
+pub struct Catalog {
     pools: HashMap<String, String>,
 }
 
 impl Catalog {
     /// Membership comes from AGY's explicit family list in each group. Unknown
-    /// language or ambiguous membership degrades to one default pool.
+    /// language or ambiguous membership uses the legacy model-family fallback.
     pub fn parse(models: &str, usage: &[u8]) -> Result<Self> {
         let groups = groups(usage)?;
         let families = groups
@@ -139,8 +139,11 @@ impl Catalog {
             .get(model)
             .map(String::as_str)
             .unwrap_or_else(|| {
-                warn();
-                "default"
+                if model.trim().to_ascii_lowercase().starts_with("gemini") {
+                    "google-native"
+                } else {
+                    "external"
+                }
             });
         format!("{account}:{pool}")
     }
@@ -158,7 +161,7 @@ fn normalize(name: &str) -> String {
 
 fn warn() {
     if !WARNED.swap(true, Ordering::Relaxed) {
-        eprintln!("warning: unrecognized AGY metadata; using no effort options and an account-scoped default quota pool");
+        eprintln!("warning: unrecognized AGY metadata; using the account-scoped Gemini/third-party quota fallback");
     }
 }
 
@@ -168,45 +171,65 @@ struct Cached {
     refreshed_at: Option<Instant>,
     retry_at: Option<Instant>,
     catalog: Catalog,
+    refreshing: bool,
 }
 static CACHE: OnceLock<Mutex<HashMap<Runtime, Cached>>> = OnceLock::new();
 
-/// Resolve capacity using this installation's live inventory. Failed refreshes
-/// retain the last good catalog with a separate retry backoff; successful
-/// inventories replace it, including empty inventories and retired models.
-pub(crate) fn pool(account: &str, model: &str, executable: &str, home: Option<&Path>) -> String {
+/// Return the last good inventory immediately and start at most one background
+/// refresh per installation. Probes never hold the cache lock or block routing.
+pub(crate) fn catalog(executable: &str, home: Option<&Path>) -> Catalog {
     #[cfg(test)]
     if let Some(catalog) = tests::FIXTURE.with(|cell| cell.borrow().clone()) {
-        return catalog.pool(account, model);
+        return catalog;
     }
     let key = (executable.to_string(), home.map(Path::to_path_buf));
     let mut cache = CACHE
         .get_or_init(Default::default)
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let cached = cache.entry(key).or_default();
-    if cached.refreshed_at.is_none_or(|at| at.elapsed() >= TTL)
-        && cached
-            .retry_at
-            .is_none_or(|retry_at| Instant::now() >= retry_at)
+    let cached = cache.entry(key.clone()).or_default();
+    let catalog = cached.catalog.clone();
+    if catalog.pools.is_empty() {
+        warn();
+    }
+    if !cached.refreshing
+        && cached.refreshed_at.is_none_or(|at| at.elapsed() >= TTL)
+        && cached.retry_at.is_none_or(|at| Instant::now() >= at)
     {
-        match load(executable, home) {
-            Ok(catalog) => {
-                if cached.retry_at.take().is_some() {
-                    eprintln!("AGY metadata refresh recovered; using the updated quota catalog");
+        cached.refreshing = true;
+        let refresh_key = key.clone();
+        let spawned = std::thread::Builder::new().name("agy-metadata".into()).spawn(move || {
+            let result = load(&refresh_key.0, refresh_key.1.as_deref());
+            let mut cache = CACHE.get().unwrap().lock().unwrap_or_else(|e| e.into_inner());
+            let cached = cache.get_mut(&refresh_key).unwrap();
+            cached.refreshing = false;
+            match result {
+                Ok(catalog) => {
+                    if cached.retry_at.take().is_some() {
+                        eprintln!("AGY metadata refresh recovered; using the updated quota catalog");
+                    }
+                    cached.catalog = catalog;
+                    cached.refreshed_at = Some(Instant::now());
                 }
-                cached.catalog = catalog;
-                cached.refreshed_at = Some(Instant::now());
-            }
-            Err(_) => {
-                if cached.retry_at.is_none() {
-                    eprintln!("warning: AGY metadata refresh failed; retaining cached quota pools and retrying after 10 seconds");
+                Err(_) => {
+                    if cached.retry_at.is_none() {
+                        eprintln!("warning: AGY metadata refresh failed; retaining cached quota pools and retrying after 10 seconds");
+                    }
+                    cached.retry_at = Some(Instant::now() + RETRY_BACKOFF);
                 }
-                cached.retry_at = Some(Instant::now() + RETRY_BACKOFF);
             }
+        });
+        if spawned.is_err() {
+            let cached = cache.get_mut(&key).unwrap();
+            cached.refreshing = false;
+            cached.retry_at = Some(Instant::now() + RETRY_BACKOFF);
         }
     }
-    cached.catalog.pool(account, model)
+    catalog
+}
+
+pub(crate) fn pool(account: &str, model: &str, executable: &str, home: Option<&Path>) -> String {
+    catalog(executable, home).pool(account, model)
 }
 
 fn load(executable: &str, home: Option<&Path>) -> Result<Catalog> {

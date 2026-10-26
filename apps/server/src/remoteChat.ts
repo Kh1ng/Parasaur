@@ -100,8 +100,8 @@ export function workerChatConnection(registry: RegistryService, nodeId: string, 
         },
         listCommands: () => command('commands'),
         listModels: () => command('models'),
-        setModel: async () => { throw new Error('Set the model on the conversation before the next worker turn.'); },
-        setReasoningEffort: async () => { throw new Error('Set reasoning effort on the conversation before the next worker turn.'); },
+        setModel: async (_conversation, model) => { await command('set-model', { model }); },
+        setReasoningEffort: async (_conversation, reasoningEffort) => { await command('set-effort', { reasoningEffort }); },
         steerTurn: async (_key, message) => {
           if (!active) throw new Error('No worker turn is active.');
           await command('steer', { requestId: active.requestId, message });

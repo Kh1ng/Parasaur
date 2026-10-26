@@ -580,20 +580,17 @@ export async function listModelsForProfile(
 export async function setModelForProfile(profile: string, modelId: string, nodeId?: string): Promise<void> {
   const backendId = backendForProfile(profile);
   const route = await chatRoute(profile, nodeId, backendId, false);
-  if (route.remote) {
-    const models = await route.remote.adapter(backendId).listModels({ key: profile, profile });
-    if (!models.models.some(model => model.id === modelId)) throw new Error('The worker backend does not advertise that model.');
-  } else await resolveAdapter(backendId).setModel({ key: profile, profile }, modelId);
+  await (route.remote?.adapter(backendId) ?? resolveAdapter(backendId)).setModel({ key: profile, profile }, modelId);
   setModelOverrideForProfile(profile, backendId, modelId);
 }
 
 export async function setReasoningEffortForProfile(profile: string, effortId: string, nodeId?: string): Promise<void> {
   const backendId = backendForProfile(profile);
   const route = await chatRoute(profile, nodeId, backendId, false);
-  if (route.remote) {
-    const models = await route.remote.adapter(backendId).listModels({ key: profile, profile });
-    if (!models.reasoningEfforts.some(effort => effort.id === effortId)) throw new Error('The worker backend does not advertise that reasoning effort.');
-  } else await resolveAdapter(backendId).setReasoningEffort({ key: profile, profile }, effortId);
+  const adapter = route.remote?.adapter(backendId) ?? resolveAdapter(backendId);
+  const model = modelOverrideForProfile(profile, backendId);
+  if (route.remote && model) await adapter.setModel({ key: profile, profile }, model);
+  await adapter.setReasoningEffort({ key: profile, profile }, effortId);
   setReasoningEffortOverrideForProfile(profile, backendId, effortId);
 }
 
