@@ -12,7 +12,7 @@ Set these environment variables on the central server:
 - `GAH_GITLAB_PIPELINE_REPAIR`: set `1` to enable failed-pipeline repair. Default: off.
 - `GAH_GITLAB_PANEL_URL`: required public dashboard base URL, including any path prefix. Example: `https://panel.example.com/parasaur/`.
 - `GAH_GITLAB_EVENTS_RATE_LIMIT`: positive integer requests per minute per source IP. Default: `600`, also used for invalid values. Applies before secret verification and event classification, including unsupported events and invalid secrets.
-- `GAH_GITLAB_EVENTS_STORE_PATH`: optional receipt-file path. Default: `$XDG_STATE_HOME/gah/gitlab-events.json`, or `~/.local/state/gah/gitlab-events.json`.
+- `GAH_GITLAB_EVENTS_STORE_PATH`: optional receipt and queue file path. Default: `$XDG_STATE_HOME/gah/gitlab-events.json`, or `~/.local/state/gah/gitlab-events.json`.
 
 Configure a GitLab profile with `provider`, `repo`, `provider_api_base`, and `provider_project_id`.
 Authenticate `glab` as the configured bot with the existing provider credentials.
@@ -48,7 +48,7 @@ The companion file hook forwards stdin unchanged. It sends no event UUID header.
 Its curl command has a ten-second timeout. It has no retry loop and does not fail on HTTP error status.
 Use hook and server logs to diagnose rejected deliveries.
 
-- `202`: the server saved a receipt and scheduled asynchronous authorization and dispatch.
+- `202`: the server durably saved the receipt and payload for asynchronous authorization and dispatch.
 - `204`: an unsupported event, an inactive trigger, or a duplicate receipt.
 - `401`: the secret is absent, incorrect, or unconfigured.
 - `429`: the per-source-IP request limit was exceeded. Default: 600 requests per minute.
@@ -84,15 +84,20 @@ A comment failure never starts another run. This integration does not merge MRs.
 If supplied, `X-Gitlab-Event-UUID` or body `event_uuid` identifies the event.
 Otherwise, receipts use project, object kind, object ID, and action or pipeline status.
 Issue and MR receipts also include revision and assignment changes. Note receipts include revision and note text.
-The file stores only receipt hashes and expiry times, with private permissions and atomic replacement.
-One central server owns the receipt file. Do not share it between server processes.
-Receipts survive restart and expire after 24 hours. The store holds at most 10,000 unexpired receipts.
-A full store refuses new events instead of removing live receipts.
+The file stores receipt hashes, expiry times, and pending payloads with their classification
+and dashboard settings, using private permissions and atomic replacement.
+One central server owns the file. Do not share it between server processes.
+Completed receipts expire after 24 hours. Pending payloads never expire or get evicted.
+The store holds at most 10,000 receipts; a full store refuses new events.
+Receipt files from earlier versions remain readable.
 
-The receipt is saved before `202`, so replay cannot repeat a dispatch after a comment failure or restart.
-There is no durable work queue or automatic dispatch retry.
-A crash after acknowledgement can leave a receipt without a run.
-Before manual replay, check the run state and remove only the affected receipt hash from the file with the server stopped.
+The receipt and payload are saved together before `202`. On startup, pending payloads
+pass through the same classifier, authorization, and fleet dispatcher as new deliveries.
+A successful dispatch clears its payload after the fleet records the request-ID lease;
+the receipt remains for deduplication. Authorization rejections also finish processing
+without starting a worker. Dispatch or storage failures retain pending payloads and
+retry every 30 seconds, with at most 64 concurrent dispatches. Fleet request IDs remain
+stable across replay. Comment failures do not repeat a dispatch.
 
 Fixtures under `apps/server/tests/fixtures/gitlab-19/` derive from GitLab 19.0 documentation examples.
 They are sanitized examples, not live captures. Validate the deployment with real file-hook deliveries before enabling unattended work.

@@ -133,6 +133,10 @@ test('receipts survive restarts, expire, stay bounded, and reject corrupt state'
     assert.equal(store.reserve(event('note').key), 'new');
     writeFileSync(path, '{');
     assert.throws(() => new EventDedupe(1, 10, () => now, path).reserve(key));
+    writeFileSync(path, JSON.stringify([[key, 100]]));
+    const legacy = new EventDedupe(1, 10, () => now, path);
+    assert.equal(legacy.reserve(key), 'duplicate', 'legacy receipt format remains readable');
+    assert.deepEqual(legacy.queued(), []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
   const body = fixture('issue');
   record(body.object_attributes).updated_at = '2026-05-23T12:00:00.000Z';
@@ -360,4 +364,102 @@ test('unavailable receipts and panel configuration refuse work without dispatch'
     await server.close(); rmSync(dir, { recursive: true, force: true });
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
   }
+});
+
+test('accepted payload survives restart before dispatch and replays exactly once', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gitlab-replay-'));
+  const path = join(dir, 'events.json');
+  const body = fixture('issue');
+  const key = event('issue').key;
+  let now = 0;
+  const saved = { GAH_GITLAB_HOOK_SECRET: process.env.GAH_GITLAB_HOOK_SECRET, GAH_GITLAB_PANEL_URL: process.env.GAH_GITLAB_PANEL_URL };
+  Object.assign(process.env, { GAH_GITLAB_HOOK_SECRET: 'restart-test', GAH_GITLAB_PANEL_URL: options.panelUrl });
+  try {
+    const accepted = new EventDedupe(1, 10, () => now, path);
+    const app = express(); app.use(express.json());
+    // Suspend before any dispatch is recorded, then discard this process's in-memory state.
+    app.use('/hooks', gitLabEventsRouter({ dedupe: accepted, dispatch: () => new Promise<void>(() => {}) }));
+    const server = await serve(app);
+    try {
+      const response = await fetch(`${server.base}/hooks/events`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Parasaur-Hook-Secret': 'restart-test' },
+        body: JSON.stringify(body),
+      });
+      assert.equal(response.status, 202);
+      assert.equal(accepted.queued().length, 1);
+    } finally { await server.close(); }
+    now = 20;
+    const restarted = new EventDedupe(1, 10, () => now, path);
+    assert.equal(restarted.reserve(key), 'duplicate', 'pending receipts never expire');
+    assert.equal(restarted.reserve(event('note').key), 'full', 'pending work is never evicted');
+    let calls = 0;
+    const dispatched = new Promise<void>(resolve => {
+      gitLabEventsRouter({ dedupe: restarted, dispatch: async replay => {
+        assert.deepEqual(replay, event('issue'));
+        calls++;
+        resolve();
+      } });
+    });
+    await dispatched;
+    await new Promise(resolve => setImmediate(resolve));
+    const completed = new EventDedupe(1, 10, () => now, path);
+    assert.deepEqual(completed.queued(), []);
+    assert.equal(completed.reserve(key), 'duplicate');
+    gitLabEventsRouter({ dedupe: completed, dispatch: async () => { calls++; } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
+
+test('failed dispatch keeps the accepted payload durable for restart replay', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gitlab-retry-'));
+  const path = join(dir, 'events.json');
+  try {
+    const store = new EventDedupe(10, 100, Date.now, path);
+    store.reserve(event('note').key, { body: fixture('note'), ...options, pipelineEnabled: false });
+    gitLabEventsRouter({ dedupe: store, dispatch: async () => { throw new Error('fleet unavailable'); } });
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(new EventDedupe(10, 100, Date.now, path).queued().length, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test('durable queue reclassifies UUID deliveries and completes only after dispatch resolves', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gitlab-queue-'));
+  const path = join(dir, 'events.json');
+  try {
+    const body = fixture('issue');
+    const eventUuid = 'restart-event';
+    const classified = classifyEvent(body, options.bot, false, eventUuid);
+    assert.ok(classified);
+    let now = 0;
+    const accepted = new EventDedupe(1, 10, () => now, path);
+    assert.equal(accepted.reserve(classified.key, { body, ...options, pipelineEnabled: false, eventUuid }), 'new');
+    now = 20;
+    const replayed = new EventDedupe(1, 10, () => now, path);
+    assert.equal(replayed.reserve(classified.key), 'duplicate');
+    assert.equal(replayed.reserve(event('note').key), 'full');
+    let release: () => void = () => {};
+    const dispatching = new Promise<void>(resolve => {
+      gitLabEventsRouter({ dedupe: replayed, dispatch: async received => {
+        assert.deepEqual(received, classified);
+        await new Promise<void>(done => { release = done; resolve(); });
+      } });
+    });
+    await dispatching;
+    assert.equal(new EventDedupe(1, 10, () => now, path).queued().length, 1);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    const completed = new EventDedupe(1, 10, () => now, path);
+    assert.deepEqual(completed.queued(), []);
+    assert.equal(completed.reserve(classified.key), 'duplicate');
+    let duplicates = 0;
+    gitLabEventsRouter({ dedupe: completed, dispatch: async () => { duplicates++; } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(duplicates, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
