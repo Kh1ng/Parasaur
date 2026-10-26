@@ -40,6 +40,7 @@ pub(super) fn finish_improve_workflow(
     job_contract: Option<&super::job_contract::JobContract>,
     validation_environment: &[(String, String)],
     timeout: std::time::Duration,
+    gitlab_fix: Option<&super::gitlab_fix::GitLabFix>,
 ) -> Result<()> {
     if profile.validation_commands.is_empty() && ledger.validation_result.is_none() {
         ledger.validation_result = Some("not_run".into());
@@ -236,6 +237,9 @@ pub(super) fn finish_improve_workflow(
         route_effective_model,
     )?;
 
+    if let Some(context) = gitlab_fix {
+        context.finish(profile, ledger, wt);
+    }
     clear_wip_checkpoints(repo, wip_checkpoints);
     worktree::cleanup(wt, repo);
     Ok(())

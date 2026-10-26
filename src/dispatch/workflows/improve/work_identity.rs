@@ -66,6 +66,10 @@ pub(super) fn resolve_manual_fix_work_identity(
         .collect::<Vec<_>>();
 
     if relevant.is_empty() {
+        // GitLab can request fixes on human-authored MRs that GAH has never dispatched.
+        if profile.provider_kind()? == crate::provider_kind::ProviderKind::Gitlab {
+            return Ok((branch.to_string(), None));
+        }
         anyhow::bail!(
             "could not resolve a work identity for branch '{branch}' from existing ledger records; \
 no prior implementation/review dispatch record on this branch.",
@@ -568,6 +572,18 @@ mod tests {
         let err = resolve_manual_fix_work_identity(&cfg, "test", "gah/manual-fix-1").unwrap_err();
 
         assert!(err.to_string().contains("multiple work identities"));
+    }
+
+    #[test]
+    fn gitlab_fix_without_prior_dispatch_uses_branch_identity() {
+        let (_tmp, mut cfg) = ledger_test_util::test_config();
+        let mut profile = ledger_test_util::profile();
+        profile.provider = "gitlab".into();
+        cfg.profiles.insert("test".into(), profile);
+        assert_eq!(
+            resolve_manual_fix_work_identity(&cfg, "test", "feature/human-mr").unwrap(),
+            ("feature/human-mr".into(), None)
+        );
     }
 
     #[test]

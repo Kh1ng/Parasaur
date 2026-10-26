@@ -390,3 +390,92 @@ The `/embed` document router, framing policy, sign-in handoff, and runs-feed rou
 
 Enterprise must still choose the issuer, signing keys, audience, claim lifetime, replay controls, and principal enrollment policy.
 It must also implement GitLab/Supabase sign-in and the trusted gate changes before this hook can authenticate panel users.
+
+## GitLab MR reviews and fixes
+
+The GitLab events endpoint in #1643 dispatches MR review requests as `review`.
+MR mentions such as `@parasaur fix these` dispatch `fix --mr <iid>`.
+Panel starts use the same Rust workflows.
+Event authorization and the profile's trusted-author lists still apply.
+
+### Bot credentials and publication
+
+Set `GITLAB_PAT2` or `GITLAB_PAT` in the profile's environment file to the bot user's API token.
+`GITLAB_PAT2` takes precedence, matching existing provider credentials.
+The bot needs permission to read the project, create MR notes, and resolve discussions.
+Existing push credentials use the same profile PAT.
+
+Review publication and discussion reads, replies, and resolution explicitly supply this token to `glab`.
+They never fall back to a requesting user's token or a saved `glab` login.
+
+The publisher lives in `src/provider/gitlab_review.rs`.
+The diff-position mapper lives in `src/provider/gitlab_review/positions.rs`.
+`post_review_findings` selects the provider through an exhaustive match.
+GitHub keeps its existing publication behavior.
+This change adds no dependencies or review wire fields.
+
+Each review posts one summary note.
+Confirmed findings become diff discussions with the latest diff version's base, start, and head SHAs.
+The head must match the reviewed commit.
+The publisher fetches the patch by version ID so a concurrent push cannot mix patches.
+Paths and lines must exist in that version's diff.
+
+Renames carry both old and new paths.
+Added lines carry `new_line`, deleted lines carry `old_line`, and context lines carry both.
+A finding's `line` is a new-side number, `new:<number>`, or `old:<number>`.
+
+When the reviewer has an exact replacement, its summary includes a fenced `suggestion` block.
+GitLab shows its native Apply suggestion action.
+Old-side findings cannot contain suggestions.
+Unpositioned findings remain visible in the summary.
+Inline failures preserve the summary without retrying writes.
+One warning reports an incomplete publication, and the ledger requires human review.
+
+### Fix review comments
+
+`fix --mr <iid>` resolves the existing source branch and uses the normal repair, validation, commit, and push path.
+A GitLab MR with no local run history uses its source branch as its work identity.
+Conflicting ledger identities still fail closed.
+
+The Rust adapter loads every page of MR discussions, up to 100 pages, before it starts the backend.
+It includes only unresolved, resolvable discussions with a non-system note from an author trusted by the existing profile rules.
+Unknown and absent author lists grant no trust.
+The existing author parser treats ordinary accounts without a bot flag as human accounts.
+If the bot uses such an account, include its username in `trusted_issue_human_authors`.
+The prompt includes only trusted authors' non-system notes.
+It marks their text as untrusted review data.
+If the context exceeds 60 KB, the adapter emits one warning and leaves the threads open.
+
+The worker writes `gitlab-addressed-threads.json` in its allocated build directory.
+The implementation sandbox can write to that directory.
+Each entry names `discussion_id`, a `summary` of the change, and the repository-relative `files` changed for that thread.
+The harness clears the report before each backend attempt so an earlier attempt cannot acknowledge threads.
+
+After successful validation and push, the harness checks the report against the original snapshot.
+It checks that the reported files changed since the repair's starting commit.
+Positioned threads must name a changed file from their position.
+The harness also checks that the MR remains open at the pushed SHA.
+It then reads each thread again.
+
+Changed discussions stay open.
+For each remaining addressed thread, the harness posts a reply with the commit and explanation.
+It then resolves that discussion.
+A failed reply prevents resolution.
+Unreported, untrusted, unrelated, and unverified threads remain open.
+
+Comment restrictions, handoff delivery, failed validation, or failed push prevent acknowledgement.
+Provider failures produce one warning per publication, context load, or acknowledgement operation.
+The warning excludes provider output and credentials.
+An incomplete operation requires human review.
+Weak and fallback review gates remain in force.
+This integration never merges an MR.
+
+### Verification
+
+`tests/fixtures/gitlab-19/` contains redacted GitLab 19.x API shapes derived from official documentation examples.
+They cover diff versions, renamed-file patches, and resolved/unresolved discussions.
+They are not live deployment captures.
+
+Before deployment acceptance, check bot identity, Apply suggestion, and fix/reply/resolve behavior against the target GitLab instance.
+
+API references: [Discussions](https://docs.gitlab.com/api/discussions/) and [Merge requests](https://docs.gitlab.com/api/merge_requests/).

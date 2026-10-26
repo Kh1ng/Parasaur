@@ -1,9 +1,9 @@
 use super::{
-    github_find_pr_number_by_branch, github_set_review_state_labels, gitlab_api,
-    gitlab_find_mr_by_branch, gitlab_hostname, gitlab_mr_result_from_value, gitlab_project_id,
-    gitlab_set_review_state_labels, provider_command, provider_network_retry_backoff,
-    provider_output_with_transient_retry, redacted_provider_output, redacted_stderr, MrResult,
-    Profile, ProviderKind, Result, PROVIDER_NETWORK_ATTEMPTS, PROVIDER_TITLE_MAX_CHARS,
+    github_find_pr_number_by_branch, github_set_review_state_labels, gitlab_api, gitlab_hostname,
+    gitlab_mr_result_from_value, gitlab_project_id, provider_command,
+    provider_network_retry_backoff, provider_output_with_transient_retry, redacted_provider_output,
+    redacted_stderr, MrResult, Profile, ProviderKind, Result, PROVIDER_NETWORK_ATTEMPTS,
+    PROVIDER_TITLE_MAX_CHARS,
 };
 use anyhow::Context;
 use std::sync::OnceLock;
@@ -191,6 +191,29 @@ pub fn post_review_comment(
     }
 }
 
+/// Publish positioned findings on GitLab while retaining GitHub's existing summary path.
+pub fn post_review_findings(
+    profile: &Profile,
+    branch: &str,
+    head: &str,
+    body: &str,
+    findings: &[crate::models::ActionableReviewFinding],
+    labels: &[&str],
+) -> Result<bool> {
+    match profile.provider_kind()? {
+        ProviderKind::Github => post_review_comment(profile, branch, body, labels).map(|()| true),
+        ProviderKind::Gitlab => {
+            crate::policy::enforce_policy(profile, "review")?;
+            if profile.delivery_mode == crate::config::DeliveryMode::Handoff {
+                anyhow::bail!("delivery_mode=handoff: review publication is disallowed");
+            }
+            Ok(super::gitlab_review::publish(
+                profile, branch, head, body, findings, labels,
+            ))
+        }
+    }
+}
+
 /// Post an idempotent comment to a source issue using the configured provider.
 /// The body is redacted before it crosses the provider boundary.
 pub fn post_issue_comment(profile: &Profile, issue_number: &str, body: &str) -> Result<()> {
@@ -304,12 +327,7 @@ fn gitlab_post_review_comment(
     body: &str,
     labels: &[&str],
 ) -> Result<()> {
-    let project_id = gitlab_project_id(profile)?;
-    let mr = gitlab_find_mr_by_branch(profile, branch)?;
-    let endpoint = format!("projects/{project_id}/merge_requests/{}/notes", mr.id);
-    gitlab_api(profile, &endpoint, "POST", &[("body", body)])?;
-    gitlab_set_review_state_labels(profile, &mr.id, labels)
-        .with_context(|| format!("applying review labels to MR {}", mr.id))?;
+    super::gitlab_review::publish(profile, branch, "", body, &[], labels);
     Ok(())
 }
 

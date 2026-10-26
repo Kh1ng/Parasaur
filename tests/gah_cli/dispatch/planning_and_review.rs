@@ -1139,7 +1139,7 @@ fn review_shutdown_records_cancelled_shutdown_and_dispatch_finished_event() {
 }
 
 #[test]
-fn review_gitlab_uses_host_scoped_glab_session_without_pat() {
+fn review_gitlab_without_bot_pat_keeps_local_verdict_and_does_not_publish() {
     let tmp = test_tempdir();
     let repo = tmp.path().join("repo");
     fs::create_dir_all(&repo).unwrap();
@@ -1189,17 +1189,24 @@ fn review_gitlab_uses_host_scoped_glab_session_without_pat() {
         .env("PATH", prepend_path(&fake_bin))
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "Resolved MR: https://gitlab.example.com/owner/real/-/merge_requests/7",
-        ));
+        .stderr(
+            predicate::str::contains(
+                "warning: GitLab review publication incomplete; human review required\n",
+            )
+            .count(1),
+        );
 
     let glab_log = fs::read_to_string(glab_log).unwrap();
     assert!(glab_log.contains("--hostname gitlab.example.com"));
     assert!(!glab_log.contains("PRIVATE-TOKEN"));
+    assert!(!glab_log.contains("--method POST"));
 
     let session_dir = latest_child_dir(&tmp.path().join("artifacts/real/sessions"));
     let verdict = fs::read_to_string(session_dir.join("review-verdict.json")).unwrap();
     assert!(verdict.contains("\"verdict\": \"APPROVE\""));
+    let ledger = fs::read_to_string(tmp.path().join("artifacts/ledger.jsonl")).unwrap();
+    let entry: Value = serde_json::from_str(ledger.lines().last().unwrap()).unwrap();
+    assert_eq!(entry["human_required"], true);
 }
 
 #[test]
