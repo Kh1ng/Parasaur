@@ -481,3 +481,88 @@ They are not live deployment captures.
 Before deployment acceptance, check bot identity, Apply suggestion, and fix/reply/resolve behavior against the target GitLab instance.
 
 API references: [Discussions](https://docs.gitlab.com/api/discussions/) and [Merge requests](https://docs.gitlab.com/api/merge_requests/).
+
+## Durable event acceptance and replay (#1644)
+
+This section supersedes the receipt-only storage and manual-replay behavior
+described under "Redelivery and limits" above.
+
+`GAH_GITLAB_EVENTS_STORE_PATH` now holds receipts, pending deliveries, and
+dead letters together. The default remains
+`$XDG_STATE_HOME/gah/gitlab-events.json`, or
+`~/.local/state/gah/gitlab-events.json` when `XDG_STATE_HOME` is unset.
+There is no separate queue file or new environment variable. The server
+reads the old receipt-array format and upgrades it on the next write to
+`{ version: 1, receipts, pending, deadLetters }`.
+Existing receipts remain deduplicated. Previously acknowledged events
+without saved payloads cannot be recovered by this upgrade.
+
+Before sending `202`, the server writes both the receipt and the pending
+delivery using the existing atomic replacement helper: a private `0600`
+temporary file beside the store, flush, rename, and directory flush.
+An unsuccessful write returns `503 gitlab_event_store_unavailable` and
+does not reserve the event in memory. Only one central server process
+can own this file. Keep the file on persistent storage.
+
+Pending entries retain the accepted JSON payload, the optional
+`X-Gitlab-Event-UUID`, the receipt hash, and the acceptance-time
+`GAH_GITLAB_BOT_USERNAME`, `GAH_GITLAB_PIPELINE_REPAIR`, and
+`GAH_GITLAB_PANEL_URL` settings. The server never stores hook-secret headers.
+The existing JSON body limit remains 100 KiB. The saved JSON payload also
+has a 100 KiB limit. If serialization exceeds this limit, acceptance returns
+`503 gitlab_event_store_unavailable` before it reserves a receipt.
+Pending payloads and dead letters can contain issue or note text and retain
+private permissions.
+
+At central-server startup, after fleet dispatch initializes, the worker
+reclassifies pending payloads with their saved classification settings and
+uses the same dispatcher as new deliveries. Provider author trust,
+profile matching, managed-issue checks, and other dispatch policy are
+checked again against current provider state. A policy rejection completes
+the entry without a worker start. A successful start returns only after
+the fleet coordinator records its dispatch lease. The queue then removes
+the payload and refreshes its receipt for 24 hours. Queued-run comment
+failure still cannot trigger another dispatch.
+
+If the server stops before queue completion, replay preserves
+`gitlab-<receipt hash>` as the fleet request ID to reuse the recorded lease.
+Pending and dead-letter receipts remain pinned even after
+24 hours. HTTP redelivery of either returns `204` without a
+second drain. The worker serializes drains, and each ready entry gets one attempt
+before failed entries become eligible for retry. Shutdown stops scheduling
+new attempts and leaves unfinished entries on disk. For a custom startup
+using `createServer`, call `app.locals.gitLabEventsQueue.start()` after
+initializing fleet dispatch and `.stop()` during shutdown. The standard
+`bin.ts` does both. Worker nodes have no GitLab event queue.
+
+The combined pending and dead-letter limit is 64 entries. Nothing in
+either list expires or gets evicted. New qualifying events receive
+`503 gitlab_event_queue_full` when that limit is reached, without reserving
+a receipt. The existing 10,000-receipt bound still returns
+`503 gitlab_event_store_full`. Unsupported events still return `204` and
+invalid hook credentials still return `401` before storage access. The
+rate limiter and `GAH_GITLAB_EVENTS_RATE_LIMIT` behavior are unchanged.
+
+Dispatch failures retry after at least 30 seconds, on the background
+worker's 30-second tick or a new acceptance. Failure counts and retry times
+survive restart. After three failures the entry moves atomically to
+`deadLetters`, with one log line for that transition. Other ready entries
+continue. Dead letters are not replayed automatically and still count
+against the 64-entry bound. Storage failures retain pending work, retry on
+later ticks, and log once per failure/recovery transition without payload
+or provider error text. Corrupt stores fail closed and remain in place
+for inspection.
+
+To inspect or recover dead letters, stop the server and back up the store.
+Check fleet sessions, leases, and provider state before retrying a run.
+For an intentional retry, move only that entry from `deadLetters` to
+`pending`, set `attempts` and `retryAt` to `0`, and keep its receipt and
+identity fields. Restart to replay it. To discard a dead letter after
+inspection, remove only that entry and retain its receipt until expiry.
+Do not downgrade to a receipt-only server while this store contains queued
+work. Older servers cannot read the new format.
+
+This implements the durable-queue half of #1644. The GitLab 19 fixtures
+remain documented examples. Replacing them with redacted live captures of
+issue, merge-request, note, and pipeline deliveries still requires the
+owner's self-hosted GitLab instance and remains open under #1644.

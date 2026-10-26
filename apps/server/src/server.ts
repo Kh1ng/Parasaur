@@ -392,7 +392,11 @@ export function createServer(
   // Middleware
   app.use(cors());
   app.use(express.json());
-  if (node.role === 'central') app.use('/api/integrations/gitlab', gitLabEventsRouter(configDeps.gitLabEvents));
+  if (node.role === 'central') {
+    const gitLabEvents = gitLabEventsRouter(configDeps.gitLabEvents);
+    app.locals.gitLabEventsQueue = gitLabEvents.queue;
+    app.use('/api/integrations/gitlab', gitLabEvents);
+  }
   if (node.role === 'central') {
     app.post('/api/manager-chat/bridge/telegram', async (req, res) => {
       if (!req.secure && !isLocalAddress(req.socket.remoteAddress ?? '')) {

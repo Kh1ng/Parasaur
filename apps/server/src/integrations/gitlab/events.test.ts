@@ -8,7 +8,7 @@ import express from 'express';
 import type { ConfigProfileSummary, ProfileSummary } from '@git-agent-harness/contracts';
 import type { SessionOptions } from '../../sessions/SessionManager.js';
 import { classifyEvent, record, type GitLabEvent } from './classifier.js';
-import { EventDedupe } from './dedupe.js';
+import { GitLabEventStore, type GitLabDelivery } from './eventStore.js';
 import { dispatchGitLabEvent, type GitLabDispatchDeps } from './dispatcher.js';
 import { sessionMatchesGitLabContext } from './runsFeed.js';
 import { gitLabEventsRouter } from './route.js';
@@ -41,6 +41,7 @@ const config: ConfigProfileSummary = {
   prompt_policies: { schema_version: 1, profile: 'example', revision: 0, policies: [], rollback_revisions: [] }, event_policy: policy,
 };
 const options = { bot: 'parasaur', panelUrl: 'https://panel.example.com/parasaur/' };
+const delivery = (name: string): GitLabDelivery => ({ ...options, pipelineEnabled: true, body: fixture(name), key: event(name).key });
 
 function harness(overrides: Partial<GitLabDispatchDeps> = {}) {
   const starts: SessionOptions[] = [];
@@ -125,15 +126,16 @@ test('receipts survive restarts, expire, stay bounded, and reject corrupt state'
   try {
     const path = join(dir, 'events.json');
     let now = 0;
-    const store = new EventDedupe(1, 10, () => now, path);
+    const store = new GitLabEventStore(1, 10, () => now, path);
     const key = event('issue').key;
-    assert.equal(store.reserve(key), 'new');
-    assert.equal(new EventDedupe(1, 10, () => now, path).reserve(key), 'duplicate');
-    assert.equal(store.reserve(event('note').key), 'full');
+    assert.equal(store.enqueue(delivery('issue')), 'new');
+    assert.equal(new GitLabEventStore(1, 10, () => now, path).enqueue(delivery('issue')), 'duplicate');
+    assert.equal(store.enqueue(delivery('note')), 'full');
+    store.complete(key);
     now = 11;
-    assert.equal(store.reserve(event('note').key), 'new');
+    assert.equal(store.enqueue(delivery('note')), 'new');
     writeFileSync(path, '{');
-    assert.throws(() => new EventDedupe(1, 10, () => now, path).reserve(key));
+    assert.throws(() => new GitLabEventStore(1, 10, () => now, path).enqueue(delivery('issue')));
   } finally { rmSync(dir, { recursive: true, force: true }); }
   const body = fixture('issue');
   record(body.object_attributes).updated_at = '2026-05-23T12:00:00.000Z';
@@ -234,7 +236,7 @@ test('hook route authenticates independently, acknowledges before dispatch, and 
   let release: () => void = () => {};
   const pending = new Promise<void>(resolve => { release = resolve; });
   let calls = 0;
-  const app = createServer({ gitLabEvents: { dedupe: new EventDedupe(), dispatch: async () => { calls++; await pending; } } });
+  const app = createServer({ gitLabEvents: { store: new GitLabEventStore(), dispatch: async () => { calls++; await pending; } } });
   const server = await serve(app);
   const send = (body: unknown, secret?: string) => fetch(`${server.base}/api/integrations/gitlab/events`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-Proto': 'https', ...(secret ? { 'X-Parasaur-Hook-Secret': secret } : {}) }, body: JSON.stringify(body),
@@ -261,7 +263,7 @@ test('hook rate limiting permits 600 requests and rejects request 601 before aut
   Object.assign(process.env, { GAH_GITLAB_HOOK_SECRET: 'hook-test', GAH_GITLAB_PANEL_URL: options.panelUrl });
   delete process.env.GAH_GITLAB_EVENTS_RATE_LIMIT;
   const app = express(); app.use(express.json());
-  app.use('/api/integrations/gitlab', gitLabEventsRouter({ dedupe: new EventDedupe(), dispatch: async () => {} }));
+  app.use('/api/integrations/gitlab', gitLabEventsRouter({ store: new GitLabEventStore(), dispatch: async () => {} }));
   const server = await serve(app);
   const send = (body: unknown, secret = 'hook-test') => fetch(`${server.base}/api/integrations/gitlab/events`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Parasaur-Hook-Secret': secret }, body: JSON.stringify(body),
@@ -289,7 +291,7 @@ test('hook rate limit is configurable per router', async () => {
     GAH_GITLAB_EVENTS_RATE_LIMIT: process.env.GAH_GITLAB_EVENTS_RATE_LIMIT };
   Object.assign(process.env, { GAH_GITLAB_HOOK_SECRET: 'hook-test', GAH_GITLAB_EVENTS_RATE_LIMIT: '2' });
   const app = express(); app.use(express.json());
-  app.use('/api/integrations/gitlab', gitLabEventsRouter({ dedupe: new EventDedupe(), dispatch: async () => {} }));
+  app.use('/api/integrations/gitlab', gitLabEventsRouter({ store: new GitLabEventStore(), dispatch: async () => {} }));
   const server = await serve(app);
   const send = () => fetch(`${server.base}/api/integrations/gitlab/events`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Parasaur-Hook-Secret': 'hook-test' },
@@ -299,6 +301,76 @@ test('hook rate limit is configurable per router', async () => {
     assert.equal((await send()).status, 204);
     assert.equal((await send()).status, 204);
     assert.equal((await send()).status, 429);
+  } finally {
+    await server.close();
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
+
+test('an acknowledged event replays exactly once after restart before dispatch', async () => {
+  const saved = { GAH_GITLAB_HOOK_SECRET: process.env.GAH_GITLAB_HOOK_SECRET, GAH_GITLAB_PANEL_URL: process.env.GAH_GITLAB_PANEL_URL };
+  Object.assign(process.env, { GAH_GITLAB_HOOK_SECRET: 'hook-test', GAH_GITLAB_PANEL_URL: options.panelUrl });
+  const dir = mkdtempSync(join(tmpdir(), 'gitlab-restart-'));
+  const path = join(dir, 'events.json');
+  const h = harness();
+  const dispatch = (event: GitLabEvent, options: { bot: string; panelUrl: string }) => dispatchGitLabEvent(event, options, h.deps);
+  const freshApp = () => createServer({ gitLabEvents: { store: new GitLabEventStore(10, 86_400_000, Date.now, path), dispatch } });
+  const app = freshApp();
+  // Hold the background worker to model process exit immediately after acknowledgement.
+  app.locals.gitLabEventsQueue.stop();
+  let server = await serve(app);
+  const body = fixture('issue');
+  const eventUuid = 'header-identity-must-survive-replay';
+  const accepted = classifyEvent(body, 'parasaur', false, eventUuid); assert.ok(accepted);
+  const send = () => fetch(`${server.base}/api/integrations/gitlab/events`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Parasaur-Hook-Secret': 'hook-test', 'X-Gitlab-Event-UUID': eventUuid },
+    body: JSON.stringify(body),
+  });
+  let restarted: express.Express | undefined;
+  try {
+    assert.equal((await send()).status, 202);
+    assert.equal(h.starts.length, 0);
+    assert.equal(JSON.parse(readFileSync(path, 'utf8')).pending[0].key, accepted.key, 'queue exists before the caller observes 202');
+    await server.close();
+    restarted = freshApp();
+    server = await serve(restarted);
+    restarted.locals.gitLabEventsQueue.start();
+    await Promise.all([restarted.locals.gitLabEventsQueue.drain(), restarted.locals.gitLabEventsQueue.drain()]);
+    assert.equal(h.starts.length, 1);
+    assert.equal(h.starts[0].requestId, `gitlab-${accepted.key}`);
+    assert.equal(JSON.parse(readFileSync(path, 'utf8')).pending.length, 0);
+    assert.equal((await send()).status, 204);
+    const third = freshApp();
+    await third.locals.gitLabEventsQueue.drain();
+    assert.equal(h.starts.length, 1, 'receipt survives completion and a second restart');
+  } finally {
+    restarted?.locals.gitLabEventsQueue.stop();
+    await server.close(); rmSync(dir, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
+
+test('a full durable queue refuses new work with 503 but keeps fast authentication and ignore paths', async () => {
+  const saved = { GAH_GITLAB_HOOK_SECRET: process.env.GAH_GITLAB_HOOK_SECRET, GAH_GITLAB_PANEL_URL: process.env.GAH_GITLAB_PANEL_URL };
+  Object.assign(process.env, { GAH_GITLAB_HOOK_SECRET: 'hook-test', GAH_GITLAB_PANEL_URL: options.panelUrl });
+  const store = new GitLabEventStore(10, 100, Date.now, undefined, 1);
+  const app = createServer({ gitLabEvents: { store, dispatch: async () => { assert.fail('worker stopped'); } } });
+  app.locals.gitLabEventsQueue.stop();
+  const server = await serve(app);
+  const send = (body: unknown, secret = 'hook-test') => fetch(`${server.base}/api/integrations/gitlab/events`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Parasaur-Hook-Secret': secret }, body: JSON.stringify(body),
+  });
+  try {
+    assert.equal((await send(fixture('issue'))).status, 202);
+    const full = await send(fixture('note'));
+    assert.equal(full.status, 503);
+    assert.equal(record(await full.json()).error, 'gitlab_event_queue_full');
+    assert.equal((await send(fixture('issue'))).status, 204);
+    assert.equal((await send(fixture('note'), 'wrong')).status, 401);
+    assert.equal((await send({ object_kind: 'push' })).status, 204);
+    assert.equal(store.ready().length, 1);
+    store.complete(event('issue').key);
+    assert.equal((await send(fixture('note'))).status, 202, 'refusal did not reserve a receipt');
   } finally {
     await server.close();
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
@@ -373,7 +445,7 @@ test('unavailable receipts and panel configuration refuse work without dispatch'
   const path = join(dir, 'events.json'); writeFileSync(path, '{');
   let calls = 0;
   const app = express(); app.use(express.json());
-  app.use('/api/integrations/gitlab', gitLabEventsRouter({ dedupe: new EventDedupe(10, 100, Date.now, path), dispatch: async () => { calls++; } }));
+  app.use('/api/integrations/gitlab', gitLabEventsRouter({ store: new GitLabEventStore(10, 100, Date.now, path), dispatch: async () => { calls++; } }));
   const server = await serve(app);
   const send = (body: string) => fetch(`${server.base}/api/integrations/gitlab/events`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Parasaur-Hook-Secret': 'hook-test' }, body,
