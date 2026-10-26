@@ -11,11 +11,12 @@ import { getProviderRegistry } from '../provider/ProviderRegistry.js';
 import { getServerPushBus } from '../serverPushBus.js';
 import { runDispatchCancellable, type DispatchOptions, type DispatchResult, type CancellableDispatch, type CancellationResult } from '../gahCli.js';
 import type {
-  Session, 
-  SessionId, 
-  ProviderKind, 
+  Session,
+  SessionId,
+  ProviderKind,
   ProviderInstanceId,
-  SessionStatus
+  SessionStatus,
+  GitLabDispatchContext
 } from '@git-agent-harness/contracts';
 
 export type SessionOptions = {
@@ -41,6 +42,10 @@ export type SessionOptions = {
   manualWorker?: boolean;
   reasoningEffort?: string;
   requestId?: string;
+  /** GitLab page context (#1595): recorded on the session so the runs feed
+   * can filter without parsing target text. Only the GitLab event
+   * dispatcher (#1592) sets it. */
+  gitlab?: GitLabDispatchContext;
 };
 
 type ProviderRegistryLike = {
@@ -148,7 +153,8 @@ class SessionManagerImpl {
       mode: options.mode,
       backend: options.backend,
       model: options.model,
-      budget: options.budget
+      budget: options.budget,
+      gitlab: options.gitlab
     };
     
     this.sessions.set(sessionId, session);

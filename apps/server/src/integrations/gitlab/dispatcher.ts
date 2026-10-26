@@ -98,6 +98,15 @@ export async function dispatchGitLabEvent(
   const session = await deps.start({
     profile: profile.name, repo: profile.repo, providerKind: 'gitlab', instanceId: 'gitlab-0',
     requestId: `gitlab-${event.key}`, ...dispatch,
+    // The page context the runs feed filters by (#1595): recording it here
+    // lets origin-scoped queries see dispatcher-started runs without
+    // deriving them from target text.
+    gitlab: {
+      project: event.project.repo,
+      kind: comment.resource === 'issues' ? 'issue' : 'merge_request',
+      iid: comment.iid,
+      webUrl: event.project.url
+    }
   });
   if (!policy.allow_issue_comments || profile.delivery_mode === 'handoff') return;
   const url = new URL(options.panelUrl);

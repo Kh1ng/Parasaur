@@ -1,7 +1,9 @@
 import type { Session } from '@git-agent-harness/contracts';
 import { coordinatorToken } from './coordinatorToken.js';
+import { withBasePath } from '../lib/basePath.js';
 import type { ActivityEvent, ActivityNotificationPreferences, AuthHealthRow, LoginRepairView, PairedDevice, PairingOffer, PairingPreview, PairingAccessRequest } from '@git-agent-harness/contracts';
 import type { PlanningChatRequest, PlanningEpicList, PlanningMap, PlanningSettings, PlanningTarget } from '@git-agent-harness/contracts';
+import type { GitLabRunsFeedResponse } from '@git-agent-harness/contracts';
 /**
  * Typed data-source client for GAH's pull-data REST endpoints.
  *
@@ -78,6 +80,12 @@ import type {
 const SERVER_URL =
   (import.meta as unknown as { env: { VITE_SERVER_URL?: string } }).env?.VITE_SERVER_URL ||
   (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
+
+/** Every endpoint is app-absolute; the deployment's base path (nginx prefix)
+ * joins here once so every call site stays prefix-agnostic. */
+function apiUrl(path: string): URL {
+  return new URL(withBasePath(path), SERVER_URL);
+}
 
 function authHeaders(): Record<string, string> {
   const token = coordinatorToken();
@@ -167,7 +175,7 @@ export const activityApi = {
 };
 
 async function getJson<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
-  const url = new URL(path, SERVER_URL);
+  const url = apiUrl(path);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined) url.searchParams.set(key, value);
@@ -330,6 +338,7 @@ export interface GahDataSource {
   getReportSeries(params?: { profile?: string; since?: string; bucket?: string }): Promise<ReportSeriesData>;
   getWorkTimeline(workId: string): Promise<LedgerEntry[]>;
   getEvents(params?: { profile?: string; since?: string }): Promise<ControllerEvent[]>;
+  getGitLabRuns(params: { project: string; kind: 'issue' | 'merge_request'; iid: number; gitlab?: string; branch?: string; limit?: number }): Promise<GitLabRunsFeedResponse>;
   getControllerActivity(params?: { profile?: string; since?: string }): Promise<ControllerActivity[]>;
   getLoopDecision(profile: string): Promise<LoopDecision | null>;
   getProfiles(): Promise<ProfileSummary[]>;
@@ -576,6 +585,16 @@ export const gahApi: GahDataSource = {
     return getJson<ControllerEvent[]>('/api/events', {
       profile: params.profile,
       since: params.since
+    });
+  },
+  getGitLabRuns(params) {
+    return getJson<GitLabRunsFeedResponse>('/api/integrations/gitlab/runs', {
+      project: params.project,
+      kind: params.kind,
+      iid: String(params.iid),
+      gitlab: params.gitlab,
+      branch: params.branch,
+      limit: params.limit === undefined ? undefined : String(params.limit)
     });
   },
   getLoopDecision(profile) {

@@ -453,3 +453,25 @@ test('stopSession times out if cancellation takes too long', async (t) => {
   assert.equal(stoppedSession.status, 'error');
   assert.equal(stoppedSession.error, 'Session cancellation timed out');
 });
+
+test('a GitLab dispatch context is recorded on the session and survives fleet listing', async () => {
+  const manager = createSessionManager({
+    disableCleanupTimer: true,
+    providerRegistry: { isProviderAvailable: () => true },
+    pushBus: { publish() {} },
+    dispatchRunner: () => ({ promise: new Promise(() => {}), cancel: async () => ({ cancelled: true }) })
+  });
+  const gitlab = { project: 'parasaur-test/group/project', kind: 'merge_request' as const, iid: 7, webUrl: 'https://gitlab.example.test/parasaur-test/group/project' };
+  const session = await manager.startSession({
+    profile: 'gl-profile', providerKind: 'gitlab', instanceId: 'gitlab-0',
+    repo: 'parasaur-test/group/project', mode: 'review', mr: '7', gitlab
+  });
+  assert.deepEqual(manager.getSession(session.id)?.gitlab, gitlab);
+  assert.deepEqual(manager.getAllSessions().find(candidate => candidate.id === session.id)?.gitlab, gitlab);
+
+  // Sessions without a context (every other start path) stay unchanged.
+  const plain = await manager.startSession({
+    profile: 'gah', providerKind: 'github', instanceId: 'github-0', repo: 'owner/repo', mode: 'improve'
+  });
+  assert.equal(manager.getSession(plain.id)?.gitlab, undefined);
+});

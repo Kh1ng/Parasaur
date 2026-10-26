@@ -31,6 +31,13 @@ function respond(name) {
     process.stdout.write(fs.readFileSync(process.env.GAH_FIXTURE_PROFILE_LIST, 'utf8'));
     process.exit(0);
   }
+  // Tests that need their own ledger (e.g. the GitLab runs feed's mixed
+  // GitHub/GitLab fixtures) point GAH_FIXTURE_REPORT at a report JSON whose
+  // ledger_path selects their ledger file instead of the recorded response.
+  if (name === 'report' && process.env.GAH_FIXTURE_REPORT) {
+    process.stdout.write(fs.readFileSync(process.env.GAH_FIXTURE_REPORT, 'utf8'));
+    process.exit(0);
+  }
   const file = path.join(responsesDir, `${name}.json`);
   process.stdout.write(fs.readFileSync(file, 'utf8'));
   process.exit(0);

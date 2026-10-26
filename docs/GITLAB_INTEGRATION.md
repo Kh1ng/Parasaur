@@ -1,9 +1,19 @@
-# GitLab event ingestion
+# GitLab integration
 
-This endpoint implements the events section of the [companion contract](https://github.com/Kh1ng/parasaur-gitlab/blob/main/docs/parasaur-contract.md).
-The companion repository is private. The integration epic is [#1591](https://github.com/Kh1ng/git-agent-harness/issues/1591).
+How Parasaur serves the GitLab panel: event ingestion starts the work, the
+runs feed shows it inside the panel, and the embed view (in flight, #1646)
+mounts both. The companion contract is
+[docs/parasaur-contract.md](https://github.com/Kh1ng/parasaur-gitlab/blob/main/docs/parasaur-contract.md)
+in the private [Kh1ng/parasaur-gitlab](https://github.com/Kh1ng/parasaur-gitlab)
+repository; the epic is [#1591](https://github.com/Kh1ng/git-agent-harness/issues/1591).
 
-## Configuration
+> Note: the embed view ([#1646](https://github.com/Kh1ng/git-agent-harness/pull/1646),
+> `gah/1593-gitlab-embed-view`) adds its own section here when it lands;
+> keep it alongside the two sections below.
+
+## Event ingestion (#1643)
+
+### Configuration
 
 Set these environment variables on the central server:
 
@@ -33,7 +43,7 @@ The hook uses `gah config show --json --full` to read these lists.
 Older CLIs without `event_policy` cannot authorize event dispatch.
 Comment policy and `delivery_mode = "handoff"` still apply.
 
-## Request and response
+### Request and response
 
 Send `POST /api/integrations/gitlab/events` with `Content-Type: application/json`.
 Send the shared secret in `X-Parasaur-Hook-Secret`.
@@ -58,7 +68,7 @@ Invalid JSON returns `400`. Oversized JSON returns `413`.
 Authorization can reject a candidate after `202`; this starts no worker.
 Provider failures produce a server log entry without provider output or credentials.
 
-## Dispatch rules
+### Dispatch rules
 
 The server loads the actor through `glab` and checks the existing human or bot author list.
 It verifies the configured project ID through the provider API.
@@ -76,10 +86,12 @@ Bot-authored mention notes are ignored. Commit and snippet notes are ignored.
 Unrelated assignment or reviewer edits do not dispatch.
 Pipeline events without an open bot-owned MR are ignored.
 All starts use the same fleet coordinator as `POST /api/dispatch`, then the existing `gah dispatch` path.
+Every dispatch records the session's `gitlab` context (see the runs feed below),
+so panel queries scoped to the event's origin see the started runs.
 A successful start posts `Parasaur queued a run` with a dashboard session link.
 A comment failure never starts another run. This integration does not merge MRs.
 
-## Redelivery and limits
+### Redelivery and limits
 
 If supplied, `X-Gitlab-Event-UUID` or body `event_uuid` identifies the event.
 Otherwise, receipts use project, object kind, object ID, and action or pipeline status.
@@ -96,3 +108,72 @@ Before manual replay, check the run state and remove only the affected receipt h
 
 Fixtures under `apps/server/tests/fixtures/gitlab-19/` derive from GitLab 19.0 documentation examples.
 They are sanitized examples, not live captures. Validate the deployment with real file-hook deliveries before enabling unattended work.
+
+## Context-scoped runs feed (#1595)
+
+`GET /api/integrations/gitlab/runs` returns the runs relevant to what the
+panel is looking at: live dispatch sessions plus durable ledger runs for one
+GitLab issue or merge request, newest first, with backend, model, test
+status and the resulting MR link. It is a read behind the same auth as every
+other `/api` route (bearer token, paired device cookie, or trusted local
+request) — unlike the events endpoint, it never accepts the hook secret.
+Only the central server exposes it; workers do not.
+
+Query parameters:
+
+- `project` (required): full project path, e.g. `group/project` — one or
+  more non-empty `/`-separated segments of GitLab-allowed characters.
+- `kind` (required): `issue` or `merge_request`.
+- `iid` (required): positive issue or merge request iid.
+- `gitlab` (optional): the GitLab origin, e.g. `https://gitlab.example.com`.
+  It must be an `http(s)` origin configured for a GitLab profile; anything
+  else is a `400`. When present, only sessions and profiles that can prove
+  that origin answer; unprovable matches are excluded rather than assumed.
+- `branch` (optional): further narrow runs to one branch.
+- `limit` (optional): 1–100, default 20.
+
+Responses:
+
+- `200`: `{ context: { project, kind, iid, webUrl, profiles }, runs, events }`.
+  `context.profiles` names the configured GitLab profiles matching the
+  project (empty when none: the feed is then empty, not an error). `runs`
+  and `events` are newest first and bounded by `limit`.
+- `400`: empty or malformed context (`invalid_gitlab_context`) — a missing,
+  malformed or unconfigured context never widens the feed.
+- `502`: a `gah` CLI read failed.
+
+Each run is `{ id, source: 'session' | 'ledger', status, mode, workId,
+branch, backend, model, startedAt, endedAt, durationSeconds, testStatus,
+mrUrl, title, profile, attempts }`. `session` runs are in-flight dispatches
+(terminal ones are the ledger's job, so nothing is listed twice); `ledger`
+runs are durable records with their per-attempt history in `attempts`.
+`testStatus` is the ledger's `validation_result` (e.g. `passed`, `failed`,
+`not_run`). `mrUrl` is the resulting MR link. A live-session run deep-links
+its detail as `?page=work&profile=<profile>&session=<id>` (the same shape as
+the events endpoint's queued-run comments); a ledger run links the
+profile's work page.
+
+### How runs are matched
+
+The filter reuses what the server already exposes — the fleet session list,
+the dispatch ledger (read through the same `gah report` ledger path as
+`/api/report/roles`), and `gah events` — and matches a run to the context
+by:
+
+- the structured `gitlab` context recorded on the session by the GitLab
+  event dispatcher (#1643): `options.gitlab = { project, kind, iid,
+  webUrl }` on every dispatch it starts. A session carrying it must still
+  pass the common provider/repo/branch guards before it counts;
+- derivation for older sessions and ledger entries: GitLab provider +
+  project path, `source_issue_number` / `#<iid>` work ids for issues,
+  `mr:<iid>` work ids and MR URLs for merge requests, and the authoritative
+  resource URL embedded in note-instruction targets. A derived match
+  requires the run's recorded repo/host and its issue/MR reference —
+  parsed from the authoritative resource URL, not from arbitrary body
+  links — to equal the requested context; a link in a body to another
+  project is never context.
+
+`POST /api/dispatch` and the `session.start` WebSocket message accept the
+same optional `gitlab` context, validated by the same runtime validator on
+both paths, so any start path can record it and the feed stays
+provider-scoped without string parsing.

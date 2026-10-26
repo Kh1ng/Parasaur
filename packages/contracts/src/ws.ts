@@ -5,6 +5,7 @@
 
 import type { RunningWorker, MergeRequest, AvailabilityScope, Blocker, StatusError, RecentLedgerSummary, DependencyBlocker } from './gah.js';
 import type { ChatSessionSummary, ChatSessionView, ChatTranscriptTurn } from './chat-session.js';
+import type { GitLabDispatchContext } from './gitlab.js';
 
 // Provider types
 export type ProviderKind = 
@@ -171,6 +172,10 @@ export interface Session {
   backend?: string;
   model?: string;
   budget?: number;
+  /** GitLab page context when this dispatch was started from a GitLab
+   * event (#1595). The runs feed filters by it; absent for every other
+   * start path. */
+  gitlab?: GitLabDispatchContext;
 }
 
 // WebSocket message types
@@ -416,6 +421,9 @@ export type ClientMessage =
       backend?: string;
       model?: string;
       budget?: number;
+      /** GitLab page context for dispatches started from GitLab events
+       * (#1595); forwarded to the owning node with the session. */
+      gitlab?: GitLabDispatchContext;
     }
   | {
       type: "session.stop";

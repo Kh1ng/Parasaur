@@ -1,5 +1,6 @@
 import { notificationChannelFailure } from './notifyDelivery.js';
 import { gitLabEventsRouter, type GitLabRouteDeps } from './integrations/gitlab/route.js';
+import { gitLabRunsRouter } from './integrations/gitlab/runsRoute.js';
 import { parseSkillSelections } from './skillSelections.js';
 import { runningWorkers } from './runningWorkers.js';
 import express from 'express';
@@ -68,6 +69,7 @@ import type {
   ProfileSummary,
   ChatSessionEvent
 } from '@git-agent-harness/contracts';
+import { parseGitLabDispatchContext } from './integrations/gitlab/dispatchContext.js';
 import { getFleetDispatch, sessionStore } from './wsServer.js';
 import { GAHError } from '@git-agent-harness/shared';
 import { ISSUE_MANAGED_ERROR_CODE, assertIssueNotManaged } from './managedIssues.js';
@@ -418,6 +420,11 @@ export function createServer(
   // All API reads and mutations share one boundary, including future routes.
   // Direct same-origin loopback access remains local; /health stays public.
   app.use('/api', authMiddleware);
+  // Context-scoped runs feed for the GitLab panel (#1595): a read-only
+  // GET behind the same auth as every other /api route. The events route
+  // (#1592) mounts its own hook-secret boundary before this line; workers
+  // expose neither.
+  if (node.role === 'central') app.use('/api/integrations/gitlab', gitLabRunsRouter());
   const mutation = mutationSafety(getCoordinatorIdentity(undefined, coordinatorPort).node_id);
   app.use(workerRouteGuard(node));
   if (node.role === 'central' && (configDeps.webPushNotifications || configDeps.apnsNotifications)) {
@@ -1648,6 +1655,11 @@ export function createServer(
       res.status(400).json({ error: 'profile, providerKind, instanceId, repo, and mode are required' });
       return;
     }
+    const gitlab = parseGitLabDispatchContext(body.gitlab);
+    if (gitlab === 'invalid') {
+      res.status(400).json({ error: 'gitlab must be a valid context: project, kind (issue|merge_request), iid, webUrl' });
+      return;
+    }
     const options: SessionOptions & { requestId?: string; nodeId?: string; coordinatorNodeId?: string } = {
       profile,
       providerKind: providerKind as SessionOptions['providerKind'],
@@ -1668,6 +1680,7 @@ export function createServer(
       escalate: body.escalate === true,
       manualWorker: body.manualWorker === true,
       reasoningEffort: typeof body.reasoningEffort === 'string' ? body.reasoningEffort : undefined,
+      gitlab: gitlab ?? undefined,
       requestId: typeof body.requestId === 'string' ? body.requestId : undefined,
       nodeId: typeof body.nodeId === 'string' ? body.nodeId : undefined,
       coordinatorNodeId: typeof body.coordinatorNodeId === 'string' ? body.coordinatorNodeId : undefined

@@ -14,6 +14,7 @@ import { gatewayHealth } from './managerChat/memoryGatewayClient.js';
 import { getProviderRegistry } from './provider/ProviderRegistry.js';
 import { getSessionManager } from './sessions/SessionManager.js';
 import { createFleetDispatchCoordinator } from './fleetDispatch.js';
+import { parseGitLabDispatchContext } from './integrations/gitlab/dispatchContext.js';
 import { RegistryService } from './registryService.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { assertIssueNotManaged } from './managedIssues.js';
@@ -434,6 +435,12 @@ async function handleClientMessage(ws: WebSocket, message: ClientMessage) {
 
 async function handleStartSession(ws: WebSocket, message: Extract<ClientMessage, { type: 'session.start' }>, requestId: string) {
   try {
+    // The GitLab context arrives over the network: validate it with the same
+    // runtime validator as POST /api/dispatch before it is stored on a session.
+    const gitlab = parseGitLabDispatchContext(message.gitlab);
+    if (gitlab === 'invalid') {
+      throw new GAHError('gitlab must be a valid context: project, kind (issue|merge_request), iid, webUrl', 'INVALID_GITLAB_CONTEXT');
+    }
     // A managed issue belongs to a manager: the Assign button may not start a worker on it.
     await assertIssueNotManaged({ profile: message.profile, mode: message.mode, target: message.target });
     const session = await fleetDispatch.startSession({
@@ -452,7 +459,8 @@ async function handleStartSession(ws: WebSocket, message: Extract<ClientMessage,
       model: message.model,
       budget: message.budget,
       manualWorker: message.manualWorker,
-      reasoningEffort: message.reasoningEffort
+      reasoningEffort: message.reasoningEffort,
+      gitlab: gitlab ?? undefined
     });
     
     // Send success response
