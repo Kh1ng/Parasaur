@@ -2,6 +2,7 @@ import type { Session } from '@git-agent-harness/contracts';
 import { coordinatorToken } from './coordinatorToken.js';
 import type { ActivityEvent, ActivityNotificationPreferences, AuthHealthRow, LoginRepairView, PairedDevice, PairingOffer, PairingPreview, PairingAccessRequest } from '@git-agent-harness/contracts';
 import type { PlanningChatRequest, PlanningEpicList, PlanningMap, PlanningSettings, PlanningTarget } from '@git-agent-harness/contracts';
+import type { GitLabRunsFeedResponse } from '@git-agent-harness/contracts';
 /**
  * Typed data-source client for GAH's pull-data REST endpoints.
  *
@@ -330,6 +331,7 @@ export interface GahDataSource {
   getReportSeries(params?: { profile?: string; since?: string; bucket?: string }): Promise<ReportSeriesData>;
   getWorkTimeline(workId: string): Promise<LedgerEntry[]>;
   getEvents(params?: { profile?: string; since?: string }): Promise<ControllerEvent[]>;
+  getGitLabRuns(params: { project: string; kind: 'issue' | 'merge_request'; iid: number; gitlab?: string; branch?: string; limit?: number }): Promise<GitLabRunsFeedResponse>;
   getControllerActivity(params?: { profile?: string; since?: string }): Promise<ControllerActivity[]>;
   getLoopDecision(profile: string): Promise<LoopDecision | null>;
   getProfiles(): Promise<ProfileSummary[]>;
@@ -576,6 +578,16 @@ export const gahApi: GahDataSource = {
     return getJson<ControllerEvent[]>('/api/events', {
       profile: params.profile,
       since: params.since
+    });
+  },
+  getGitLabRuns(params) {
+    return getJson<GitLabRunsFeedResponse>('/api/integrations/gitlab/runs', {
+      project: params.project,
+      kind: params.kind,
+      iid: String(params.iid),
+      gitlab: params.gitlab,
+      branch: params.branch,
+      limit: params.limit === undefined ? undefined : String(params.limit)
     });
   },
   getLoopDecision(profile) {

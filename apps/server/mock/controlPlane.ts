@@ -41,6 +41,7 @@ import type {
   CliRouterSnapshot,
   GatewayBootstrapCommand,
   GatewaySettingsSummary,
+  GitLabRunsFeedResponse,
   HelperUsageRecord,
   GitReviewState,
   SettingsConfigProfileSummary,
@@ -1656,6 +1657,18 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
   });
   app.get('/api/events', (_req, res) => res.json([]));
   app.get('/api/controller-activity', (_req, res) => res.json([]));
+  // The GitLab panel's context-scoped runs feed (#1595): an empty feed for
+  // the requested context, mirroring a project with no runs yet.
+  app.get('/api/integrations/gitlab/runs', (req, res) => {
+    const context = {
+      project: String(req.query.project ?? ''),
+      kind: req.query.kind === 'merge_request' ? 'merge_request' as const : 'issue' as const,
+      iid: Number(req.query.iid ?? 0),
+      webUrl: null,
+      profiles: []
+    };
+    res.json({ context, runs: [], events: [] } satisfies GitLabRunsFeedResponse);
+  });
   app.get('/api/loop/last-decision', (_req, res) => res.json(null));
   app.get('/api/factory-runs/:runId/output', (_req, res) => res.json({ found: false, attempt: null, log: null, next: 0, truncated: false, events: [] }));
   app.get('/api/device-agents', (_req, res) => res.json({ supported: true, generated_at: new Date(FIXED_NOW).toISOString(), agents: [], factory_agents: [] }));

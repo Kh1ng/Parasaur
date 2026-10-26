@@ -471,7 +471,8 @@ class RemoteNodeTransport implements NodeDispatchTransport {
           allowUnknownRedBaseline: options.allowUnknownRedBaseline,
           escalate: options.escalate,
           manualWorker: options.manualWorker,
-          reasoningEffort: options.reasoningEffort
+          reasoningEffort: options.reasoningEffort,
+          gitlab: options.gitlab
         })
       );
       setTimeout(() => {

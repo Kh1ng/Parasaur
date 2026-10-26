@@ -452,7 +452,8 @@ async function handleStartSession(ws: WebSocket, message: Extract<ClientMessage,
       model: message.model,
       budget: message.budget,
       manualWorker: message.manualWorker,
-      reasoningEffort: message.reasoningEffort
+      reasoningEffort: message.reasoningEffort,
+      gitlab: message.gitlab
     });
     
     // Send success response

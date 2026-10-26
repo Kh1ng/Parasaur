@@ -1,5 +1,6 @@
 import { notificationChannelFailure } from './notifyDelivery.js';
 import { gitLabEventsRouter, type GitLabRouteDeps } from './integrations/gitlab/route.js';
+import { gitLabRunsRouter } from './integrations/gitlab/runsRoute.js';
 import { parseSkillSelections } from './skillSelections.js';
 import { runningWorkers } from './runningWorkers.js';
 import express from 'express';
@@ -66,7 +67,8 @@ import type {
   SettingsConfigProfileSummary,
   DoctorSnapshot,
   ProfileSummary,
-  ChatSessionEvent
+  ChatSessionEvent,
+  GitLabDispatchContext
 } from '@git-agent-harness/contracts';
 import { getFleetDispatch, sessionStore } from './wsServer.js';
 import { GAHError } from '@git-agent-harness/shared';
@@ -418,6 +420,11 @@ export function createServer(
   // All API reads and mutations share one boundary, including future routes.
   // Direct same-origin loopback access remains local; /health stays public.
   app.use('/api', authMiddleware);
+  // Context-scoped runs feed for the GitLab panel (#1595): a read-only
+  // GET behind the same auth as every other /api route. The events route
+  // (#1592) mounts its own hook-secret boundary before this line; workers
+  // expose neither.
+  if (node.role === 'central') app.use('/api/integrations/gitlab', gitLabRunsRouter());
   const mutation = mutationSafety(getCoordinatorIdentity(undefined, coordinatorPort).node_id);
   app.use(workerRouteGuard(node));
   if (node.role === 'central' && (configDeps.webPushNotifications || configDeps.apnsNotifications)) {
@@ -1635,6 +1642,23 @@ export function createServer(
     }
   });
 
+  /** Valid GitLab page context for a dispatch started against a GitLab
+   * project (#1595), or null when absent. Invalid context is a 400: a
+   * malformed context must not silently start an unscoped run. */
+  function gitLabDispatchContextFromBody(value: unknown): GitLabDispatchContext | null | 'invalid' {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== 'object' || Array.isArray(value)) return 'invalid';
+    const record = value as Record<string, unknown>;
+    const project = typeof record.project === 'string' ? record.project.trim() : '';
+    const webUrl = typeof record.webUrl === 'string' ? record.webUrl.trim() : '';
+    const iid = typeof record.iid === 'number' && Number.isSafeInteger(record.iid) && record.iid > 0 ? record.iid : null;
+    if (!project || project.length > 512 || /[\x00-\x1f\x7f]/.test(project)
+      || (record.kind !== 'issue' && record.kind !== 'merge_request')
+      || iid === null
+      || !/^https?:\/\//.test(webUrl)) return 'invalid';
+    return { project, kind: record.kind, iid, webUrl };
+  }
+
   // Submits a dispatch as a fleet Session. Callers may opt into a single
   // push-driven wait for its terminal event; the default remains immediate.
   app.post('/api/dispatch', async (req, res) => {
@@ -1646,6 +1670,11 @@ export function createServer(
     const mode = typeof body.mode === 'string' ? body.mode : undefined;
     if (!profile || !providerKind || !instanceId || !repo || !mode) {
       res.status(400).json({ error: 'profile, providerKind, instanceId, repo, and mode are required' });
+      return;
+    }
+    const gitlab = gitLabDispatchContextFromBody(body.gitlab);
+    if (gitlab === 'invalid') {
+      res.status(400).json({ error: 'gitlab must be a valid context: project, kind (issue|merge_request), iid, webUrl' });
       return;
     }
     const options: SessionOptions & { requestId?: string; nodeId?: string; coordinatorNodeId?: string } = {
@@ -1668,6 +1697,7 @@ export function createServer(
       escalate: body.escalate === true,
       manualWorker: body.manualWorker === true,
       reasoningEffort: typeof body.reasoningEffort === 'string' ? body.reasoningEffort : undefined,
+      gitlab: gitlab ?? undefined,
       requestId: typeof body.requestId === 'string' ? body.requestId : undefined,
       nodeId: typeof body.nodeId === 'string' ? body.nodeId : undefined,
       coordinatorNodeId: typeof body.coordinatorNodeId === 'string' ? body.coordinatorNodeId : undefined
