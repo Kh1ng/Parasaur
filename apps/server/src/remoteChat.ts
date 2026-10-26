@@ -1,6 +1,6 @@
 /** A remote agent implements the same adapter as a local agent. Only the
  * registered worker chooses paths and launches processes; central keeps history. */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { nodeHeaders, type RegistryService } from './registryService.js';
 import type { ManagerAdapter } from './managerChat/registry.js';
 import { parseWorkerChatEvent, readWorkerChatReply } from './workerChatProtocol.js';
@@ -101,6 +101,12 @@ export function workerChatConnection(registry: RegistryService, nodeId: string, 
         },
         listCommands: () => command('commands'),
         listModels: () => command('models'),
+        modelCatalogVersion: async () => {
+          const result = await command<{ version: string | null } | Awaited<ReturnType<ManagerAdapter['listModels']>>>('models', { catalogVersionOnly: true });
+          // Older workers return their full summary for this optional query.
+          return 'version' in result ? result.version ?? undefined
+            : createHash('sha256').update(JSON.stringify([result.models, result.reasoningEfforts])).digest('hex');
+        },
         setModel: async (_conversation, model) => { await command('set-model', { model }); },
         setReasoningEffort: async (_conversation, reasoningEffort) => { await command('set-effort', { reasoningEffort }); },
         steerTurn: async (_key, message) => {

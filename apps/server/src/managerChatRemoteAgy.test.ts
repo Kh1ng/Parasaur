@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -46,6 +47,7 @@ console.log(JSON.stringify({event:'result', result:{status:'SUCCESS', response:'
   const makeAdapter = () => {
     const backend = createHeadlessBackend({ ...agyBackendSpec({ executable, state_root: null }), modelOptions: async () => inventory });
     return { ...backend,
+      modelCatalogVersion: () => createHash('sha256').update(JSON.stringify(inventory)).digest('hex'),
       listModels: async (...args: Parameters<typeof backend.listModels>) => { modelReads++; return backend.listModels(...args); },
       setModel: async (...args: Parameters<typeof backend.setModel>) => { modelWrites++; return backend.setModel(...args); },
       setReasoningEffort: async (...args: Parameters<typeof backend.setReasoningEffort>) => { effortWrites++; return backend.setReasoningEffort(...args); }
@@ -135,9 +137,10 @@ console.log(JSON.stringify({event:'result', result:{status:'SUCCESS', response:'
 
   await setModelForProfile(chatProfile, 'gemini-3.8-flash-high', nodeId);
   await setReasoningEffortForProfile(chatProfile, 'high', nodeId);
+  await sendManagerChatMessage(chatProfile, '/status', undefined, undefined, undefined, nodeId);
   inventory = { models: [], reasoningEfforts: [], modelReasoningEfforts: {} };
-  await listModelsForProfile(chatProfile, nodeId);
-  await listModelsForProfile(chatProfile, nodeId);
+  await sendManagerChatMessage(chatProfile, '/status', undefined, undefined, undefined, nodeId);
+  assert.ok(!JSON.parse(readFileSync(argv, 'utf8')).includes('--model'));
   assert.equal(modelOverrideForProfile(chatProfile, 'agy'), undefined);
   assert.equal(reasoningEffortOverrideForProfile(chatProfile, 'agy'), undefined);
   assert.equal(warnings.filter(w => w.includes('persisted')).length, 3);

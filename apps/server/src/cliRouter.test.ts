@@ -1126,3 +1126,24 @@ test('AGY failures before a first reading invalidate both probe-free pools on ev
     assert.ok(records.every(record => record.check_error && record.quota_remaining_percent === undefined));
   }
 });
+
+
+test('AGY observer preserves separate flash and pro weekly balances', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'gah-distinct-agy-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const records: Record<string, unknown>[] = [];
+  const rec = recordingFetch(c => {
+    if (c.url.endsWith('/auth-files')) return { status: 200, body: { files: [file({ id: 'split', provider: 'antigravity', project_id: 'p' })] } };
+    if (c.url.endsWith('/api-call')) return { status: 200, body: { status_code: 200, body: { groups: [
+      { buckets: [{ bucketId: 'gemini-flash-weekly', window: 'weekly', remainingFraction: 0 }] },
+      { buckets: [{ bucketId: 'gemini-pro-weekly', window: 'weekly', remainingFraction: .8 }] }
+    ] } } };
+  });
+  const observer = createCliRouterQuotaObserver({ agyScopesPath: join(root, 'scopes.json'),
+    readSettingsFn: () => ({ url: 'https://split.example.com', apiKey: 'k', managementKey: 'm', accountBackends: { split: 'agy' } }),
+    fetchFn: rec.fn, recordQuotaFn: async record => { records.push(record); } });
+  await observer.refresh();
+  assert.deepEqual(records.map(record => [record.quota_pool, record.quota_window, record.quota_remaining_percent]), [
+    ['agy:gemini-flash-weekly', 'weekly', 0], ['agy:gemini-pro-weekly', 'weekly', 80]
+  ]);
+});

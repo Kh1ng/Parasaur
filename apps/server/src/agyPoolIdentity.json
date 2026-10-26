@@ -3,12 +3,18 @@
     {
       "id": "google-native",
       "modelPrefix": "gemini",
-      "bucketPrefix": "gemini-"
+      "bucketIds": [
+        "gemini-weekly",
+        "gemini-5h"
+      ]
     },
     {
       "id": "external",
       "modelPrefix": "",
-      "bucketPrefix": "3p-"
+      "bucketIds": [
+        "3p-weekly",
+        "3p-5h"
+      ]
     }
   ]
 }

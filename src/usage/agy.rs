@@ -170,6 +170,39 @@ mod tests {
     }
 
     #[test]
+    fn distinct_agy_provider_groups_route_to_their_own_weekly_balance() {
+        let output = br#"{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[
+            {"description":"Models within this group: Gemini Flash","buckets":[{"id":"gemini-flash-weekly","window":"weekly","remaining_fraction":0}]},
+            {"description":"Models within this group: Gemini Pro","buckets":[{"id":"gemini-pro-weekly","window":"weekly","remaining_fraction":0.8}]},
+            {"description":"Models within this group: Claude Sonnet","buckets":[{"id":"3p-sonnet-weekly","window":"weekly","remaining_fraction":0.3}]},
+            {"description":"Models within this group: Claude Opus","buckets":[{"id":"3p-opus-weekly","window":"weekly","remaining_fraction":0.6}]}
+        ]}}}"#;
+        let catalog = crate::availability::AgyCatalog::parse(
+            "flash\tGemini Flash\npro\tGemini Pro\nsonnet\tClaude Sonnet\nopus\tClaude Opus\n",
+            output,
+        )
+        .unwrap();
+        let records = parse(output, "agy", OffsetDateTime::UNIX_EPOCH).unwrap();
+        for (model, pool, balance) in [
+            ("flash", "gemini-flash-weekly", 0.0),
+            ("pro", "gemini-pro-weekly", 80.0),
+            ("sonnet", "3p-sonnet-weekly", 30.0),
+            ("opus", "3p-opus-weekly", 60.0),
+        ] {
+            let pool = format!("agy:{pool}");
+            assert_eq!(catalog.pool("agy", model), pool);
+            let identity = crate::execution_identity::ExecutionIdentity::legacy_candidate(
+                "agy",
+                Some(model),
+                Some(pool),
+            );
+            let windows = crate::quota_store::latest_windows_for_identity(&records, &identity);
+            assert_eq!(windows.len(), 1);
+            assert_eq!(windows[0].quota_remaining_percent, Some(balance));
+        }
+    }
+
+    #[test]
     fn dynamic_windows_share_the_reported_group_without_a_bucket_table() {
         let output = br#"{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"buckets":[{"id":"nova-weekly","window":"weekly","reset_time":"2026-10-31T14:55:54Z"},{"id":"nova-short","window":"short","remaining_fraction":1.2}]}]}}}"#;
         let records = parse(output, "agy-second", OffsetDateTime::UNIX_EPOCH).unwrap();

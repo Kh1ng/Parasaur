@@ -2,22 +2,23 @@ import type { ManagerAdapter } from './registry.js';
 import { modelOverrideForProfile, reasoningEffortOverrideForProfile, setModelOverrideForProfile, setReasoningEffortOverrideForProfile } from './settingsStore.js';
 
 type Summary = Awaited<ReturnType<ManagerAdapter['listModels']>>;
-const restored = new WeakMap<object, Map<string, { selection: string; summary: Summary }>>();
+const restored = new WeakMap<object, Map<string, { selection: string; version: string | undefined; summary: Summary }>>();
 const selection = (profile: string, backend: string) => JSON.stringify([
   modelOverrideForProfile(profile, backend), reasoningEffortOverrideForProfile(profile, backend)
 ]);
 
-/** Catalog reads refresh validation. Turns reuse it until selections or the
- * adapter/worker registration change, with no remote calls on a cache hit. */
+/** Turns reuse validation until selections, inventory, or registration change.
+ * Remote turns check only the worker catalog revision on a cache hit. */
 export async function restoreProfileSelections(profile: string, backendId: string, adapter: ManagerAdapter,
   scope: object = adapter.listModels, refresh = true) {
   let cache = restored.get(scope);
   if (!cache) { cache = new Map(); restored.set(scope, cache); }
   const key = JSON.stringify([profile, backendId]);
   const previous = cache.get(key);
-  if (!refresh && previous?.selection === selection(profile, backendId)) return previous.summary;
+  const version = await adapter.modelCatalogVersion?.();
+  if (!refresh && previous?.selection === selection(profile, backendId) && previous.version === version) return previous.summary;
   const summary = await validateSelections(profile, backendId, adapter);
-  cache.set(key, { selection: selection(profile, backendId), summary });
+  cache.set(key, { selection: selection(profile, backendId), version: await adapter.modelCatalogVersion?.(), summary });
   return summary;
 }
 

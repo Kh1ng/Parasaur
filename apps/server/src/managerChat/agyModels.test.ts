@@ -41,11 +41,15 @@ test('agy TTL refresh removes retired models and efforts, deduplicates probes, a
   t.after(() => options.dispose());
   await Promise.all([options(), options()]);
   assert.equal(calls, 2);
+  const version = options.version();
+  assert.equal(options.version(), version);
   inventory = models.split('\n').filter(line => !line.startsWith('gemini-3.8-flash-low\t')).join('\n');
   await options();
   assert.equal(calls, 2);
   now = 60_000;
   t.mock.timers.tick(60_000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.notEqual(options.version(), version, 'background refresh invalidates selections without a catalog read');
   const next = await options();
   assert.equal(next.models.length, 5);
   assert.deepEqual(next.modelReasoningEfforts['gemini-3.8-flash-high'].map(e => e.id), ['medium', 'high']);
@@ -113,6 +117,7 @@ for (const failure of ['models exit', 'models spawn', 'help exit']) {
     await backend.setModel(conversation, 'gemini-3.8-flash-high');
     await backend.setReasoningEffort(conversation, 'low');
     const good = await options();
+    const version = options.version();
     failing = true;
     for (now = 60_000; now <= 120_000; now += 60_000) {
       const retained = await backend.listModels(conversation);
@@ -120,6 +125,7 @@ for (const failure of ['models exit', 'models spawn', 'help exit']) {
       assert.equal(retained.currentModelId, 'gemini-3.8-flash-high');
       assert.equal(retained.currentReasoningEffortId, 'low');
       assert.equal(await options(), good);
+      assert.equal(options.version(), version);
       const count = calls;
       await options();
       assert.equal(calls, count);

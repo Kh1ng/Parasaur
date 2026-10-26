@@ -1,5 +1,6 @@
 /** AGY 1.3.6 exposes TSV models and the valid effort vocabulary in --help.
  * Cache each spec's installation for one minute; failed commands retain the last inventory. */
+import { randomUUID } from 'node:crypto';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 import { agentChildEnv } from './childEnv.js';
@@ -56,6 +57,7 @@ export function createAgyModelOptions(runtime?: { executable: string; state_root
   });
   let checkedAt = -Infinity;
   let cached: Options = { models: [], reasoningEfforts: [], modelReasoningEfforts: {} };
+  let version = randomUUID();
   let pending: Promise<Options> | undefined;
   let warning: string | undefined;
   let stopped = false;
@@ -71,6 +73,7 @@ export function createAgyModelOptions(runtime?: { executable: string; state_root
     if (pending) return pending;
     if (!force && now() - checkedAt < 60_000) return Promise.resolve(cached);
     pending = (async () => {
+      const previous = cached;
       try {
         const models = await run(['models']);
         const help = await run(['--help']);
@@ -86,6 +89,7 @@ export function createAgyModelOptions(runtime?: { executable: string; state_root
       } catch {
         warn('[managerChat] AGY metadata invocation failed; retaining the cached models and effort options.');
       }
+      if (JSON.stringify(previous) !== JSON.stringify(cached)) version = randomUUID();
       checkedAt = now();
       return cached;
     })().finally(() => { pending = undefined; });
@@ -100,5 +104,5 @@ export function createAgyModelOptions(runtime?: { executable: string; state_root
     }
     return refresh();
   };
-  return Object.assign(read, { dispose: () => { stopped = true; clearInterval(timer); } });
+  return Object.assign(read, { version: () => version, dispose: () => { stopped = true; clearInterval(timer); } });
 }

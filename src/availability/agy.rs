@@ -48,7 +48,7 @@ impl Group {
 struct PoolRule {
     id: String,
     model_prefix: String,
-    bucket_prefix: String,
+    bucket_ids: Vec<String>,
 }
 #[derive(Deserialize)]
 struct PoolPolicy {
@@ -70,7 +70,7 @@ fn pool_identity<'a>(model: &str, ids: &[&'a str]) -> &'a str {
         .find(|rule| {
             bucket.map_or_else(
                 || model.starts_with(&rule.model_prefix),
-                |bucket| bucket.starts_with(&rule.bucket_prefix),
+                |bucket| rule.bucket_ids.iter().any(|id| id == bucket),
             )
         })
         .map(|rule| rule.id.as_str())

@@ -6,7 +6,7 @@ import policy from './agyPoolIdentity.json' with { type: 'json' };
 export function agyPool(model: string, ids: string[] = []): string {
   const bucket = ids.slice().sort()[0];
   const rule = policy.pools.find(rule => bucket !== undefined
-    ? bucket.startsWith(rule.bucketPrefix) : model.trim().toLowerCase().startsWith(rule.modelPrefix));
+    ? rule.bucketIds.includes(bucket) : model.trim().toLowerCase().startsWith(rule.modelPrefix));
   return rule?.id ?? bucket!;
 }
 export const agyFallbackPools = policy.pools.map(rule => rule.id);

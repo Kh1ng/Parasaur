@@ -205,6 +205,7 @@ export function createWorkerChatRouter(deps: {
         else await adapter.setReasoningEffort({ key, profile: body.profile }, value);
         return void res.json({ success: true });
       }
+      if (body.action === 'models' && body.catalogVersionOnly === true) return void res.json({ version: await adapter.modelCatalogVersion?.() ?? null });
       if (body.action === 'models') return void res.json(await adapter.listModels({ key, profile: body.profile }));
       if (body.action === 'commands') return void res.json(await adapter.listCommands(key));
       const settings = {

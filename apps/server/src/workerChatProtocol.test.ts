@@ -217,3 +217,14 @@ test('revocation, endpoint changes and secret rotation abort an idle worker stre
     assert.equal(requests, beforeRequest, 'obsolete connection rejects before another HTTP request');
   }
 });
+
+
+test('catalog revisions accept new workers and older full model summaries', () => {
+  const request = { action: 'models', catalogVersionOnly: true };
+  assert.deepEqual(parseWorkerChatReply({ version: 'revision-2' }, request), { version: 'revision-2' });
+  assert.deepEqual(parseWorkerChatReply({ version: null }, request), { version: null });
+  assert.throws(() => parseWorkerChatReply({ version: 2 }, request));
+  assert.throws(() => parseWorkerChatReply({ version: 'x'.repeat(257) }, request));
+  const summary = { models: [], reasoningEfforts: [], currentModelId: null, currentReasoningEffortId: null, contextUsage: null };
+  assert.deepEqual(parseWorkerChatReply(summary, request), summary);
+});

@@ -72,6 +72,7 @@ export interface HeadlessBackendSpec {
   displayName: string;
   /** Release metadata refresh timers when an installation is replaced. */
   dispose?: () => void;
+  modelCatalogVersion?: ManagerAdapter['modelCatalogVersion'];
   /** Argv for a print-mode turn. Must not embed prompt/history -- only the
    * session's pinned model/reasoning-effort (#1032 reopened), which are
    * bounded ids, not conversation content. A spec that has no native flag
@@ -395,6 +396,7 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
       return []; // no native slash commands over a one-shot pipe
     },
 
+    modelCatalogVersion: spec.modelCatalogVersion,
     async listModels(conversation) {
       const options = await spec.modelOptions?.(conversation);
       const state = stateFor(conversation.key);
@@ -902,6 +904,7 @@ export function agyBackendSpec(runtime?: { executable: string; state_root: strin
     displayName: 'Agy',
     ...(runtime?.state_root ? { spawnEnv: async () => ({ HOME: runtime.state_root! }) } : {}),
     modelOptions,
+    modelCatalogVersion: modelOptions.version,
     turnArgs: (opts = {}) => {
       const args = [
         runtime?.executable ?? 'agy',

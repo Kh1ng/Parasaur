@@ -1,10 +1,9 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { agyPool } from './agyQuota.js';
+import { agyPool, agyLabel } from './agyQuota.js';
 import { dirname } from 'node:path';
 
 type Scope = { quotaPool: string; window?: string };
-const label = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9_.-]{1,100}$/.test(value);
 const digest = (key: string) => createHash('sha256').update(key).digest('hex');
 
 /** Retain only provider scope identities across restarts, never balances or credentials. */
@@ -20,7 +19,7 @@ export class AgyQuotaScopes {
         if (!Array.isArray(entry) || entry.length !== 2) continue;
         const [key, scopes] = entry;
         if (typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key) || !Array.isArray(scopes) || scopes.length > 128) continue;
-        if (scopes.every(scope => scope && label(scope.quotaPool) && (scope.window === undefined || label(scope.window)))) {
+        if (scopes.every(scope => scope && agyLabel(scope.quotaPool) && (scope.window === undefined || agyLabel(scope.window)))) {
           this.scopes.set(key, scopes.map(scope => ({ quotaPool: agyPool('', [scope.quotaPool]), ...(scope.window ? { window: scope.window } : {}) })));
         }
       }
@@ -30,7 +29,7 @@ export class AgyQuotaScopes {
   set(key: string, scopes: { quotaPool?: string; window?: string }[]): void {
     const id = digest(key);
     this.scopes.delete(id);
-    this.scopes.set(id, scopes.filter((scope): scope is Scope => label(scope.quotaPool)).slice(0, 128));
+    this.scopes.set(id, scopes.filter((scope): scope is Scope => agyLabel(scope.quotaPool)).slice(0, 128));
     while (this.scopes.size > 64) this.scopes.delete(this.scopes.keys().next().value!);
     const tmp = `${this.path}.${randomUUID()}.tmp`;
     try {

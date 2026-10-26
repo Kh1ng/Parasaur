@@ -68,7 +68,8 @@ type WorkerChatReply = import('./gahCli.js').SubscriptionRoute[] | import('./gah
   | Awaited<ReturnType<ManagerAdapter['listCommands']>>
   | HelperTaskResult
   | { branch: string; commit: string }
-  | { success: true };
+  | { success: true }
+  | { version: string | null };
 const timestamp = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 const optionalString = (value: unknown): value is string | undefined => value === undefined || typeof value === 'string';
 
@@ -76,6 +77,10 @@ const optionalString = (value: unknown): value is string | undefined => value ==
  * Project only the action's response fields before central stores or renders them. */
 export function parseWorkerChatReply(value: unknown, request: Record<string, unknown>): WorkerChatReply {
   const invalid = () => new Error('Worker returned an invalid chat response.');
+  if (request.action === 'models' && request.catalogVersionOnly === true && object(value) && 'version' in value) {
+    if (!nullableString(value.version) || (typeof value.version === 'string' && value.version.length > 256)) throw invalid();
+    return { version: value.version };
+  }
   if (request.action === 'quota-failure') {
     if (!object(value) || !['hard', 'transient', 'other'].includes(String(value.kind)) || !measurement(value.resetAt, true) || !measurement(value.retryAfterMs, true)) throw invalid();
     return { kind: value.kind as 'hard' | 'transient' | 'other', resetAt: value.resetAt as number | null, retryAfterMs: value.retryAfterMs as number | null };

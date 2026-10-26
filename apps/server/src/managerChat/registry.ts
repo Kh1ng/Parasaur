@@ -87,6 +87,8 @@ export interface ManagerAdapter extends ManagerBackendInfo {
      * false (older workers and backends without a bundled fallback). */
     bundledRuntime?: boolean;
   }>;
+  /** Cheap inventory revision; changes when background discovery replaces the catalog. */
+  modelCatalogVersion?(): string | undefined | Promise<string | undefined>;
   setModel(conversation: ManagerConversation, modelId: string): Promise<void>;
   setReasoningEffort(conversation: ManagerConversation, effortId: string): Promise<void>;
   steerTurn(gahProfile: string, message: string): Promise<{ outcome: 'injected' }>;
