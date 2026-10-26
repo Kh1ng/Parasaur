@@ -1,5 +1,6 @@
 import http from 'node:http';
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { sessionHandoffRouter } from '../../../server/src/sessionHandoff.js';
 import { authMiddleware } from '../../../server/src/authMiddleware.js';
 import { expect, test, type APIRequestContext } from '@playwright/test';
@@ -126,6 +127,7 @@ test('an owner signs in through the real handoff router and the iframe keeps its
   const app = express();
   app.set('trust proxy', 'loopback');
   app.use(express.json());
+  app.use(rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false }));
   app.use('/api/pairing/handoff', sessionHandoffRouter());
   app.get('/api/pairing/session', authMiddleware, (_req, res) => res.json({ principal: res.locals.authPrincipal }));
   const server = http.createServer(app);
@@ -147,7 +149,7 @@ test('an owner signs in through the real handoff router and the iframe keeps its
     await route.fulfill({ status: response.status, contentType: 'application/json', body: await response.text() });
   });
   try {
-    await page.route('**/embed-parent', route => route.fulfill({ contentType: 'text/html', body: `<iframe title="panel" src="${issueContext}"></iframe>` }));
+    await page.route('**/embed-parent', route => route.fulfill({ contentType: 'text/html', body: `<iframe title="panel" width="420" height="800" src="${issueContext}"></iframe>` }));
     await page.goto('/embed-parent');
     const panel = page.frameLocator('iframe');
     await expect(panel.getByRole('dialog', { name: 'Sign in to Parasaur' })).toBeVisible();
