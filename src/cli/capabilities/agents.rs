@@ -2,6 +2,11 @@ use super::*;
 
 pub(super) fn add_operations(manifest: &mut CapabilityManifest) {
     for (action, class, idempotency) in [
+        (
+            "check-update-policy",
+            OperationClass::Read,
+            Idempotency::Idempotent,
+        ),
         ("versions", OperationClass::Read, Idempotency::Idempotent),
         ("update", OperationClass::Admin, Idempotency::NonIdempotent),
     ] {
@@ -15,8 +20,16 @@ pub(super) fn add_operations(manifest: &mut CapabilityManifest) {
             streaming: StreamingBehavior::None,
             idempotency,
             secret_fields: vec![],
-            remote_disposition: RemoteDisposition::RemoteAvailable,
-            local_only_reason: None,
+            remote_disposition: if action == "check-update-policy" {
+                RemoteDisposition::LocalOnly
+            } else {
+                RemoteDisposition::RemoteAvailable
+            },
+            local_only_reason: if action == "check-update-policy" {
+                Some(LocalOnlyReason::FilesystemAccessRequired)
+            } else {
+                None
+            },
             documentation: Some("Node-local agent CLI inventory and owner-approved updates".into()),
             cli_command_path: format!("gah agents {action}"),
             is_stable: true,

@@ -14,9 +14,9 @@ Each CLI or registry probe has a ten-second deadline. Probes run concurrently in
 
 | CLI | Latest version source | Update command |
 | --- | --- | --- |
-| Claude | `npm view @anthropic-ai/claude-code version --json` | `claude update` |
-| Codex | `npm view @openai/codex version --json` | `codex update`, or npm/Homebrew for those installations |
-| OpenCode | `npm view opencode-ai version --json`; `@opencode/cli` for installed v2+ | `opencode upgrade` |
+| Claude | `npm view @anthropic-ai/claude-code name version --json` | `claude update` |
+| Codex | `npm view @openai/codex name version --json` | `codex update`, or npm/Homebrew for those installations |
+| OpenCode | `npm view opencode-ai name version --json`; `@opencode/cli` for installed v2+ | `opencode upgrade` |
 | agy | Platform manifest from Google's CLI updater | `agy update` |
 | Vibe | `info.version` from PyPI's `mistral-vibe` JSON endpoint | `uv tool upgrade mistral-vibe`, or `brew upgrade mistral-vibe` for Homebrew installations |
 
@@ -44,7 +44,11 @@ The Agents page offers an Update button for outdated CLIs. This action requires 
 
 Updates use the node service account and its PATH. They do not use sudo or install missing CLIs. Provider errors and timeouts remain visible.
 
-Dashboard and scheduled updates defer while dispatch claims are active or unreadable. A shared process lock prevents concurrent CLI and GAH installations.
+Every update requires a fresh, valid release manifest. npm and PyPI responses must name the expected package and contain a complete semantic version. The agy manifest must also contain an HTTPS URL and a SHA-512 digest. HTTPS requests cannot redirect to HTTP.
+
+Every update checks `update-agent-cli` through the policy rules for all configured profiles. Read-only policies refuse this action. With `draft_pr_allowed`, the action requires `allow_project_write=true`. A profile without a policy file retains the existing user-trust behavior. Missing or unreadable node config refuses installation. A request cannot bypass a restrictive profile by selecting another profile.
+
+Terminal, dashboard, and scheduled updates refuse installation while dispatch claims are active or unreadable. The node update lock also closes dispatch admission until installation finishes. A dispatch that obtained admission first writes its claim before the installer can check node readiness.
 
 An installer has a ten-minute deadline. GAH checks the installed version after the installer exits successfully.
 
@@ -63,13 +67,13 @@ GAH_AUTO_UPDATE_AGENT_CLIS=1
 
 Restart that node's server after changing its environment. CLI auto-update is off by default and independent of the node's GAH auto-update preference.
 
-Central checks CLI updates on the existing five-minute fleet update timer. Each node validates its own opt-in and admin policy.
+Central checks CLI updates on the existing five-minute fleet update timer. Standalone nodes do not run this timer. Each node validates its own opt-in and admin policy.
 
 Each tick updates at most one outdated CLI per node. Unattempted CLIs go first, so one failing installer cannot block the others.
 
 The next tick retries deferred work. Registry failures do not authorize an update.
 
-After success, GAH invalidates cached model connections and refreshes the existing gah-router inventory. Active chat prompts finish before their old processes close.
+After success, GAH invalidates cached model connections and refreshes the existing gah-router inventory. Active chat prompts retain cancellation and steering until they finish. Their old processes then close, and the next catalog request discovers the updated CLI.
 
 Vibe and OpenHands model readers already query their inventories on demand. Direct terminal updates also invalidate model connections when the server next resolves an adapter.
 

@@ -50,6 +50,7 @@ export class AgentCliFleet {
 
   async update(nodeId: string, backend: string): Promise<void> {
     if (nodeId === this.local.node.node_id) return this.local.start(backend);
+    await this.local.checkPolicy();
     const node = this.registry.getNode(nodeId);
     if (!node) throw new AgentCliError(404, 'unknown_node', 'That node is no longer registered.');
     await this.remote(node, 'update', { backend });
@@ -57,6 +58,7 @@ export class AgentCliFleet {
 
   async scheduledUpdate(): Promise<void> {
     // Each node enforces its own opt-in and admin policy, including current GAH nodes.
+    await this.local.checkPolicy();
     await Promise.allSettled([
       this.local.scheduledUpdate(),
       ...this.registry.getNodes().filter(n => n.node_id !== this.local.node.node_id)

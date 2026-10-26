@@ -69,6 +69,22 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
   "schema_version": 1,
   "manifest_version": "v1",
   "operations": {
+    "agents.check-update-policy": {
+      "operation_id": "agents.check-update-policy",
+      "display_name": "Agent CLI check-update-policy",
+      "class": "read",
+      "profile_scope": "global",
+      "request_schema": null,
+      "response_schema": null,
+      "streaming": "none",
+      "idempotency": "idempotent",
+      "secret_fields": [],
+      "remote_disposition": "local_only",
+      "local_only_reason": "filesystem_access_required",
+      "documentation": "Node-local agent CLI inventory and owner-approved updates",
+      "cli_command_path": "gah agents check-update-policy",
+      "is_stable": true
+    },
     "agents.update": {
       "operation_id": "agents.update",
       "display_name": "Agent CLI update",
@@ -1379,6 +1395,7 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
     }
   },
   "command_path_to_operation_id": {
+    "gah agents check-update-policy": "agents.check-update-policy",
     "gah agents update": "agents.update",
     "gah agents versions": "agents.versions",
     "gah auth-health": "auth.health",
@@ -1510,6 +1527,7 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
     "agents.update"
   ],
   "local_only_operations": {
+    "agents.check-update-policy": "filesystem_access_required",
     "auth.health": "local_backend_execution_required",
     "candidates.convert": "filesystem_access_required",
     "config.set_vibe_model": "filesystem_access_required",

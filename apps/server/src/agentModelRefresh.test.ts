@@ -12,23 +12,28 @@ test('model adapter observes direct terminal updates once and ignores failed upd
   process.env.GAH_CLI_ROUTER_SETTINGS_PATH = join(dir, 'unconfigured-router.json');
   process.env.XDG_STATE_HOME = dir;
   const adapter = resolveAdapter('codex');
-  const dispose = adapter.dispose;
+  const invalidate = adapter.invalidateModels;
   let invalidations = 0;
-  adapter.dispose = () => { invalidations++; };
+  adapter.invalidateModels = () => { invalidations++; };
   try {
     const folder = join(dir, 'gah/agent-cli-updates'); mkdirSync(folder, { recursive: true });
     const path = join(folder, 'codex.json');
     writeFileSync(path, JSON.stringify({ backend: 'codex', status: 'success', started_at: 'first', finished_at: 'first-finished' }));
     const refreshed = resolveAdapter('codex');
-    assert.notEqual(refreshed, adapter);
+    assert.equal(refreshed, adapter);
     assert.equal(resolveAdapter('codex'), refreshed);
     assert.equal(invalidations, 1);
     writeFileSync(path, JSON.stringify({ backend: 'codex', status: 'failed', started_at: 'second', finished_at: 'second-finished' }));
     assert.equal(resolveAdapter('codex'), refreshed); assert.equal(invalidations, 1);
     writeFileSync(path, JSON.stringify({ backend: 'codex', status: 'success', started_at: 'third', finished_at: 'third-finished' }));
-    assert.notEqual(resolveAdapter('codex'), refreshed);
+    assert.equal(resolveAdapter('codex'), refreshed);
+    assert.equal(invalidations, 2);
+    writeFileSync(path, JSON.stringify({ backend: 'codex', status: 'success', started_at: 'fourth' }));
+    assert.equal(resolveAdapter('codex'), refreshed);
+    assert.equal(resolveAdapter('codex'), refreshed);
+    assert.equal(invalidations, 3, 'missing finished_at uses the same revision for comparison and storage');
   } finally {
-    adapter.dispose = dispose;
+    adapter.invalidateModels = invalidate;
     if (previous === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = previous;
     if (routerSettings === undefined) delete process.env.GAH_CLI_ROUTER_SETTINGS_PATH; else process.env.GAH_CLI_ROUTER_SETTINGS_PATH = routerSettings;
     rmSync(dir, { recursive: true, force: true });
@@ -52,8 +57,11 @@ test('CLI updates invalidate named accounts by runner kind, including logical al
     process.env.GAH_BINARY = cli;
     const first = await resolveInstanceAdapter('agent-update-test', 'team-claude', 'work');
     assert.equal(await resolveInstanceAdapter('agent-update-test', 'team-claude', 'work'), first);
+    let refreshes = 0;
+    first.invalidateModels = () => { refreshes++; };
     invalidateAgentModels('claude');
-    assert.notEqual(await resolveInstanceAdapter('agent-update-test', 'team-claude', 'work'), first);
+    assert.equal(await resolveInstanceAdapter('agent-update-test', 'team-claude', 'work'), first);
+    assert.equal(refreshes, 1);
   } finally {
     invalidateAgentModels('claude');
     if (previous === undefined) delete process.env.GAH_BINARY; else process.env.GAH_BINARY = previous;

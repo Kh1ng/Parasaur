@@ -9,7 +9,7 @@ import { AgentCliError, AgentCliVersions, readAgentUpdates } from './agentCliVer
 const node = { node_id: 'local', display_name: 'Local' };
 const row: AgentCliVersion = { backend: 'codex', installed: '1.0.0', latest: '1.1.0', outdated: true,
   source: 'npm:@openai/codex', update_command: 'codex update', error: null };
-const deps = { probe: async () => [row], readUpdates: () => [], activeClaims: async () => 0,
+const deps = { checkPolicy: async () => {}, probe: async () => [row], readUpdates: () => [], activeClaims: async () => 0,
   enabled: () => true, optedIn: () => false, nodeUpdating: () => false };
 const turn = () => new Promise(resolve => setImmediate(resolve));
 
@@ -103,4 +103,22 @@ test('a failed CLI update does not starve other outdated CLIs on later ticks', a
     launch: async backend => { launched.push(backend); } });
   await service.scheduledUpdate();
   assert.deepEqual(launched, ['claude']);
+});
+
+test('agents refuse an unknown latest release even after a cached successful lookup', async () => {
+  let rows = [row]; let starts = 0;
+  const service = new AgentCliVersions(node, { ...deps, probe: async () => rows, launch: async () => { starts++; } });
+  await service.snapshot();
+  rows = [{ ...row, latest: null, error: 'manifest unavailable' }];
+  await assert.rejects(service.start('codex'), /latest.*unknown/i);
+  assert.equal((await service.snapshot()).versions[0].latest, null);
+  assert.equal(starts, 0);
+});
+
+test('agents refuse a dispatch admitted during the release lookup', async () => {
+  let active = 0; let starts = 0;
+  const service = new AgentCliVersions(node, { ...deps, activeClaims: async () => active,
+    probe: async () => { active = 1; return [row]; }, launch: async () => { starts++; } });
+  await assert.rejects(service.start('codex'), /dispatch/i);
+  assert.equal(starts, 0);
 });

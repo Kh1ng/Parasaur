@@ -54,7 +54,7 @@ export function AgentCliVersions() {
               {row.error && <p className="mt-1 max-w-sm text-xs text-muted">{row.error}</p>}
               {result && result.status !== 'running' && <p className={`mt-1 text-xs ${result.status === 'failed' ? 'text-critical' : 'text-muted'}`}>{result.status === 'success' ? `Last update succeeded · ${result.after}` : `Last update failed · ${result.error ?? 'Check the node update log.'}`}</p>}
             </td>
-            <td className="py-2">{snapshot.can_update && node.updates_enabled && row.update_command && row.installed && (row.outdated || result?.status === 'failed') && <button type="button" className="btn-secondary min-h-11" disabled={pending !== null || node.updates.some(u => u.status === 'running')} aria-label={`Update ${row.backend} on ${node.display_name}`} onClick={() => void update(node.node_id, row.backend)}>{busy ? 'Updating…' : 'Update'}</button>}</td>
+            <td className="py-2">{snapshot.can_update && node.updates_enabled && row.update_command && row.installed && row.latest && !row.error && (row.outdated || result?.status === 'failed') && <button type="button" className="btn-secondary min-h-11" disabled={pending !== null || node.updates.some(u => u.status === 'running')} aria-label={`Update ${row.backend} on ${node.display_name}`} onClick={() => void update(node.node_id, row.backend)}>{busy ? 'Updating…' : 'Update'}</button>}</td>
           </tr>;
         })}</tbody></table>
       </div>}

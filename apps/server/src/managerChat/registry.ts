@@ -93,6 +93,8 @@ export interface ManagerAdapter extends ManagerBackendInfo {
   cancelTurn(gahProfile: string): Promise<void>;
   /** Release processes when a selected credential or instance changes. */
   dispose?(): void;
+  /** Refresh catalogs while retaining controllers for active prompts. */
+  invalidateModels?(): void;
 }
 
 function acpManagerAdapter(
@@ -191,12 +193,9 @@ export async function resolveInstanceAdapter(profile: string, backendId: string,
 
 /** New connections discover models from the updated CLI; active prompts finish. */
 export function invalidateAgentModels(backend: string): void {
-  REGISTRY[backend]?.dispose?.();
-  if (DEFAULT_ADAPTERS[backend]) REGISTRY[backend] = DEFAULT_ADAPTERS[backend]();
-  for (const [key, entry] of INSTANCE_ADAPTERS) {
-    if (entry.runnerKind !== backend) continue;
-    entry.adapter.dispose?.();
-    INSTANCE_ADAPTERS.delete(key);
+  REGISTRY[backend]?.invalidateModels?.();
+  for (const entry of INSTANCE_ADAPTERS.values()) {
+    if (entry.runnerKind === backend) entry.adapter.invalidateModels?.();
   }
 }
 
@@ -209,8 +208,9 @@ export function refreshUpdatedAgentModels(): Promise<void> {
   try { updates = readAgentUpdates(); } catch { return Promise.resolve(); }
   let changed = false;
   for (const update of updates) {
-    if (update.status !== 'success' || modelUpdateRevisions.get(update.backend) === update.finished_at) continue;
-    modelUpdateRevisions.set(update.backend, update.finished_at ?? update.started_at);
+    const revision = update.finished_at ?? update.started_at;
+    if (update.status !== 'success' || modelUpdateRevisions.get(update.backend) === revision) continue;
+    modelUpdateRevisions.set(update.backend, revision);
     invalidateAgentModels(update.backend);
     changed = true;
   }

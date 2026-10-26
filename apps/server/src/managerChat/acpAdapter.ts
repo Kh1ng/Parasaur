@@ -809,6 +809,19 @@ export function createAcpBackend(
     state.process.kill();
   }
 
+  // Refresh idle catalog connections now; a live prompt keeps its controls
+  // until settlement, then the next call discovers the updated CLI's models.
+  function invalidateModels(): void {
+    for (const [key, state] of connections) {
+      const retire = () => {
+        if (connections.get(key) === state) connections.delete(key);
+        state.process.kill();
+      };
+      if (state.activePrompt) void state.activePrompt.then(retire, retire);
+      else retire();
+    }
+  }
+
   function dispose(): void {
     for (const state of connections.values()) {
       if (state.activePrompt) {
@@ -820,5 +833,5 @@ export function createAcpBackend(
     connections.clear();
   }
 
-  return { runTurn, listCommands, listModels, setModel, setReasoningEffort, steerTurn, cancelTurn, dispose };
+  return { runTurn, listCommands, listModels, setModel, setReasoningEffort, steerTurn, cancelTurn, dispose, invalidateModels };
 }

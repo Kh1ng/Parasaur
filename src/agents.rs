@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
+mod release;
 mod state;
 #[cfg(test)]
 mod tests;
@@ -22,10 +23,12 @@ pub struct AgentsArgs {
     pub command: AgentsCommand,
 }
 
-pub(crate) use state::lock as maintenance_lock;
+pub(crate) use state::{dispatch_admission, lock as maintenance_lock};
 
 #[derive(clap::Subcommand)]
 pub enum AgentsCommand {
+    /// Check every configured profile before changing a node-wide CLI.
+    CheckUpdatePolicy,
     /// Report installed and latest versions of this node's agent CLIs.
     Versions {
         #[arg(long)]
@@ -52,6 +55,7 @@ pub struct AgentVersion {
 
 pub fn run(command: AgentsCommand) -> Result<()> {
     match command {
+        AgentsCommand::CheckUpdatePolicy => enforce_update_policy(),
         AgentsCommand::Versions { json } => {
             let versions = versions();
             if json {
@@ -173,36 +177,6 @@ fn source(kind: BackendKind, installed: Option<&str>) -> Option<String> {
     }
 }
 
-fn latest(kind: BackendKind, source: &str) -> Result<String> {
-    if let Some(package) = source.strip_prefix("npm:") {
-        return version(&output(
-            "npm",
-            &["view", package, "version", "--json"],
-            PROBE_TIMEOUT,
-        )?);
-    }
-    let text = output(
-        "curl",
-        &[
-            "--fail",
-            "--silent",
-            "--show-error",
-            "--location",
-            "--max-time",
-            "10",
-            source,
-        ],
-        PROBE_TIMEOUT,
-    )?;
-    let data: serde_json::Value = serde_json::from_str(&text)?;
-    let field = if kind == BackendKind::Vibe {
-        &data["info"]["version"]
-    } else {
-        &data["version"]
-    };
-    version(field.as_str().context("Release metadata has no version")?)
-}
-
 fn update_command(kind: BackendKind) -> Option<(&'static str, Vec<&'static str>)> {
     match kind {
         BackendKind::Claude => Some(("claude", vec!["update"])),
@@ -241,7 +215,10 @@ fn update_command(kind: BackendKind) -> Option<(&'static str, Vec<&'static str>)
 fn probe(kind: BackendKind) -> AgentVersion {
     let installed = output(kind.as_str(), &["--version"], PROBE_TIMEOUT).and_then(|v| version(&v));
     let source = source(kind, installed.as_deref().ok());
-    let latest = source.as_deref().map(|s| latest(kind, s)).transpose();
+    let latest = source
+        .as_deref()
+        .map(|s| release::latest(kind, s))
+        .transpose();
     let mut errors = Vec::new();
     if let Err(e) = &installed {
         errors.push(e.to_string());
@@ -294,6 +271,7 @@ pub fn update(kind: BackendKind, yes: bool) -> Result<()> {
     if !yes {
         bail!("Review the command, then pass --yes to run it");
     }
+    enforce_update_policy()?;
     let _lock = state::lock()?;
     let mut record = state::UpdateRecord::new(kind.as_str(), command);
     state::save(&record)?;
@@ -301,10 +279,24 @@ pub fn update(kind: BackendKind, yes: bool) -> Result<()> {
         record.before =
             Some(output(kind.as_str(), &["--version"], PROBE_TIMEOUT).and_then(|v| version(&v))?);
         state::save(&record)?;
+        let source = source(kind, record.before.as_deref()).context("Latest release unknown")?;
+        release::latest(kind, &source).context("Latest release unknown; refusing installation")?;
+        // Admission stays closed from this check until the installer exits.
+        crate::work_claim::ensure_node_idle()?;
         output(program, &args, Duration::from_secs(600))?;
         output(kind.as_str(), &["--version"], PROBE_TIMEOUT).and_then(|v| version(&v))
     })();
     record.finish(&result);
     state::save(&record)?;
     result.map(|after| println!("{} is now {after}", kind.as_str()))
+}
+
+/// CLI changes affect every profile on this node, so choosing a permissive
+/// profile cannot bypass a read-only profile's policy. Missing config fails closed.
+fn enforce_update_policy() -> Result<()> {
+    let config = crate::config::load(None)?;
+    for profile in config.profiles.values() {
+        crate::policy::enforce_policy(profile, "update-agent-cli")?;
+    }
+    Ok(())
 }

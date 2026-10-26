@@ -45,3 +45,14 @@ test('read-only owners, offline nodes, and rejected updates remain understandabl
   await component.getByRole('button', { name: /^Update codex/ }).click();
   await expect(component.getByRole('alert')).toHaveText('Wait for active dispatches to finish.');
 });
+
+test('unknown latest release hides retry after a failed installation', async ({ mount, page }) => {
+  const data = inventory();
+  data.nodes[0].versions[0].latest = null;
+  data.nodes[0].versions[0].error = 'Release manifest unavailable';
+  data.nodes[0].updates = [{ backend: 'codex', status: 'failed', started_at: 'today', finished_at: 'today', before: '0.110.0', after: null, error: 'Installer failed' }];
+  await page.route('**/api/agents/versions', route => route.fulfill({ json: data }));
+  const component = await mount(<AgentCliVersions />);
+  await expect(component.getByText('0.110.0 / Unknown')).toBeVisible();
+  await expect(component.getByRole('button', { name: /^Update codex/ })).toHaveCount(0);
+});

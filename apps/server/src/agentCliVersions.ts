@@ -19,6 +19,7 @@ export class AgentCliError extends Error {
 }
 
 interface Deps {
+  checkPolicy?: () => Promise<void>;
   probe?: () => Promise<AgentCliVersion[]>;
   launch?: (backend: string) => Promise<void>;
   readUpdates?: () => AgentCliUpdate[];
@@ -40,6 +41,15 @@ async function probeVersions(): Promise<AgentCliVersion[]> {
     throw new Error('Invalid agent inventory');
   }
   return rows as AgentCliVersion[];
+}
+
+/** Use the same policy decision as the installer, including scheduled updates. */
+async function checkUpdatePolicy(): Promise<void> {
+  try {
+    await exec(findGahBinary(), ['agents', 'check-update-policy'], { timeout: 10_000 });
+  } catch {
+    throw new AgentCliError(403, 'agent_update_policy_blocked', 'Node policy refuses update-agent-cli. Check every configured profile policy.');
+  }
 }
 
 /** Detached Rust child owns the timeout, update lock and durable outcome. */
@@ -99,6 +109,10 @@ export class AgentCliVersions {
       updates_enabled: (this.deps.enabled ?? agentUpdatesEnabled)(), error: this.launchError };
   }
 
+  async checkPolicy(): Promise<void> {
+    await (this.deps.checkPolicy ?? checkUpdatePolicy)();
+  }
+
   async start(backend: string): Promise<void> {
     if (!UPDATABLE.has(backend)) throw new AgentCliError(400, 'unsupported_agent', 'Choose a supported agent CLI.');
     if (!(this.deps.enabled ?? agentUpdatesEnabled)()) throw new AgentCliError(403, 'agent_updates_disabled', 'Agent updates are disabled on this node.');
@@ -108,10 +122,18 @@ export class AgentCliVersions {
     }
     this.updating = true;
     try {
+      await this.checkPolicy();
       // Fail closed on unreadable claims; do not modify CLIs during dispatch.
       if (await (this.deps.activeClaims ?? countActiveClaims)() !== 0) throw new AgentCliError(409, 'node_busy', 'Wait for active dispatches to finish.');
-      const rows = await this.versions();
-      if (!rows.find(r => r.backend === backend)?.installed) throw new AgentCliError(409, 'agent_not_installed', 'This CLI is not installed on the node.');
+      const rows = await (this.deps.probe ?? probeVersions)();
+      this.generation++;
+      this.cached = { rows, at: (this.deps.now ?? Date.now)() };
+      const release = rows.find(r => r.backend === backend);
+      if (!release?.installed) throw new AgentCliError(409, 'agent_not_installed', 'This CLI is not installed on the node.');
+      if (!release.latest || release.error) throw new AgentCliError(409, 'latest_unknown', 'Latest release unknown; retry when validated metadata is available.');
+      // The Rust child closes dispatch admission and checks claims under its
+      // maintenance lock. This second check also returns an immediate refusal.
+      if (await (this.deps.activeClaims ?? countActiveClaims)() !== 0) throw new AgentCliError(409, 'node_busy', 'Wait for active dispatches to finish.');
       this.launchError = null;
       const work = (this.deps.launch ?? launchUpdate)(backend);
       void work.catch(() => { this.launchError = `${backend} update failed. Check the node update state and installation permissions.`; }).finally(() => {

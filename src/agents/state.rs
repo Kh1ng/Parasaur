@@ -18,7 +18,7 @@ fn directory() -> Result<PathBuf> {
     Ok(dir)
 }
 
-pub(crate) fn lock() -> Result<File> {
+fn lock_file() -> Result<File> {
     let mut options = OpenOptions::new();
     options.create(true).truncate(false).read(true).write(true);
     #[cfg(unix)]
@@ -26,7 +26,11 @@ pub(crate) fn lock() -> Result<File> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let file = options.open(directory()?.join("update.lock"))?;
+    Ok(options.open(directory()?.join("update.lock"))?)
+}
+
+pub(crate) fn lock() -> Result<File> {
+    let file = lock_file()?;
     file.try_lock_exclusive()
         .context("Another node or agent CLI update is running")?;
     Ok(file)
@@ -90,4 +94,15 @@ pub(super) fn save(record: &UpdateRecord) -> Result<()> {
     file.as_file().sync_all()?;
     file.persist(dir.join(format!("{}.json", record.backend)))?;
     Ok(())
+}
+
+/// Hold while admitting a dispatch. Maintenance takes the exclusive side,
+/// then checks durable claims; neither side can pass the other unnoticed.
+pub(crate) fn dispatch_admission() -> Result<Option<File>> {
+    let file = lock_file()?;
+    match FileExt::try_lock_shared(&file) {
+        Ok(()) => Ok(Some(file)),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(error) => Err(error).context("Checking node maintenance admission"),
+    }
 }

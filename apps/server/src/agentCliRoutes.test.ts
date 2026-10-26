@@ -6,12 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RegisteredNode, AgentVersionsSnapshot } from '@git-agent-harness/contracts';
 import { AgentCliFleet, agentCliRouter } from './agentCliRoutes.js';
-import { AgentCliVersions } from './agentCliVersions.js';
+import { AgentCliError, AgentCliVersions } from './agentCliVersions.js';
 import { mutationSafety } from './mutationSafety.js';
 
 const node = { node_id: 'local', display_name: 'Local' };
 const row = { backend: 'codex', installed: '1.0.0', latest: '1.1.0', outdated: true, source: 'npm:@openai/codex', update_command: 'codex update', error: null };
-const options = { probe: async () => [row], readUpdates: () => [], activeClaims: async () => 0, enabled: () => true, optedIn: () => false, nodeUpdating: () => false };
+const options = { checkPolicy: async () => {}, probe: async () => [row], readUpdates: () => [], activeClaims: async () => 0, enabled: () => true, optedIn: () => false, nodeUpdating: () => false };
 
 test('agents routes enforce owner, admin flag, idempotency and valid backend before launching', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-agent-routes-'));
@@ -70,4 +70,34 @@ test('agents fleet includes unavailable nodes and relays only fixed registry des
     await fleet.scheduledUpdate();
     assert.deepEqual(calls, ['http://127.0.0.1:3774/api/agents/local', 'http://127.0.0.1:3774/api/agents/update', 'http://127.0.0.1:3774/api/agents/scheduled-update']);
   } finally { delete process.env.AGENT_TEST_TOKEN; }
+});
+
+test('owner and scheduled updates refuse node policy before any installer launch', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-agent-policy-'));
+  const old = process.env.GAH_ENABLE_ADMIN_UPDATE;
+  let launches = 0;
+  const local = new AgentCliVersions(node, { ...options, optedIn: () => true,
+    checkPolicy: async () => { throw new AgentCliError(403, 'agent_update_policy_blocked', 'POLICY BLOCKED: update-agent-cli'); },
+    launch: async () => { launches++; } });
+  const app = express(); app.use(express.json());
+  app.use((_req, res, next) => { res.locals.authPrincipal = { kind: 'owner' }; next(); });
+  app.use('/api/agents', agentCliRouter(local, undefined, mutationSafety('local', dir)));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  process.env.GAH_ENABLE_ADMIN_UPDATE = '1';
+  try {
+    for (const route of ['update', 'scheduled-update']) {
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/agents/${route}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `blocked-policy-${route}` },
+        body: JSON.stringify({ backend: 'codex', profile: 'readonly' }) });
+      assert.equal(response.status, route === 'update' ? 403 : 409);
+    }
+    await assert.rejects(local.scheduledUpdate(), /POLICY BLOCKED/);
+    assert.equal(launches, 0);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    if (old === undefined) delete process.env.GAH_ENABLE_ADMIN_UPDATE; else process.env.GAH_ENABLE_ADMIN_UPDATE = old;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
