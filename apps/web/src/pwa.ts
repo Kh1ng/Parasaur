@@ -3,6 +3,7 @@
  * and offline state. The service worker itself (public/sw.js) enforces the
  * cache policy: static shell only, /api/* never cached, offline read-only.
  */
+import { basePath } from './lib/basePath.js';
 
 /// Whether the browser is currently offline. Drives the stale banner.
 export function isOffline(): boolean {
@@ -26,6 +27,10 @@ export function listenOfflineChange(onChange: (offline: boolean) => void): () =>
 /// (or on non-https origins other than localhost, per the register spec).
 export function registerServiceWorker(onUpdateReady: (apply: () => void) => void): void {
   if (!('serviceWorker' in navigator)) return;
+  // Under a path prefix (#1593) the worker is not registered: its cache
+  // policy is written in root-deployment paths, so a prefix install gets a
+  // normal website instead of a misdirected offline shell.
+  if (basePath() !== '') return;
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
     // Service workers require a secure context; plain-HTTP LAN deployments
     // simply get no offline shell (the dashboard keeps working as before).

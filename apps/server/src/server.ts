@@ -3,6 +3,7 @@ import { gitLabEventsRouter, type GitLabRouteDeps } from './integrations/gitlab/
 import { gitLabRunsRouter } from './integrations/gitlab/runsRoute.js';
 import { parseSkillSelections } from './skillSelections.js';
 import { runningWorkers } from './runningWorkers.js';
+import { appHtmlHandler, embedHtmlHandler, isApiRequest } from './integrations/gitlab/embedView.js';
 import express from 'express';
 import type { ActivityEvent, ActivityKind, NodeRoleStatus } from '@git-agent-harness/contracts';
 import { workerRouteGuard, validateNodeRole } from './nodeRole.js';
@@ -2973,11 +2974,17 @@ export function createServer(
   if (webRoot) {
     const absoluteWebRoot = resolve(webRoot);
     app.use(express.static(absoluteWebRoot, { index: false }));
+    // The GitLab panel's chrome-less embed view (#1593): frameable only by
+    // the origins configured through GAH_GITLAB_ORIGIN, and fail-closed
+    // (frame-ancestors 'none') when none is. Every other served document
+    // stays non-frameable via X-Frame-Options: DENY. Both handlers inject
+    // the public base path from X-Forwarded-Prefix so the SPA builds asset,
+    // API, and WebSocket URLs under a proxy prefix like /parasaur/.
+    const embedViewOptions = { webRoot: absoluteWebRoot };
+    app.get('/embed', embedHtmlHandler(embedViewOptions));
     app.get('*', (req, res, next) => {
-      if (req.path.startsWith('/api/') || req.path === '/api' || !req.accepts('html')) return next();
-      res.sendFile(join(absoluteWebRoot, 'index.html'), error => {
-        if (error) next(error);
-      });
+      if (isApiRequest(req.path) || !req.accepts('html')) return next();
+      appHtmlHandler(embedViewOptions)(req, res, next);
     });
   }
 
