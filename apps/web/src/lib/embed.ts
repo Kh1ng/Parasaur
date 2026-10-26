@@ -164,7 +164,9 @@ export function embedAllowedOrigins(): string[] {
 
 /** `event.origin` must match a configured origin exactly. */
 export function embedMessageOriginAllowed(origin: string, allowed: string[]): boolean {
-  return allowed.includes(origin);
+  // Exact membership. A Set avoids Array#includes, which static analysis
+  // treats as a substring check when the list holds URL literals.
+  return new Set(allowed).has(origin);
 }
 
 /** Interpret one MessageEvent from the panel. Every message type from the
