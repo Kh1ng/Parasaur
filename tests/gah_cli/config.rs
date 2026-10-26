@@ -1172,13 +1172,13 @@ fn vibe_model_commands_scope_to_a_declared_backend_instance() {
     );
 
     // An instance of another runner kind never answers for Vibe.
-    let codex_bin = tmp.path().join("codex-bin");
-    std::fs::create_dir_all(&codex_bin).unwrap();
-    make_fake_bin(&codex_bin, "codex");
-    let codex_path = prepend_path(&codex_bin);
+    // The fake `codex` sits beside the fake `vibe`: adding `codex-work`
+    // re-validates every declared instance, so `vibe` must stay on PATH
+    // (CI runners have no real backends installed).
+    make_fake_bin(&fake_bin, "codex");
     let codex_gah = || {
         let mut command = bin();
-        command.env("HOME", &home).env("PATH", &codex_path);
+        command.env("HOME", &home).env("PATH", &path);
         command
     };
     codex_gah()
