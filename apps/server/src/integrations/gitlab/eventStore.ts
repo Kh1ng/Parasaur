@@ -54,21 +54,16 @@ export class GitLabEventStore {
     return this.load().pending.filter(entry => entry.retryAt <= this.now());
   }
 
-  /** Reserve a durable dispatch identity before any side effect; retain it until completion. */
-  begin(key: string): void {
+  /** Reserve identity and consume one attempt before dispatch; false means the budget is exhausted. */
+  begin(key: string): boolean {
     const state = this.load();
     const entry = state.pending.find(entry => entry.key === key);
     if (!entry) throw new Error('Missing GitLab delivery');
-    const started = entry.started ?? { requestId: `gitlab-${key}` };
+    if (entry.attempts >= MAX_DISPATCH_ATTEMPTS) return false;
+    const started = { requestId: `gitlab-${key}` };
     this.save({ ...state, pending: state.pending.map(entry => entry.key === key
-      ? { ...entry, started, retryAt: this.now() + DISPATCH_LEASE_MS } : entry) });
-  }
-
-  /** Persist the successful start before optional provider publication or dequeue. */
-  started(key: string, sessionId: string): void {
-    const state = this.load();
-    this.save({ ...state, pending: state.pending.map(entry => entry.key === key
-      ? { ...entry, started: { requestId: `gitlab-${key}`, sessionId } } : entry) });
+      ? { ...entry, started, attempts: entry.attempts + 1, retryAt: this.now() + DISPATCH_LEASE_MS } : entry) });
+    return true;
   }
 
   retryAfter(): number {
@@ -104,15 +99,14 @@ export class GitLabEventStore {
       receipts: state.receipts.map(([id, expires]) => [id, id === key ? this.now() + this.ttlMs : expires]) });
   }
 
-  /** Persist a failed attempt; return true only on the transition to dead-letter. */
+  /** Schedule a reserved attempt for retry; return true only on transition to dead-letter. */
   failed(key: string): boolean {
     const state = this.load();
     const entry = state.pending.find(entry => entry.key === key);
     if (!entry) return false;
-    const next = { ...entry, attempts: entry.attempts + 1, retryAt: this.now() + DISPATCH_RETRY_MS };
+    const next = { ...entry, retryAt: this.now() + DISPATCH_RETRY_MS };
     // Preserve poison work when the separate dead-letter bound is full.
     const dead = next.attempts >= MAX_DISPATCH_ATTEMPTS && state.deadLetters.length < this.deadLetterCapacity;
-    if (!dead) next.attempts = Math.min(next.attempts, MAX_DISPATCH_ATTEMPTS - 1);
     this.save({ ...state,
       pending: dead ? state.pending.filter(entry => entry.key !== key) : state.pending.map(entry => entry.key === key ? next : entry),
       deadLetters: dead ? [...state.deadLetters, next] : state.deadLetters });
@@ -157,7 +151,7 @@ export class GitLabEventStore {
         || (started.sessionId !== undefined && (typeof started.sessionId !== 'string' || !started.sessionId))))
       || typeof entry.panelUrl !== 'string' || !Number.isSafeInteger(entry.attempts) || !Number.isFinite(entry.retryAt)
       || Number(entry.attempts) < 0 || Number(entry.attempts) > MAX_DISPATCH_ATTEMPTS
-      || (Number(entry.attempts) === MAX_DISPATCH_ATTEMPTS) !== dead
+      || (dead && Number(entry.attempts) !== MAX_DISPATCH_ATTEMPTS)
       || Buffer.byteLength(JSON.stringify(entry.body) ?? '') > 102_400) return false;
     try {
       const url = new URL(entry.panelUrl);

@@ -21,8 +21,10 @@ type PushBusLike = {
   subscribe?(subscriber: (message: ServerMessage) => void): () => void;
 };
 
-type RoutedSessionOptions = SessionOptions & {
+export type RoutedSessionOptions = SessionOptions & {
   requestId?: string;
+  /** Keep this idempotency receipt across terminal retention and later work. */
+  retainReceipt?: boolean;
   nodeId?: string;
   coordinatorNodeId?: string;
 };
@@ -44,6 +46,7 @@ type FleetDispatchDeps = {
 };
 
 type LeaseRecord = {
+  retainReceipt?: boolean;
   requestId: string;
   workKey: string;
   profile: string;
@@ -201,6 +204,7 @@ function recoverLeaseWorkKey(lease: Pick<LeaseRecord, 'profile' | 'session'> & {
 function isCompleteLease(value: unknown): value is LeaseRecord {
   const lease = value as Partial<LeaseRecord> | null;
   if (!(typeof lease === 'object' && lease !== null
+    && (lease.retainReceipt === undefined || typeof lease.retainReceipt === 'boolean')
     && isNonEmptyString(lease.requestId)
     && isNonEmptyString(lease.nodeId)
     && isNonEmptyString(lease.nodeUrl)
@@ -218,7 +222,6 @@ function isCompleteLease(value: unknown): value is LeaseRecord {
 
 class LeaseStore {
   private leases = new Map<string, LeaseRecord>();
-  private leasesByWorkKey = new Map<string, LeaseRecord>();
   private unreadable = false;
   /** Present while the store is quarantined. Only an operator removes it. */
   private readonly quarantinePath: string;
@@ -253,11 +256,9 @@ class LeaseStore {
           workKey: recoverLeaseWorkKey(lease)!
         } satisfies LeaseRecord;
         this.leases.set(normalizedLease.requestId, normalizedLease);
-        this.leasesByWorkKey.set(normalizedLease.workKey, normalizedLease);
       }
     } catch (error) {
       this.leases.clear();
-      this.leasesByWorkKey.clear();
       this.markUnreadable(error);
     }
   }
@@ -319,14 +320,8 @@ class LeaseStore {
   }
 
   getByWorkKey(workKey: string): LeaseRecord | undefined {
-    const lease = this.leasesByWorkKey.get(workKey);
-    if (!lease) {
-      return undefined;
-    }
-    if (lease.state === 'terminal' || lease.state === 'expired') {
-      return undefined;
-    }
-    return lease;
+    return this.values().find(lease => lease.workKey === workKey
+      && lease.state !== 'terminal' && lease.state !== 'expired');
   }
 
   getBySessionId(sessionId: string): LeaseRecord | undefined {
@@ -343,24 +338,18 @@ class LeaseStore {
   }
 
   upsert(record: LeaseRecord): void {
-    const existing = this.leasesByWorkKey.get(record.workKey);
-    if (existing && existing.requestId !== record.requestId) {
-      this.leases.delete(existing.requestId);
+    for (const existing of this.leases.values()) {
+      if (existing.requestId === record.requestId) continue;
+      if (existing.session.id === record.session.id) {
+        // Several request IDs can join one running job; all observe its outcome.
+        this.leases.set(existing.requestId, { ...record, requestId: existing.requestId,
+          retainReceipt: existing.retainReceipt });
+      } else if (existing.workKey === record.workKey && !existing.retainReceipt
+        && (existing.state === 'terminal' || existing.state === 'expired')) {
+        this.leases.delete(existing.requestId);
+      }
     }
     this.leases.set(record.requestId, record);
-    this.leasesByWorkKey.set(record.workKey, record);
-    this.save();
-  }
-
-  delete(requestId: string): void {
-    const existing = this.leases.get(requestId);
-    if (!existing) {
-      return;
-    }
-    this.leases.delete(requestId);
-    if (this.leasesByWorkKey.get(existing.workKey)?.requestId === requestId) {
-      this.leasesByWorkKey.delete(existing.workKey);
-    }
     this.save();
   }
 
@@ -368,13 +357,10 @@ class LeaseStore {
     const now = Date.now();
     let changed = false;
     for (const [requestId, lease] of this.leases) {
-      if (lease.state === 'terminal') {
+      if (lease.state === 'terminal' && !lease.retainReceipt) {
         const endedAt = Date.parse(lease.session.endedAt ?? lease.updatedAt);
         if (!Number.isNaN(endedAt) && now - endedAt > TERMINAL_LEASE_TTL_MS) {
           this.leases.delete(requestId);
-          if (this.leasesByWorkKey.get(lease.workKey)?.requestId === requestId) {
-            this.leasesByWorkKey.delete(lease.workKey);
-          }
           changed = true;
         }
       }
@@ -712,13 +698,11 @@ export class FleetDispatchCoordinator {
   async startSession(options: RoutedSessionOptions): Promise<Session> {
     const requestId = options.requestId ?? generateRequestId();
     const workKey = deriveDispatchWorkKey(options);
-    const pendingRequest = this.pendingRequestStarts.get(requestId);
-    if (pendingRequest) {
-      return pendingRequest;
-    }
-    const pendingWork = this.pendingWorkStarts.get(workKey);
-    if (pendingWork) {
-      return pendingWork;
+    const pending = this.pendingRequestStarts.get(requestId) ?? this.pendingWorkStarts.get(workKey);
+    if (pending) {
+      const session = await pending;
+      if (options.retainReceipt) this.pinReceipt(requestId, session.id);
+      return session;
     }
 
     const startPromise = this.startSessionFresh(options, requestId, workKey);
@@ -741,12 +725,14 @@ export class FleetDispatchCoordinator {
     await this.reconcileLeases(options.profile);
 
     const existingByRequest = this.leaseStore.getByRequestId(requestId);
-    if (existingByRequest) {
+    if (existingByRequest && existingByRequest.state !== 'expired') {
+      if (options.retainReceipt) this.pinReceipt(requestId, existingByRequest.session.id);
       return existingByRequest.session;
     }
 
     const existingByWorkKey = this.leaseStore.getByWorkKey(workKey);
     if (existingByWorkKey) {
+      if (options.retainReceipt) this.pinReceipt(requestId, existingByWorkKey.session.id);
       return existingByWorkKey.session;
     }
 
@@ -764,6 +750,7 @@ export class FleetDispatchCoordinator {
       this.remoteTransports.set(routed.id, transport);
       this.recordLease({
         requestId,
+        retainReceipt: options.retainReceipt,
         workKey,
         profile: options.profile,
         nodeId: this.coordinatorIdentity.node_id,
@@ -794,6 +781,7 @@ export class FleetDispatchCoordinator {
     const routed = decorateSession(session, target.nodeId, 'running');
     this.recordLease({
       requestId,
+      retainReceipt: options.retainReceipt,
       workKey,
       profile: options.profile,
       nodeId: target.nodeId,
@@ -878,10 +866,24 @@ export class FleetDispatchCoordinator {
     this.remoteTransports.set(sessionId, transport);
   }
 
+  private pinReceipt(requestId: string, sessionId: string): void {
+    const lease = this.leaseStore.getBySessionId(sessionId);
+    if (!lease) throw new GAHError('Dispatch receipt is missing', 'SESSION_NOT_FOUND');
+    this.recordLease({ ...lease, requestId, retainReceipt: true });
+  }
+
+  /** A durable caller has acknowledged this request and no longer needs its receipt pinned. */
+  releaseReceipt(requestId: string): void {
+    this.leaseStore.assertReadable();
+    const lease = this.leaseStore.getByRequestId(requestId);
+    if (lease?.retainReceipt) this.recordLease({ ...lease, retainReceipt: false });
+  }
+
   /** Inspect a durable request receipt without expiring/reconciling its lease. */
   getSessionByRequestId(requestId: string): Session | undefined {
     this.leaseStore.assertReadable();
-    return this.leaseStore.getByRequestId(requestId)?.session;
+    const lease = this.leaseStore.getByRequestId(requestId);
+    return lease ? decorateSession(lease.session, lease.nodeId, lease.state) : undefined;
   }
 
   getSession(sessionId: string): Session | undefined {

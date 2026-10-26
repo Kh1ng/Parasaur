@@ -18,10 +18,9 @@ export function gitLabQueueRouter(store: GitLabEventStore, queue: GitLabEventQue
     router.post(`/queue/dead-letters/:id/${action}`, mutation(`gitlab.dead_letter.${action}`), (req, res) => {
       if (!/^[a-f0-9]{64}$/.test(req.params.id)) return res.status(400).json({ error: 'invalid_dead_letter_id' });
       try {
-        const result = store.recover(req.params.id, action);
+        const result = queue.recover(req.params.id, action);
         if (result === 'not_found') return res.status(404).json({ error: 'dead_letter_not_found' });
         if (result === 'queue_full') return res.set('Retry-After', String(store.retryAfter())).status(503).json({ error: 'gitlab_event_queue_full' });
-        if (action === 'retry') queue.wake();
         return res.json({ ok: true });
       } catch { return res.status(503).json({ error: 'gitlab_event_store_unavailable' }); }
     });

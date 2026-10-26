@@ -24,9 +24,8 @@ export function gitLabEventsRouter(deps: GitLabRouteDeps = {}): Router & { queue
   const queue = new GitLabEventQueue(store, deps.dispatch ?? dispatchGitLabEvent,
     deps.findDispatch ?? (async identity => {
       const fleet = getFleetDispatch();
-      return (identity.sessionId ? fleet.getSession(identity.sessionId) : undefined)
-        ?? fleet.getSessionByRequestId(identity.requestId);
-    }));
+      return fleet.getSessionByRequestId(identity.requestId);
+    }), requestId => getFleetDispatch().releaseReceipt(requestId));
   const configuredLimit = Number(process.env.GAH_GITLAB_EVENTS_RATE_LIMIT);
   const limit = Number.isSafeInteger(configuredLimit) && configuredLimit > 0 ? configuredLimit : 600;
   router.use(rateLimit({ windowMs: 60_000, limit, standardHeaders: true, legacyHeaders: false,

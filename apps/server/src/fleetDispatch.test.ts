@@ -1219,51 +1219,118 @@ for (const protocol of ['http:', 'https:']) {
 }
 
 
-test('GitLab replay after dequeue crash and fleet lease retention expiry starts exactly once', async t => {
-  t.mock.method(console, 'error', () => {});
-  const dir = mkdtempSync(resolve(tmpdir(), 'gah-gitlab-fleet-expiry-'));
+for (const crash of ['before-dispatch', 'after-start', 'before-dequeue', 'lost-marker', 'missing-session'] as const) {
+  test(`GitLab ${crash} recovery preserves idempotency beyond fleet retention`, async t => {
+    t.mock.method(console, 'error', () => {});
+    const dir = mkdtempSync(resolve(tmpdir(), 'gah-gitlab-fleet-expiry-'));
+    const leaseStorePath = resolve(dir, 'leases.json');
+    const eventPath = resolve(dir, 'events.json');
+    const registryService = {
+      getNode: () => undefined,
+      getNodeObservations: async () => [makeSnapshot('coordinator-1', 'http://127.0.0.1:9999', 0, 0, 0)],
+    } as unknown as RegistryService;
+    const transportMap = new Map<string, FakeTransport>();
+    const freshFleet = () => createCoordinatorHarness({ leaseStorePath, registryService,
+      coordinatorNodeId: 'coordinator-1', coordinatorUrl: 'http://127.0.0.1:9999', transportMap, published: [] });
+    let fleet = freshFleet();
+    let now = 0;
+    const freshStore = () => new GitLabEventStore(10, 86_400_000, () => now, eventPath);
+    const store = freshStore();
+    const body: unknown = JSON.parse(readFileSync(new URL('../tests/fixtures/gitlab-19/issue.json', import.meta.url), 'utf8'));
+    const event = classifyEvent(body, 'parasaur', true);
+    assert.ok(event);
+    store.enqueue({ key: event.key, body, bot: 'parasaur', panelUrl: 'https://panel.example/', pipelineEnabled: true });
+    let crashing = true;
+    const dispatch = async (_event: unknown, options: { requestId?: string }) => {
+      assert.equal(options.requestId, `gitlab-${event.key}`);
+      assert.equal(freshStore().summary().pending[0].started?.requestId, options.requestId,
+        'reservation is durable before dispatcher entry');
+      const session = await fleet.startSession({ requestId: options.requestId, retainReceipt: true, profile: 'gah',
+        providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve' });
+      if (session.leaseState !== 'terminal') await fleet.stopSession(session.id);
+      if (crashing && crash === 'after-start') throw new Error('crash before dispatcher returns');
+    };
+    try {
+      if (crash === 'before-dispatch') {
+        const begin = store.begin.bind(store);
+        store.begin = key => { begin(key); throw new Error('crash after reservation'); };
+      }
+      store.complete = () => { throw new Error('crash before dequeue'); };
+      await new GitLabEventQueue(store, dispatch).drain();
+      const startsBefore = transportMap.get('coordinator-1')?.startCalls ?? 0;
+      assert.equal(startsBefore, crash === 'before-dispatch' ? 0 : 1);
+      if (startsBefore) {
+        const saved = JSON.parse(readFileSync(leaseStorePath, 'utf8'));
+        saved.leases[0].session.endedAt = new Date(Date.now() - DISPATCH_LEASE_MS - 1).toISOString();
+        if (crash === 'missing-session') {
+          saved.leases[0].state = 'expired';
+          // The lease is authoritative even when cached session metadata is stale.
+          saved.leases[0].session.status = 'running';
+        }
+        writeFileSync(leaseStorePath, JSON.stringify(saved));
+      }
+      if (crash === 'lost-marker') {
+        const saved = JSON.parse(readFileSync(eventPath, 'utf8'));
+        delete saved.pending[0].started;
+        writeFileSync(eventPath, JSON.stringify(saved));
+      }
+      fleet = freshFleet();
+      await fleet.reconcileLeases('gah');
+      if (startsBefore) assert.ok(fleet.getSessionByRequestId(`gitlab-${event.key}`), 'unacknowledged receipt survives retention');
+      now += DISPATCH_LEASE_MS + 1;
+      crashing = false;
+      const restarted = freshStore();
+      await new GitLabEventQueue(restarted, dispatch,
+        async identity => fleet.getSessionByRequestId(identity.requestId),
+        requestId => fleet.releaseReceipt(requestId)).drain();
+      assert.equal(transportMap.get('coordinator-1')?.startCalls, crash === 'missing-session' ? 2 : 1);
+      assert.equal(restarted.summary().pending.length, 0);
+      assert.equal(restarted.summary().deadLetters.length, 0);
+      assert.equal(JSON.parse(readFileSync(leaseStorePath, 'utf8')).leases[0].retainReceipt, false);
+      if (crash !== 'before-dispatch' && crash !== 'missing-session') {
+        await fleet.reconcileLeases('gah');
+        assert.equal(fleet.getSessionByRequestId(`gitlab-${event.key}`), undefined, 'acknowledged receipts can expire');
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+}
+
+test('retained request receipts survive concurrent coalescing, later work, and coordinator restart', async () => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'gah-retained-receipts-'));
   const leaseStorePath = resolve(dir, 'leases.json');
-  const eventPath = resolve(dir, 'events.json');
+  const transportMap = new Map<string, FakeTransport>();
+  const node = await createMockNode();
   const registryService = {
     getNode: () => undefined,
-    getNodeObservations: async () => [makeSnapshot('coordinator-1', 'http://127.0.0.1:9999', 0, 0, 0)],
+    getNodeObservations: async () => [makeSnapshot('worker-1', node.url, 0, 0, 0)],
   } as unknown as RegistryService;
-  const transportMap = new Map<string, FakeTransport>();
-  const published: PublishedMessage[] = [];
-  const freshFleet = () => createCoordinatorHarness({ leaseStorePath, registryService,
-    coordinatorNodeId: 'coordinator-1', coordinatorUrl: 'http://127.0.0.1:9999', transportMap, published });
-  let fleet = freshFleet();
-  let now = 0;
-  const freshStore = () => new GitLabEventStore(10, 86_400_000, () => now, eventPath);
-  const store = freshStore();
-  const body: unknown = JSON.parse(readFileSync(new URL('../tests/fixtures/gitlab-19/issue.json', import.meta.url), 'utf8'));
-  const event = classifyEvent(body, 'parasaur', true);
-  assert.ok(event);
-  store.enqueue({ key: event.key, body, bot: 'parasaur', panelUrl: 'https://panel.example/', pipelineEnabled: true });
-  let starts = 0;
-  const dispatch = async (_event: unknown, options: { onStarted?: (id: string) => void }) => {
-    starts++;
-    const session = await fleet.startSession({ requestId: `gitlab-${event.key}`, profile: 'gah',
-      providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve' });
-    options.onStarted?.(session.id);
-    await fleet.stopSession(session.id);
-  };
+  const fresh = () => createCoordinatorHarness({ leaseStorePath, registryService, transportMap, published: [],
+    coordinatorNodeId: 'coordinator-1', coordinatorUrl: 'http://127.0.0.1:9999' });
+  const options = { profile: 'gah', providerKind: 'codex' as const, instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve' };
   try {
-    store.complete = () => { throw new Error('crash before dequeue'); };
-    await new GitLabEventQueue(store, dispatch).drain();
-    assert.equal(starts, 1);
-    // Age the real terminal fleet lease beyond its one-hour retention and reload it.
-    const leases = JSON.parse(readFileSync(leaseStorePath, 'utf8'));
-    leases.leases[0].session.endedAt = new Date(Date.now() - DISPATCH_LEASE_MS - 1).toISOString();
-    writeFileSync(leaseStorePath, JSON.stringify(leases));
-    fleet = freshFleet();
+    let fleet = fresh();
+    const [first, joined] = await Promise.all([
+      fleet.startSession({ ...options, requestId: 'event-one', retainReceipt: true }),
+      fleet.startSession({ ...options, requestId: 'event-two', retainReceipt: true }),
+    ]);
+    assert.equal(joined.id, first.id);
+    assert.equal(transportMap.get('worker-1')?.startCalls, 1);
+    await fleet.stopSession(first.id);
+    assert.equal(fleet.getSessionByRequestId('event-two')?.leaseState, 'terminal');
+    const next = await fleet.startSession({ ...options, requestId: 'later-event' });
+    node.sessions = [next];
+    const saved = JSON.parse(readFileSync(leaseStorePath, 'utf8'));
+    for (const lease of saved.leases) {
+      if (lease.state === 'terminal') lease.session.endedAt = new Date(Date.now() - DISPATCH_LEASE_MS - 1).toISOString();
+    }
+    writeFileSync(leaseStorePath, JSON.stringify(saved));
+    fleet = fresh();
     await fleet.reconcileLeases('gah');
-    assert.equal(fleet.getSessionByRequestId(`gitlab-${event.key}`), undefined, 'fleet start receipt has expired');
-    now += DISPATCH_LEASE_MS + 1;
-    const restarted = freshStore();
-    await new GitLabEventQueue(restarted, dispatch, async identity =>
-      fleet.getSessionByRequestId(identity.requestId)).drain();
-    assert.equal(starts, 1, 'durable event receipt prevents a second fleet start');
-    assert.equal(restarted.summary().pending.length, 0);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+    for (const requestId of ['event-one', 'event-two']) {
+      assert.equal((await fleet.startSession({ ...options, requestId, retainReceipt: true })).id, first.id);
+      fleet.releaseReceipt(requestId);
+    }
+    assert.equal((await fleet.startSession({ ...options, requestId: 'join-later' })).id, next.id);
+    assert.equal(transportMap.get('worker-1')?.startCalls, 2, 'old receipt updates must not hide newer active work');
+  } finally { await node.close(); rmSync(dir, { recursive: true, force: true }); }
 });

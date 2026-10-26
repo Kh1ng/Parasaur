@@ -146,15 +146,9 @@ test('receipts survive restarts, expire, stay bounded, and reject corrupt state'
 });
 
 for (const name of ['issue', 'merge_request', 'note', 'note-mr', 'pipeline']) {
-  test(`${name} reaches the shared dispatch entry and posts a panel run link`, async () => {
+  test(`${name} reaches the shared dispatch entry without raw provider publication`, async () => {
     const h = harness();
-    let recorded: string | undefined;
-    await dispatchGitLabEvent(event(name), { ...options, onStarted: id => {
-      recorded = id;
-      assert.equal(h.starts.length, 1);
-      assert.ok(h.calls.every(args => !args.includes('POST')), 'start receipt precedes provider publication');
-    } }, h.deps);
-    assert.equal(recorded, 'run-example');
+    await dispatchGitLabEvent(event(name), options, h.deps);
     assert.equal(h.starts.length, 1);
     const start = h.starts[0];
     assert.equal(start.profile, 'example'); assert.equal(start.repo, 'team/project');
@@ -175,9 +169,7 @@ for (const name of ['issue', 'merge_request', 'note', 'note-mr', 'pipeline']) {
     }
     if (name === 'issue') assert.equal(start.target, '#42');
     if (['merge_request', 'note-mr', 'pipeline'].includes(name)) assert.equal(start.mr, '42');
-    const comment = h.calls.find(args => args.includes('POST'));
-    assert.ok(comment);
-    assert.ok(comment.includes('body=Parasaur queued a run: [open run](https://panel.example.com/parasaur/?page=work&profile=example&session=run-example).'));
+    assert.ok(h.calls.every(args => !args.includes('POST')), 'only the policy-enforced CLI publishes');
     if (name === 'issue' || name === 'note') assert.ok(h.managed.some(input => input.target === '#42'));
   });
 }
@@ -216,18 +208,6 @@ test('pipeline repairs require bot ownership, configured prefix, matching projec
   const h = harness();
   await dispatchGitLabEvent({ ...pipeline, branch: 'gah/unrelated-branch' }, options, h.deps);
   assert.equal(h.starts.length, 0);
-});
-
-test('publishing restrictions suppress comments, and comment errors do not repeat dispatch', async () => {
-  for (const p of [{ ...profile, delivery_mode: 'handoff' as const }, profile]) {
-    const h = harness({ listProfiles: async () => [p], config: async () => ({ ...config, event_policy: { ...policy, allow_issue_comments: false } }) });
-    await dispatchGitLabEvent(event('note'), options, h.deps);
-    assert.equal(h.starts.length, 1); assert.ok(h.calls.every(args => !args.includes('POST')));
-  }
-  const h = harness(); const original = h.deps.cli;
-  h.deps.cli = async (cmd, args, cwd) => { if (args.includes('POST')) throw new Error('Provider rejected comment'); return original(cmd, args, cwd); };
-  await dispatchGitLabEvent(event('note'), options, h.deps);
-  assert.equal(h.starts.length, 1);
 });
 
 async function serve(app: express.Express) {
@@ -484,7 +464,7 @@ test('queue recovery API requires owner API auth, retries once, and discards wit
   const store = new GitLabEventStore(10, 86_400_000, Date.now, path);
   for (const name of ['issue', 'note']) {
     store.enqueue(delivery(name));
-    for (let i = 0; i < 3; i++) store.failed(event(name).key);
+    for (let i = 0; i < 3; i++) { store.begin(event(name).key); store.failed(event(name).key); }
   }
   let starts = 0;
   const access = new DeviceAccess(join(dir, 'devices.json'));
@@ -521,6 +501,47 @@ test('queue recovery API requires owner API auth, retries once, and discards wit
     await app.locals.gitLabEventsQueue.drain();
     assert.equal(starts, 1);
     assert.equal(store.summary().pending.length, 0);
+  } finally {
+    app.locals.gitLabEventsQueue.stop();
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
+
+
+test('dead-letter retry uses hook dispatch and a CLI read-only refusal makes zero provider writes', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gitlab-policy-retry-'));
+  const saved = { COORDINATOR_TOKEN: process.env.COORDINATOR_TOKEN, GAH_MUTATION_STORE_PATH: process.env.GAH_MUTATION_STORE_PATH };
+  Object.assign(process.env, { COORDINATOR_TOKEN: 'policy-retry-owner', GAH_MUTATION_STORE_PATH: join(dir, 'mutations') });
+  const store = new GitLabEventStore();
+  store.enqueue(delivery('issue'));
+  for (let i = 0; i < 3; i++) { store.begin(event('issue').key); store.failed(event('issue').key); }
+  let refusals = 0;
+  const manager = createSessionManager({
+    disableCleanupTimer: true, providerRegistry: { isProviderAvailable: () => true }, pushBus: { publish() {} },
+    dispatchRunner: () => {
+      refusals++;
+      return { promise: Promise.resolve({ exitCode: 1, stderr: 'POLICY BLOCKED: read_only' }),
+        cancel: async () => ({ cancelled: true }) };
+    },
+  });
+  const h = harness({ start: input => manager.startSession(input) });
+  const app = createServer({ gitLabEvents: { store, dispatch: (event, options) => dispatchGitLabEvent(event, options, h.deps),
+    findDispatch: async () => undefined } });
+  app.locals.gitLabEventsQueue.stop();
+  const server = await serve(app);
+  try {
+    const response = await fetch(`${server.base}/api/integrations/gitlab/queue/dead-letters/${event('issue').key}/retry`, {
+      method: 'POST', headers: { Authorization: 'Bearer policy-retry-owner', 'Idempotency-Key': 'policy-retry-request-0001' },
+    });
+    assert.equal(response.status, 200, 'recovery queues the same policy-enforced dispatch as hooks');
+    app.locals.gitLabEventsQueue.start();
+    await app.locals.gitLabEventsQueue.drain();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(refusals, 1);
+    assert.equal(manager.getAllSessions()[0].status, 'error', 'the retry is refused by CLI policy');
+    assert.equal(h.calls.filter(args => args.includes('POST')).length, 0);
   } finally {
     app.locals.gitLabEventsQueue.stop();
     await server.close();

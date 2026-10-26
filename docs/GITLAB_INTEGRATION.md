@@ -84,23 +84,24 @@ Pipeline events without an open bot-owned MR are ignored.
 All starts use the same fleet coordinator as `POST /api/dispatch`, then the existing `gah dispatch` path.
 Every dispatch records the session's `gitlab` context (see the runs feed below),
 so panel queries scoped to the event's origin see the started runs.
-A successful start posts `Parasaur queued a run` with a dashboard session link.
-A comment failure never starts another run. This integration does not merge MRs.
+Successful starts appear in the panel runs feed with session links.
+The dispatcher never posts provider notes; CLI mutations enforce repository policy.
+This integration does not merge MRs.
 
 ### Redelivery and limits
 
 If supplied, `X-Gitlab-Event-UUID` or body `event_uuid` identifies the event.
 Otherwise, receipts use project, object kind, object ID, and action or pipeline status.
 Issue and MR receipts also include revision and assignment changes. Note receipts include revision and note text.
-The file stores only receipt hashes and expiry times, with private permissions and atomic replacement.
+The file stores deduplication receipts, pending payloads, and dead letters with private permissions and atomic replacement.
 One central server owns the receipt file. Do not share it between server processes.
-Receipts survive restart and expire after 24 hours. The store holds at most 10,000 unexpired receipts.
+Receipts survive restart. Completed receipts expire after 24 hours; pending and dead-letter receipts stay pinned.
+The store holds at most 10,000 receipts.
 A full store refuses new events instead of removing live receipts.
 
-The receipt is saved before `202`, so replay cannot repeat a dispatch after a comment failure or restart.
-There is no durable work queue or automatic dispatch retry.
-A crash after acknowledgement can leave a receipt without a run.
-Before manual replay, check the run state and remove only the affected receipt hash from the file with the server stopped.
+The payload and receipt are saved before `202`; replay uses the event ID for fleet idempotency.
+The durable worker retries unresolved work within its saved attempt budget.
+Use the owner recovery API described below to retry or discard dead letters.
 
 Fixtures under `apps/server/tests/fixtures/gitlab-19/` derive from GitLab 19.0 documentation examples.
 They are sanitized examples, not live captures. Validate the deployment with real file-hook deliveries before enabling unattended work.
@@ -146,7 +147,7 @@ runs are durable records with their per-attempt history in `attempts`.
 `testStatus` is the ledger's `validation_result` (e.g. `passed`, `failed`,
 `not_run`). `mrUrl` is the resulting MR link. A live-session run deep-links
 its detail as `?page=work&profile=<profile>&session=<id>` (the same shape as
-the events endpoint's queued-run comments); a ledger run links the
+the panel's live runs); a ledger run links the
 profile's work page.
 
 ### How runs are matched
@@ -518,22 +519,26 @@ At central-server startup, after fleet dispatch initializes, the worker
 reclassifies pending payloads with their saved classification settings and
 uses the same dispatcher as new deliveries. Provider author trust,
 profile matching, managed-issue checks, and other dispatch policy are
-checked again against current provider state. A policy rejection completes
-the entry without a worker start. A successful start returns only after
-the fleet coordinator records its dispatch lease. The queue then removes
-the payload and refreshes its receipt for 24 hours. Queued-run comment
-failure still cannot trigger another dispatch.
+checked again against current provider state. An intake rejection completes
+without a start. Repository mutation policy runs inside the CLI and can
+refuse a started session. The dispatcher makes provider GET requests only;
+it no longer posts queued-run notes. The panel runs feed supplies run links.
 
-Before dispatch, the queue saves a `started` marker with the
-`gitlab-<receipt hash>` request ID and a one-hour lease in `retryAt`.
-After fleet start returns, the dispatcher saves the session ID before
-optional comment publication or dequeue. If the server stops before queue
-completion, replay waits for the lease, then checks the saved marker and
-fleet dispatch receipt. A saved session ID proves that the event already
-started, even after the fleet lease expires. An existing fleet request
-receipt also completes the entry without another start. Otherwise, replay
-uses the same request ID and rechecks current dispatch policy.
-A failed fleet lookup retains pending work without another dispatch.
+Before dispatch, the queue atomically reserves the `gitlab-<receipt hash>`
+request ID in `started`, consumes one attempt, and sets a one-hour retry lease.
+The fleet coordinator owns the session outcome. Its receipt stays pinned until
+the queue durably removes the payload, even after terminal receipt retention
+expires or another event starts work on the same target. The queue then releases
+the pin and refreshes the event's deduplication receipt for 24 hours.
+
+Replay trusts a confirmed running or terminal fleet receipt. An expired or
+missing session retries with the same request ID while budget remains. An
+uncertain fleet lookup waits for another attempt without starting work.
+Unknown outcomes with exhausted budgets become dead letters, never success.
+Old queue markers containing session IDs remain readable, but those IDs alone
+do not prove completion. There is no post-start callback or second session
+receipt in the queue. A crash after dequeue but before releasing the fleet pin
+can leave an extra retained receipt; it cannot cause another dispatch.
 Pending and dead-letter receipts remain pinned even after
 24 hours. HTTP redelivery of either returns `204` without a
 second drain. The worker serializes drains, and each ready entry gets one attempt
@@ -559,8 +564,8 @@ invalid hook credentials still return `401` before storage access. The
 rate limiter and `GAH_GITLAB_EVENTS_RATE_LIMIT` behavior are unchanged.
 
 Dispatch failures retry after at least 30 seconds, on the background
-worker's 30-second tick or a new acceptance. Failure counts and retry times
-survive restart. After three failures the entry moves atomically to
+worker's 30-second tick or a new acceptance. Attempt counts and retry times
+survive restart, including crashes before the dispatcher returns. After three attempts the entry moves atomically to
 `deadLetters`, with one log line for that transition. Other ready entries
 continue. Dead letters do not replay automatically. Storage failures retain
 pending work, retry on
@@ -577,7 +582,7 @@ Workers do not expose these routes. Mutation guards require an
 
 - `GET /api/integrations/gitlab/queue` returns `pending` and `deadLetters`
   arrays, `capacity`, and `deadLetterCapacity`. Each entry contains `id`,
-  `attempts`, `retryAt`, and an optional `started` marker with request/session IDs.
+  `attempts`, `retryAt`, and an optional `started` marker with the request ID.
   The response excludes accepted payloads and provider errors.
 - `POST /api/integrations/gitlab/queue/dead-letters/:id/retry` moves one entry
   to pending and resets its attempt count and retry time. It preserves the

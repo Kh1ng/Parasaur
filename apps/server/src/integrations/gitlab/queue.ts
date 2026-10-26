@@ -1,9 +1,10 @@
+import type { Session } from '@git-agent-harness/contracts';
 import { classifyEvent, type GitLabEvent } from './classifier.js';
 import { DISPATCH_RETRY_MS, GitLabEventStore, MAX_DISPATCH_ATTEMPTS, type DispatchMarker } from './eventStore.js';
 
-export type GitLabDispatchOptions = { bot: string; panelUrl: string; onStarted?: (sessionId: string) => void };
+export type GitLabDispatchOptions = { bot: string; panelUrl: string; requestId?: string };
 export type GitLabDispatch = (event: GitLabEvent, options: GitLabDispatchOptions) => Promise<void>;
-export type FindGitLabDispatch = (identity: DispatchMarker) => Promise<{ id: string } | undefined>;
+export type FindGitLabDispatch = (identity: DispatchMarker) => Promise<Pick<Session, 'id' | 'leaseState'> | undefined>;
 
 /** Replay accepted deliveries independently of HTTP requests; serialize drains and isolate poison work. */
 export class GitLabEventQueue {
@@ -14,7 +15,8 @@ export class GitLabEventQueue {
   private storeFailed = false;
 
   constructor(private readonly store: GitLabEventStore, private readonly dispatch: GitLabDispatch,
-    private readonly findDispatch: FindGitLabDispatch = async () => undefined) {}
+    private readonly findDispatch: FindGitLabDispatch = async () => undefined,
+    private readonly releaseReceipt: (requestId: string) => void = () => {}) {}
 
   /** Start only once fleet dispatch is initialized. Provider calls run in the background. */
   start(): void {
@@ -50,6 +52,27 @@ export class GitLabEventQueue {
     return this.running;
   }
 
+  /** Owner recovery uses the same replay path and dispatch policy as hook acceptance. */
+  recover(key: string, action: 'retry' | 'discard') {
+    const result = this.store.recover(key, action);
+    if (result === 'ok') {
+      if (action === 'retry') this.wake();
+      else this.release(key);
+    }
+    return result;
+  }
+
+  private release(key: string): void {
+    try { this.releaseReceipt(`gitlab-${key}`); }
+    catch { console.error(`[gitlab-events] Event ${key} acknowledged; fleet receipt remains pinned.`); }
+  }
+
+  private complete(key: string): void {
+    this.store.complete(key);
+    // Release only after durable acknowledgement, so a crash cannot erase dedupe.
+    this.release(key);
+  }
+
   private async replay(): Promise<void> {
     while (!this.stopped) {
       const ready = this.store.ready();
@@ -57,26 +80,22 @@ export class GitLabEventQueue {
       for (const entry of ready) {
         if (this.stopped) return;
         const event = classifyEvent(entry.body, entry.bot, entry.pipelineEnabled, entry.eventUuid);
-        // A saved session is a durable start receipt even after fleet retention expires.
-        // Otherwise inspect the fleet request identity before attempting another start.
-        if (entry.started) {
-          const previous = await this.findDispatch(entry.started);
-          if (entry.started.sessionId || previous) {
-            this.store.complete(entry.key);
-            continue;
-          }
-        }
-        this.store.begin(entry.key);
+        // Reservation and budget survive a crash anywhere in the dispatcher.
+        const reserved = this.store.begin(entry.key);
         let failed = false;
         try {
-          if (event) await this.dispatch(event, { bot: entry.bot, panelUrl: entry.panelUrl, onStarted: id => this.store.started(entry.key, id) });
+          const previous = entry.started ? await this.findDispatch(entry.started) : undefined;
+          if (previous?.leaseState !== 'running' && previous?.leaseState !== 'terminal') {
+            if (!reserved || (previous && previous.leaseState !== 'expired')) failed = true;
+            else if (event) await this.dispatch(event, { bot: entry.bot, panelUrl: entry.panelUrl, requestId: `gitlab-${entry.key}` });
+          }
         } catch { failed = true; }
         if (failed) {
           if (this.store.failed(entry.key)) {
             console.error(`[gitlab-events] Event ${entry.key} moved to dead letters after ${MAX_DISPATCH_ATTEMPTS} dispatch failures.`);
           }
         } else {
-          this.store.complete(entry.key);
+          this.complete(entry.key);
         }
       }
     }
