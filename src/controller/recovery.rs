@@ -92,6 +92,11 @@ pub(super) fn recently_capacity_deferred_work_ids(
         if !terminal_seen.insert(work_id.clone()) {
             continue;
         }
+        // Node eligibility is rechecked by live admission, independently of
+        // routing state. Route backoff must not hide recovered node capacity.
+        if event.reason_code.as_deref() == Some("node_capacity_deferred") {
+            continue;
+        }
         if !event.details.contains(": deferred_capacity:") {
             continue;
         }

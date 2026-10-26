@@ -189,7 +189,7 @@ pub(crate) fn request_channel() -> (Sender<AdmissionMessage>, Receiver<Admission
 
 pub(crate) enum PollOutcome {
     Empty,
-    Admitted,
+    Admitted(NextAction),
     Deferred { action: NextAction, reason: String },
     Shutdown,
     Released,
@@ -256,7 +256,7 @@ impl Coordinator {
                 {
                     self.complete_worker(sequence);
                 }
-                PollOutcome::Admitted
+                PollOutcome::Admitted(action)
             }
             Ok(super::node_capacity::LiveAdmission::Defer(reason)) => {
                 let _ = request
@@ -282,8 +282,8 @@ pub(crate) fn service_pending_request(
     reprobe: &mut super::node_reprobe::NodeCapacityReprobe,
 ) -> Result<bool> {
     match coordinator.poll() {
-        PollOutcome::Admitted => {
-            reprobe.clear();
+        PollOutcome::Admitted(action) => {
+            reprobe.admitted(&action);
             Ok(true)
         }
         PollOutcome::Deferred { action, reason } => {

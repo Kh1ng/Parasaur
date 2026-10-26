@@ -1,7 +1,8 @@
-use super::terminal::{append_ledger_entry, is_policy_approval_gate};
-use super::{
-    capacity_deferred_error, ensure_terminal_failure_attribution, should_notify_dispatch_failure,
+use super::terminal::{
+    append_ledger_entry, attribute_terminal_failure, ensure_terminal_failure_attribution,
+    is_policy_approval_gate,
 };
+use super::{capacity_deferred_error, should_notify_dispatch_failure};
 use crate::routing::{RouteError, SkippedBackend};
 
 fn no_eligible(reason: &str) -> anyhow::Error {
@@ -256,4 +257,39 @@ fn dispatch_routing_notifies_before_fallback_and_preserves_the_approval_gate() {
     assert!(entry.human_required);
     assert!(!should_notify_dispatch_failure(&error));
     assert_eq!(std::fs::read_to_string(&output).unwrap().lines().count(), 1);
+}
+
+#[test]
+fn initial_node_rejection_does_not_consume_an_execution_attempt() {
+    let profile = crate::ledger::test_util::profile();
+    let mut entry =
+        crate::ledger::LedgerEntry::new("test", &profile, "auto", "fix", "#1614", None, None);
+    entry.attempts_started = Some(1);
+    let error = crate::controller::NodeAdmissionDeferred("node memory is critical".into()).into();
+
+    attribute_terminal_failure(&mut entry, &error);
+
+    assert!(crate::ledger::gates::launched_no_backend(&entry));
+    assert_eq!(entry.attempts_started, Some(0));
+}
+
+#[test]
+fn node_rejection_after_a_backend_attempt_preserves_attempt_attribution() {
+    let profile = crate::ledger::test_util::profile();
+    let mut entry =
+        crate::ledger::LedgerEntry::new("test", &profile, "auto", "review", "#1614", None, None);
+    entry.attempts_started = Some(1);
+    entry.failure_class = Some("validation_failure".into());
+    entry.failure_stage = Some("post_validation".into());
+    let error = super::contextualize_capacity_deferral(
+        crate::controller::NodeAdmissionDeferred("node memory is critical".into()).into(),
+        1,
+    );
+
+    attribute_terminal_failure(&mut entry, &error);
+
+    assert!(!crate::ledger::gates::launched_no_backend(&entry));
+    assert_eq!(entry.attempts_started, Some(1));
+    assert_eq!(entry.failure_class.as_deref(), Some("validation_failure"));
+    assert_eq!(entry.failure_stage.as_deref(), Some("post_validation"));
 }

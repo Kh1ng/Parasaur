@@ -88,18 +88,6 @@ pub(crate) use self::prior_attempts::prior_attempt_context;
 pub(crate) use self::prior_attempts::{issue_budget_usages, IssueBudgetUsage};
 pub use self::validation::{self_check_validation_gate, ValidationGateError};
 
-fn ensure_terminal_failure_attribution(
-    failure_class: &mut Option<String>,
-    failure_stage: &mut Option<String>,
-) {
-    failure_class.get_or_insert_with(|| {
-        crate::ledger::FailureClass::HarnessError
-            .as_str()
-            .to_string()
-    });
-    failure_stage.get_or_insert_with(|| crate::ledger::FailureStage::Dispatch.as_str().to_string());
-}
-
 pub(super) const MIN_DISPATCH_FREE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
 pub struct DispatchArgs {
@@ -235,15 +223,7 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
         ledger.usage = aggregate_attempt_usage(&ledger.attempts);
     }
     if let Err(err) = &result {
-        if crate::policy::policy_blocked(err).is_some() {
-            crate::policy::stamp_refusal(&mut ledger, err);
-        }
-        // Every terminal dispatch error must be attributable. More precise
-        // workflow boundaries set their own class/stage; this fallback marks
-        // uncaught orchestration/plumbing errors as harness-owned rather than
-        // sending an operationally useless class=unknown/stage=unknown alert.
-        ensure_terminal_failure_attribution(&mut ledger.failure_class, &mut ledger.failure_stage);
-        ledger.error_summary = Some(error::summarize_error(err));
+        terminal::attribute_terminal_failure(&mut ledger, err);
     }
     let policy_approval_gate = terminal::is_policy_approval_gate(&ledger);
     let append_result = terminal::append_ledger_entry(cfg, &ledger, policy_approval_gate);

@@ -28,7 +28,7 @@ pub(super) enum WaitOutcome<T> {
     Shutdown,
 }
 
-/// Tracks one capacity-deferred action while other workers remain active.
+/// Tracks node-deferred actions while other workers remain active.
 ///
 /// Persistent pressure rechecks only local kernel and lease state. Provider
 /// state is rebuilt only after a local probe succeeds, immediately before the
@@ -36,18 +36,41 @@ pub(super) enum WaitOutcome<T> {
 #[derive(Default)]
 pub(super) struct NodeCapacityReprobe {
     deadline: Option<Instant>,
-    action: Option<NextAction>,
+    actions: Vec<NextAction>,
 }
 
 impl NodeCapacityReprobe {
     pub(super) fn schedule(&mut self, action: NextAction) {
+        self.admitted(&action);
         self.deadline = Some(Instant::now() + interval());
-        self.action = Some(action);
+        self.actions.push(action);
     }
 
-    pub(super) fn clear(&mut self) {
+    pub(super) fn admitted(&mut self, action: &NextAction) {
+        self.actions.retain(|deferred| {
+            let same_work = deferred
+                .work_id()
+                .zip(action.work_id())
+                .is_some_and(|(a, b)| {
+                    crate::work_claim::normalize_work_identity(a)
+                        == crate::work_claim::normalize_work_identity(b)
+                });
+            !same_work && deferred != action
+        });
+        if self.actions.is_empty() {
+            self.deadline = None;
+        }
+    }
+
+    /// Release only node deferrals, leaving completed work and route refusals
+    /// excluded. Normal launch admission must still acquire its own lease.
+    pub(super) fn readmit(&mut self, executed_work_ids: &mut std::collections::HashSet<String>) {
+        for action in self.actions.drain(..) {
+            if let Some(work_id) = action.work_id() {
+                executed_work_ids.remove(&crate::work_claim::normalize_work_identity(work_id));
+            }
+        }
         self.deadline = None;
-        self.action = None;
     }
 
     pub(super) fn is_scheduled(&self) -> bool {
@@ -69,10 +92,9 @@ impl NodeCapacityReprobe {
             .min(SHUTDOWN_POLL_INTERVAL);
 
         match done_rx.recv_timeout(wait) {
-            Ok(result) => {
-                self.clear();
-                Ok(WaitOutcome::WorkerCompleted(result))
-            }
+            // A rejected dispatch also completes a worker. Its completion
+            // must not cancel the probe that can make it eligible again.
+            Ok(result) => Ok(WaitOutcome::WorkerCompleted(result)),
             Err(RecvTimeoutError::Disconnected) => Err(anyhow::anyhow!(
                 "parallel GAH worker channel closed unexpectedly"
             )),
@@ -85,8 +107,8 @@ impl NodeCapacityReprobe {
                 }
 
                 let action = self
-                    .action
-                    .as_ref()
+                    .actions
+                    .first()
                     .ok_or_else(|| anyhow::anyhow!("node-capacity re-probe lost its action"))?;
                 match node_capacity::try_acquire(action, active_workers, settings) {
                     Ok(node_capacity::LiveAdmission::Admit(lease)) => {
@@ -94,7 +116,6 @@ impl NodeCapacityReprobe {
                         // rebuilding provider state; normal launch admission
                         // reacquires and can still fail closed.
                         drop(lease);
-                        self.clear();
                         Ok(WaitOutcome::RetryFill)
                     }
                     Ok(node_capacity::LiveAdmission::Defer(reason)) => {
