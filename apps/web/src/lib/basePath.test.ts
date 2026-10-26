@@ -47,3 +47,15 @@ test('gitLab origins are validated exactly like the server injected them', () =>
     expect(readBootstrap().gitLabOrigins).toEqual([]);
   });
 });
+
+test('wildcard and near-http origins never authorize the panel, even from a tampered bootstrap', () => {
+  for (const rejected of ['https://*', 'https://*.example.com', 'http://*', 'httpx://evil.example', 'https://gitlab.example.com/*']) {
+    withInjectedBootstrap({ gitLabOrigins: [rejected] }, () => {
+      expect(readBootstrap().gitLabOrigins).toEqual([]);
+    });
+  }
+  // A wildcard among valid entries is dropped; the exact origins survive.
+  withInjectedBootstrap({ gitLabOrigins: ['https://gitlab.example.com', 'https://*.evil.example'] }, () => {
+    expect(readBootstrap().gitLabOrigins).toEqual(['https://gitlab.example.com']);
+  });
+});

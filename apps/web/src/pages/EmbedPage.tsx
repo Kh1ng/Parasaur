@@ -3,12 +3,14 @@ import { CircleDot, ExternalLink, FileText, GitPullRequest, X } from 'lucide-rea
 import { useUiStore } from '../store/uiStore.js';
 import { useWebSocket } from '../ws/WebSocketContext.js';
 import { gahApi, pairingApi, GahApiError } from '../api/client.js';
+import { saveCoordinatorToken, requestSessionHandoff } from '../api/coordinatorToken.js';
 import { ExternalAnchor } from '../components/ExternalAnchor.js';
 import { LoadingState } from '../components/ui/EmptyState.js';
 import { formatChatName } from '../lib/format.js';
 import { useAutoRefresh } from '../hooks/useAutoRefresh.js';
 import { withBasePath } from '../lib/basePath.js';
 import {
+  EMBED_CONTEXT_KIND_LABELS as KIND_LABELS,
   embedAllowedOrigins,
   embedContextParams,
   handleEmbedMessage,
@@ -24,10 +26,10 @@ import type { ChatSessionSummary, ProfileSummary } from '@git-agent-harness/cont
 // entry bundle does not carry it.
 const ManagerChatPage = lazy(() => import('./ManagerChatPage.js').then((module) => ({ default: module.ManagerChatPage })));
 
-function EmbeddedChat() {
+function EmbeddedChat({ context }: { context: EmbedContext | null }) {
   return (
     <Suspense fallback={<LoadingState label="Loading chat…" />}>
-      <ManagerChatPage docked />
+      <ManagerChatPage docked gitlabContext={context} />
     </Suspense>
   );
 }
@@ -41,15 +43,6 @@ function EmbeddedChat() {
  * this issue or merge request, and the agent chat with its model and
  * skills pickers, scoped to the matching Parasaur project.
  */
-
-const KIND_LABELS: Record<EmbedContextKind, string> = {
-  issue: 'Issue',
-  merge_request: 'Merge request',
-  file: 'File',
-  tree: 'Tree',
-  pipeline: 'Pipeline',
-  job: 'Job'
-};
 
 const KIND_ICONS: Record<EmbedContextKind, typeof CircleDot> = {
   issue: CircleDot,
@@ -108,8 +101,10 @@ function EmbedContextHeader({ context, standalone, onDismiss }: { context: Embed
 }
 
 /** Runs for this context: live or settled chat sessions the profile opened
- * for this issue or merge request. */
+ * for this issue or merge request. Selecting one opens it in the chat
+ * below, the same selection path the dashboard uses. */
 function ContextRuns({ profile, context }: { profile: ProfileSummary | null; context: EmbedContext }) {
+  const openChatSession = useUiStore((state) => state.openChatSession);
   const { reconnectSeq } = useWebSocket();
   const [sessions, setSessions] = useState<ChatSessionSummary[] | null>(null);
   const refresh = () => {
@@ -130,7 +125,7 @@ function ContextRuns({ profile, context }: { profile: ProfileSummary | null; con
       <ul className="space-y-1">
         {relevant.map((session) => (
           <li key={session.id}>
-            <button type="button" className="w-full truncate rounded-md px-2 py-1 text-left text-xs text-secondary hover:bg-overlay/5"
+            <button type="button" onClick={() => openChatSession(profile.name, session.id)} className="w-full truncate rounded-md px-2 py-1 text-left text-xs text-secondary hover:bg-overlay/5"
               title={session.title ?? session.id}>
               {formatChatName(session)}
               {session.outcome === 'live' ? '' : ` · ${session.outcome}`}
@@ -146,6 +141,7 @@ function ContextRuns({ profile, context }: { profile: ProfileSummary | null; con
  * and the agent chat scoped to the matching Parasaur project. */
 export function EmbedSurface({ context, standalone, onDismiss }: { context: EmbedContext; standalone: boolean; onDismiss?: () => void }) {
   const openChatSession = useUiStore((state) => state.openChatSession);
+  const setProfileOverride = useUiStore((state) => state.setProfileOverride);
   const { reconnectSeq } = useWebSocket();
   const [profiles, setProfiles] = useState<ProfileSummary[] | null>(null);
   const [profilesError, setProfilesError] = useState<string | null>(null);
@@ -161,6 +157,16 @@ export function EmbedSurface({ context, standalone, onDismiss }: { context: Embe
   }, [reconnectSeq]);
 
   const matched = useMemo(() => profiles === null ? undefined : matchEmbedProfile(profiles, context), [profiles, context]);
+
+  // Bind the ordinary chat to the matched project — the context actions and
+  // run strip already are — including after context updates: a page change
+  // that matches another project must carry the chat with it, not leave an
+  // unrelated selection behind. Without a unique match the chat's own project
+  // picker stays in control (the "no matching project" guidance says so).
+  const matchedName = matched?.name ?? null;
+  useEffect(() => {
+    if (matchedName !== null) setProfileOverride(matchedName);
+  }, [matchedName, setProfileOverride]);
 
   /** A context action starts the conversation the page context names
    * (issue chat or read-only MR chat) and sends its instruction as the
@@ -216,7 +222,10 @@ export function EmbedSurface({ context, standalone, onDismiss }: { context: Embe
       )}
       {actionError && <p role="alert" className="px-3 py-2 text-xs text-critical">{actionError}</p>}
       <main className="flex min-h-0 flex-1 flex-col overflow-hidden px-1 pb-1">
-        <EmbeddedChat />
+        {/* The ordinary chat carries the resolved page context with its
+            outgoing turns, so the conversation knows which GitLab page it
+            serves even without a context action. */}
+        <EmbeddedChat context={context} />
       </main>
     </div>
   );
@@ -237,6 +246,26 @@ export function EmbedApp() {
       .catch((error) => { if (check === checkCounter.current && error instanceof GahApiError && error.status === 401) setSignedOut(true); });
   };
   useEffect(checkSession, [isConnected]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // #1593 round 2: a sign-in in the new tab the prompt opens must reach this
+  // iframe, which lives in its own browsing context and so cannot see that
+  // tab's sessionStorage. While the prompt shows, the iframe re-checks the
+  // auth endpoint (device pairing lands as a same-origin cookie, which this
+  // context already carries) and listens for the same-origin session handoff
+  // an owner-token sign-in publishes. The credential never passes through
+  // the embedding page; after pickup the view re-renders signed in.
+  useEffect(() => {
+    if (!signedOut) return;
+    const stop = requestSessionHandoff((token) => {
+      if (token) saveCoordinatorToken(token);
+      checkSession();
+    });
+    const timer = window.setInterval(checkSession, 3_000);
+    return () => {
+      stop();
+      window.clearInterval(timer);
+    };
+  }, [signedOut]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The panel handshake: announce readiness (the panel replies with the
   // context), and take context updates as the GitLab page changes.
@@ -263,7 +292,7 @@ export function EmbedApp() {
             Waiting for the GitLab page context — open this panel from a GitLab page.
           </p>
           <main className="flex min-h-0 flex-1 flex-col overflow-hidden px-1 pb-1">
-            <EmbeddedChat />
+            <EmbeddedChat context={context} />
           </main>
         </>
       )}
@@ -272,7 +301,7 @@ export function EmbedApp() {
           <div className="max-w-sm space-y-3 text-center">
             <h2 className="text-base font-semibold text-primary">Sign in to Parasaur</h2>
             <p className="text-sm text-secondary">
-              The GitLab panel uses Parasaur's normal dashboard session. Open Parasaur, sign in with your owner token or pairing link, then return here.
+              The GitLab panel uses Parasaur's normal dashboard session. Open Parasaur, sign in with your owner token or pairing link, then come back — this panel picks the session up by itself.
             </p>
             <div className="flex justify-center gap-2">
               <ExternalAnchor href={context ? standaloneUrl(context) : withBasePath('/')} className="btn-primary !min-h-11 text-sm">

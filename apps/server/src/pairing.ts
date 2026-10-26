@@ -4,7 +4,17 @@ import { authMiddleware, isTrustedLocalRequest, requireOwner, sameOriginRequest 
 import { DEVICE_COOKIE, DEVICE_LIFETIME, PAIRING_REQUEST_COOKIE, credentialCookie, type DeviceAccess } from './deviceAccess.js';
 import type { CoordinatorIdentity } from './coordinatorIdentity.js';
 import { browserOriginAllowed } from './webSocketAuth.js';
+import { publicPathPrefix } from './integrations/gitlab/embedView.js';
 import type { PairingAccessRequest } from '@git-agent-harness/contracts';
+
+/** The browser-bound approval credential's cookie path. Under a public path
+ * prefix (#1593, GitLab's `/parasaur/` proxy) the browser sends the cookie
+ * only when the path carries the same validated `X-Forwarded-Prefix` the
+ * SPA bootstrap uses — otherwise the prefixed status and claim requests
+ * would lose their credential. */
+function pairingAccessCookiePath(req: { header(name: string): string | undefined }): string {
+  return `${publicPathPrefix(req.header('X-Forwarded-Prefix'))}/api/pairing/access`;
+}
 
 /** Public offers and approval requests keep transport/origin checks. Owners
  * manage devices and offers; explicitly delegated controllers may review sign-ins. */
@@ -28,7 +38,7 @@ export function pairingRouter(access: DeviceAccess, identity: CoordinatorIdentit
       const origin = new URL(`${req.protocol}://${req.headers.host}`).origin;
       const result = access.createAccessRequest({ id: identity.node_id, name: identity.display_name, origin }, req.body.name);
       requested?.(result.request);
-      res.cookie(PAIRING_REQUEST_COOKIE, result.cookie, { httpOnly: true, sameSite: 'strict', secure: true, path: '/api/pairing/access', maxAge: 5 * 60_000 });
+      res.cookie(PAIRING_REQUEST_COOKIE, result.cookie, { httpOnly: true, sameSite: 'strict', secure: true, path: pairingAccessCookiePath(req), maxAge: 5 * 60_000 });
       res.status(202).json(result.request);
     } catch (error) { res.status(400).json({ message: error instanceof Error ? error.message : 'Cannot request device access.' }); }
   });
@@ -45,7 +55,7 @@ export function pairingRouter(access: DeviceAccess, identity: CoordinatorIdentit
       const paired = access.claimAccessRequest(credentialCookie(req.headers.cookie, PAIRING_REQUEST_COOKIE), origin);
       const options = { httpOnly: true, sameSite: 'strict' as const, secure: true };
       res.cookie(DEVICE_COOKIE, paired.token, { ...options, path: '/', maxAge: DEVICE_LIFETIME });
-      res.clearCookie(PAIRING_REQUEST_COOKIE, { ...options, path: '/api/pairing/access' });
+      res.clearCookie(PAIRING_REQUEST_COOKIE, { ...options, path: pairingAccessCookiePath(req) });
       res.json({ schema_version: 1, device: paired.device });
     } catch (error) { res.status(400).json({ message: error instanceof Error ? error.message : 'Cannot claim device access.' }); }
   });

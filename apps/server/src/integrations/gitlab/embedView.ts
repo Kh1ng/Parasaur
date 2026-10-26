@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { readFileSync, statSync } from 'node:fs';
+import { join, resolve, sep } from 'node:path';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 /**
@@ -25,20 +25,28 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 const MAX_FRAME_ORIGINS = 8;
 
 /** Origins allowed to frame the embed view: `GAH_GITLAB_ORIGIN`, split on
- * whitespace or commas. Each entry must be a bare http(s) origin; invalid
- * entries are dropped, and with none left the route fails closed. */
+ * whitespace or commas. Each entry must be a bare http(s) origin — exactly
+ * `http:` or `https:`, no wildcard anywhere (an entry containing `*` would
+ * become an active CSP wildcard, not an exact origin), no credentials, no
+ * path. Invalid entries are dropped, and with none left the route fails
+ * closed. */
 export function gitLabFrameOrigins(raw: string | undefined = process.env.GAH_GITLAB_ORIGIN): string[] {
   const valid: string[] = [];
   for (const entry of (raw ?? '').split(/[\s,]+/)) {
     if (entry.length === 0 || valid.length >= MAX_FRAME_ORIGINS) continue;
+    // `https://*` and `https://*.example.com` parse but are wildcards: a
+    // frame-ancestors entry must name one origin, never a pattern.
+    if (entry.includes('*')) continue;
     let url: URL;
     try {
       url = new URL(entry);
     } catch {
       continue;
     }
-    const bareOrigin = url.protocol.startsWith('http') && !url.username && !url.password
-      && url.pathname === '/' && url.search === '' && url.hash === '';
+    // Exactly http/https — `startsWith('http')` would admit `httpx://`,
+    // whose origin serializes as the string 'null'.
+    const bareOrigin = (url.protocol === 'http:' || url.protocol === 'https:') && !url.username && !url.password
+      && url.pathname === '/' && url.search === '' && url.hash === '' && !url.hostname.includes('*');
     if (bareOrigin && !valid.includes(url.origin)) valid.push(url.origin);
   }
   return valid;
@@ -94,9 +102,31 @@ export function isApiRequest(path: string): boolean {
   return path.startsWith('/api/') || path === '/api';
 }
 
-/** Serve the SPA document for the embed route: frameable only by the
- * configured GitLab origins, no `X-Frame-Options`. */
-export function embedHtmlHandler(options: EmbedViewOptions): RequestHandler {
+/** True when the path maps to an existing file in the web root that is not
+ * an HTML document — a static asset (`express.static` serves it as-is).
+ * HTML files (`/index.html`) are documents and never static assets: every
+ * HTML-serving path goes through the document pipeline below, so no served
+ * HTML document can bypass its framing policy or the prefix bootstrap. */
+export function isStaticAsset(webRoot: string, path: string): boolean {
+  if (path === '' || path === '/') return false;
+  const root = resolve(webRoot);
+  const target = resolve(root, `.${path}`);
+  if (target !== root && !target.startsWith(root + sep)) return false;
+  let file: { isFile(): boolean } | null = null;
+  try {
+    file = statSync(target);
+  } catch {
+    return false;
+  }
+  return file.isFile() && !/\.html?$/i.test(target);
+}
+
+/** The one pipeline every served HTML document goes through: it sets the
+ * framing policy and injects the prefix bootstrap. `frameable` picks the
+ * embed route's policy (CSP naming the configured origins, no
+ * `X-Frame-Options`) over the app's (`X-Frame-Options: DENY`, never
+ * frameable). */
+function spaDocumentHandler(options: EmbedViewOptions, frameable: boolean): RequestHandler {
   const webRoot = resolve(options.webRoot);
   return (req: Request, res: Response, next: NextFunction) => {
     if (isApiRequest(req.path) || !req.accepts('html')) return next();
@@ -107,25 +137,28 @@ export function embedHtmlHandler(options: EmbedViewOptions): RequestHandler {
       return next(error);
     }
     const origins = gitLabFrameOrigins(configuredOrigin(options));
-    res.setHeader('Content-Security-Policy', framePolicyHeader(origins));
+    if (frameable) res.setHeader('Content-Security-Policy', framePolicyHeader(origins));
+    else res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Cache-Control', 'no-store');
     res.send(injectedDocument(html, publicPathPrefix(req.get('X-Forwarded-Prefix')), origins));
   };
 }
 
-/** Serve the SPA document for every other route, including the standalone
- * `/?<embed query>` view: never frameable. */
+/** Serve the SPA document for the embed route: frameable only by the
+ * configured GitLab origins, no `X-Frame-Options`. */
+export function embedHtmlHandler(options: EmbedViewOptions): RequestHandler {
+  return spaDocumentHandler(options, true);
+}
+
+/** Serve the SPA document for every other route — `/`, `/index.html`, and
+ * the SPA fallback alike, always through the document pipeline above —
+ * never frameable. Existing non-HTML files (assets) fall through so static
+ * middleware serves them. */
 export function appHtmlHandler(options: EmbedViewOptions): RequestHandler {
   const webRoot = resolve(options.webRoot);
+  const handler = spaDocumentHandler(options, false);
   return (req: Request, res: Response, next: NextFunction) => {
-    let html: string;
-    try {
-      html = readFileSync(join(webRoot, 'index.html'), 'utf8');
-    } catch (error) {
-      return next(error);
-    }
-    res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('Cache-Control', 'no-store');
-    res.send(injectedDocument(html, publicPathPrefix(req.get('X-Forwarded-Prefix')), gitLabFrameOrigins(configuredOrigin(options))));
+    if (isStaticAsset(webRoot, req.path)) return next();
+    handler(req, res, next);
   };
 }

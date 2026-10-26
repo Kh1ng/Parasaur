@@ -20,6 +20,17 @@ import { readBootstrap } from './basePath.js';
 export const EMBED_CONTEXT_KINDS = ['issue', 'merge_request', 'file', 'tree', 'pipeline', 'job'] as const;
 export type EmbedContextKind = (typeof EMBED_CONTEXT_KINDS)[number];
 
+/** Human labels for the context kinds, shared by the embed surface and the
+ * chat context block. */
+export const EMBED_CONTEXT_KIND_LABELS: Record<EmbedContextKind, string> = {
+  issue: 'Issue',
+  merge_request: 'Merge request',
+  file: 'File',
+  tree: 'Tree',
+  pipeline: 'Pipeline',
+  job: 'Job'
+};
+
 /** The GitLab page the panel is looking at. */
 export interface EmbedContext {
   /** Page origin, e.g. https://gitlab.example.com. */
@@ -51,8 +62,10 @@ function boundedString(value: unknown, limit: number): string | null {
 function httpOrigin(value: string): string | null {
   try {
     const url = new URL(value);
-    if (!url.protocol.startsWith('http') || url.username || url.password
-      || url.pathname !== '/' || url.search !== '' || url.hash !== '') return null;
+    // Exactly http/https (startsWith('http') would admit 'httpx://', whose
+    // origin serializes as 'null'), and never a wildcard host.
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password
+      || url.pathname !== '/' || url.search !== '' || url.hash !== '' || url.hostname.includes('*')) return null;
     return url.origin;
   } catch {
     return null;
@@ -62,7 +75,7 @@ function httpOrigin(value: string): string | null {
 function httpUrl(value: string): string | null {
   try {
     const url = new URL(value);
-    return url.protocol.startsWith('http') ? url.href : null;
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
   } catch {
     return null;
   }
@@ -203,6 +216,26 @@ export function postEmbedMessage(message: EmbedOutboundMessage, targetOrigins: s
 }
 
 // ---- project matching ------------------------------------------------------
+
+/** The context block an ordinary embed-view chat sends with its first turn
+ * (and again when the page context changes): the same resolved
+ * project/kind/iid/ref/path the seeded issue and MR chats carry, written as
+ * the opening block of the outgoing message. */
+export function embedContextPreamble(context: EmbedContext): string {
+  const lines = ['GitLab page context (from the Parasaur panel):'];
+  if (context.project !== null) lines.push(`Project: ${context.project}`);
+  if (context.kind !== null && context.iid !== null) lines.push(`${EMBED_CONTEXT_KIND_LABELS[context.kind]}: #${context.iid}`);
+  if (context.ref !== null) lines.push(`Ref: ${context.ref}`);
+  if (context.path !== null) lines.push(`Path: ${context.path}`);
+  lines.push(`Page: ${context.url}`);
+  return lines.join('\n');
+}
+
+/** Whether this context still needs to ride along with a send: it does
+ * until the same context signature has been delivered to the conversation. */
+export function embedContextSignature(context: EmbedContext): string {
+  return JSON.stringify([context.project, context.kind, context.iid, context.ref, context.path, context.url]);
+}
 
 /** A chat profile's provider identity, as the embed context needs it. */
 export interface EmbedProjectLike {
