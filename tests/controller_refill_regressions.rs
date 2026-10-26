@@ -996,11 +996,20 @@ fn parallel_loop_reprobes_node_pressure_with_active_worker_remaining() {
         || second_started.exists(),
         "second worker did not start while first was active",
     );
-    // Neither worker can have finished: both still wait for the release.
-    assert_eq!(read_u32_file(&active_count), 2);
-
+    // Neither worker can have finished: both still wait for the release. On a
+    // mismatch, release the workers and fail with everything the controller
+    // and the fake backend recorded, so the cause is diagnosable (#1662).
+    let active = read_u32_file(&active_count);
     fs::write(&slow_release, "release").unwrap();
     let output = child.wait_with_output().unwrap();
+    assert_eq!(
+        active,
+        2,
+        "expected both workers active when the second started\ncalls: {}\nstdout: {}\nstderr: {}",
+        fs::read_to_string(&calls).unwrap_or_default(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(
         output.status.success(),
         "stderr: {}",
