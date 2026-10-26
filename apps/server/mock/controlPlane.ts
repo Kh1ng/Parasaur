@@ -1280,6 +1280,10 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
   // fixtures only -- the real single-use/expiry/origin semantics are
   // covered by apps/server/src/pairing.test.ts and deliberately not
   // re-tested here.
+  // The mock is always signed in; security/claim behavior uses the real router in tests.
+  app.post('/api/pairing/handoff', (_req, res) => res.json({ code: 'mock-code'.padEnd(43, 'x'), verifier: 'mock-verifier'.padEnd(43, 'x'), expires_in: 60 }));
+  app.post('/api/pairing/handoff/approve', (_req, res) => res.json({ approved: true }));
+  app.post('/api/pairing/handoff/claim', (_req, res) => res.status(202).json({ pending: true }));
   app.get('/api/pairing/session', (_req, res) => res.json({ schema_version: 1, principal: { kind: 'owner', id: 'mock-owner' }, can_approve_pairing: true }));
   app.get('/api/pairing/devices', (_req, res) => res.json({
     schema_version: 1,

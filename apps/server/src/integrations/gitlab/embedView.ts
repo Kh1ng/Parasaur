@@ -1,5 +1,7 @@
-import { readFileSync, statSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import express, { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 /**
@@ -102,37 +104,18 @@ export function isApiRequest(path: string): boolean {
   return path.startsWith('/api/') || path === '/api';
 }
 
-/** True when the path maps to an existing file in the web root that is not
- * an HTML document — a static asset (`express.static` serves it as-is).
- * HTML files (`/index.html`) are documents and never static assets: every
- * HTML-serving path goes through the document pipeline below, so no served
- * HTML document can bypass its framing policy or the prefix bootstrap. */
-export function isStaticAsset(webRoot: string, path: string): boolean {
-  if (path === '' || path === '/') return false;
-  const root = resolve(webRoot);
-  const target = resolve(root, `.${path}`);
-  if (target !== root && !target.startsWith(root + sep)) return false;
-  let file: { isFile(): boolean } | null = null;
-  try {
-    file = statSync(target);
-  } catch {
-    return false;
-  }
-  return file.isFile() && !/\.html?$/i.test(target);
-}
-
 /** The one pipeline every served HTML document goes through: it sets the
  * framing policy and injects the prefix bootstrap. `frameable` picks the
  * embed route's policy (CSP naming the configured origins, no
  * `X-Frame-Options`) over the app's (`X-Frame-Options: DENY`, never
  * frameable). */
 function spaDocumentHandler(options: EmbedViewOptions, frameable: boolean): RequestHandler {
-  const webRoot = resolve(options.webRoot);
+  const indexPath = resolve(options.webRoot, 'index.html');
   return (req: Request, res: Response, next: NextFunction) => {
     if (isApiRequest(req.path) || !req.accepts('html')) return next();
     let html: string;
     try {
-      html = readFileSync(join(webRoot, 'index.html'), 'utf8');
+      html = readFileSync(indexPath, 'utf8');
     } catch (error) {
       return next(error);
     }
@@ -144,21 +127,21 @@ function spaDocumentHandler(options: EmbedViewOptions, frameable: boolean): Requ
   };
 }
 
-/** Serve the SPA document for the embed route: frameable only by the
- * configured GitLab origins, no `X-Frame-Options`. */
-export function embedHtmlHandler(options: EmbedViewOptions): RequestHandler {
-  return spaDocumentHandler(options, true);
-}
-
-/** Serve the SPA document for every other route — `/`, `/index.html`, and
- * the SPA fallback alike, always through the document pipeline above —
- * never frameable. Existing non-HTML files (assets) fall through so static
- * middleware serves them. */
-export function appHtmlHandler(options: EmbedViewOptions): RequestHandler {
-  const webRoot = resolve(options.webRoot);
-  const handler = spaDocumentHandler(options, false);
-  return (req: Request, res: Response, next: NextFunction) => {
-    if (isStaticAsset(webRoot, req.path)) return next();
-    handler(req, res, next);
-  };
+/** All dashboard documents share framing, bootstrap, and a per-IP read limit.
+ * Static middleware owns asset path resolution; request paths never enter our
+ * filesystem calls, and explicit HTML URLs always use the fixed index file. */
+export function documentRouter(options: EmbedViewOptions): Router {
+  const router = Router();
+  const assets = express.static(options.webRoot, { index: false });
+  router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: true, legacyHeaders: false }));
+  router.get('/embed', spaDocumentHandler(options, true));
+  router.use((req, res, next) => {
+    if (isApiRequest(req.path)) return next('router');
+    let assetPath: string;
+    try { assetPath = decodeURIComponent(req.path); } catch { return next(); }
+    if (/\.html?(?:\/|$)/i.test(assetPath)) return next();
+    assets(req, res, next);
+  });
+  router.get('*', spaDocumentHandler(options, false));
+  return router;
 }

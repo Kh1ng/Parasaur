@@ -3,7 +3,7 @@ import { gitLabEventsRouter, type GitLabRouteDeps } from './integrations/gitlab/
 import { gitLabRunsRouter } from './integrations/gitlab/runsRoute.js';
 import { parseSkillSelections } from './skillSelections.js';
 import { runningWorkers } from './runningWorkers.js';
-import { appHtmlHandler, embedHtmlHandler } from './integrations/gitlab/embedView.js';
+import { documentRouter } from './integrations/gitlab/embedView.js';
 import express from 'express';
 import type { ActivityEvent, ActivityKind, NodeRoleStatus } from '@git-agent-harness/contracts';
 import { workerRouteGuard, validateNodeRole } from './nodeRole.js';
@@ -2973,21 +2973,11 @@ export function createServer(
   const webRoot = process.env.GAH_WEB_ROOT;
   if (webRoot) {
     const absoluteWebRoot = resolve(webRoot);
-    // The GitLab panel's chrome-less embed view (#1593): frameable only by
-    // the origins configured through GAH_GITLAB_ORIGIN, and fail-closed
-    // (frame-ancestors 'none') when none is. Every other served HTML
-    // document — including explicit /index.html — goes through the same
-    // document pipeline and stays non-frameable via X-Frame-Options: DENY;
-    // both inject the public base path from X-Forwarded-Prefix so the SPA
-    // builds asset, API, and WebSocket URLs under a proxy prefix like
-    // /parasaur/. The document handlers run before static middleware: an
-    // HTML request must never be served as a bare file that bypasses the
-    // framing policy and the bootstrap. Existing non-HTML files (assets)
-    // fall through to express.static.
-    const embedViewOptions = { webRoot: absoluteWebRoot };
-    app.get('/embed', embedHtmlHandler(embedViewOptions));
-    app.get('*', appHtmlHandler(embedViewOptions));
-    app.use(express.static(absoluteWebRoot, { index: false }));
+    // The document router owns framing, prefix bootstrap, and rate limiting.
+    // Only /embed allows the configured GitLab origins to frame it; ordinary
+    // documents (including encoded /index.html URLs) receive DENY. Assets use
+    // express.static, while every document reads the configured index.html.
+    app.use(documentRouter({ webRoot: absoluteWebRoot }));
   }
 
   // 404 handler

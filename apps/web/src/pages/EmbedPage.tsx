@@ -3,7 +3,7 @@ import { CircleDot, ExternalLink, FileText, GitPullRequest, X } from 'lucide-rea
 import { useUiStore } from '../store/uiStore.js';
 import { useWebSocket } from '../ws/WebSocketContext.js';
 import { gahApi, pairingApi, GahApiError } from '../api/client.js';
-import { saveCoordinatorToken, requestSessionHandoff } from '../api/coordinatorToken.js';
+import { saveCoordinatorToken } from '../api/coordinatorToken.js';
 import { ExternalAnchor } from '../components/ExternalAnchor.js';
 import { LoadingState } from '../components/ui/EmptyState.js';
 import { formatChatName } from '../lib/format.js';
@@ -236,6 +236,8 @@ export function EmbedSurface({ context, standalone, onDismiss }: { context: Embe
 export function EmbedApp() {
   const [context, setContext] = useState<EmbedContext | null>(() => parseEmbedContext(window.location.search));
   const [signedOut, setSignedOut] = useState(false);
+  const [handoffCode, setHandoffCode] = useState<string | null>(null);
+  const [handoffRound, setHandoffRound] = useState(0);
   const { isConnected } = useWebSocket();
   const checkCounter = useRef(0);
 
@@ -247,25 +249,42 @@ export function EmbedApp() {
   };
   useEffect(checkSession, [isConnected]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // #1593 round 2: a sign-in in the new tab the prompt opens must reach this
-  // iframe, which lives in its own browsing context and so cannot see that
-  // tab's sessionStorage. While the prompt shows, the iframe re-checks the
-  // auth endpoint (device pairing lands as a same-origin cookie, which this
-  // context already carries) and listens for the same-origin session handoff
-  // an owner-token sign-in publishes. The credential never passes through
-  // the embedding page; after pickup the view re-renders signed in.
+  // Cookie sessions are detected through auth polling. Owner sign-in uses a
+  // short-lived approval code; its claim verifier stays in this effect only.
   useEffect(() => {
     if (!signedOut) return;
-    const stop = requestSessionHandoff((token) => {
-      if (token) saveCoordinatorToken(token);
-      checkSession();
-    });
-    const timer = window.setInterval(checkSession, 3_000);
-    return () => {
-      stop();
-      window.clearInterval(timer);
-    };
-  }, [signedOut]); // eslint-disable-line react-hooks/exhaustive-deps
+    let stopped = false;
+    let busy = false;
+    let handoff: { code: string; verifier: string } | null = null;
+    setHandoffCode(null);
+    pairingApi.createHandoff().then(created => {
+      if (!stopped) { handoff = created; setHandoffCode(created.code); }
+    }).catch(() => { /* Pairing cookies can still establish the session. */ });
+    const timer = window.setInterval(async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        if (handoff) {
+          const result = await pairingApi.claimHandoff(handoff.code, handoff.verifier);
+          if (stopped) return;
+          if (result.token) {
+            saveCoordinatorToken(result.token);
+            handoff = null;
+            setHandoffCode(null);
+          }
+        }
+      } catch (error) {
+        if (!stopped && error instanceof GahApiError && error.status === 410) {
+          handoff = null;
+          setHandoffCode(null);
+        }
+      } finally {
+        busy = false;
+        if (!stopped) checkSession();
+      }
+    }, 3_000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [signedOut, handoffRound]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The panel handshake: announce readiness (the panel replies with the
   // context), and take context updates as the GitLab page changes.
@@ -301,13 +320,13 @@ export function EmbedApp() {
           <div className="max-w-sm space-y-3 text-center">
             <h2 className="text-base font-semibold text-primary">Sign in to Parasaur</h2>
             <p className="text-sm text-secondary">
-              The GitLab panel uses Parasaur's normal dashboard session. Open Parasaur, sign in with your owner token or pairing link, then come back — this panel picks the session up by itself.
+              Open Parasaur and sign in with your owner token, then confirm Connect GitLab panel. The sign-in link expires after 60 seconds; Retry prepares a new link. Pairing links also work.
             </p>
             <div className="flex justify-center gap-2">
-              <ExternalAnchor href={context ? standaloneUrl(context) : withBasePath('/')} className="btn-primary !min-h-11 text-sm">
+              <ExternalAnchor href={`${context ? standaloneUrl(context) : withBasePath('/')}${handoffCode ? `#gah_signin=${encodeURIComponent(handoffCode)}` : ''}`} className="btn-primary !min-h-11 text-sm">
                 Open Parasaur to sign in
               </ExternalAnchor>
-              <button type="button" className="btn-secondary !min-h-11 text-sm" onClick={checkSession}>Retry</button>
+              <button type="button" className="btn-secondary !min-h-11 text-sm" onClick={() => { checkSession(); setHandoffRound(round => round + 1); }}>Retry</button>
             </div>
           </div>
         </div>

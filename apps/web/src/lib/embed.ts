@@ -90,7 +90,7 @@ export function readEmbedContext(fields: { gitlab?: unknown; url?: unknown; proj
   if (gitlabRaw === null || urlRaw === null) return null;
   const gitlab = httpOrigin(gitlabRaw);
   const url = httpUrl(urlRaw);
-  if (gitlab === null || url === null) return null;
+  if (gitlab === null || url === null || new URL(url).origin !== gitlab) return null;
   const kind = typeof fields.kind === 'string' && (EMBED_CONTEXT_KINDS as readonly string[]).includes(fields.kind)
     ? fields.kind as EmbedContextKind
     : null;

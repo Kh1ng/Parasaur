@@ -37,6 +37,13 @@ test('the device-approval cookie path follows the validated public prefix', asyn
   writeFileSync(process.env.GAH_MANAGER_CHAT_SETTINGS_PATH, JSON.stringify({ defaultBackend: 'claude', profileOverrides: {} }));
   resetCachedCoordinatorIdentity();
   const access = new DeviceAccess(join(directory, 'devices.json'));
+  const createRequest = access.createAccessRequest.bind(access);
+  let requestCredential = '';
+  access.createAccessRequest = (...args) => {
+    const result = createRequest(...args);
+    requestCredential = result.cookie;
+    return result;
+  };
   const server = http.createServer(createServer({ deviceAccess: access,
     registryService: new RegistryService(join(directory, 'registry.json')), detectTailscaleIPv4: async () => null }));
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -49,6 +56,11 @@ test('the device-approval cookie path follows the validated public prefix', asyn
   const post = (path: string, body: unknown, headers: Record<string, string> = remote) => fetch(base + '/api/pairing' + path,
     { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   try {
+    const handoff = await (await post('/handoff', {}, { ...remote, 'X-Forwarded-Prefix': '/parasaur' })).json() as { code: string; verifier: string };
+    assert.equal((await post('/handoff/approve', { code: handoff.code }, owner)).status, 200);
+    const session = await post('/handoff/claim', handoff, { ...remote, 'X-Forwarded-Prefix': '/parasaur' });
+    assert.deepEqual(await session.json(), { token: 'owner-fixture-secret' });
+    assert.equal((await post('/handoff/claim', handoff)).status, 410);
     // Without a prefix the cookie keeps the app-absolute path.
     const plain = await post('/access/request', { name: 'Root browser' });
     assert.equal(plain.status, 202);
@@ -56,6 +68,15 @@ test('the device-approval cookie path follows the validated public prefix', asyn
     // A validated prefix scopes the cookie to the prefixed request paths.
     const prefixed = await post('/access/request', { name: 'Prefixed browser' }, { ...remote, 'X-Forwarded-Prefix': '/parasaur' });
     assert.equal(prefixed.status, 202);
+    const encryptedCookie = prefixed.headers.getSetCookie()[0];
+    assert.ok(!encryptedCookie.includes(requestCredential));
+    assert.ok(!encryptedCookie.includes(requestCredential.split('.')[1]));
+    const status = await fetch(base + '/api/pairing/access/status', { headers: {
+      ...remote, 'X-Forwarded-Prefix': '/parasaur', Cookie: encryptedCookie.split(';')[0] } });
+    assert.equal(status.status, 200);
+    const tampered = await fetch(base + '/api/pairing/access/status', { headers: {
+      ...remote, Cookie: encryptedCookie.split(';')[0] + 'tampered' } });
+    assert.equal(tampered.status, 404);
     assert.match(prefixed.headers.getSetCookie()[0], /Path=\/parasaur\/api\/pairing\/access(?:;|$)/);
     // A trailing slash in the header normalizes to the same path.
     const slashed = await post('/access/request', { name: 'Slashed browser' }, { ...remote, 'X-Forwarded-Prefix': '/parasaur/' });

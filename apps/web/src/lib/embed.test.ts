@@ -47,7 +47,9 @@ test('contexts without a usable GitLab origin and page URL are rejected', () => 
     '?gitlab=https://*&url=https://gitlab.example.com',
     '?gitlab=https://*.example.com&url=https://gitlab.example.com',
     '?gitlab=httpx://evil.example.com&url=https://gitlab.example.com',
-    '?gitlab=https://gitlab.example.com&url=httpx://evil.example.com'
+    '?gitlab=https://gitlab.example.com&url=httpx://evil.example.com',
+    '?gitlab=https://gitlab.example.com&url=https://gitlab.example.com.evil.test',
+    '?gitlab=https://gitlab.example.com&url=https://evil.test/https://gitlab.example.com'
   ]) {
     expect(parseEmbedContext(invalid)).toBeNull();
   }
@@ -68,6 +70,7 @@ test('the context round-trips through the standalone query string', () => {
   const restored = parseEmbedContext(`?${embedContextParams(context).toString()}`);
   expect(restored).toEqual(context);
   expect(restored?.kind).toBe('merge_request');
+  expect(new URL(restored!.url).origin).toBe(context.gitlab);
 });
 
 test('only configured origins pass the postMessage origin check', () => {

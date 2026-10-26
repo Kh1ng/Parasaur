@@ -7,13 +7,11 @@ import http from 'node:http';
 import express from 'express';
 import { createServer } from '../../server.js';
 import {
-  appHtmlHandler,
+  documentRouter,
   bootstrapScript,
-  embedHtmlHandler,
   framePolicyHeader,
   gitLabFrameOrigins,
   isApiRequest,
-  isStaticAsset,
   publicPathPrefix
 } from './embedView.js';
 
@@ -78,31 +76,6 @@ test('the API boundary never falls through to the SPA document', () => {
   for (const path of ['/', '/embed', '/parasaur/embed', '/health']) assert.equal(isApiRequest(path), false);
 });
 
-test('only existing non-HTML files are static assets; HTML files are documents', () => {
-  const webRoot = mkdtempSync(join(tmpdir(), 'gah-embed-static-'));
-  try {
-    writeFileSync(join(webRoot, 'asset.txt'), 'shell');
-    writeFileSync(join(webRoot, 'index.html'), '<!DOCTYPE html>');
-    mkdirSync(join(webRoot, 'assets'));
-    writeFileSync(join(webRoot, 'assets', 'app.js'), 'export {}');
-    writeFileSync(join(webRoot, 'nested.html'), '<!DOCTYPE html>');
-    assert.equal(isStaticAsset(webRoot, '/asset.txt'), true);
-    assert.equal(isStaticAsset(webRoot, '/assets/app.js'), true);
-    // Every HTML file is a document, never a static asset — including
-    // /index.html, which static middleware would otherwise serve bare.
-    assert.equal(isStaticAsset(webRoot, '/index.html'), false);
-    assert.equal(isStaticAsset(webRoot, '/nested.html'), false);
-    assert.equal(isStaticAsset(webRoot, '/missing.js'), false);
-    assert.equal(isStaticAsset(webRoot, '/assets'), false);
-    assert.equal(isStaticAsset(webRoot, '/'), false);
-    // Path traversal must not reach outside the web root.
-    assert.equal(isStaticAsset(webRoot, `/../${join('..', 'etc', 'passwd')}`), false);
-    assert.equal(isStaticAsset(webRoot, '/%2e%2e/secret'), false);
-  } finally {
-    rmSync(webRoot, { recursive: true, force: true });
-  }
-});
-
 async function serve(app: express.Express) {
   const server = http.createServer(app);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -165,6 +138,11 @@ test('explicit /index.html goes through the document pipeline: DENY, prefix boot
     assert.match(document, /<base href="\/parasaur\/">/);
     assert.match(document, /"basePath":"\/parasaur"/);
     assert.match(document, /"gitLabOrigins":\["https:\/\/gitlab.example.com"\]/);
+    for (const encoded of ['/index%2ehtml', '/%69ndex.htm%6c', '/index.html/']) {
+      const response = await fetch(server.base + encoded, { headers: { 'X-Forwarded-Prefix': '/parasaur' } });
+      assert.equal(response.headers.get('x-frame-options'), 'DENY');
+      assert.match(await response.text(), /<base href="\/parasaur\/">/);
+    }
     // The SPA fallback path carries the same policy and injection, and the
     // embed route keeps its own framing policy.
     const fallback = await fetch(`${server.base}/some/spa/route`, { headers: { 'X-Forwarded-Prefix': '/parasaur' } });
@@ -211,8 +189,7 @@ test('X-Forwarded-Prefix injects the base path into served documents', async () 
   const webRoot = mkdtempSync(join(tmpdir(), 'gah-embed-web-'));
   writeFileSync(join(webRoot, 'index.html'), '<!DOCTYPE html><html><head><title>Parasaur</title></head><body></body></html>');
   const app = express();
-  app.get('/embed', embedHtmlHandler({ webRoot }));
-  app.get('*', appHtmlHandler({ webRoot }));
+  app.use(documentRouter({ webRoot }));
   const server = await serve(app);
   try {
     const embed = await fetch(`${server.base}/embed?project=team%2Fproject`, { headers: { 'X-Forwarded-Prefix': '/parasaur' } });
@@ -234,7 +211,7 @@ test('non-HTML requests fall through the embed route to the JSON 404', async () 
   const webRoot = mkdtempSync(join(tmpdir(), 'gah-embed-web-'));
   writeFileSync(join(webRoot, 'index.html'), '<!DOCTYPE html><html><head></head><body></body></html>');
   const app = express();
-  app.get('/embed', embedHtmlHandler({ webRoot }));
+  app.use(documentRouter({ webRoot }));
   app.use((_req, res) => res.status(404).json({ error: 'Not Found' }));
   const server = await serve(app);
   try {
@@ -245,4 +222,46 @@ test('non-HTML requests fall through the embed route to the JSON 404', async () 
     await server.close();
     rmSync(webRoot, { recursive: true, force: true });
   }
+});
+
+test('document file reads ignore traversal in path queries and forwarded prefixes', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'gah-fixed-document-'));
+  const webRoot = join(root, 'web');
+  mkdirSync(webRoot);
+  writeFileSync(join(webRoot, 'index.html'), '<html><head></head><body>fixed entry</body></html>');
+  writeFileSync(join(root, 'secret.html'), 'outside secret');
+  writeFileSync(join(webRoot, 'nested.html'), 'bare HTML document');
+  const app = express();
+  app.use(documentRouter({ webRoot }));
+  const server = await serve(app);
+  try {
+    for (const path of ['/embed?path=../secret.html', '/index.html?path=../../secret.html', '/nested.html?path=../secret.html', '/..%2fsecret.html']) {
+      for (const prefix of ['/parasaur', '/../secret.html', '/parasaur/../secret.html']) {
+        const response = await fetch(server.base + path, { headers: { 'X-Forwarded-Prefix': prefix } });
+        assert.equal(response.status, 200);
+        const html = await response.text();
+        assert.match(html, /fixed entry/);
+        assert.doesNotMatch(html, /outside secret|bare HTML document/);
+      }
+    }
+  } finally { await server.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the real document router limits reads across embed and ordinary HTML paths', async () => {
+  const webRoot = mkdtempSync(join(tmpdir(), 'gah-document-limit-'));
+  writeFileSync(join(webRoot, 'index.html'), '<html><head></head><body>entry</body></html>');
+  const app = express();
+  app.use(documentRouter({ webRoot }));
+  const server = await serve(app);
+  try {
+    for (let i = 0; i < 300; i++) {
+      const response = await fetch(server.base + (i % 2 ? '/embed' : '/index.html'));
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('ratelimit-limit'), '300');
+      await response.text();
+    }
+    const limited = await fetch(server.base + '/embed');
+    assert.equal(limited.status, 429);
+    assert.ok(limited.headers.get('retry-after'));
+  } finally { await server.close(); rmSync(webRoot, { recursive: true, force: true }); }
 });

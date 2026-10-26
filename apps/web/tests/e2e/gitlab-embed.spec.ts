@@ -1,3 +1,7 @@
+import http from 'node:http';
+import express from 'express';
+import { sessionHandoffRouter } from '../../../server/src/sessionHandoff.js';
+import { authMiddleware } from '../../../server/src/authMiddleware.js';
 import { expect, test, type APIRequestContext } from '@playwright/test';
 
 /**
@@ -116,27 +120,64 @@ test('a context update re-binds the chat to the newly matched project', async ({
   await expect(projectSelect).toHaveValue('gitlab-other');
 });
 
-test('a sign-in finished in another tab reaches the waiting iframe through the session handoff', async ({ page, context }) => {
-  // Fake auth endpoint: only the credential the sign-in tab issued works.
-  await page.route('**/api/pairing/session', route => {
-    if (route.request().headers().authorization === 'Bearer token-from-sign-in-tab') {
-      return route.fulfill({ json: { principal: { kind: 'owner' }, can_approve_pairing: true } });
-    }
-    return route.fulfill({ status: 401, json: { message: 'Sign in required' } });
+test('an owner signs in through the real handoff router and the iframe keeps its token tab-scoped', async ({ page, context }) => {
+  const previous = process.env.COORDINATOR_TOKEN;
+  process.env.COORDINATOR_TOKEN = 'owner-handoff-e2e-fixture';
+  const app = express();
+  app.set('trust proxy', 'loopback');
+  app.use(express.json());
+  app.use('/api/pairing/handoff', sessionHandoffRouter());
+  app.get('/api/pairing/session', authMiddleware, (_req, res) => res.json({ principal: res.locals.authPrincipal }));
+  const server = http.createServer(app);
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Missing test address');
+  const base = `http://127.0.0.1:${address.port}`;
+  // Forward browser requests to the production router, simulating TLS proxy
+  // headers. The rest of the dashboard still uses the hermetic mock server.
+  await context.route(/\/api\/pairing\/(handoff(?:\/[^?]*)?|session)(?:\?.*)?$/, async route => {
+    const request = route.request();
+    const response = await fetch(base + new URL(request.url()).pathname, {
+      method: request.method(),
+      headers: { 'Content-Type': 'application/json', Origin: base.replace('http:', 'https:'),
+        'X-Forwarded-For': '198.51.100.2', 'X-Forwarded-Proto': 'https',
+        ...(request.headers().authorization ? { Authorization: request.headers().authorization } : {}) },
+      ...(request.postData() ? { body: request.postData()! } : {})
+    });
+    await route.fulfill({ status: response.status, contentType: 'application/json', body: await response.text() });
   });
-  await page.goto(issueContext);
-  await expect(page.getByRole('dialog', { name: 'Sign in to Parasaur' })).toBeVisible();
-  // The prompt's link opened a new tab; the owner signed in there. That
-  // tab's sessionStorage is invisible here, so its save mirrors the
-  // credential through the same-origin storage handoff — never through the
-  // embedding page. A real second tab on the same origin fires the storage
-  // event into this iframe.
-  const signInTab = await context.newPage();
-  await signInTab.goto('/');
-  await signInTab.evaluate(() => localStorage.setItem('gah.coordinatorTokenHandoff', 'token-from-sign-in-tab'));
-  await expect(page.getByRole('dialog', { name: 'Sign in to Parasaur' })).toHaveCount(0);
-  expect(await page.evaluate(() => sessionStorage.getItem('gah.coordinatorToken'))).toBe('token-from-sign-in-tab');
-  await signInTab.close();
+  try {
+    await page.route('**/embed-parent', route => route.fulfill({ contentType: 'text/html', body: `<iframe title="panel" src="${issueContext}"></iframe>` }));
+    await page.goto('/embed-parent');
+    const panel = page.frameLocator('iframe');
+    await expect(panel.getByRole('dialog', { name: 'Sign in to Parasaur' })).toBeVisible();
+    const link = panel.getByRole('link', { name: 'Open Parasaur to sign in' });
+    await expect(link).toHaveAttribute('href', /#gah_signin=/);
+    const popup = context.waitForEvent('page');
+    await link.click();
+    const signInTab = await popup;
+    await signInTab.waitForLoadState();
+    await expect(signInTab.getByRole('button', { name: 'Connect GitLab panel' })).toBeVisible();
+    expect(new URL(signInTab.url()).hash).toBe('');
+    await signInTab.getByText('Central access token', { exact: true }).click();
+    await signInTab.getByLabel('Access token', { exact: true }).fill('owner-handoff-e2e-fixture');
+    await signInTab.getByRole('button', { name: 'Save and reconnect' }).click();
+    await signInTab.getByRole('button', { name: 'Connect GitLab panel' }).click();
+    await expect(panel.getByRole('dialog', { name: 'Sign in to Parasaur' })).toHaveCount(0, { timeout: 8_000 });
+    const frame = page.frames().find(candidate => candidate.url().includes('/embed?'))!;
+    expect(await frame.evaluate(() => sessionStorage.getItem('gah.coordinatorToken'))).toBe('owner-handoff-e2e-fixture');
+    // A same-origin parent shares its iframe's tab-scoped storage.
+    expect(await page.evaluate(() => sessionStorage.getItem('gah.coordinatorToken'))).toBe('owner-handoff-e2e-fixture');
+    await signInTab.close();
+    expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('gah.coordinatorToken')))).toEqual([]);
+    const otherTab = await context.newPage();
+    await otherTab.goto('/');
+    expect(await otherTab.evaluate(() => sessionStorage.getItem('gah.coordinatorToken'))).toBeNull();
+    await otherTab.close();
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    if (previous === undefined) delete process.env.COORDINATOR_TOKEN; else process.env.COORDINATOR_TOKEN = previous;
+  }
 });
 
 test('the signed-out embed view keeps re-checking the auth endpoint and picks up a later session', async ({ page }) => {

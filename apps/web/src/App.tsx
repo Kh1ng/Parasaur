@@ -54,7 +54,7 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
   * same context view the embed route shows, inside this app shell. */ standaloneEmbedContext?: EmbedContext | null }) {
   const [currentPage, setCurrentPage] = useState<MainPage>(() => readNavigation().page);
   const [embedContext, setEmbedContext] = useState<EmbedContext | null>(standaloneEmbedContext);
-  const [sideView, setSideView] = useState<SideView | null>(() => (new URLSearchParams(window.location.hash.slice(1)).has('pair') || new URLSearchParams(window.location.search).has('pairingRequest')) ? 'settings' : readNavigation().side);
+  const [sideView, setSideView] = useState<SideView | null>(() => (new URLSearchParams(window.location.hash.slice(1)).has('pair') || new URLSearchParams(window.location.hash.slice(1)).has('gah_signin') || new URLSearchParams(window.location.search).has('pairingRequest')) ? 'settings' : readNavigation().side);
   // Chat lives in the right sidebar; `currentPage === 'chat'` is the same chat expanded over the main panel.
   const [chatDocked, setChatDocked] = useState(() => readNavigation().dock === 'chat');
   const [pageBehindChat, setPageBehindChat] = useState<MainPage>('overview');

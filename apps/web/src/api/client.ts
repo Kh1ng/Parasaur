@@ -104,6 +104,9 @@ export class GahApiError extends Error {
 }
 
 export const pairingApi = {
+  createHandoff: () => postJson<{ code: string; verifier: string; expires_in: number }, object>('/api/pairing/handoff', {}),
+  approveHandoff: (code: string) => postJson<{ approved: boolean }, { code: string }>('/api/pairing/handoff/approve', { code }),
+  claimHandoff: (code: string, verifier: string) => postJson<{ token?: string; pending?: boolean }, { code: string; verifier: string }>('/api/pairing/handoff/claim', { code, verifier }),
   session: () => getJson<{ principal: { kind: 'owner' | 'device'; id?: string }; can_approve_pairing: boolean }>('/api/pairing/session'),
   devices: () => getJson<{ devices: PairedDevice[] }>('/api/pairing/devices'),
   create: (origin: string) => postJson<PairingOffer, { origin: string }>('/api/pairing/offers', { origin }),

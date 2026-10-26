@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+import { sessionHandoffRouter } from './sessionHandoff.js';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { authMiddleware, isTrustedLocalRequest, requireOwner, sameOriginRequest } from './authMiddleware.js';
@@ -20,6 +22,23 @@ function pairingAccessCookiePath(req: { header(name: string): string | undefined
  * manage devices and offers; explicitly delegated controllers may review sign-ins. */
 export function pairingRouter(access: DeviceAccess, identity: CoordinatorIdentity, requested?: (request: PairingAccessRequest) => void): Router {
   const router = Router();
+  // Pending approval requests already die on restart; so does their cookie key.
+  const cookieKey = crypto.randomBytes(32);
+  const sealCookie = (value: string): string => {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', cookieKey, iv);
+    const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+    return Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64url');
+  };
+  const approvalCredential = (cookie: string | undefined): string => {
+    try {
+      const bytes = Buffer.from(credentialCookie(cookie, PAIRING_REQUEST_COOKIE) ?? '', 'base64url');
+      const decipher = crypto.createDecipheriv('aes-256-gcm', cookieKey, bytes.subarray(0, 12));
+      decipher.setAuthTag(bytes.subarray(12, 28));
+      return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString('utf8');
+    } catch { throw new Error('No access request is bound to this browser.'); }
+  };
+  router.use('/handoff', sessionHandoffRouter());
   router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   router.use(rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false,
     skip: req => req.method === 'GET' && ['/session', '/access/status', '/access/requests'].includes(req.path),
@@ -38,21 +57,21 @@ export function pairingRouter(access: DeviceAccess, identity: CoordinatorIdentit
       const origin = new URL(`${req.protocol}://${req.headers.host}`).origin;
       const result = access.createAccessRequest({ id: identity.node_id, name: identity.display_name, origin }, req.body.name);
       requested?.(result.request);
-      res.cookie(PAIRING_REQUEST_COOKIE, result.cookie, { httpOnly: true, sameSite: 'strict', secure: true, path: pairingAccessCookiePath(req), maxAge: 5 * 60_000 });
+      res.cookie(PAIRING_REQUEST_COOKIE, sealCookie(result.cookie), { httpOnly: true, sameSite: 'strict', secure: true, path: pairingAccessCookiePath(req), maxAge: 5 * 60_000 });
       res.status(202).json(result.request);
     } catch (error) { res.status(400).json({ message: error instanceof Error ? error.message : 'Cannot request device access.' }); }
   });
   router.get('/access/status', (req, res) => {
     try {
       const origin = new URL(`${req.protocol}://${req.headers.host}`).origin;
-      res.json(access.accessRequestStatus(credentialCookie(req.headers.cookie, PAIRING_REQUEST_COOKIE), origin));
+      res.json(access.accessRequestStatus(approvalCredential(req.headers.cookie), origin));
     } catch { res.status(404).json({ message: 'No access request is bound to this browser.' }); }
   });
   router.post('/access/claim', (req, res) => {
     try {
       if (!req.body || req.body.confirm !== true || Object.keys(req.body).some(key => key !== 'confirm')) throw new Error('Confirm this server and controller access before continuing.');
       const origin = new URL(`${req.protocol}://${req.headers.host}`).origin;
-      const paired = access.claimAccessRequest(credentialCookie(req.headers.cookie, PAIRING_REQUEST_COOKIE), origin);
+      const paired = access.claimAccessRequest(approvalCredential(req.headers.cookie), origin);
       const options = { httpOnly: true, sameSite: 'strict' as const, secure: true };
       res.cookie(DEVICE_COOKIE, paired.token, { ...options, path: '/', maxAge: DEVICE_LIFETIME });
       res.clearCookie(PAIRING_REQUEST_COOKIE, { ...options, path: pairingAccessCookiePath(req) });
