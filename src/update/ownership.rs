@@ -338,9 +338,29 @@ pub(super) struct ServerManagedPaths {
     pub(super) anchors: Vec<PathBuf>,
 }
 
-/// Reject broad roots even when config explicitly names them. Mount roots
-/// and account home roots must never be recursive ownership targets.
+/// Reject system trees and broad roots even when config explicitly names
+/// them. Callers must pass canonical paths so aliases cannot evade this rule.
 fn protected_root(path: &Path) -> bool {
+    if [
+        "/etc",
+        "/private/etc",
+        "/private/var",
+        "/usr",
+        "/bin",
+        "/sbin",
+        "/System",
+        "/Library",
+        "/dev",
+        "/proc",
+        "/sys",
+        "/boot",
+        "/var/root",
+    ]
+    .iter()
+    .any(|prefix| path.starts_with(prefix))
+    {
+        return true;
+    }
     if path
         .components()
         .filter(|part| matches!(part, std::path::Component::Normal(_)))
@@ -411,6 +431,64 @@ fn protected_root(path: &Path) -> bool {
     false
 }
 
+/// Prove this is a checkout of the updater's repository before trusting any
+/// descendant. A .git entry prevents Git from discovering a parent checkout.
+fn checkout_anchor(repo: &Path) -> Result<PathBuf> {
+    let checkout = std::fs::canonicalize(repo)
+        .with_context(|| format!("resolving ownership checkout boundary {}", repo.display()))?;
+    if protected_root(&checkout) {
+        bail!("refusing ownership checkout {} (checkout {}): protected system, home, or mount boundary", checkout.display(), repo.display());
+    }
+    let git = checkout.join(".git");
+    if !git.is_dir() && !git.is_file() {
+        bail!(
+            "refusing ownership checkout {}: missing .git directory or gitfile",
+            checkout.display()
+        );
+    }
+    let origin =
+        super::captured(&checkout, "git", &["remote", "get-url", "origin"]).with_context(|| {
+            format!(
+                "refusing ownership checkout {}: cannot prove origin repository",
+                checkout.display()
+            )
+        })?;
+    // Accept URL forms only: a similarly named local remote is not upstream.
+    let origin = origin.to_ascii_lowercase();
+    let repository = origin
+        .strip_prefix("https://github.com/")
+        .or_else(|| origin.strip_prefix("git@github.com:"))
+        .or_else(|| origin.strip_prefix("ssh://git@github.com/"))
+        .map(|path| path.strip_suffix(".git").unwrap_or(path));
+    const EXPECTED_REPOSITORY: &str = "github.com/kh1ng/git-agent-harness";
+    if repository != Some("kh1ng/git-agent-harness") {
+        bail!("refusing ownership checkout {}: origin does not match expected repository {EXPECTED_REPOSITORY}", checkout.display());
+    }
+    Ok(checkout)
+}
+
+/// A configured path alone is not proof of state. Require the unit's exact
+/// config beneath it, or an existing GAH state marker that is not a symlink.
+fn prove_state_anchor(root: &Path, config_path: &Path) -> Result<()> {
+    if std::fs::canonicalize(config_path)
+        .is_ok_and(|config| config.is_file() && config.starts_with(root))
+        || ["ledger.jsonl", "events.jsonl", "reconciliation.jsonl"]
+            .iter()
+            .any(|marker| {
+                root.join(marker)
+                    .symlink_metadata()
+                    .is_ok_and(|meta| meta.is_file())
+            })
+        || root
+            .join("sessions")
+            .symlink_metadata()
+            .is_ok_and(|meta| meta.is_dir())
+    {
+        return Ok(());
+    }
+    bail!("refusing ownership state boundary {}: contains neither unit config {} nor known GAH state markers", root.display(), config_path.display());
+}
+
 /// State boundaries are never chowned. Refuse before deployment if the
 /// installing account cannot create state beneath the unchanged boundary.
 fn ensure_state_boundary_access(root: &Path) -> Result<()> {
@@ -430,15 +508,7 @@ fn ensure_state_boundary_access(root: &Path) -> Result<()> {
 /// Collect state boundaries from the exact file named by the rendered unit.
 /// Environment variables can nominate candidates, never authorize targets.
 pub(super) fn server_managed_paths(repo: &Path, config_path: &Path) -> Result<ServerManagedPaths> {
-    let checkout = std::fs::canonicalize(repo)
-        .with_context(|| format!("resolving ownership checkout boundary {}", repo.display()))?;
-    if protected_root(&checkout) {
-        bail!(
-            "refusing protected ownership checkout boundary {} (checkout {})",
-            checkout.display(),
-            repo.display()
-        );
-    }
+    let checkout = checkout_anchor(repo)?;
     let mut state_roots = BTreeSet::new();
     match std::fs::read_to_string(config_path) {
         Ok(text) => {
@@ -486,23 +556,26 @@ pub(super) fn server_managed_paths(repo: &Path, config_path: &Path) -> Result<Se
             .any(|other| other != *root && root.starts_with(other))
     }) {
         paths.push(root.clone());
-        // Keep the configured basename: canonicalizing this candidate itself
-        // would let a state-root symlink authorize its own escape.
-        let Some(anchor) = root
-            .parent()
-            .and_then(|parent| std::fs::canonicalize(parent).ok())
-            .zip(root.file_name())
-            .map(|(parent, name)| parent.join(name))
-        else {
-            continue;
+        let metadata = match root.symlink_metadata() {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("proving state boundary {}", root.display()))
+            }
+            Ok(meta) => meta,
         };
-        if protected_root(&anchor)
-            || root
-                .symlink_metadata()
-                .map_or(true, |meta| meta.file_type().is_symlink())
-        {
-            continue;
+        let anchor = std::fs::canonicalize(root)
+            .with_context(|| format!("resolving ownership state boundary {}", root.display()))?;
+        if protected_root(&anchor) {
+            bail!(
+                "refusing ownership state boundary {}: protected system, home, or mount boundary",
+                anchor.display()
+            );
         }
+        if metadata.file_type().is_symlink() {
+            bail!("refusing ownership state boundary {} (configured {}): symlink cannot prove a state root", anchor.display(), root.display());
+        }
+        prove_state_anchor(&anchor, config_path)?;
         ensure_state_boundary_access(root)?;
         anchors.push(anchor);
         // A boundary itself is never a recursive target. Repair each child,

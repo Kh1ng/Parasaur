@@ -28,7 +28,7 @@ fn unit_user_reads_only_service_assignments() {
 
 #[test]
 fn previous_account_distinguishes_missing_root_and_user_units() {
-    let dir = TempDir::new().unwrap();
+    let dir = ownership_tempdir();
     assert!(matches!(
         previous_account(&dir.path().join("absent.service")).unwrap(),
         PreviousAccount::NotInstalled
@@ -57,7 +57,7 @@ fn previous_account_distinguishes_missing_root_and_user_units() {
 #[test]
 fn unreadable_installed_unit_is_an_error() {
     use std::os::unix::fs::PermissionsExt;
-    let dir = TempDir::new().unwrap();
+    let dir = ownership_tempdir();
     let path = dir.path().join("private.service");
     std::fs::write(&path, "[Service]\nUser=agent\n").unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o0)).unwrap();
@@ -126,6 +126,14 @@ fn ownership_root_requires_an_explicit_rendered_root_account() {
     assert_eq!(change.new.as_str(), "root");
 }
 
+// macOS's default temp directory is under the denied /private/var tree.
+fn ownership_tempdir() -> TempDir {
+    tempfile::Builder::new()
+        .prefix(".gah-ownership-")
+        .tempdir_in(env!("CARGO_MANIFEST_DIR"))
+        .unwrap()
+}
+
 fn fixture_repo(dir: &Path) -> PathBuf {
     let repo = dir.join("repo");
     std::fs::create_dir_all(repo.join("packaging/systemd")).unwrap();
@@ -139,6 +147,13 @@ fn fixture_repo(dir: &Path) -> PathBuf {
         repo.join("packaging/systemd/gah-server.service"),
     )
     .unwrap();
+    std::fs::create_dir_all(repo.join(".git/objects")).unwrap();
+    std::fs::create_dir_all(repo.join(".git/refs/heads")).unwrap();
+    std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    std::fs::write(
+        repo.join(".git/config"),
+        "[core]\nbare = false\n[remote \"origin\"]\nurl = https://github.com/Kh1ng/git-agent-harness.git\n",
+    ).unwrap();
     repo
 }
 
@@ -208,11 +223,12 @@ fn profile_toml(name: &str, artifact_root: &str) -> String {
 
 #[test]
 fn managed_paths_collect_state_roots_checkout_and_web_root() {
-    let dir = TempDir::new().unwrap();
+    let _exec = crate::test_support::ExecGuard::new();
+    let dir = ownership_tempdir();
     let repo = fixture_repo(dir.path());
     let state = dir.path().join("state");
     std::fs::create_dir_all(&state).unwrap();
-    let config = dir.path().join("config.toml");
+    let config = state.join("config.toml");
     std::fs::write(
         &config,
         "[defaults]\nartifact_root = \"/srv/gah\"\n".to_string()
@@ -226,14 +242,21 @@ fn managed_paths_collect_state_roots_checkout_and_web_root() {
     let env = ManagedPathsEnvGuard::set(Some(web.to_str().unwrap()), Some(&config));
     let managed = server_managed_paths(&repo, &config).unwrap();
     assert_eq!(
-        managed.paths,
-        vec![
+        managed
+            .paths
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>(),
+        [
             PathBuf::from("/srv/gah"),
             state.clone(),
+            config.clone(),
             repo.join("config"),
             repo.join("apps/server/dist"),
             web.clone(),
-        ],
+        ]
+        .into_iter()
+        .collect(),
         "the nested /srv/gah/a root must be covered by /srv/gah"
     );
     for anchor in [repo.canonicalize().unwrap(), state.canonicalize().unwrap()] {
@@ -253,7 +276,8 @@ fn managed_paths_collect_state_roots_checkout_and_web_root() {
 
 #[test]
 fn malformed_config_fails_the_repair_rather_than_guessing_state_roots() {
-    let dir = TempDir::new().unwrap();
+    let _exec = crate::test_support::ExecGuard::new();
+    let dir = ownership_tempdir();
     let repo = fixture_repo(dir.path());
     let config = dir.path().join("config.toml");
     std::fs::write(&config, "[defaults\nbroken").unwrap();
@@ -273,7 +297,7 @@ fn malformed_config_fails_the_repair_rather_than_guessing_state_roots() {
 
 #[test]
 fn chown_targets_must_stay_under_the_anchors() {
-    let dir = TempDir::new().unwrap();
+    let dir = ownership_tempdir();
     let inside = dir.path().join("inside");
     let outside = dir.path().join("outside");
     for path in [&inside, &outside] {
@@ -303,13 +327,14 @@ fn chown_targets_must_stay_under_the_anchors() {
 /// touches the installed unit.
 #[test]
 fn refusal_names_both_accounts_and_the_paths() {
-    let dir = TempDir::new().unwrap();
+    let _exec = crate::test_support::ExecGuard::new();
+    let dir = ownership_tempdir();
     let repo = fixture_repo(dir.path());
     let state = dir.path().join("state");
     std::fs::create_dir_all(&state).unwrap();
     let web = dir.path().join("www");
     std::fs::create_dir_all(&web).unwrap();
-    let config = dir.path().join("config.toml");
+    let config = state.join("config.toml");
     std::fs::write(
         &config,
         format!("[defaults]\nartifact_root = \"{}\"\n", state.display()),
@@ -342,7 +367,7 @@ fn refusal_names_both_accounts_and_the_paths() {
 /// `systemctl` answers --version and daemon-reload; `node` keeps the
 /// render hermetic (the tracked template needs a Node path).
 fn unit_install_shims(unit_target: &Path) -> TempDir {
-    let bin = TempDir::new().unwrap();
+    let bin = ownership_tempdir();
     let sudo_log = bin.path().join("sudo-argv.log");
     for (name, body) in [
             (
@@ -398,8 +423,8 @@ fn current_user() -> String {
 fn repair_fixture(dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
     let repo = fixture_repo(dir);
     let state = dir.join("state");
-    std::fs::create_dir_all(state.join("data")).unwrap();
-    std::fs::write(state.join("data/private.json"), "private").unwrap();
+    std::fs::create_dir_all(state.join("sessions")).unwrap();
+    std::fs::write(state.join("sessions/private.json"), "private").unwrap();
     let config = dir.join("config.toml");
     std::fs::write(
         &config,
@@ -416,7 +441,7 @@ fn repair_fixture(dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
 #[test]
 fn rendering_over_a_unit_with_a_different_user_repairs_ownership() {
     let _exec = crate::test_support::ExecGuard::new();
-    let dir = TempDir::new().unwrap();
+    let dir = ownership_tempdir();
     let (repo, config, state) = repair_fixture(dir.path());
     let units = dir.path().join("units");
     std::fs::create_dir_all(&units).unwrap();
@@ -440,7 +465,7 @@ fn rendering_over_a_unit_with_a_different_user_repairs_ownership() {
     let record = std::fs::read_to_string(bin.path().join("sudo-argv.log")).unwrap();
     let user = current_user();
     for managed in [
-        &state.join("data"),
+        &state.join("sessions"),
         &repo.join("config"),
         &repo.join("apps/server/dist"),
     ] {
@@ -472,7 +497,7 @@ fn rendering_over_a_unit_with_a_different_user_repairs_ownership() {
 #[test]
 fn no_repair_flag_refuses_the_account_change_without_touching_the_unit() {
     let _exec = crate::test_support::ExecGuard::new();
-    let dir = TempDir::new().unwrap();
+    let dir = ownership_tempdir();
     let (repo, config, state) = repair_fixture(dir.path());
     let units = dir.path().join("units");
     std::fs::create_dir_all(&units).unwrap();
@@ -511,7 +536,7 @@ fn no_repair_flag_refuses_the_account_change_without_touching_the_unit() {
 fn matching_or_missing_previous_account_never_chowns() {
     let _exec = crate::test_support::ExecGuard::new();
     for installed in [Some(current_user()), None] {
-        let dir = TempDir::new().unwrap();
+        let dir = ownership_tempdir();
         let (repo, config, _state) = repair_fixture(dir.path());
         let units = dir.path().join("units");
         std::fs::create_dir_all(&units).unwrap();
@@ -540,7 +565,7 @@ fn matching_or_missing_previous_account_never_chowns() {
 #[test]
 fn escaped_symlink_is_absent_from_a_running_repair() {
     let _exec = crate::test_support::ExecGuard::new();
-    let dir = TempDir::new().unwrap();
+    let dir = ownership_tempdir();
     let (repo, config, state) = repair_fixture(dir.path());
     std::fs::remove_dir_all(repo.join("config")).unwrap();
     let outside = dir.path().join("outside");
@@ -564,7 +589,7 @@ fn escaped_symlink_is_absent_from_a_running_repair() {
         record.contains(&format!(
             "chown -R -h -P -- {} {}",
             current_user(),
-            state.join("data").canonicalize().unwrap().display()
+            state.join("sessions").canonicalize().unwrap().display()
         )),
         "{record}"
     );
@@ -576,7 +601,7 @@ fn escaped_symlink_is_absent_from_a_running_repair() {
 #[test]
 fn server_unit_template_is_installed_on_every_update() {
     let _exec = crate::test_support::ExecGuard::new();
-    let dir = TempDir::new().unwrap();
+    let dir = ownership_tempdir();
     let (repo, config, _state) = repair_fixture(dir.path());
     let units = dir.path().join("units");
     std::fs::create_dir_all(&units).unwrap();
@@ -620,7 +645,7 @@ fn server_unit_template_is_installed_on_every_update() {
 #[test]
 fn production_server_unit_install_targets_etc_systemd() {
     let _exec = crate::test_support::ExecGuard::new();
-    let dir = TempDir::new().unwrap();
+    let dir = ownership_tempdir();
     let (repo, config, _state) = repair_fixture(dir.path());
     let bin = unit_install_shims(&dir.path().join("installed.service"));
     let _path = crate::test_support::PathGuard::set(bin.path().to_str().unwrap());
@@ -637,7 +662,7 @@ fn production_server_unit_install_targets_etc_systemd() {
 
 #[test]
 fn server_unit_name_cannot_escape_systemd_directory() {
-    let dir = TempDir::new().unwrap();
+    let dir = ownership_tempdir();
     let repo = fixture_repo(dir.path());
     for name in [
         "/tmp/pwn.service",
@@ -661,15 +686,18 @@ fn server_unit_name_cannot_escape_systemd_directory() {
 #[cfg(unix)]
 #[test]
 fn ownership_never_authorizes_roots_from_resolved_candidates() {
-    let dir = TempDir::new().unwrap();
+    let _exec = crate::test_support::ExecGuard::new();
+    let dir = ownership_tempdir();
     let (repo, config, state) = repair_fixture(dir.path());
     std::fs::remove_dir_all(&state).unwrap();
     std::os::unix::fs::symlink("/home", &state).unwrap();
     std::fs::remove_dir_all(repo.join("config")).unwrap();
     std::os::unix::fs::symlink("/", repo.join("config")).unwrap();
     let _env = ManagedPathsEnvGuard::set(Some(""), Some(&config));
+    let error = server_managed_paths(&repo, &config).unwrap_err();
+    assert!(error.to_string().contains("state boundary"));
+    std::fs::remove_file(&state).unwrap();
     let managed = server_managed_paths(&repo, &config).unwrap();
-    assert!(!managed.anchors.contains(&PathBuf::from("/home")));
     assert_eq!(confirmed_chown_target(&state, &managed.anchors), None);
     assert_eq!(
         confirmed_chown_target(&repo.join("config"), &managed.anchors),
@@ -683,7 +711,8 @@ fn ownership_never_authorizes_roots_from_resolved_candidates() {
 
 #[test]
 fn ownership_web_environment_cannot_authorize_a_root() {
-    let dir = TempDir::new().unwrap();
+    let _exec = crate::test_support::ExecGuard::new();
+    let dir = ownership_tempdir();
     let (repo, config, _) = repair_fixture(dir.path());
     let _env = ManagedPathsEnvGuard::set(Some("/"), Some(&config));
     assert!(server_managed_paths(&repo, &config).is_err());
@@ -693,8 +722,12 @@ fn ownership_web_environment_cannot_authorize_a_root() {
 #[test]
 fn ownership_protected_checkout_symlinks_refuse_before_mutation() {
     let _exec = crate::test_support::ExecGuard::new();
-    for root in ["/", "/home"] {
-        let dir = TempDir::new().unwrap();
+    for root in ["/", "/home", "/etc", "/private/etc", "/usr/local"] {
+        // /private/etc exists on macOS; the shared policy test covers it on Linux.
+        if !Path::new(root).exists() {
+            continue;
+        }
+        let dir = ownership_tempdir();
         let repo = dir.path().join("checkout");
         std::os::unix::fs::symlink(root, &repo).unwrap();
         let config = dir.path().join("absent.toml");
@@ -719,11 +752,195 @@ fn ownership_protected_checkout_symlinks_refuse_before_mutation() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn ownership_checkout_requires_git_entry_and_matching_origin_before_mutation() {
+    let _exec = crate::test_support::ExecGuard::new();
+    for (git_config, proof) in [
+        (None, "missing .git directory or gitfile"),
+        (
+            Some("[remote \"origin\"]\nurl = https://github.com/other/repo.git\n"),
+            "origin does not match expected repository",
+        ),
+        (
+            Some("[remote \"origin\"]\nurl = github.com/kh1ng/git-agent-harness\n"),
+            "origin does not match expected repository",
+        ),
+        (
+            Some("[core]\nbare = false\n"),
+            "cannot prove origin repository",
+        ),
+    ] {
+        let dir = ownership_tempdir();
+        let target = fixture_repo(dir.path());
+        if let Some(config) = git_config {
+            std::fs::write(target.join(".git/config"), config).unwrap();
+        } else {
+            std::fs::remove_dir_all(target.join(".git")).unwrap();
+        }
+        let repo = dir.path().join("checkout");
+        std::os::unix::fs::symlink(&target, &repo).unwrap();
+        let bin = unit_install_shims(&dir.path().join("installed.service"));
+        let _path = crate::test_support::PathGuard::set(bin.path().to_str().unwrap());
+        let _env = ManagedPathsEnvGuard::set(Some("/etc/ssh"), None);
+        let change = AccountChange {
+            previous: UserName::parse("agent").unwrap(),
+            new: UserName::parse("khing").unwrap(),
+        };
+        let before = std::fs::read(target.join("apps/server/dist/bin.js")).unwrap();
+        let error = server_managed_paths(&repo, &dir.path().join("absent.toml"))
+            .and_then(|managed| repair_or_refuse(&repo, &change, &managed, true))
+            .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains(proof), "{message}");
+        assert!(
+            message.contains(target.canonicalize().unwrap().to_str().unwrap()),
+            "{message}"
+        );
+        assert!(!bin.path().join("sudo-argv.log").exists());
+        assert_eq!(
+            std::fs::read(target.join("apps/server/dist/bin.js")).unwrap(),
+            before
+        );
+    }
+}
+
+#[test]
+fn ownership_denies_system_prefixes_but_allows_deployment_layouts() {
+    for prefix in [
+        "/etc",
+        "/private/etc",
+        "/private/var",
+        "/usr",
+        "/bin",
+        "/sbin",
+        "/System",
+        "/Library",
+        "/dev",
+        "/proc",
+        "/sys",
+        "/boot",
+        "/var/root",
+    ] {
+        assert!(super::protected_root(Path::new(prefix)), "{prefix}");
+        assert!(
+            super::protected_root(&Path::new(prefix).join("child/grandchild")),
+            "{prefix}"
+        );
+    }
+    for home in ["/Users/some-user", "/home/some-user"] {
+        assert!(super::protected_root(Path::new(home)), "{home}");
+        assert!(
+            !super::protected_root(&Path::new(home).join("gah")),
+            "{home}"
+        );
+    }
+    for path in [
+        "/srv/agent-lab/repos/github/Kh1ng/git-agent-harness",
+        "/srv/gah/state",
+        "/opt/gah",
+        "/usr-local/gah",
+    ] {
+        assert!(!super::protected_root(Path::new(path)), "{path}");
+    }
+}
+
+#[test]
+fn ownership_proves_checkout_gitfiles_and_state_config_or_markers() {
+    let _exec = crate::test_support::ExecGuard::new();
+    let dir = ownership_tempdir();
+    let original = fixture_repo(dir.path());
+    let repo = dir
+        .path()
+        .join("srv/agent-lab/repos/github/Kh1ng/git-agent-harness");
+    std::fs::create_dir_all(repo.parent().unwrap()).unwrap();
+    std::fs::rename(original, &repo).unwrap();
+    let state = dir.path().join("srv/gah/state");
+    std::fs::create_dir_all(&state).unwrap();
+    let config = state.join("unit-config.toml");
+    let text = format!("[defaults]\nartifact_root = \"{}\"\n", state.display());
+    std::fs::write(&config, &text).unwrap();
+    let _env = ManagedPathsEnvGuard::set(Some(""), None);
+    let managed = server_managed_paths(&repo, &config).unwrap();
+    for root in [&repo, &state] {
+        assert!(managed.anchors.contains(&root.canonicalize().unwrap()));
+    }
+    assert!(confirmed_chown_target(&repo.join("config"), &managed.anchors).is_some());
+    assert!(confirmed_chown_target(&config, &managed.anchors).is_some());
+
+    let git_dir = dir.path().join("git-metadata");
+    std::fs::rename(repo.join(".git"), &git_dir).unwrap();
+    std::fs::write(
+        repo.join(".git"),
+        format!("gitdir: {}\n", git_dir.display()),
+    )
+    .unwrap();
+    for origin in [
+        "git@github.com:Kh1ng/git-agent-harness.git",
+        "ssh://git@github.com/Kh1ng/git-agent-harness.git",
+    ] {
+        std::fs::write(
+            git_dir.join("config"),
+            format!("[remote \"origin\"]\nurl = {origin}\n"),
+        )
+        .unwrap();
+        assert!(server_managed_paths(&repo, &config).is_ok());
+    }
+    let external = dir.path().join("external-config.toml");
+    std::fs::rename(&config, &external).unwrap();
+    let error = server_managed_paths(&repo, &external).unwrap_err();
+    assert!(
+        error.to_string().contains("neither unit config"),
+        "{error:#}"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains(state.canonicalize().unwrap().to_str().unwrap()),
+        "{error:#}"
+    );
+    std::fs::write(state.join("events.jsonl"), "").unwrap();
+    assert!(server_managed_paths(&repo, &external).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn ownership_state_system_prefix_and_symlink_marker_refuse_before_mutation() {
+    let _exec = crate::test_support::ExecGuard::new();
+    let dir = ownership_tempdir();
+    let (repo, config, state) = repair_fixture(dir.path());
+    let bin = unit_install_shims(&dir.path().join("installed.service"));
+    let _path = crate::test_support::PathGuard::set(bin.path().to_str().unwrap());
+    let _env = ManagedPathsEnvGuard::set(Some(""), None);
+    std::fs::remove_dir_all(state.join("sessions")).unwrap();
+    std::os::unix::fs::symlink(&config, state.join("events.jsonl")).unwrap();
+    let change = AccountChange {
+        previous: UserName::parse("agent").unwrap(),
+        new: UserName::parse("khing").unwrap(),
+    };
+    for (root, proof) in [
+        (state.to_str().unwrap(), "neither unit config"),
+        ("/etc", "protected system"),
+    ] {
+        std::fs::write(&config, format!("[defaults]\nartifact_root = \"{root}\"\n")).unwrap();
+        let error = server_managed_paths(&repo, &config)
+            .and_then(|managed| repair_or_refuse(&repo, &change, &managed, true))
+            .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains(proof), "{message}");
+        assert!(
+            message.contains(Path::new(root).canonicalize().unwrap().to_str().unwrap()),
+            "{message}"
+        );
+        assert!(!bin.path().join("sudo-argv.log").exists());
+    }
+}
+
 #[test]
 fn ownership_unknown_or_root_systemctl_user_refuses_before_mutation() {
     let _exec = crate::test_support::ExecGuard::new();
     for output in ["", " \t\n", "root\n", "garbage:uid\n"] {
-        let dir = TempDir::new().unwrap();
+        let dir = ownership_tempdir();
         let (repo, config, _) = repair_fixture(dir.path());
         let template = repo.join("packaging/systemd/gah-server.service");
         let body = std::fs::read_to_string(&template).unwrap();
@@ -780,7 +997,7 @@ fn ownership_unknown_or_root_systemctl_user_refuses_before_mutation() {
 #[test]
 fn ownership_persistent_user_drop_in_refuses_before_any_chown() {
     let _exec = crate::test_support::ExecGuard::new();
-    let dir = TempDir::new().unwrap();
+    let dir = ownership_tempdir();
     let (repo, config, _) = repair_fixture(dir.path());
     let units = dir.path().join("units");
     std::fs::create_dir_all(units.join("gah-server.service.d")).unwrap();
@@ -808,22 +1025,26 @@ fn ownership_persistent_user_drop_in_refuses_before_any_chown() {
 fn ownership_preflight_refuses_source_and_release_before_mutation() {
     use std::os::unix::fs::PermissionsExt;
     let _exec = crate::test_support::ExecGuard::new();
-    let dir = TempDir::new().unwrap();
+    let dir = ownership_tempdir();
     let (repo, config, _) = repair_fixture(dir.path());
     let target = dir.path().join("installed.service");
     std::fs::write(&target, "[Service]\nUser=agent\n").unwrap();
     let bin = unit_install_shims(&target);
     let git = bin.path().join("git");
+    let real_git = crate::runner::resolve::resolve_executable_on_path("git").unwrap();
     std::fs::write(
         &git,
         format!(
             r#"#!/bin/sh
+if [ "$PWD" != '{repo}' ] && {{ [ "$1" != -C ] || [ "$2" != '{repo}' ]; }}; then exec '{real_git}' "$@"; fi
 printf '%s\n' "$*" >> '{log}'
 if [ "$3" = rev-parse ] && [ "$4" = --show-toplevel ]; then printf '%s\n' '{repo}'; exit 0; fi
+if [ "$1" = remote ] && [ "$2" = get-url ] && [ "$3" = origin ]; then echo https://github.com/Kh1ng/git-agent-harness.git; exit 0; fi
 exit 91
 "#,
             log = bin.path().join("git.log").display(),
-            repo = repo.display()
+            repo = repo.display(),
+            real_git = real_git.display()
         ),
     )
     .unwrap();
@@ -881,14 +1102,15 @@ exit 91
         commands
             .lines()
             .all(|line| line.ends_with("rev-parse --show-toplevel")
-                || line == "worktree list --porcelain"),
+                || line == "worktree list --porcelain"
+                || line == "remote get-url origin"),
         "no mutating git command may run: {commands}"
     );
 }
 
 #[test]
 fn ownership_protected_home_and_mount_roots_are_never_targets() {
-    let dir = TempDir::new().unwrap();
+    let dir = ownership_tempdir();
     let child = dir.path().join("data");
     std::fs::create_dir(&child).unwrap();
     let anchor = dir.path().canonicalize().unwrap();
@@ -918,7 +1140,7 @@ fn ownership_protected_home_and_mount_roots_are_never_targets() {
 #[test]
 fn ownership_first_install_also_refuses_persistent_user_drop_in() {
     let _exec = crate::test_support::ExecGuard::new();
-    let dir = TempDir::new().unwrap();
+    let dir = ownership_tempdir();
     let (repo, config, _) = repair_fixture(dir.path());
     let units = dir.path().join("units");
     let drop_in = units.join("gah-server.service.d/override.conf");
@@ -940,8 +1162,9 @@ fn ownership_first_install_also_refuses_persistent_user_drop_in() {
 #[cfg(unix)]
 #[test]
 fn ownership_unwritable_state_boundary_stops_preflight() {
+    let _exec = crate::test_support::ExecGuard::new();
     use std::os::unix::fs::PermissionsExt;
-    let dir = TempDir::new().unwrap();
+    let dir = ownership_tempdir();
     let (repo, config, state) = repair_fixture(dir.path());
     std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o555)).unwrap();
     if unsafe { libc::geteuid() } != 0 {
