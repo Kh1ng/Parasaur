@@ -82,12 +82,10 @@ fn account_change_uses_validated_names() {
     assert!(account_change(user("khing"), Some("khing".into()))
         .unwrap()
         .is_none());
-    for previous in [Root, user("agent")] {
-        let change = account_change(previous, Some("khing".into()))
-            .unwrap()
-            .unwrap();
-        assert_eq!(change.new.as_str(), "khing");
-    }
+    let change = account_change(user("agent"), Some("khing".into()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(change.new.as_str(), "khing");
     for invalid in [
         "",
         "Agent",
@@ -103,6 +101,29 @@ fn account_change_uses_validated_names() {
         assert!(UserName::parse(valid).is_ok());
     }
     assert!(account_change(NotInstalled, Some("bad.name".into())).is_err());
+    assert!(account_change(Root, Some("khing".into())).is_err());
+}
+
+#[test]
+fn ownership_root_requires_an_explicit_rendered_root_account() {
+    assert!(account_change(PreviousAccount::Root, Some("root".into()))
+        .unwrap()
+        .is_none());
+    for rendered in [None, Some("khing".into())] {
+        assert!(account_change(PreviousAccount::Root, rendered).is_err());
+    }
+    assert!(account_change(
+        PreviousAccount::User(UserName::parse("agent").unwrap()),
+        None
+    )
+    .is_err());
+    let change = account_change(
+        PreviousAccount::User(UserName::parse("agent").unwrap()),
+        Some("root".into()),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(change.new.as_str(), "root");
 }
 
 fn fixture_repo(dir: &Path) -> PathBuf {
@@ -666,6 +687,94 @@ fn ownership_web_environment_cannot_authorize_a_root() {
     let (repo, config, _) = repair_fixture(dir.path());
     let _env = ManagedPathsEnvGuard::set(Some("/"), Some(&config));
     assert!(server_managed_paths(&repo, &config).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn ownership_protected_checkout_symlinks_refuse_before_mutation() {
+    let _exec = crate::test_support::ExecGuard::new();
+    for root in ["/", "/home"] {
+        let dir = TempDir::new().unwrap();
+        let repo = dir.path().join("checkout");
+        std::os::unix::fs::symlink(root, &repo).unwrap();
+        let config = dir.path().join("absent.toml");
+        let bin = unit_install_shims(&dir.path().join("installed.service"));
+        let _path = crate::test_support::PathGuard::set(bin.path().to_str().unwrap());
+        let _env = ManagedPathsEnvGuard::set(Some("/etc/ssh"), Some(&config));
+        let change = AccountChange {
+            previous: UserName::parse("agent").unwrap(),
+            new: UserName::parse("khing").unwrap(),
+        };
+        let error = server_managed_paths(&repo, &config)
+            .and_then(|managed| repair_or_refuse(&repo, &change, &managed, true))
+            .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("checkout"), "{message}");
+        assert!(
+            message.contains(root)
+                && message.contains(repo.canonicalize().unwrap().to_str().unwrap()),
+            "{message}"
+        );
+        assert!(!bin.path().join("sudo-argv.log").exists());
+    }
+}
+
+#[test]
+fn ownership_unknown_or_root_systemctl_user_refuses_before_mutation() {
+    let _exec = crate::test_support::ExecGuard::new();
+    for output in ["", " \t\n", "root\n", "garbage:uid\n"] {
+        let dir = TempDir::new().unwrap();
+        let (repo, config, _) = repair_fixture(dir.path());
+        let template = repo.join("packaging/systemd/gah-server.service");
+        let body = std::fs::read_to_string(&template).unwrap();
+        std::fs::write(&template, body.replace("User=@USER@", "User=nextuser")).unwrap();
+        let units = dir.path().join("units");
+        std::fs::create_dir(&units).unwrap();
+        let target = units.join("gah-server.service");
+        let installed = "[Service]\nUser=agent\n";
+        std::fs::write(&target, installed).unwrap();
+        let bin = unit_install_shims(&target);
+        let response = bin.path().join("user-output");
+        std::fs::write(&response, output).unwrap();
+        let systemctl = bin.path().join("systemctl");
+        let shim = std::fs::read_to_string(&systemctl).unwrap();
+        let shim = shim
+            .lines()
+            .map(|line| {
+                if line.trim_start().starts_with("User)") {
+                    format!("    User) cat '{}' ;;", response.display())
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&systemctl, shim).unwrap();
+        let _path = crate::test_support::PathGuard::set(bin.path().to_str().unwrap());
+        let _env = ManagedPathsEnvGuard::set(Some(""), Some(&config));
+        let error = super::super::install_server_unit_template_into(
+            &repo,
+            "gah-server.service",
+            &units,
+            true,
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("gah-server.service"), "{message}");
+        if output.trim() == "root" {
+            assert!(
+                message.contains("root") && message.contains("nextuser"),
+                "{message}"
+            );
+        } else {
+            assert!(
+                message.contains("systemctl show -p User --value gah-server.service"),
+                "{message}"
+            );
+        }
+        assert!(!bin.path().join("sudo-argv.log").exists(), "{output:?}");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), installed);
+    }
 }
 
 #[test]

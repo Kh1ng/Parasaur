@@ -74,7 +74,7 @@ pub(super) fn unit_user(unit: &str) -> Option<String> {
 }
 
 fn account(value: &str) -> Result<PreviousAccount> {
-    let user = UserName::parse(if value.is_empty() { "root" } else { value })?;
+    let user = UserName::parse(value)?;
     Ok(if user.as_str() == "root" {
         PreviousAccount::Root
     } else {
@@ -86,7 +86,12 @@ fn account(value: &str) -> Result<PreviousAccount> {
 /// must stop the update before it changes any installed artifacts.
 pub(super) fn previous_account(unit_path: &Path) -> Result<PreviousAccount> {
     match std::fs::read_to_string(unit_path) {
-        Ok(unit) => account(unit_user(&unit).as_deref().unwrap_or("root")),
+        Ok(unit) => account(
+            unit_user(&unit)
+                .as_deref()
+                .filter(|user| !user.is_empty())
+                .unwrap_or("root"),
+        ),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Ok(PreviousAccount::NotInstalled)
         }
@@ -105,12 +110,16 @@ pub(super) fn account_change(
     previous: PreviousAccount,
     new_user: Option<String>,
 ) -> Result<Option<AccountChange>> {
+    let explicit_root = new_user.as_deref() == Some("root");
     let new = UserName::parse(new_user.as_deref().unwrap_or("root"))?;
     let previous = match previous {
         PreviousAccount::NotInstalled => return Ok(None),
         PreviousAccount::Root => UserName::parse("root")?,
         PreviousAccount::User(user) => user,
     };
+    if (previous.as_str() == "root" || new.as_str() == "root") && !explicit_root {
+        bail!("refusing ownership repair from User={previous} to rendered User={new}: a root account requires explicit User=root in the rendered unit; repair ownership manually before changing the service account");
+    }
     Ok((previous != new).then_some(AccountChange { previous, new }))
 }
 
@@ -133,7 +142,10 @@ fn effective_previous_account(target: &Path, service: &str) -> Result<PreviousAc
     };
     let load_state = show("LoadState")?;
     let effective = if load_state == "loaded" {
-        Some(account(&show("User")?)?)
+        // Unlike a missing User= directive, empty command output is unknown.
+        Some(account(&show("User")?).with_context(|| {
+            format!("cannot determine effective account for {service}: systemctl show -p User --value {service} did not return an explicit supported account")
+        })?)
     } else {
         None
     };
@@ -244,7 +256,8 @@ fn prepare_server_unit(
     let previous = effective_previous_account(&target, service)?;
     // No User= drop-in is allowed above, so the rendered base account is also
     // the effective new account after daemon-reload.
-    let change = account_change(previous, unit_user(&rendered))?;
+    let change = account_change(previous, unit_user(&rendered))
+        .with_context(|| format!("planning ownership repair for {service}"))?;
     let managed = if change.is_some() {
         server_managed_paths(repo, values.config_path())?
     } else {
@@ -417,6 +430,15 @@ fn ensure_state_boundary_access(root: &Path) -> Result<()> {
 /// Collect state boundaries from the exact file named by the rendered unit.
 /// Environment variables can nominate candidates, never authorize targets.
 pub(super) fn server_managed_paths(repo: &Path, config_path: &Path) -> Result<ServerManagedPaths> {
+    let checkout = std::fs::canonicalize(repo)
+        .with_context(|| format!("resolving ownership checkout boundary {}", repo.display()))?;
+    if protected_root(&checkout) {
+        bail!(
+            "refusing protected ownership checkout boundary {} (checkout {})",
+            checkout.display(),
+            repo.display()
+        );
+    }
     let mut state_roots = BTreeSet::new();
     match std::fs::read_to_string(config_path) {
         Ok(text) => {
@@ -457,8 +479,7 @@ pub(super) fn server_managed_paths(repo: &Path, config_path: &Path) -> Result<Se
         }
     }
     let mut paths = Vec::new();
-    let mut anchors =
-        vec![std::fs::canonicalize(repo).context("resolving ownership checkout boundary")?];
+    let mut anchors = vec![checkout];
     for root in state_roots.iter().filter(|root| {
         !state_roots
             .iter()
