@@ -19,15 +19,16 @@
  * worktree binding (cwd per conversation), backend interchange, quota
  * handoff, and the event-sourced log — everything except streaming, native
  * slash commands, and the permission round-trip, which need a structured
- * protocol. AGY's CLI-native model/effort options are exposed.
+ * protocol. AGY's CLI-native model/effort options are exposed, and Vibe's
+ * config-native model selection is exposed through the gah CLI (#1510).
  */
 
 import { spawn, execFile as execFileCallback, execFileSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import type { ChatTranscriptTurn } from '@git-agent-harness/contracts';
-import { runConfigShowProfile } from '../gahCli.js';
+import type { ChatTranscriptTurn, ChatUsage } from '@git-agent-harness/contracts';
+import { runConfigShowProfile, runVibeModelSummary, runVibeSetModel } from '../gahCli.js';
 import type { ManagerAdapter, ManagerCommandInfo, ManagerModelInfo, ManagerReasoningEffortInfo } from './registry.js';
 import { isInsideWorkingDirectory } from './permissionPolicy.js';
 import { agentChildEnv } from './childEnv.js';
@@ -80,8 +81,27 @@ export interface HeadlessBackendSpec {
    * descriptive error. Default: trimmed stdout on exit 0, else an error
    * built from stderr. */
   parseReply?: (result: HeadlessProcessResult) => string;
-  /** Selectable CLI-native options for headless backends that expose them. */
-  modelOptions?: () => Promise<{ models: ManagerModelInfo[]; reasoningEfforts: ManagerReasoningEffortInfo[] }>;
+  /** Selectable CLI-native options for headless backends that expose them.
+   * Receives the GAH profile so a backend whose options come from a
+   * profile-scoped source (vibe's own config, per instance) can resolve it. */
+  modelOptions?: (gahProfile: string) => Promise<{
+    models: ManagerModelInfo[];
+    reasoningEfforts: ManagerReasoningEffortInfo[];
+    /** The backend's own current model, for backends whose selection lives
+     * outside this process (vibe's config file); in-memory selection still
+     * wins when one was made here. */
+    currentModelId?: string | null;
+  }>;
+  /** Persist a model selection for backends with no CLI flag to carry it
+   * (vibe writes `active_model` into its own config). Called by setModel
+   * after validation, and before a turn whose session pinned a model. */
+  applyModel?: (gahProfile: string, modelId: string) => Promise<void>;
+  /** Identifies the installation-global resource `applyModel` persists to
+   * (vibe's config home — the one config file every conversation using
+   * that Vibe installation, ambient or instance, shares). When present,
+   * the adapter serializes pinned turns and model writes sharing a scope
+   * on a per-scope mutex; see withModelSelectionLock. */
+  modelSelectionScope?: () => string;
   /** Detect a tool request the backend leaked into the reply text instead
    * of executing (#1041). Returns null for an ordinary reply; throws when
    * tool-request-shaped text cannot be decoded, so the turn ends with an
@@ -126,6 +146,30 @@ function defaultParseReply(displayName: string): (result: HeadlessProcessResult)
 
 const TURN_TIMEOUT_MS = 10 * 60_000;
 
+/** Per-scope async mutexes (#1510 round 2). Vibe's `active_model` is
+ * installation-global — one config file per Vibe home shared by every
+ * conversation using that installation — so two concurrent pinned turns
+ * used to race: turn B's pin overwrote turn A's before A's child read
+ * the config, and both ran B's model. A pinned turn now holds its
+ * installation's mutex from applyModel through turn completion (tool
+ * continuations included: they spawn under the same lock), and setModel
+ * takes the mutex for its write, so no other writer can move the
+ * selection under a turn that already pinned one. Unpinned turns stay
+ * lock-free: they read whatever the installation's active model is at
+ * spawn time, which is Vibe's own semantics. Keyed by the config home
+ * (ambient or an instance's isolated state root), so distinct
+ * installations never serialize against each other. */
+const modelSelectionLocks = new Map<string, Promise<unknown>>();
+
+function withModelSelectionLock<T>(scope: string, action: () => Promise<T>): Promise<T> {
+  const prior = modelSelectionLocks.get(scope) ?? Promise.resolve();
+  const run = prior.then(action);
+  // The stored tail never rejects, so one failed turn cannot poison the
+  // chain for the next waiter.
+  modelSelectionLocks.set(scope, run.then(() => undefined, () => undefined));
+  return run;
+}
+
 export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter {
   const states = new Map<string, ConversationState>();
   const parseReply = spec.parseReply ?? defaultParseReply(spec.displayName);
@@ -153,134 +197,163 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
       const state = stateFor(gahProfile);
       const cwd = input.cwd ?? process.cwd();
 
-      // One non-interactive invocation: fixed argv, prompt over stdin.
-      const invoke = async (prompt: string): Promise<string> => {
-        const args = spec.turnArgs({
-          model: input.model === undefined ? state.currentModelId : input.model,
-          reasoningEffort: input.reasoningEffort === undefined ? state.currentReasoningEffortId : input.reasoningEffort
-        });
-        const child = spawn(args[0], args.slice(1), {
-          cwd,
-          env: agentChildEnv(await spec.spawnEnv?.(input.profile ?? gahProfile)),
-          stdio: ['pipe', 'pipe', 'pipe']
-        });
-        state.child = child;
-
-        let stdout = '';
-        let stderr = '';
-        child.stdout.on('data', (chunk) => { stdout += chunk; });
-        child.stderr.on('data', (chunk) => { stderr += chunk; });
-        // The child may exit (e.g. a fast validation failure) before we
-        // finish writing; a write past that point would otherwise raise an
-        // unhandled EPIPE and crash the server.
-        child.stdin.on('error', () => {});
-        child.stdin.write(spec.encodeStdin(prompt));
-        child.stdin.end();
-
-        const killTimer = setTimeout(() => {
-          child.kill('SIGKILL');
-        }, TURN_TIMEOUT_MS);
-        killTimer.unref?.();
-
-        try {
-          const code = await new Promise<number | null>((resolve, reject) => {
-            child.on('error', reject);
-            child.on('close', (exitCode) => resolve(exitCode));
-          });
-          const reply = parseReply({ stdout, stderr, exitCode: code });
-          if (reply.trim().length === 0) {
-            throw new Error(`${spec.displayName} turn produced no output.`);
-          }
-          return reply;
-        } finally {
-          clearTimeout(killTimer);
-          state.child = null;
+      // The turn itself. When the session pinned a model and the backend
+      // persists pins installation-globally (vibe), the whole turn runs
+      // under that installation's mutex so no other writer can move the
+      // selection between this pin's applyModel and the child's config
+      // read — including the extra invocations tool continuations spawn.
+      const turn = async (): Promise<{ reply: string; model: string | null; usage: ChatUsage | null }> => {
+        // A backend with no CLI flag for the pin (vibe) persists the
+        // selection through its own config before the turn, so the process
+        // it is about to spawn picks the pinned model up (#1510). Only an
+        // explicit pin writes; the in-memory fallback was already persisted
+        // by setModel.
+        if (input.model && spec.applyModel) {
+          await spec.applyModel(input.profile ?? gahProfile, input.model);
         }
+
+        // One non-interactive invocation: fixed argv, prompt over stdin.
+        const invoke = async (prompt: string): Promise<string> => {
+          const args = spec.turnArgs({
+            model: input.model === undefined ? state.currentModelId : input.model,
+            reasoningEffort: input.reasoningEffort === undefined ? state.currentReasoningEffortId : input.reasoningEffort
+          });
+          const child = spawn(args[0], args.slice(1), {
+            cwd,
+            env: agentChildEnv(await spec.spawnEnv?.(input.profile ?? gahProfile)),
+            stdio: ['pipe', 'pipe', 'pipe']
+          });
+          state.child = child;
+
+          let stdout = '';
+          let stderr = '';
+          child.stdout.on('data', (chunk) => { stdout += chunk; });
+          child.stderr.on('data', (chunk) => { stderr += chunk; });
+          // The child may exit (e.g. a fast validation failure) before we
+          // finish writing; a write past that point would otherwise raise an
+          // unhandled EPIPE and crash the server.
+          child.stdin.on('error', () => {});
+          child.stdin.write(spec.encodeStdin(prompt));
+          child.stdin.end();
+
+          const killTimer = setTimeout(() => {
+            child.kill('SIGKILL');
+          }, TURN_TIMEOUT_MS);
+          killTimer.unref?.();
+
+          try {
+            const code = await new Promise<number | null>((resolve, reject) => {
+              child.on('error', reject);
+              child.on('close', (exitCode) => resolve(exitCode));
+            });
+            const reply = parseReply({ stdout, stderr, exitCode: code });
+            if (reply.trim().length === 0) {
+              throw new Error(`${spec.displayName} turn produced no output.`);
+            }
+            return reply;
+          } finally {
+            clearTimeout(killTimer);
+            state.child = null;
+          }
+        };
+
+        // A headless process has no memory: every turn replays the full
+        // conversation. (historyDelta-style catch-up is meaningless here, but
+        // keeping knownHistory lets future stream-json modes upgrade in place.)
+        let prompt = replayPrompt(input.prompt, input.history);
+        let reply = await invoke(prompt);
+
+        // #1041: a print-mode backend whose model emits a tool call the CLI
+        // didn't execute leaks the raw request syntax as reply text, which
+        // used to surface verbatim as a successful assistant reply. Decode
+        // it, gate it through the same permission round-trip the ACP backends
+        // use, execute the servable read-only subset GAH-side, then continue
+        // the turn with the tool result replayed into the next invocation.
+        // Undecodable or unknown requests fail the turn with an actionable
+        // error instead.
+        const toolExchange: ChatTranscriptTurn[] = [];
+        if (spec.decodeToolRequest) {
+          for (let round = 1; ; round += 1) {
+            const request = spec.decodeToolRequest(reply);
+            if (!request) break;
+            if (round > MAX_TOOL_ROUNDS_PER_TURN) {
+              throw new Error(`${spec.displayName} requested more than ${MAX_TOOL_ROUNDS_PER_TURN} tool calls in a single turn; stopping so raw tool syntax can never surface as a reply.`);
+            }
+            const plan = planHeadlessTool(spec.displayName, request.name, request.args, cwd);
+            const toolCallId = `${spec.id}-tool-${Date.now().toString(36)}-${round}`;
+            const emitToolCall = (status: 'pending' | 'completed' | 'failed', summary: string | null) =>
+              input.onToolCall?.({
+                toolCallId,
+                name: request.name,
+                title: plan.title,
+                kind: plan.kind,
+                status,
+                locations: plan.locations,
+                summary
+              });
+            emitToolCall('pending', null);
+            let decision: string;
+            if (input.requestPermission) {
+              decision = await input.requestPermission({
+                title: plan.title,
+                options: [
+                  { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+                  { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+                ],
+                locations: plan.locations,
+                kind: plan.kind,
+                rawInput: request.args
+              });
+            } else {
+              console.warn(`[managerChat] ${spec.displayName} requested permission for "${plan.title}" -- declining (no permission UI attached)`);
+              decision = 'cancelled';
+            }
+            if (decision !== 'allow-once') {
+              const outcome = decision === 'cancelled' ? 'cancelled' : `declined (${decision})`;
+              const message = `${spec.displayName} requested "${plan.title}" but the permission request was ${outcome}; the turn cannot continue without it.`;
+              emitToolCall('failed', message);
+              throw new Error(message);
+            }
+            let output: string;
+            try {
+              output = await plan.run();
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              emitToolCall('failed', summarizeOutput(message));
+              throw error;
+            }
+            emitToolCall('completed', summarizeOutput(output));
+            input.onToolResult(request.name, output);
+            toolExchange.push(
+              { role: 'assistant', text: request.raw, timestamp: Date.now() },
+              { role: 'tool', text: output, timestamp: Date.now() }
+            );
+            prompt = continuationPrompt(input.prompt, input.history, toolExchange);
+            reply = await invoke(prompt);
+          }
+        }
+
+        state.knownHistory = [
+          ...input.history,
+          { role: 'user', text: input.prompt, timestamp: Date.now() },
+          ...toolExchange,
+          { role: 'assistant', text: reply, timestamp: Date.now() }
+        ];
+        return { reply, model: null, usage: null };
       };
 
-      // A headless process has no memory: every turn replays the full
-      // conversation. (historyDelta-style catch-up is meaningless here, but
-      // keeping knownHistory lets future stream-json modes upgrade in place.)
-      let prompt = replayPrompt(input.prompt, input.history);
-      let reply = await invoke(prompt);
-
-      // #1041: a print-mode backend whose model emits a tool call the CLI
-      // didn't execute leaks the raw request syntax as reply text, which
-      // used to surface verbatim as a successful assistant reply. Decode
-      // it, gate it through the same permission round-trip the ACP backends
-      // use, execute the servable read-only subset GAH-side, then continue
-      // the turn with the tool result replayed into the next invocation.
-      // Undecodable or unknown requests fail the turn with an actionable
-      // error instead.
-      const toolExchange: ChatTranscriptTurn[] = [];
-      if (spec.decodeToolRequest) {
-        for (let round = 1; ; round += 1) {
-          const request = spec.decodeToolRequest(reply);
-          if (!request) break;
-          if (round > MAX_TOOL_ROUNDS_PER_TURN) {
-            throw new Error(`${spec.displayName} requested more than ${MAX_TOOL_ROUNDS_PER_TURN} tool calls in a single turn; stopping so raw tool syntax can never surface as a reply.`);
-          }
-          const plan = planHeadlessTool(spec.displayName, request.name, request.args, cwd);
-          const toolCallId = `${spec.id}-tool-${Date.now().toString(36)}-${round}`;
-          const emitToolCall = (status: 'pending' | 'completed' | 'failed', summary: string | null) =>
-            input.onToolCall?.({
-              toolCallId,
-              name: request.name,
-              title: plan.title,
-              kind: plan.kind,
-              status,
-              locations: plan.locations,
-              summary
-            });
-          emitToolCall('pending', null);
-          let decision: string;
-          if (input.requestPermission) {
-            decision = await input.requestPermission({
-              title: plan.title,
-              options: [
-                { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
-                { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
-              ],
-              locations: plan.locations,
-              kind: plan.kind,
-              rawInput: request.args
-            });
-          } else {
-            console.warn(`[managerChat] ${spec.displayName} requested permission for "${plan.title}" -- declining (no permission UI attached)`);
-            decision = 'cancelled';
-          }
-          if (decision !== 'allow-once') {
-            const outcome = decision === 'cancelled' ? 'cancelled' : `declined (${decision})`;
-            const message = `${spec.displayName} requested "${plan.title}" but the permission request was ${outcome}; the turn cannot continue without it.`;
-            emitToolCall('failed', message);
-            throw new Error(message);
-          }
-          let output: string;
-          try {
-            output = await plan.run();
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            emitToolCall('failed', summarizeOutput(message));
-            throw error;
-          }
-          emitToolCall('completed', summarizeOutput(output));
-          input.onToolResult(request.name, output);
-          toolExchange.push(
-            { role: 'assistant', text: request.raw, timestamp: Date.now() },
-            { role: 'tool', text: output, timestamp: Date.now() }
-          );
-          prompt = continuationPrompt(input.prompt, input.history, toolExchange);
-          reply = await invoke(prompt);
-        }
-      }
-
-      state.knownHistory = [
-        ...input.history,
-        { role: 'user', text: input.prompt, timestamp: Date.now() },
-        ...toolExchange,
-        { role: 'assistant', text: reply, timestamp: Date.now() }
-      ];
-      return { reply, model: null, usage: null };
+      // Vibe's `active_model` is installation-global: one config file is
+      // shared by every conversation using that Vibe installation
+      // (ambient home or one instance's isolated state root). Two
+      // concurrent pinned turns would otherwise race — each turn's
+      // applyModel overwrites the other's before the children read the
+      // config, and both run the second pin's model — so a pinned turn
+      // holds its installation's mutex (see withModelSelectionLock)
+      // from applyModel through turn completion, and setModel's write
+      // waits behind it too. This lock is the direct consequence of
+      // Vibe's config-driven, per-installation model selection.
+      const scope = input.model && spec.applyModel ? spec.modelSelectionScope?.() : undefined;
+      return scope ? withModelSelectionLock(scope, turn) : turn();
     },
 
     async listCommands(): Promise<ManagerCommandInfo[]> {
@@ -288,11 +361,11 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     },
 
     async listModels(gahProfile) {
-      const options = await spec.modelOptions?.();
+      const options = await spec.modelOptions?.(gahProfile);
       const state = stateFor(gahProfile);
       return {
         models: options?.models ?? [],
-        currentModelId: state.currentModelId,
+        currentModelId: state.currentModelId ?? options?.currentModelId ?? null,
         reasoningEfforts: options?.reasoningEfforts ?? [],
         currentReasoningEffortId: state.currentReasoningEffortId,
         contextUsage: null
@@ -300,14 +373,25 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     },
 
     async setModel(gahProfile, modelId): Promise<void> {
-      const options = await spec.modelOptions?.();
+      const options = await spec.modelOptions?.(gahProfile);
       if (!options) throw new Error(`${spec.displayName} doesn't support model selection in headless mode.`);
       if (!options.models.some((model) => model.id === modelId)) throw new Error(`Unknown model "${modelId}" for ${spec.displayName}`);
+      // The write takes the same per-installation mutex as a pinned turn:
+      // landing between another turn's applyModel and its child's config
+      // read (or a tool continuation's spawn) would make that turn run
+      // this write's model instead of its own pin.
+      const write = async () => { await spec.applyModel?.(gahProfile, modelId); };
+      const scope = spec.applyModel ? spec.modelSelectionScope?.() : undefined;
+      if (scope) {
+        await withModelSelectionLock(scope, write);
+      } else {
+        await write();
+      }
       stateFor(gahProfile).currentModelId = modelId;
     },
 
     async setReasoningEffort(gahProfile, effortId): Promise<void> {
-      const options = await spec.modelOptions?.();
+      const options = await spec.modelOptions?.(gahProfile);
       if (!options) throw new Error(`${spec.displayName} doesn't support reasoning-effort selection in headless mode.`);
       if (!options.reasoningEfforts.some((effort) => effort.id === effortId)) throw new Error(`Unknown reasoning effort "${effortId}" for ${spec.displayName}`);
       stateFor(gahProfile).currentReasoningEffortId = effortId;
@@ -372,15 +456,47 @@ function resolveVibeInterpreter(executable?: string): string {
  * so the replayed transcript never reaches process argv.
  * `resolveInterpreter` is overridable so tests can prove the argv/stdin
  * split against a fake interpreter instead of requiring a real vibe
- * install. */
-export function vibeBackendSpec(overrides: { resolveInterpreter?: () => string; executable?: string } = {}): HeadlessBackendSpec {
+ * install.
+ *
+ * Vibe's CLI has no model flag either: its config file holds the offered
+ * models and the active one. The picker reads both through the gah CLI
+ * (`config show-vibe-models`, no network), and choosing a model persists
+ * `active_model` there (`config set-vibe-model`) — scoped to `instance`'s
+ * isolated state when a backend instance is selected (#1510). */
+export function vibeBackendSpec(overrides: {
+  resolveInterpreter?: () => string;
+  executable?: string;
+  instance?: string | null;
+  /** The instance's isolated state root (runtime.state_root); the Vibe
+   * config this spec reads and writes lives at `stateRoot/.vibe`. */
+  stateRoot?: string | null;
+} = {}): HeadlessBackendSpec {
   const resolveInterpreter = overrides.resolveInterpreter ?? (() => resolveVibeInterpreter(overrides.executable));
   return {
     id: 'vibe',
     displayName: 'Vibe',
-    // vibe's CLI has no model/effort flag; the session's pin (if any) has
-    // nowhere to go here, unlike agyBackendSpec below.
+    // A pinned model never reaches argv; it reaches vibe through its own
+    // config via applyModel instead.
     turnArgs: () => [resolveInterpreter(), '-c', VIBE_STDIN_BRIDGE],
+    // The scope is the config home itself, matching what a spawned Vibe
+    // child resolves: an instance's isolated `state_root/.vibe`, else the
+    // ambient `VIBE_HOME`/`HOME/.vibe`. Keying by the config path (not the
+    // instance name) means two instances sharing a state root also share
+    // the mutex, and the ambient installation shares one mutex across all
+    // GAH profiles that use it.
+    modelSelectionScope: () =>
+      overrides.stateRoot
+        ? path.join(overrides.stateRoot, '.vibe')
+        : process.env.VIBE_HOME ?? path.join(process.env.HOME ?? '', '.vibe'),
+    modelOptions: async (gahProfile) => {
+      const summary = await runVibeModelSummary(gahProfile, overrides.instance);
+      return {
+        models: summary.models,
+        reasoningEfforts: [],
+        currentModelId: summary.active_model
+      };
+    },
+    applyModel: (gahProfile, modelId) => runVibeSetModel(gahProfile, overrides.instance, modelId),
     encodeStdin: (prompt) => prompt,
     decodeToolRequest: decodeVibeToolRequest
   };

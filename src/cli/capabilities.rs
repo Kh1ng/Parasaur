@@ -333,6 +333,7 @@ pub fn generate_manifest() -> CapabilityManifest {
     add_manager_log_operations(&mut manifest);
     add_route_approval_operations(&mut manifest);
     add_backend_instance_operations(&mut manifest);
+    add_vibe_model_operations(&mut manifest);
     add_routing_candidate_operations(&mut manifest);
     add_prompt_policy_operations(&mut manifest);
     request_schemas::add_request_schemas(&mut manifest);

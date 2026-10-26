@@ -744,6 +744,29 @@ pub enum ConfigCommands {
         #[arg(long)]
         instance: String,
     },
+    /// Show the models Vibe's own config offers plus its active model (#1510).
+    ShowVibeModels {
+        #[arg(long = "config", visible_alias = "config-path")]
+        config_path: Option<String>,
+        #[arg(long)]
+        profile: String,
+        /// Scope to one declared backend instance's isolated Vibe state.
+        #[arg(long)]
+        instance: Option<String>,
+    },
+    /// Persist Vibe's `active_model`; its CLI has no model flag (#1510).
+    SetVibeModel {
+        #[arg(long = "config", visible_alias = "config-path")]
+        config_path: Option<String>,
+        #[arg(long)]
+        profile: String,
+        /// Scope to one declared backend instance's isolated Vibe state.
+        #[arg(long)]
+        instance: Option<String>,
+        /// The configured model (alias or name) to make active.
+        #[arg(long)]
+        model: String,
+    },
     /// Run the provider's interactive browser/device login in this instance's isolated state.
     AuthenticateBackendInstance {
         #[arg(long = "config", visible_alias = "config-path")]

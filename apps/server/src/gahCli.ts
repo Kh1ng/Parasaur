@@ -1611,6 +1611,29 @@ export function runBackendInstanceAuth(profile: string, instance: string, config
   return runJsonCommand(args, config);
 }
 
+// Issue #1510: Vibe's model selection lives in its own config file (its CLI
+// has no --model flag), so the picker reads and persists it through the CLI
+// instead of a network call. An instance scopes both to its isolated state.
+export interface VibeModelSummary {
+  models: { id: string; name: string }[];
+  active_model: string | null;
+}
+
+export function runVibeModelSummary(profile: string, instance?: string | null, config?: string): Promise<VibeModelSummary> {
+  const args = ['config', 'show-vibe-models', '--profile', profile];
+  if (instance) args.push('--instance', instance);
+  if (config) args.push('--config-path', config);
+  return runJsonCommand(args, config);
+}
+
+export function runVibeSetModel(profile: string, instance: string | null | undefined, model: string, config?: string): Promise<void> {
+  const args = ['config', 'set-vibe-model', '--profile', profile];
+  if (instance) args.push('--instance', instance);
+  args.push('--model', model);
+  if (config) args.push('--config-path', config);
+  return runVoidCommand(args, config, 'gah config set-vibe-model');
+}
+
 export async function runConfigShowProfile(
   profile: string,
   config?: string

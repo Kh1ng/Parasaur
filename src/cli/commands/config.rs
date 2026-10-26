@@ -658,6 +658,69 @@ pub fn run(command: ConfigCommands) -> Result<()> {
                 anyhow::bail!("provider login failed for backend instance '{}'", instance);
             }
         }
+        ConfigCommands::ShowVibeModels {
+            config_path,
+            profile,
+            instance,
+        } => {
+            let cfg = config::load(config_path.as_deref())?;
+            let home = vibe_model_home(&cfg, &profile, instance.as_deref())?;
+            let selection = crate::runner::backends::vibe::models::read_selection(&home)?;
+            println!(
+                "{}",
+                serde_json::json!({
+                    "models": selection
+                        .models
+                        .iter()
+                        .map(|model| serde_json::json!({"id": model.id, "name": model.name}))
+                        .collect::<Vec<_>>(),
+                    "active_model": selection.active_model,
+                })
+            );
+        }
+        ConfigCommands::SetVibeModel {
+            config_path,
+            profile,
+            instance,
+            model,
+        } => {
+            let cfg = config::load(config_path.as_deref())?;
+            let home = vibe_model_home(&cfg, &profile, instance.as_deref())?;
+            crate::runner::backends::vibe::models::set_active_model(&home, &model)?;
+            println!("Updated Vibe's active model to '{model}'");
+        }
     }
     Ok(())
+}
+
+/// Resolve the Vibe state a model selection applies to (#1510): a declared
+/// backend instance's isolated state root, or the ambient installation the
+/// CLI's own environment points at (`VIBE_HOME`, then `HOME/.vibe`) —
+/// matching what a spawned Vibe child resolves for itself. A named
+/// credential never crosses this boundary; only the config file is touched.
+fn vibe_model_home(
+    cfg: &config::GahConfig,
+    profile: &str,
+    instance: Option<&str>,
+) -> anyhow::Result<std::path::PathBuf> {
+    let profile_config = config::get_profile(cfg, profile)?;
+    let Some(instance) = instance else {
+        return crate::runner::backends::vibe::models::ambient_home()
+            .ok_or_else(|| anyhow::anyhow!("cannot locate Vibe's config: set VIBE_HOME or HOME"));
+    };
+    let routing = profile_config.effective_routing(&cfg.defaults);
+    let entry = routing
+        .backend_instances
+        .get(instance)
+        .ok_or_else(|| anyhow::anyhow!("backend instance '{}' is not declared", instance))?;
+    if !entry.enabled() {
+        anyhow::bail!("backend instance '{}' is disabled", instance);
+    }
+    if entry.runner_kind != "vibe" {
+        anyhow::bail!("backend instance '{}' is not a Vibe instance", instance);
+    }
+    let root = entry.state_root.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("backend instance '{}' has no isolated state_root", instance)
+    })?;
+    Ok(std::path::PathBuf::from(root).join(".vibe"))
 }

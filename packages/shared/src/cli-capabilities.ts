@@ -329,6 +329,22 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
       "cli_command_path": "gah config set",
       "is_stable": true
     },
+    "config.set_vibe_model": {
+      "operation_id": "config.set_vibe_model",
+      "display_name": "Set Vibe Model",
+      "class": "mutation",
+      "profile_scope": "profile_required",
+      "request_schema": null,
+      "response_schema": null,
+      "streaming": "none",
+      "idempotency": "idempotent",
+      "secret_fields": [],
+      "remote_disposition": "local_only",
+      "local_only_reason": "filesystem_access_required",
+      "documentation": "Persist Vibe's installation-global active_model selection into its own config; its CLI has no model flag (#1510)",
+      "cli_command_path": "gah config set-vibe-model",
+      "is_stable": true
+    },
     "config.show": {
       "operation_id": "config.show",
       "display_name": "Show Configuration",
@@ -347,6 +363,22 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
       "local_only_reason": null,
       "documentation": "Show global defaults (e.g. current_manager)",
       "cli_command_path": "gah config show",
+      "is_stable": true
+    },
+    "config.show_vibe_models": {
+      "operation_id": "config.show_vibe_models",
+      "display_name": "Show Vibe Models",
+      "class": "read",
+      "profile_scope": "profile_required",
+      "request_schema": null,
+      "response_schema": null,
+      "streaming": "none",
+      "idempotency": "idempotent",
+      "secret_fields": [],
+      "remote_disposition": "local_only",
+      "local_only_reason": "filesystem_access_required",
+      "documentation": "Show the models Vibe's own config offers plus its active model, per installation (#1510)",
+      "cli_command_path": "gah config show-vibe-models",
       "is_stable": true
     },
     "dispatch.run": {
@@ -1331,7 +1363,9 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
     "gah config routing-candidate remove": "config.routing_candidate.remove",
     "gah config set": "config.set",
     "gah config set-backend-instance-enabled": "backend_instance.set_enabled",
+    "gah config set-vibe-model": "config.set_vibe_model",
     "gah config show": "config.show",
+    "gah config show-vibe-models": "config.show_vibe_models",
     "gah dispatch": "dispatch.run",
     "gah doctor": "doctor.validate",
     "gah events": "events.list",
@@ -1442,6 +1476,8 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
   "local_only_operations": {
     "auth.health": "local_backend_execution_required",
     "candidates.convert": "filesystem_access_required",
+    "config.set_vibe_model": "filesystem_access_required",
+    "config.show_vibe_models": "filesystem_access_required",
     "init.create": "filesystem_access_required",
     "installer.files": "filesystem_access_required",
     "loop.run": "local_backend_execution_required",

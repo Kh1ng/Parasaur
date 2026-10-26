@@ -1,4 +1,5 @@
 pub(crate) mod credential_guard;
+pub(crate) mod models;
 use anyhow::Result;
 use std::collections::HashSet;
 use std::env;

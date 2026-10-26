@@ -71,5 +71,5 @@ pub(crate) use tempfile::TempDir;
 pub(crate) use predicates::prelude::*;
 pub(crate) use support::{
     gah_command, gah_process_command, test_tempdir, write_executable, write_fake_binary,
-    FakeBackend, IsolatedCommand, Scenario,
+    FakeBackend, IsolatedCommand, Scenario, TestCommandEnvironment,
 };

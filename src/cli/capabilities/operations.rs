@@ -600,6 +600,53 @@ pub(super) fn add_backend_instance_operations(manifest: &mut CapabilityManifest)
     });
 }
 
+pub(super) fn add_vibe_model_operations(manifest: &mut CapabilityManifest) {
+    // gah config show-vibe-models
+    manifest.add_operation(OperationDefinition {
+        operation_id: "config.show_vibe_models".to_string(),
+        display_name: "Show Vibe Models".to_string(),
+        class: OperationClass::Read,
+        profile_scope: ProfileScope::ProfileRequired,
+        request_schema: None,
+        response_schema: None,
+        streaming: StreamingBehavior::None,
+        idempotency: Idempotency::Idempotent,
+        secret_fields: vec![],
+        // Both commands read or write Vibe's own config file on this
+        // machine (the ambient install's home or an instance's isolated
+        // state root), so they cannot be served from another node.
+        remote_disposition: RemoteDisposition::LocalOnly,
+        local_only_reason: Some(LocalOnlyReason::FilesystemAccessRequired),
+        documentation: Some(
+            "Show the models Vibe's own config offers plus its active model, per installation (#1510)"
+                .to_string(),
+        ),
+        cli_command_path: "gah config show-vibe-models".to_string(),
+        is_stable: true,
+    });
+
+    // gah config set-vibe-model
+    manifest.add_operation(OperationDefinition {
+        operation_id: "config.set_vibe_model".to_string(),
+        display_name: "Set Vibe Model".to_string(),
+        class: OperationClass::Mutation,
+        profile_scope: ProfileScope::ProfileRequired,
+        request_schema: None,
+        response_schema: None,
+        streaming: StreamingBehavior::None,
+        idempotency: Idempotency::Idempotent,
+        secret_fields: vec![],
+        remote_disposition: RemoteDisposition::LocalOnly,
+        local_only_reason: Some(LocalOnlyReason::FilesystemAccessRequired),
+        documentation: Some(
+            "Persist Vibe's installation-global active_model selection into its own config; its CLI has no model flag (#1510)"
+                .to_string(),
+        ),
+        cli_command_path: "gah config set-vibe-model".to_string(),
+        is_stable: true,
+    });
+}
+
 pub(super) fn add_external_approval_operations(manifest: &mut CapabilityManifest) {
     // gah external-approval list
     manifest.add_operation(OperationDefinition {
