@@ -40,6 +40,10 @@ pub struct SkillResolution {
     pub instance: Option<String>,
     pub source: String,
     pub skills: Vec<ResolvedSkill>,
+    /// When a worker fetched this from central (RFC 3339). Carried by the
+    /// last-known-good cache so `gah status` can report its age (#1532).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -180,6 +184,7 @@ fn resolve_bank(
         }
         .to_string(),
         skills,
+        resolved_at: None,
     };
     validate_resolution(&resolution, profile, backend, instance)?;
     Ok(resolution)
@@ -295,9 +300,12 @@ fn resolve_remote(
         }
         let token = std::env::var("COORDINATOR_TOKEN").ok();
         let body = transport.get(url.as_str(), token.as_deref())?;
-        let resolution: SkillResolution =
+        let mut resolution: SkillResolution =
             serde_json::from_slice(&body).context("parsing central skill resolution")?;
         validate_resolution(&resolution, profile, backend, instance)?;
+        resolution.resolved_at = crate::clock::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .ok();
         write_cache(cache, &resolution)?;
         Ok(resolution)
     })();
@@ -411,6 +419,7 @@ fn resolve_local(profile: &str, backend: &str, instance: Option<&str>) -> Result
             instance: instance.map(str::to_string),
             source: "canonical".to_string(),
             skills: vec![],
+            resolved_at: None,
         });
     }
     let bytes = std::fs::read(&path)
@@ -547,6 +556,7 @@ mod tests {
             instance: None,
             source: "canonical".into(),
             skills: vec![skill("alpha", "1.0.0")],
+            resolved_at: None,
         };
         write_cache(&cache, &expected).unwrap();
 

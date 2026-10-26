@@ -110,6 +110,10 @@ export interface SkillInventoryView {
    * no observation yet to judge freshness of. */
   observation_stale?: boolean;
   drift?: SkillDrift;
+  /** When a worker last fetched the bound resolution from central, and how
+   * old that last-known-good cache is now. Absent for local banks. */
+  skill_cache_resolved_at?: string;
+  skill_cache_age_seconds?: number;
 }
 
 export type AvailabilityScopeKind = 'backend_wide' | 'model_specific' | 'quota_pool';

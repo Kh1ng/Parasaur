@@ -1115,33 +1115,41 @@ fn build_snapshot_inner(
                 .logical_backend
                 .clone()
                 .unwrap_or_else(|| instance.runner_kind.clone());
-            let bound_skill_ids = crate::skill_bindings::resolve_cached_only(
+            let cached = crate::skill_bindings::resolve_cached_only(
                 &cfg.defaults,
                 profile_name,
                 &logical_backend,
                 Some(name.as_str()),
             )
-            .map(|resolution| {
+            .ok();
+            let bound_skill_ids = cached.as_ref().map(|resolution| {
                 resolution
                     .skills
-                    .into_iter()
-                    .map(|skill| skill.id)
+                    .iter()
+                    .map(|skill| skill.id.clone())
                     .collect()
-            })
-            .ok();
+            });
+            let resolved_at = cached.and_then(|resolution| resolution.resolved_at);
             let record = crate::skill_inventory::latest_for(
                 &skill_inventory_records,
                 profile_name,
                 &logical_backend,
                 Some(name.as_str()),
             );
-            crate::skill_inventory::view(
+            let mut view = crate::skill_inventory::view(
                 bound_skill_ids,
                 record,
                 &logical_backend,
                 Some(name.as_str()),
                 now,
-            )
+            );
+            view.skill_cache_age_seconds = resolved_at.as_deref().and_then(|ts| {
+                time::OffsetDateTime::parse(ts, &time::format_description::well_known::Rfc3339)
+                    .ok()
+                    .map(|parsed| (now - parsed).whole_seconds())
+            });
+            view.skill_cache_resolved_at = resolved_at;
+            view
         })
         .collect();
 

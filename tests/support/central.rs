@@ -55,6 +55,24 @@ impl FakeCentral {
         self.state.lock().unwrap().clone()
     }
 
+    /// Operator-style request over real HTTP, e.g. `POST /api/skills`.
+    pub fn request(&self, method: &str, path: &str, body: &Value) -> (u16, Value) {
+        let address = self.url.trim_start_matches("http://");
+        let mut socket = TcpStream::connect(address).unwrap();
+        let body = body.to_string();
+        write!(
+            socket,
+            "{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        let mut response = String::new();
+        socket.read_to_string(&mut response).unwrap();
+        let status: u16 = response.split_whitespace().nth(1).unwrap().parse().unwrap();
+        let payload = response.split("\r\n\r\n").nth(1).unwrap_or("");
+        (status, serde_json::from_str(payload).unwrap_or(Value::Null))
+    }
+
     pub fn update(&self, change: impl FnOnce(&mut Value)) {
         change(&mut self.state.lock().unwrap());
     }
@@ -144,6 +162,53 @@ fn respond(state: &mut Value, method: &str, url: &url::Url, body: Value) -> (u16
                 .get(&key)
                 .map(|resolution| (200, resolution.clone()))
                 .unwrap_or((404, json!({"error":"resolution_not_seeded"})))
+        }
+        // Same request shapes as apps/server `POST /api/skills` and
+        // `PUT /api/skills/bindings`; a binding rewrites the seeded resolution
+        // for its target from the installed bank, newest install of an id wins.
+        ("POST", "/api/skills") => {
+            let (Some(id), Some(version), Some(content)) = (
+                body["id"].as_str(),
+                body["version"].as_str(),
+                body["content"].as_str(),
+            ) else {
+                return (400, json!({"error":"Invalid skill"}));
+            };
+            let skill = json!({
+                "id": id, "version": version, "content": content,
+                "backends": body["backends"].as_array().cloned().unwrap_or_default()
+            });
+            if state["bank"].is_null() {
+                state["bank"] = json!([]);
+            }
+            state["bank"].as_array_mut().unwrap().push(skill.clone());
+            (201, skill)
+        }
+        ("PUT", "/api/skills/bindings") => {
+            let (Some(profile), Some(backend)) =
+                (body["profile"].as_str(), body["backend"].as_str())
+            else {
+                return (400, json!({"error":"Invalid skill binding"}));
+            };
+            let instance = body["instance"].as_str();
+            let wanted: Vec<&str> = body["bindings"]
+                .as_array()
+                .map(|ids| ids.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            let bank = state["bank"].as_array().cloned().unwrap_or_default();
+            let skills: Vec<Value> = wanted
+                .iter()
+                .filter_map(|id| bank.iter().rev().find(|skill| skill["id"] == *id).cloned())
+                .collect();
+            let key = format!("{profile}/{backend}/{}", instance.unwrap_or(""));
+            state["resolutions"][&key] = json!({
+                "profile": profile, "backend": backend, "instance": instance,
+                "source": "central", "skills": skills
+            });
+            (
+                200,
+                json!({"profile": profile, "backend": backend, "instance": instance, "skillIds": wanted}),
+            )
         }
         ("POST", "/api/claims/acquire" | "/api/claims/renew" | "/api/claims/release") => {
             let key = format!(
