@@ -29,6 +29,9 @@ pub struct ReleaseArgs {
     pub restart_server: bool,
     pub server_service: String,
     pub manifest: Option<String>,
+    /// Issue #1626: repair server-managed path ownership when the rendered
+    /// unit changes `User=` (the default); false refuses the change.
+    pub repair_ownership: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -627,7 +630,11 @@ pub fn run_release(args: ReleaseArgs) -> Result<()> {
     }
 
     if matches!(args.role, HostRole::Central | HostRole::Standalone) {
-        match super::install_server_unit_template(&args.repo, &args.server_service)? {
+        match super::install_server_unit_template(
+            &args.repo,
+            &args.server_service,
+            args.repair_ownership,
+        )? {
             Some(target) => println!("Installed server unit: {}", target.display()),
             None => {
                 println!("systemd not available on this host: skipping gah-server.service install.")

@@ -36,4 +36,10 @@ pub struct UpdateArgs {
     /// origin remote.
     #[arg(long)]
     pub release_manifest: Option<String>,
+    /// Refuse to change the service account when the installed
+    /// gah-server.service runs as a different user, instead of repairing
+    /// ownership of the server-managed paths with sudo chown -R (issue
+    /// #1626). Repair is the default.
+    #[arg(long, default_value_t = false)]
+    pub no_repair_ownership: bool,
 }

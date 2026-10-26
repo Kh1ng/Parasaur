@@ -16,6 +16,7 @@ use std::process::Command;
 
 mod installation;
 mod launch_agent;
+mod ownership;
 mod reexec;
 mod release;
 mod units;
@@ -42,6 +43,10 @@ pub struct UpdateArgs {
     /// Explicit manifest (edge-manifest.json) URL or local path; defaults
     /// to the edge feed derived from the checkout's origin remote.
     pub release_manifest: Option<String>,
+    /// Issue #1626: when the rendered `gah-server.service` changes `User=`,
+    /// repair ownership of the server-managed paths to the new account
+    /// (the default); `--no-repair-ownership` refuses the change instead.
+    pub repair_ownership: bool,
 }
 
 pub fn run(args: UpdateArgs) -> Result<()> {
@@ -71,6 +76,7 @@ pub fn run(args: UpdateArgs) -> Result<()> {
             restart_server: args.restart_server,
             server_service: args.server_service,
             manifest: args.release_manifest,
+            repair_ownership: args.repair_ownership,
         });
     }
 
@@ -177,7 +183,7 @@ pub fn run(args: UpdateArgs) -> Result<()> {
         // Operator customization belongs in `systemctl edit gah-server.service`
         // drop-ins; replacing the base template on every update is what
         // prevents the stale-unit drift this fix exists for.
-        match install_server_unit_template(&repo, &args.server_service)? {
+        match install_server_unit_template(&repo, &args.server_service, args.repair_ownership)? {
             Some(target) => println!("Installed server unit: {}", target.display()),
             None => {
                 println!("systemd not available on this host: skipping gah-server.service install.")
@@ -485,7 +491,28 @@ fn copy_systemd_unit(repo: &Path, config_home: &Path, unit_file_name: &str) -> R
 /// deterministic update is safe. `--server-service` names the installed unit
 /// (default `gah-server.service`), so the copy target matches what the
 /// restart step below restarts.
-fn install_server_unit_template(repo: &Path, server_service: &str) -> Result<Option<PathBuf>> {
+fn install_server_unit_template(
+    repo: &Path,
+    server_service: &str,
+    repair_ownership: bool,
+) -> Result<Option<PathBuf>> {
+    install_server_unit_template_into(
+        repo,
+        server_service,
+        Path::new("/etc/systemd/system"),
+        repair_ownership,
+    )
+}
+
+/// The install above, parameterized by the systemd unit directory so tests
+/// can render over an existing installed unit in a temporary directory
+/// (issue #1626: the ownership repair decision reads that unit first).
+fn install_server_unit_template_into(
+    repo: &Path,
+    server_service: &str,
+    units_dir: &Path,
+    repair_ownership: bool,
+) -> Result<Option<PathBuf>> {
     let mut components = Path::new(server_service).components();
     if !server_service.ends_with(".service")
         || !matches!(components.next(), Some(Component::Normal(_)))
@@ -500,12 +527,25 @@ fn install_server_unit_template(repo: &Path, server_service: &str) -> Result<Opt
     if !source.is_file() {
         bail!("systemd unit template is missing: {}", source.display());
     }
-    let target = PathBuf::from("/etc/systemd/system").join(server_service);
+    let target = units_dir.join(server_service);
     // #1322: render for this account; the tracked template has placeholders.
     let template = std::fs::read_to_string(&source)
         .with_context(|| format!("reading systemd unit template {}", source.display()))?;
-    let rendered = units::render(&template, &units::UnitValues::resolve(repo)?)
-        .context("rendering gah-server.service")?;
+    let values = units::UnitValues::resolve(repo)?;
+    let rendered = units::render(&template, &values).context("rendering gah-server.service")?;
+    // #1626: rendering for the installing account can change `User=`; repair
+    // the server-managed paths' ownership (or refuse) BEFORE the new unit
+    // replaces the old one, so the service never restarts into an account
+    // that cannot read its state and config. A failed chown aborts with the
+    // previous unit still installed and running.
+    let change = ownership::account_change(
+        ownership::previous_account(&target),
+        ownership::unit_user(&rendered),
+    );
+    if let Some(change) = change {
+        let managed = ownership::server_managed_paths(repo, values.config_path())?;
+        ownership::repair_or_refuse(repo, &change, &managed, repair_ownership)?;
+    }
     let staged = tempfile::NamedTempFile::new().context("staging gah-server.service")?;
     std::fs::write(staged.path(), rendered).context("staging gah-server.service")?;
     let source = staged
@@ -927,9 +967,8 @@ mod tests {
     use super::{
         copy_opencode_agent_configs, ensure_clean, ensure_default_branch_checkout,
         ensure_lockfile_current, install_prune_unit_template, install_quota_refresh_unit_template,
-        install_server_unit_template, install_watchdog_unit_template, installed_binary_path,
-        resolve_web_deploy_root, run, stale_asset_names, try_enable_linger, HostRole, UpdateArgs,
-        WEB_BUILD_ARGS,
+        install_watchdog_unit_template, installed_binary_path, resolve_web_deploy_root, run,
+        stale_asset_names, try_enable_linger, HostRole, UpdateArgs, WEB_BUILD_ARGS,
     };
     use crate::test_support::{ExecGuard, PathGuard};
     use std::collections::HashSet;
@@ -1278,97 +1317,17 @@ mod tests {
             server_service: "gah-server.service".into(),
             from_release: false,
             release_manifest: None,
+            repair_ownership: true,
         })
         .unwrap_err();
         assert!(err.to_string().contains("--role central"));
     }
 
     /// Issue #894: `gah update` (central role) reinstalls the system-level
-    /// `gah-server.service` unit from the tracked template on every run, so
-    /// the installed unit can never drift from `packaging/systemd/`. The fake
-    /// `sudo` shim records the invocation; the assertion checks the template
-    /// was copied to /etc/systemd/system and daemon-reload ran.
-    #[test]
-    fn server_unit_template_is_installed_on_every_update() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let bin_tmp = TempDir::new().unwrap();
-        let record_path = bin_tmp.path().join("sudo-argv.log");
-        let unit_path = bin_tmp.path().join("installed.service");
-        // Fake `sudo` that just logs its args and forwards to the real
-        // `install`/`systemctl` is too fragile; instead log and succeed so
-        // the test asserts the *plan* of the update, not the root-owned copy.
-        let script = format!(
-            "#!/bin/sh\necho \"$@\" >> '{}'\nif [ \"$1\" = \"install\" ]; then cp \"$8\" '{}'; exit 0; fi\nif [ \"$1\" = \"systemctl\" ] && [ \"$2\" = \"daemon-reload\" ]; then exit 0; fi\nexit 0\n",
-            record_path.display(),
-            unit_path.display()
-        );
-        let script_path = bin_tmp.path().join("sudo");
-        std::fs::write(&script_path, script).unwrap();
-        // systemd_available() runs `systemctl --version`; without a fake
-        // systemctl on PATH the unit install is skipped entirely (returns
-        // None) and this test can't assert anything.
-        let systemctl_path = bin_tmp.path().join("systemctl");
-        std::fs::write(
-            &systemctl_path,
-            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'systemd 255'; exit 0; fi\nif [ \"$1\" = \"daemon-reload\" ]; then exit 0; fi\nexit 0\n",
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            for path in [&script_path, &systemctl_path] {
-                let mut perms = std::fs::metadata(path).unwrap().permissions();
-                perms.set_mode(0o755);
-                std::fs::set_permissions(path, perms).unwrap();
-            }
-        }
-        let _path_guard = PathGuard::set(bin_tmp.path().to_str().unwrap());
+    /// `gah-server.service` unit from the tracked template on every run.
+    /// Moved to `src/update/ownership.rs` with the #1626 repair tests; the
+    /// coverage lives next to the install seam they share.
 
-        let target = install_server_unit_template(repo, "gah-server.service")
-            .unwrap()
-            .unwrap();
-        assert!(target.ends_with("/etc/systemd/system/gah-server.service"));
-        let record = std::fs::read_to_string(&record_path).unwrap();
-        assert!(
-            record.contains("install"),
-            "expected sudo install: {record}"
-        );
-        assert!(record.contains("gah-server.service"), "{record}");
-        assert!(record.contains("/etc/systemd/system"), "{record}");
-        assert!(record.contains("daemon-reload"), "{record}");
-        // #1322: the installed unit is rendered for this account, not copied.
-        let unit = std::fs::read_to_string(&unit_path).unwrap();
-        for placeholder in ["@USER@", "@REPO@", "@CONFIG@", "@NODE@", "@PATH@"] {
-            assert!(!unit.contains(placeholder), "{placeholder}: {unit}");
-        }
-        let user =
-            String::from_utf8(Command::new("id").arg("-un").output().unwrap().stdout).unwrap();
-        assert!(
-            unit.contains(&format!("\nUser={}\n", user.trim())),
-            "{unit}"
-        );
-        assert!(unit.contains(&format!(
-            "\nWorkingDirectory={}\n",
-            repo.canonicalize().unwrap().display()
-        )));
-    }
-
-    #[test]
-    fn server_unit_name_cannot_escape_systemd_directory() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
-        for name in [
-            "/tmp/pwn.service",
-            "../pwn.service",
-            "nested/pwn.service",
-            "not-a-unit",
-        ] {
-            assert!(install_server_unit_template(repo, name).is_err(), "{name}");
-        }
-    }
-
-    /// Issue #896: an explicitly-empty GAH_WEB_DEPLOY_ROOT skips deployment
-    /// (returns None) without touching npm or the filesystem -- the operator
-    /// opted out of web deploy for this host.
     #[test]
     fn empty_web_deploy_root_skips_deployment() {
         assert_eq!(
