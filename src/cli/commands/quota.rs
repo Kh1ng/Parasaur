@@ -192,7 +192,7 @@ pub fn run(command: QuotaCommands) -> Result<()> {
                 profile.routing = profile.effective_routing(&cfg.defaults);
                 let refreshed = quota_store::refresh_quota_observations_and_wait(
                     &profile,
-                    time::OffsetDateTime::now_utc(),
+                    crate::clock::now_utc(),
                     &path,
                 );
                 if refreshed > 0 {

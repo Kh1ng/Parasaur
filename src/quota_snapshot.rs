@@ -147,7 +147,7 @@ fn format_check_line(check: &QuotaCheck) -> String {
 }
 
 pub fn run(cfg: &GahConfig, profile_name: &str, since: &str, json: bool) -> Result<()> {
-    let now = OffsetDateTime::now_utc();
+    let now = crate::clock::now_utc();
     let snapshot = build_snapshot(cfg, profile_name, since, now)?;
 
     if json {

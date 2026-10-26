@@ -330,7 +330,7 @@ fn run_pass(
     super::import_requested_changes(cfg, profile_name, &mut ledger_entries)?;
     let profile = crate::config::get_profile(cfg, profile_name)?;
     let claim_scope = crate::work_claim::canonical_claim_scope(profile_name, &profile.repo_id);
-    let now = time::OffsetDateTime::now_utc();
+    let now = crate::clock::now_utc();
     // Issue #761: recurring daemon only, not --once (see probe.rs).
     if run_periodic_probes {
         probe::run(now)?;
@@ -535,7 +535,7 @@ fn run_selected_action(
         let fresh = crate::status::build_snapshot_from_entries(
             cfg,
             profile_name,
-            time::OffsetDateTime::now_utc(),
+            crate::clock::now_utc(),
             ledger_entries,
         )?;
         let mut scoped = fresh;
@@ -702,7 +702,7 @@ fn run_parallel_once(
         crate::status::build_snapshot_from_entries(
             cfg,
             profile_name,
-            time::OffsetDateTime::now_utc(),
+            crate::clock::now_utc(),
             ledger_entries,
         )
     }

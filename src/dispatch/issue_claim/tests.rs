@@ -841,7 +841,7 @@ fn start_renews_an_aging_claim_in_the_background() {
     let _exec_guard = ExecGuard::new();
     let tmp = tempfile::tempdir().unwrap();
     let bin = tmp.path().join("bin");
-    let claimed_at = (OffsetDateTime::now_utc() - time::Duration::minutes(59))
+    let claimed_at = (crate::clock::now_utc() - time::Duration::minutes(59))
         .format(&Rfc3339)
         .unwrap();
     let calls = install_renewal_gh(

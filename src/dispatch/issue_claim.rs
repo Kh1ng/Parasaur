@@ -297,17 +297,10 @@ fn claim_or_lose(
     let policy = &profile.publishing.issue_claim;
     let board = GithubBoard::for_writing(profile)?;
     let me = own_login()?;
-    let outcome = run_claim(
-        &board,
-        policy,
-        &me,
-        target,
-        OffsetDateTime::now_utc(),
-        || {
-            std::thread::sleep(Duration::from_secs(policy.verify_seconds.into()));
-            OffsetDateTime::now_utc()
-        },
-    )?;
+    let outcome = run_claim(&board, policy, &me, target, crate::clock::now_utc(), || {
+        std::thread::sleep(Duration::from_secs(policy.verify_seconds.into()));
+        crate::clock::now_utc()
+    })?;
     match outcome {
         ClaimOutcome::Lost(reason) => {
             ledger.validation_result = Some(crate::ledger::gates::CLAIM_LOST.into());
@@ -321,7 +314,7 @@ fn claim_or_lose(
             profile,
             target,
             me,
-            instant_at(expires_at, OffsetDateTime::now_utc(), Instant::now()),
+            instant_at(expires_at, crate::clock::now_utc(), Instant::now()),
             claim_ttl(policy),
         )),
     }
@@ -420,7 +413,7 @@ impl IssueLease {
                     profile: &profile,
                     deadline: Some(deadline),
                 };
-                match renew(&board, &policy, &me, &claimed, OffsetDateTime::now_utc()) {
+                match renew(&board, &policy, &me, &claimed, crate::clock::now_utc()) {
                     Ok(None) => {
                         failed = false;
                         if !confirm_renewal(&thread_state, began + ttl, now()) {
@@ -603,7 +596,7 @@ pub(super) fn issues_held_by_others<'a>(
     }
     let board = GithubBoard::for_reading(profile)?;
     let me = own_login()?;
-    let now = OffsetDateTime::now_utc();
+    let now = crate::clock::now_utc();
     let mut held = HashSet::new();
     for (number, assignees) in issues {
         if assignees.iter().all(|login| same_login(login, &me)) {

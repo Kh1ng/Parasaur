@@ -688,7 +688,7 @@ pub(super) fn attempt_usage(
                     }
                     if merged.usage_source.is_some() {
                         merged.observed_at = Some(
-                            time::OffsetDateTime::now_utc()
+                            crate::clock::now_utc()
                                 .format(&time::format_description::well_known::Rfc3339)
                                 .unwrap_or_default(),
                         );
@@ -702,7 +702,7 @@ pub(super) fn attempt_usage(
         let mut usage = usage::parse_generic_usage(&text, "attempt_output_log");
         if usage.usage_source.is_some() {
             usage.observed_at = Some(
-                time::OffsetDateTime::now_utc()
+                crate::clock::now_utc()
                     .format(&time::format_description::well_known::Rfc3339)
                     .unwrap_or_default(),
             );
@@ -767,7 +767,7 @@ pub(super) fn attempt_usage(
 
     if usage.usage_source.is_some() {
         usage.observed_at = Some(
-            time::OffsetDateTime::now_utc()
+            crate::clock::now_utc()
                 .format(&time::format_description::well_known::Rfc3339)
                 .unwrap_or_default(),
         );
@@ -1134,7 +1134,7 @@ pub(crate) fn routing_runtime_state_from_entries(
     entries: &[LedgerEntry],
     current: &LedgerEntry,
 ) -> RoutingRuntimeState {
-    let cutoff = OffsetDateTime::now_utc() - time::Duration::days(7);
+    let cutoff = crate::clock::now_utc() - time::Duration::days(7);
     let mut state = RoutingRuntimeState::default();
     for entry in entries
         .iter()

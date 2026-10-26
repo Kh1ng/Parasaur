@@ -562,7 +562,7 @@ pub(super) fn defer_if_branch_attached(
         },
         |deferred_work_ids, deferred_branches| {
             let mut fresh =
-                crate::status::build_snapshot(cfg, profile_name, time::OffsetDateTime::now_utc())?;
+                crate::status::build_snapshot(cfg, profile_name, crate::clock::now_utc())?;
             let all_excluded_work_ids = excluded_work_ids
                 .union(deferred_work_ids)
                 .cloned()

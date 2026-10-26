@@ -8,6 +8,7 @@ use crate::status::StatusSnapshot;
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::time::Duration;
+use time::format_description::well_known::Rfc3339;
 
 /// TICKET-078: how many times the controller will automatically
 /// Retry/Escalate the same work_id before giving up and requiring a human.
@@ -90,14 +91,10 @@ fn has_current_repair_review(mr: &crate::sync::SyncMrJson) -> bool {
 /// `WaitUntil` re-check. Used when a READY_FOR_HUMAN MR's CI is pending so the
 /// controller records a visible, observable deferral instead of a silent no-op.
 fn now_plus(offset: Duration) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let offset = time::Duration::try_from(offset).unwrap_or_default();
+    (crate::clock::now_utc() + offset)
+        .format(&Rfc3339)
         .unwrap_or_default()
-        + offset;
-    let secs = now.as_secs();
-    let dt =
-        chrono::DateTime::from_timestamp(secs as i64, 0).unwrap_or(chrono::DateTime::UNIX_EPOCH);
-    format!("{}", dt.format("%Y-%m-%dT%H:%M:%SZ"))
 }
 
 fn issue_path_identity_key(path: &str) -> IssuePathIdentity {

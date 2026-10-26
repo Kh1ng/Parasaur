@@ -135,6 +135,29 @@ fn multi_loop_preserves_state() {
     let _ = entries; // ledger may be empty for WaitUntil/NoOp loops
 }
 
+#[test]
+fn scenario_clock_advances_between_loop_iterations() {
+    let start = time::OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+    let mut harness = ScenarioHarness::new("github").github_scenario("empty");
+    harness.set_now(start);
+    harness.run_one_loop().unwrap();
+
+    harness.advance(std::time::Duration::from_secs(60));
+    harness.run_one_loop().unwrap();
+
+    let events = support::scenario::read_jsonl_lines(&harness.events_path).unwrap();
+    let timestamps: Vec<_> = events
+        .iter()
+        .filter_map(|event| event["timestamp"].as_str())
+        .collect();
+    assert!(timestamps
+        .iter()
+        .any(|timestamp| timestamp.starts_with("2027-01-15T08:00:00")));
+    assert!(timestamps
+        .iter()
+        .any(|timestamp| timestamp.starts_with("2027-01-15T08:01:00")));
+}
+
 /// Harness children get the harness bin dir through their own command
 /// environment, and only their own. The test process's `PATH` is never
 /// changed, so parallel harnesses cannot resolve each other's fakes (#1557).

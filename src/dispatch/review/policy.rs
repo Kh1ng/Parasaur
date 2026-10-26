@@ -8,7 +8,6 @@ use crate::routing::RouteDecision;
 use anyhow::Result;
 use std::collections::HashSet;
 use std::fmt;
-use time::OffsetDateTime;
 
 mod ci_wait;
 
@@ -308,7 +307,7 @@ fn candidate_is_available(state_path: &std::path::Path, candidate: &CandidateCon
         candidate.model.as_deref(),
         quota_pool.as_deref(),
     );
-    availability::availability_for_identity(state_path, &identity, OffsetDateTime::now_utc())
+    availability::availability_for_identity(state_path, &identity, crate::clock::now_utc())
         .map(|decision| decision.eligible)
         .unwrap_or(true)
 }

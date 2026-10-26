@@ -5,7 +5,7 @@ use super::*;
 /// string in backend output (e.g. Codex's "resets 9:01 PM") as being in
 /// `now`'s offset, since that's the only clock available to a backend CLI
 /// printing to its own terminal -- it means local wall-clock time, not
-/// UTC. Passing `OffsetDateTime::now_utc()` silently mis-resolved every
+/// UTC. Passing `crate::clock::now_utc()` silently mis-resolved every
 /// such reset by exactly the host's UTC offset (observed live: a ~3am
 /// local reset displaying as "~14h remaining" on a UTC-5 host). Falls back
 /// to UTC only if the local offset genuinely can't be determined.
@@ -13,7 +13,7 @@ fn now_with_local_offset() -> OffsetDateTime {
     let local_offset_seconds = chrono::Local::now().offset().local_minus_utc();
     let offset =
         time::UtcOffset::from_whole_seconds(local_offset_seconds).unwrap_or(time::UtcOffset::UTC);
-    OffsetDateTime::now_utc().to_offset(offset)
+    crate::clock::now_utc().to_offset(offset)
 }
 
 pub(in crate::dispatch) fn mark_backend_unavailable_from_output_for_identity(
@@ -253,7 +253,7 @@ mod transition_tests {
             std::fs::read_to_string(&notices).unwrap().lines().count(),
             1
         );
-        let now = OffsetDateTime::now_utc();
+        let now = crate::clock::now_utc();
         for tick in 0..20 {
             assert!(
                 !crate::availability::availability_for_identity(
@@ -311,7 +311,7 @@ mod transition_tests {
             !crate::availability::availability_for_identity(
                 &path,
                 &identity,
-                OffsetDateTime::now_utc()
+                crate::clock::now_utc()
             )
             .unwrap()
             .eligible
@@ -322,7 +322,7 @@ mod transition_tests {
             crate::availability::availability_for_identity(
                 &path,
                 &identity,
-                OffsetDateTime::now_utc()
+                crate::clock::now_utc()
             )
             .unwrap()
             .eligible

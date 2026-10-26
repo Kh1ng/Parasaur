@@ -488,9 +488,6 @@ fn dispatch_agy_multi_instance_isolated_execution() {
     // Clear ledger for the next check
     let _ = fs::remove_file(&ledger_path);
 
-    // Sleep for 1.1s to avoid timestamp/worktree conflict
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-
     // 2. Dispatch with backend agy-second
     bin()
         .args([
@@ -523,9 +520,6 @@ fn dispatch_agy_multi_instance_isolated_execution() {
 
     // Clear ledger again
     let _ = fs::remove_file(&ledger_path);
-
-    // Sleep for 1.1s to avoid timestamp/worktree conflict
-    std::thread::sleep(std::time::Duration::from_millis(1100));
 
     // 3. Dispatch with backend agy (fallback)
     bin()
