@@ -17,5 +17,6 @@ pub fn run(args: Args) -> Result<()> {
         server_service: args.server_service,
         from_release: args.from_release,
         release_manifest: args.release_manifest,
+        repair_ownership: !args.no_repair_ownership,
     })
 }

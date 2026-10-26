@@ -49,6 +49,11 @@ fn argv(args: &UpdateArgs, repo: &Path) -> Vec<OsString> {
     if args.restart_server {
         out.push("--restart-server".into());
     }
+    // #1626: the resumed run renders the server unit, so the ownership
+    // decision must survive the hand-off exactly as the operator passed it.
+    if !args.repair_ownership {
+        out.push("--no-repair-ownership".into());
+    }
     out.extend([
         "--server-service".into(),
         args.server_service.clone().into(),
@@ -72,13 +77,14 @@ mod tests {
             server_service: "gah-server.service".into(),
             from_release: false,
             release_manifest: None,
+            repair_ownership: true,
         };
-        let argv: Vec<String> = argv(&args, Path::new("/srv/gah"))
+        let rendered: Vec<String> = argv(&args, Path::new("/srv/gah"))
             .into_iter()
             .map(|arg| arg.into_string().unwrap())
             .collect();
         assert_eq!(
-            argv,
+            rendered,
             [
                 "update",
                 "--repo",
@@ -92,6 +98,15 @@ mod tests {
                 "--server-service",
                 "gah-server.service"
             ]
+        );
+        // #1626: a refused ownership repair stays refused after the re-exec.
+        let refused = UpdateArgs {
+            repair_ownership: false,
+            ..args
+        };
+        assert!(
+            argv(&refused, Path::new("/srv/gah")).contains(&"--no-repair-ownership".into()),
+            "the refused repair must survive the hand-off"
         );
     }
 }

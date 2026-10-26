@@ -60,6 +60,12 @@ impl UnitValues {
         Ok(())
     }
 
+    /// The config file the rendered unit's `GAH_CONFIG_PATH` points at; the
+    /// ownership repair reads the same file to find the state roots (#1626).
+    pub(super) fn config_path(&self) -> &Path {
+        &self.config
+    }
+
     /// Resolve every value from the running account and its PATH, the same
     /// environment that just built the server.
     pub(super) fn resolve(repo: &Path) -> Result<Self> {
