@@ -1864,6 +1864,8 @@ export interface ManagerModelInfo {
   id: string;
   name: string;
   description?: string;
+  /** Optional model-specific choices. An empty array explicitly disables effort. */
+  reasoningEfforts?: ManagerReasoningEffortInfo[];
 }
 
 /** A reasoning-effort choice advertised by the active backend through ACP's

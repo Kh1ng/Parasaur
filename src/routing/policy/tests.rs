@@ -1365,11 +1365,12 @@ fn cost_aware_ordering_respects_explicit_priority_override() {
 
 #[test]
 fn policy_candidates_attaches_derived_quota_pool_for_agy() {
+    let _fixture = crate::availability::agy::fixture();
     let policy = crate::config::RoutingPolicy {
         pm_candidates: Some(vec![
             crate::config::CandidateConfig {
                 backend: "agy".into(),
-                model: Some("Gemini 3.5 Flash (Medium)".into()),
+                model: Some("Gemini 3.8 Flash (Medium)".into()),
                 quota_pool: None,
                 ..Default::default()
             },
@@ -1381,7 +1382,7 @@ fn policy_candidates_attaches_derived_quota_pool_for_agy() {
             },
             crate::config::CandidateConfig {
                 backend: "agy-second".into(),
-                model: Some("Gemini 3.5 Flash".into()),
+                model: Some("Gemini 3.8 Flash (High)".into()),
                 quota_pool: Some("agy-second".into()),
                 ..Default::default()
             },
@@ -1393,32 +1394,33 @@ fn policy_candidates_attaches_derived_quota_pool_for_agy() {
     assert_eq!(candidates.len(), 3);
     assert_eq!(
         candidates[0].identity.quota_pool.as_deref(),
-        Some("agy:google-native")
+        Some("agy:gemini-weekly")
     );
     assert_eq!(
         candidates[1].identity.quota_pool.as_deref(),
-        Some("agy:external")
+        Some("agy:3p-weekly")
     );
     assert_eq!(
         candidates[2].identity.quota_pool.as_deref(),
-        Some("agy-second:google-native")
+        Some("agy-second:gemini-weekly")
     );
 }
 
 #[test]
 fn live_agy_gemini_pool_block_routes_to_same_accounts_external_pool() {
+    let _fixture = crate::availability::agy::fixture();
     let tmp = TempDir::new().unwrap();
     let now = OffsetDateTime::now_utc();
     let mut profile = profile();
     profile.routing.pm_candidates = Some(vec![
-        candidate_config("agy", Some("Gemini 3.5 Flash (Medium)"), Some("agy")),
+        candidate_config("agy", Some("Gemini 3.8 Flash (Medium)"), Some("agy")),
         candidate_config("agy", Some("Claude Sonnet 4.6 (Thinking)"), Some("agy")),
     ]);
     crate::availability::record_unavailable(
         &path(&tmp),
         "agy",
-        Some("Gemini 3.5 Flash (Medium)"),
-        Some("agy:google-native"),
+        Some("Gemini 3.8 Flash (Medium)"),
+        Some("agy:gemini-weekly"),
         Reason::QuotaExhausted,
         Source::BackendError,
         Some(now + time::Duration::hours(1)),
@@ -1454,7 +1456,7 @@ fn live_agy_gemini_pool_block_routes_to_same_accounts_external_pool() {
     );
     assert_eq!(
         decision.effective_quota_pool.as_deref(),
-        Some("agy:external")
+        Some("agy:3p-weekly")
     );
     assert!(decision.fallback_used);
 }

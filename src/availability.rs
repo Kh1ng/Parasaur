@@ -44,6 +44,7 @@ const LEGACY_VERSION: u32 = 1;
 /// far short of the multi-day spans that were actually wrong.
 pub(crate) const UNAVAILABLE_UNTIL_CEILING_SECONDS: i64 = 2 * 60 * 60;
 
+pub(crate) mod agy;
 mod quota_failures;
 pub(crate) use quota_failures::{clear_quota_failure, notify_quota_exhausted};
 
@@ -156,6 +157,23 @@ pub fn resolve_candidate_quota_pool(
     model: Option<&str>,
     configured_pool: Option<&str>,
 ) -> Option<String> {
+    resolve_candidate_quota_pool_for_runtime(backend, model, configured_pool, None)
+}
+
+pub(crate) fn resolve_candidate_quota_pool_for_runtime(
+    backend: &str,
+    model: Option<&str>,
+    configured_pool: Option<&str>,
+    runtime: Option<(&str, Option<&Path>)>,
+) -> Option<String> {
+    let derive = || match runtime {
+        Some((executable, home)) => {
+            let account = agy_account(backend)?;
+            let model = model?.trim();
+            (!model.is_empty()).then(|| agy::pool(account, model, executable, home))
+        }
+        None => derive_quota_pool(backend, model),
+    };
     if let Some(pool) = configured_pool {
         // Only reinterpret the legacy account-wide tag for this AGY
         // instance. Custom pools (including names beginning with `agy-`) and
@@ -163,13 +181,13 @@ pub fn resolve_candidate_quota_pool(
         let legacy_account_pool =
             agy_account(backend).is_some_and(|account| pool == account || pool == backend);
         if !pool.contains(':') && legacy_account_pool && model.is_some() {
-            if let Some(derived) = derive_quota_pool(backend, model) {
+            if let Some(derived) = derive() {
                 return Some(derived);
             }
         }
         return Some(pool.to_string());
     }
-    derive_quota_pool(backend, model)
+    derive()
 }
 
 /// Canonical quota account for an AGY backend instance. `agy-main` is the
@@ -183,19 +201,15 @@ pub(crate) fn agy_account(backend: &str) -> Option<&str> {
     }
 }
 
-/// Derive a per-account, per-pool quota-pool tag for AGY (`agy:google-native`, etc.).
+/// Derive an account-scoped pool from the live AGY catalog and usage groups.
 pub fn derive_quota_pool(backend: &str, model: Option<&str>) -> Option<String> {
     let account = agy_account(backend)?;
     let model = model?.trim();
     if model.is_empty() {
         return None;
     }
-    let pool = if model.to_ascii_lowercase().starts_with("gemini") {
-        "google-native"
-    } else {
-        "external"
-    };
-    Some(format!("{account}:{pool}"))
+    let executable = if account == "agy" { "agy" } else { backend };
+    Some(agy::pool(account, model, executable, None))
 }
 
 /// Which scope a blocking record matched, for callers that want to explain

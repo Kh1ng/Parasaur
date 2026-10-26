@@ -1,3 +1,4 @@
+import { agyGroupPool } from './agyQuota.js';
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -387,11 +388,11 @@ async function refreshAntigravityQuota(account: UpstreamAuthFile, deps: QuotaRef
   const quotas: CliRouterQuota[] = [];
   for (const g of groups) {
     if (!isObj(g) || !Array.isArray(g.buckets)) continue;
+    const pool = agyGroupPool(g.buckets.map(b => isObj(b) ? b.bucketId : undefined));
     for (const b of g.buckets) {
       if (!isObj(b)) continue;
       const name = boundedString(b.displayName, 80) ?? 'Unknown';
       const window = boundedString(b.window, 40);
-      const pool = b.bucketId === 'gemini-weekly' ? 'google-native' : b.bucketId === '3p-weekly' ? 'external' : null;
       quotas.push({
         label: [boundedString(g.displayName, 80), window ? `${name} (${window})` : name].filter(Boolean).join(' · '),
         remainingPercent: typeof b.remainingFraction === 'number' ? percent(b.remainingFraction * 100) : null,
@@ -517,6 +518,7 @@ export function createCliRouterQuotaObserver(deps: CliRouterDeps = {}) {
   const refreshThrottle = refreshInterval - 60_000;
   let batch: Promise<void> | undefined;
   let stopped = false;
+  const agyScopes = new Map<string, { quotaPool?: string; window?: string }[]>();
 
   async function observeAccount(account: UpstreamAuthFile, stored: CliRouterStoredSettings, force = false): Promise<QuotaCache | undefined> {
     const origin = stored.url.replace(/\/$/, '');
@@ -536,13 +538,17 @@ export function createCliRouterQuotaObserver(deps: CliRouterDeps = {}) {
     const bound = stored.accountBackends?.[account.id];
     const backend = bound ?? logical;
     const opaqueInstance = `cli-router:${createHash('sha256').update(key).digest('hex').slice(0, 24)}`;
-    const routable = provider === 'claude' ? result.quotas.filter(quota => quota.window) : result.quotas;
+    const routable = provider === 'claude' ? result.quotas.filter(quota => quota.window)
+      : provider === 'antigravity' ? result.quotas.filter(quota => quota.quotaPool) : result.quotas;
     // A shape change or model-only response is not an account-wide check.
     // Preserve prior windows until their normal freshness limit expires.
     if (provider === 'claude' && !result.quotaError && routable.length === 0) return result;
     const hasReading = routable.length > 0 && !result.quotaError;
+    if (provider === 'antigravity' && hasReading) {
+      agyScopes.set(key, routable.map(quota => ({ quotaPool: quota.quotaPool, window: quota.window })));
+    }
     const observations: (Partial<CliRouterQuota> | undefined)[] = hasReading ? routable
-      : provider === 'antigravity' ? [{ quotaPool: 'google-native' }, { quotaPool: 'external' }] : [undefined];
+      : provider === 'antigravity' ? (agyScopes.get(key) ?? [{ quotaPool: 'default' }]) : [undefined];
     try {
       for (const quota of observations) {
         const family = quota?.quotaPool;

@@ -128,10 +128,10 @@ test('read-only controller snapshots automatically collect distinct AGY pools, p
     assert.deepEqual(snapshot.accounts.map(a => a.quotas.map(q => q.remainingPercent)), [[0, 0], [54, 0]]);
     assert.equal(rec.calls.filter(c => c.url.endsWith('/api-call')).length, 2);
     assert.deepEqual(records.map(r => [r.backend, r.backend_instance, r.quota_pool, r.quota_window, r.quota_remaining_percent]), [
-      ['agy', 'agy:google-native', 'agy:google-native', 'weekly', 0],
-      ['agy', 'agy:external', 'agy:external', 'weekly', 0],
-      ['agy-second', 'agy-second:google-native', 'agy-second:google-native', 'weekly', 54],
-      ['agy-second', 'agy-second:external', 'agy-second:external', 'weekly', 0],
+      ['agy', 'agy:gemini-weekly', 'agy:gemini-weekly', 'weekly', 0],
+      ['agy', 'agy:3p-weekly', 'agy:3p-weekly', 'weekly', 0],
+      ['agy-second', 'agy-second:gemini-weekly', 'agy-second:gemini-weekly', 'weekly', 54],
+      ['agy-second', 'agy-second:3p-weekly', 'agy-second:3p-weekly', 'weekly', 0],
     ]);
     now += 15 * 60_000 + 1;
     await get(ctx.base, '/');
@@ -142,13 +142,13 @@ test('read-only controller snapshots automatically collect distinct AGY pools, p
 
 test('a partial router outage still observes accounts and failure checks never reuse previous balances', async () => {
   let now = Date.now();
-  let state: 'good' | 'empty' | 'failed' = 'good';
+  let state: 'good' | 'empty' | 'failed' | 'malformed' = 'good';
   const records: Record<string, unknown>[] = [];
   const rec = recordingFetch(c => {
     if (c.url.endsWith('/auth-files')) return { status: 200, body: { files: [file({ id: 'partial', provider: 'antigravity', project_id: 'p' })] } };
     if (c.url.endsWith('/models')) return { status: 503, body: {} };
     if (c.url.endsWith('/config')) return { status: 200, body: { routing: { strategy: 'round-robin' } } };
-    if (c.url.endsWith('/api-call')) return { status: 200, body: { status_code: state === 'failed' ? 401 : 200, body: { groups: state === 'empty' ? [] : [{ displayName: 'Gemini', buckets: [{ bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: .5, resetTime: '2026-10-09T05:00:00Z' }] }] } } };
+    if (c.url.endsWith('/api-call')) return { status: 200, body: { status_code: state === 'failed' ? 401 : 200, body: { groups: state === 'empty' ? [] : [{ displayName: 'Gemini', buckets: [{ bucketId: state === 'malformed' ? undefined : 'gemini-weekly', window: 'weekly', remainingFraction: .5, resetTime: '2026-10-09T05:00:00Z' }] }] } } };
   });
   const ctx = await createTestServer({
     settings: { url: 'https://partial.example.com', apiKey: 'k', managementKey: 'm', accountBackends: { partial: 'agy' } },
@@ -160,17 +160,17 @@ test('a partial router outage still observes accounts and failure checks never r
     assert.equal(first.accounts.length, 1, 'model inventory failure cannot erase credential inventory');
     for (let i = 0; i < 40 && records.length < 1; i++) await new Promise(resolve => setTimeout(resolve, 5));
     assert.equal(records[0].quota_remaining_percent, 50);
-    for (const failure of ['empty', 'failed'] as const) {
+    for (const failure of ['empty', 'failed', 'malformed'] as const) {
       state = failure; now += 15 * 60_000 + 1;
       const count = records.length;
       await get(ctx.base, '/');
-      for (let i = 0; i < 40 && records.length < count + 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
-      assert.deepEqual(records.slice(count).map(check => check.backend_instance), ['agy:google-native', 'agy:external']);
+      for (let i = 0; i < 40 && records.length < count + 1; i++) await new Promise(resolve => setTimeout(resolve, 5));
+      assert.deepEqual(records.slice(count).map(check => check.backend_instance), ['agy:gemini-weekly']);
       for (const check of records.slice(count)) {
         assert.equal(check.quota_remaining_percent, undefined);
         assert.equal(check.quota_window, undefined);
         assert.equal(check.observed_at, undefined);
-        assert.ok(check.backend_instance === 'agy:google-native' || check.backend_instance === 'agy:external');
+        assert.ok(check.backend_instance === 'agy:gemini-weekly');
         if (failure === 'failed') assert.equal(check.check_error, 'Failed to refresh quota from provider');
       }
       assert.ok(records.length > count);

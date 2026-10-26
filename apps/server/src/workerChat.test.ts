@@ -49,7 +49,7 @@ test('remote agent runs only in the worker profile and streams permission, steer
       return { reply: 'worker reply', model: null, usage: null };
     },
     listCommands: async () => [],
-    listModels: async () => ({ models: [{ id: 'helper-model', name: 'Helper model' }], currentModelId: null, reasoningEfforts: [], currentReasoningEffortId: null, contextUsage: null }),
+    listModels: async () => ({ models: [{ id: 'helper-model', name: 'Helper model', reasoningEfforts: [{ id: 'high', name: 'High' }] }], currentModelId: null, reasoningEfforts: [], currentReasoningEffortId: null, contextUsage: null }),
     setModel: async () => {}, setReasoningEffort: async () => {},
     steerTurn: async (_key, message) => { steered = message; return { outcome: 'injected' }; },
     cancelTurn: async () => { cancelled++; }
@@ -71,6 +71,8 @@ test('remote agent runs only in the worker profile and streams permission, steer
   registry.registerNode({ node_id: 'worker', display_name: 'Worker', advertised_url: url, version: '0.1.0', schema_digest: COORDINATOR_SCHEMA_DIGEST, transport_mode: 'loopback', secret_ref: 'env:WORKER_CHAT_TEST_TOKEN', profiles: ['demo'] });
   const connection = workerChatConnection(registry, 'worker', 'demo', profile);
   const remote = connection.adapter('claude', 'test-session');
+  const catalog = await remote.listModels({ key: 'demo#test-session', profile: 'demo' });
+  assert.deepEqual(catalog.models[0].reasoningEfforts, [{ id: 'high', name: 'High' }]);
     const helper = await connection.request<import('./managerChat/helperTasks.js').HelperTaskResult>({
       action: 'helper-task', kind: 'chat_title', sourceBackend: 'claude', sourceBackendInstance: null,
       message: 'Fix worker auth', fallback: 'Fix worker auth',

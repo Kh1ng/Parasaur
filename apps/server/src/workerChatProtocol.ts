@@ -158,10 +158,12 @@ export function parseWorkerChatReply(value: unknown, request: Record<string, unk
   }
   if (request.action === 'models' && object(value) && Array.isArray(value.models) && Array.isArray(value.reasoningEfforts)
     && nullableString(value.currentModelId) && nullableString(value.currentReasoningEffortId)) {
-    const choices = (entries: unknown[]) => {
+    const choices = (entries: unknown[], includeModelEfforts = false): import('./managerChat/registry.js').ManagerModelInfo[] => {
       const result = entries.map(entry => {
         if (!object(entry) || typeof entry.id !== 'string' || !entry.id || typeof entry.name !== 'string' || !optionalString(entry.description)) throw invalid();
-        return { id: entry.id, name: entry.name, ...(entry.description === undefined ? {} : { description: entry.description }) };
+        if (includeModelEfforts && entry.reasoningEfforts !== undefined && !Array.isArray(entry.reasoningEfforts)) throw invalid();
+        return { id: entry.id, name: entry.name, ...(entry.description === undefined ? {} : { description: entry.description }),
+          ...(includeModelEfforts && Array.isArray(entry.reasoningEfforts) ? { reasoningEfforts: choices(entry.reasoningEfforts) } : {}) };
       });
       if (new Set(result.map(entry => entry.id)).size !== result.length) throw invalid();
       return result;
@@ -174,7 +176,7 @@ export function parseWorkerChatReply(value: unknown, request: Record<string, unk
     }
     // Optional since #1507; older workers omit it.
     if (value.bundledRuntime !== undefined && typeof value.bundledRuntime !== 'boolean') throw invalid();
-    return { models: choices(value.models), reasoningEfforts: choices(value.reasoningEfforts),
+    return { models: choices(value.models, true), reasoningEfforts: choices(value.reasoningEfforts),
       currentModelId: value.currentModelId, currentReasoningEffortId: value.currentReasoningEffortId,
       contextUsage, ...(value.bundledRuntime === undefined ? {} : { bundledRuntime: value.bundledRuntime }) };
   }

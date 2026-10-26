@@ -679,54 +679,50 @@ fn cli_clear_without_model_marks_backend_wide_available() {
 
 #[test]
 fn derive_quota_pool_separates_pools_per_account_and_ignores_non_agy() {
+    let _fixture = super::agy::fixture();
     let d = |b, m| super::derive_quota_pool(b, Some(m)).unwrap();
-    assert_eq!(d("agy", "Gemini 3.5 Flash (Medium)"), "agy:google-native");
-    assert_eq!(d("agy-main", "Gemini 3.5 Flash"), "agy:google-native");
-    assert_eq!(d("agy", "gemini-2.0-flash"), "agy:google-native");
-    assert_eq!(d("agy", "Claude Sonnet 4.6 (Thinking)"), "agy:external");
+    assert_eq!(d("agy", "Gemini 3.8 Flash (Medium)"), "agy:gemini-weekly");
+    assert_eq!(d("agy-main", "gemini-3.8-flash-high"), "agy:gemini-weekly");
     assert_eq!(
-        d("agy-second", "Gemini 3.1 Pro (High)"),
-        "agy-second:google-native"
+        d("agy-second", "Claude Sonnet 4.6 (Thinking)"),
+        "agy-second:3p-weekly"
     );
-    assert_eq!(d("agy-second", "Claude Sonnet 4.6"), "agy-second:external");
-    assert_eq!(d("agy-third", "Gemini 3.5"), "agy-third:google-native");
-    assert_eq!(super::derive_quota_pool("claude", Some("Gemini 3.5")), None);
+    assert_eq!(d("agy-third", "unknown"), "agy-third:default");
+    assert_eq!(d("agy", "Gemini retired model"), "agy:default");
+    assert_eq!(super::derive_quota_pool("claude", Some("Gemini 3.8")), None);
     assert_eq!(super::derive_quota_pool("agy", None), None);
     assert_eq!(super::derive_quota_pool("agy", Some("   ")), None);
-    assert_eq!(d("agy", "OpenGeminiWrapper"), "agy:external");
     let r = |b, m, p| super::resolve_candidate_quota_pool(b, m, p).unwrap();
-    let g = "agy:google-native";
-    assert_eq!(r("agy", Some("Gemini 3.5"), Some("agy")), g);
-    assert_eq!(r("agy-main", Some("Gemini 3.5"), Some("agy-main")), g);
-    assert_eq!(r("agy", Some("Gemini 3.5"), None), g);
-    // A fully-qualified pool is operator intent and is respected verbatim.
     assert_eq!(
-        r("agy", Some("Gemini 3.5"), Some("agy:external")),
-        "agy:external"
+        r("agy", Some("gemini-3.8-flash-high"), Some("agy")),
+        "agy:gemini-weekly"
     );
     assert_eq!(
-        r("codex", Some("Gemini 3.5"), Some("agy-custom")),
-        "agy-custom"
+        r("agy-main", Some("gemini-3.8-flash-high"), Some("agy-main")),
+        "agy:gemini-weekly"
     );
+    // Explicit operator pools remain authoritative.
     assert_eq!(
-        r("agy", Some("Gemini 3.5"), Some("agy-custom")),
-        "agy-custom"
+        r("agy", Some("gemini-3.8-flash-high"), Some("custom:pool")),
+        "custom:pool"
     );
+    assert_eq!(r("agy", Some("unknown"), Some("agy-custom")), "agy-custom");
     assert_eq!(r("agy", None, Some("agy")), "agy");
 }
 
 #[test]
 fn agy_pool_isolation_blocks_only_same_pool_on_same_account() {
+    let _fixture = super::agy::fixture();
     // Issue #180: live rate-limit must not spill onto external pool of same account.
     let tmp = TempDir::new().unwrap();
     let p = path(&tmp);
     let now = OffsetDateTime::now_utc();
-    let ag = super::derive_quota_pool("agy", Some("Gemini 3.5 Flash (Medium)")).unwrap();
+    let ag = super::derive_quota_pool("agy", Some("Gemini 3.8 Flash (Medium)")).unwrap();
     let ae = super::derive_quota_pool("agy", Some("Claude Sonnet 4.6 (Thinking)")).unwrap();
     super::record_unavailable(
         &p,
         "agy",
-        Some("Gemini 3.5 Flash (Medium)"),
+        Some("Gemini 3.8 Flash (Medium)"),
         Some(&ag),
         Reason::RateLimited,
         Source::BackendError,
@@ -747,7 +743,7 @@ fn agy_pool_isolation_blocks_only_same_pool_on_same_account() {
 
     // Gemini on `agy` is blocked; Claude on `agy` is not.
     let gemini =
-        super::availability_for(&p, "agy", Some("Gemini 3.5 Flash (Medium)"), Some(&ag), now)
+        super::availability_for(&p, "agy", Some("Gemini 3.8 Flash (Medium)"), Some(&ag), now)
             .unwrap();
     assert!(!gemini.eligible);
     assert_eq!(gemini.scope, Some(BlockScope::QuotaPool));

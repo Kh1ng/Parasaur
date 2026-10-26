@@ -610,10 +610,12 @@ export async function listModelsForBackend(
     ?? await resolveInstanceAdapter(profile, backendId, backendInstance);
   const summary = await adapter.listModels({ key: profile, profile });
   const override = modelOverrideForProfile(profile, backendId);
+  const selected = summary.models.find(model => model.id === (override ?? summary.currentModelId));
+  const reasoningEfforts = selected?.reasoningEfforts ?? summary.reasoningEfforts;
   const effort = reasoningEffortOverrideForProfile(profile, backendId);
-  return { ...summary,
+  return { ...summary, reasoningEfforts,
     ...(override && summary.models.some(model => model.id === override) ? { currentModelId: override } : {}),
-    ...(effort && summary.reasoningEfforts.some(item => item.id === effort) ? { currentReasoningEffortId: effort } : {})
+    ...(effort && reasoningEfforts.some(item => item.id === effort) ? { currentReasoningEffortId: effort } : {})
   };
 }
 

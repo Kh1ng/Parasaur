@@ -62,6 +62,11 @@ pub struct TaskRoutingRule {
 
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct RoutingPolicy {
+    /// Runtime-only legacy AGY installation, inherited from the profile.
+    #[serde(skip)]
+    pub agy_path: Option<String>,
+    #[serde(skip)]
+    pub agy_second_home: Option<std::path::PathBuf>,
     /// Profile entries replace same-key global/default declarations.
     #[serde(default)]
     pub backend_instances: HashMap<String, BackendInstanceConfig>,
@@ -388,6 +393,23 @@ impl RoutingPolicy {
         self.max_implementation_failures_per_ticket.unwrap_or(8)
     }
 
+    /// Resolve quota metadata using the same executable and account HOME as execution.
+    pub(crate) fn candidate_quota_pool(
+        &self,
+        backend: &str,
+        model: Option<&str>,
+        configured: Option<&str>,
+    ) -> Option<String> {
+        let home = (backend == "agy-second")
+            .then_some(self.agy_second_home.as_deref())
+            .flatten();
+        let runtime = (self.agy_path.is_some() || home.is_some())
+            .then(|| (self.agy_path.as_deref().unwrap_or("agy"), home));
+        crate::availability::resolve_candidate_quota_pool_for_runtime(
+            backend, model, configured, runtime,
+        )
+    }
+
     pub fn find_quota_pool(
         &self,
         mode: &str,
@@ -409,7 +431,7 @@ impl RoutingPolicy {
                 };
                 candidates.and_then(|list| configured_quota_pool(list, backend, model))
             });
-        crate::availability::resolve_candidate_quota_pool(backend, model, configured)
+        self.candidate_quota_pool(backend, model, configured)
     }
 }
 
@@ -435,6 +457,8 @@ impl Profile {
     /// Resolve runtime billing without changing the owner's stored policy.
     pub fn effective_routing(&self, defaults: &Defaults) -> RoutingPolicy {
         let mut routing = self.stored_routing(defaults);
+        routing.agy_path = self.agy_path.clone();
+        routing.agy_second_home = self.agy_second_home.as_ref().map(std::path::PathBuf::from);
         routing.normalize_subscription_candidates(|id| {
             crate::credentials::get(id).is_ok_and(|info| {
                 info.kind == crate::credentials::CredentialKind::ClaudeSubscriptionToken

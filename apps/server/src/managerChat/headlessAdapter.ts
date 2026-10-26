@@ -34,6 +34,7 @@ import { runConfigShowProfile, runVibeModelSummary, runVibeSetModel } from '../g
 import { boundedUpstreamFetch } from '../cliRouter.js';
 import type { ManagerConversation, ManagerAdapter, ManagerCommandInfo, ManagerModelInfo, ManagerReasoningEffortInfo } from './registry.js';
 import { isInsideWorkingDirectory } from './permissionPolicy.js';
+import { createAgyModelOptions } from './agyModels.js';
 import { agentChildEnv } from './childEnv.js';
 
 export type { ManagerCommandInfo, ManagerModelInfo };
@@ -69,6 +70,8 @@ interface HeadlessProcessResult {
 export interface HeadlessBackendSpec {
   id: string;
   displayName: string;
+  /** Release metadata refresh timers when an installation is replaced. */
+  dispose?: () => void;
   /** Argv for a print-mode turn. Must not embed prompt/history -- only the
    * session's pinned model/reasoning-effort (#1032 reopened), which are
    * bounded ids, not conversation content. A spec that has no native flag
@@ -92,6 +95,7 @@ export interface HeadlessBackendSpec {
   modelOptions?: (conversation: ManagerConversation) => Promise<{
     models: ManagerModelInfo[];
     reasoningEfforts: ManagerReasoningEffortInfo[];
+    modelReasoningEfforts?: Record<string, ManagerReasoningEffortInfo[]>;
     /** The backend's own current model, for backends whose selection lives
      * outside this process (vibe's config file, OpenHands' configured
      * profile model); an in-memory selection still wins when one was made
@@ -198,6 +202,7 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     dispose(): void {
       // Retire the adapter without interrupting a turn already using its key.
       states.clear();
+      spec.dispose?.();
     },
 
     async runTurn(conversation, input) {
@@ -393,10 +398,19 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     async listModels(conversation) {
       const options = await spec.modelOptions?.(conversation);
       const state = stateFor(conversation.key);
+      if (options?.modelReasoningEfforts && state.currentModelId && !options.models.some(model => model.id === state.currentModelId)) {
+        state.currentModelId = null;
+      }
+      const efforts = options?.modelReasoningEfforts
+        ? options.modelReasoningEfforts[state.currentModelId ?? options.currentModelId ?? ''] ?? []
+        : options?.reasoningEfforts ?? [];
+      if (options?.modelReasoningEfforts && !efforts.some(effort => effort.id === state.currentReasoningEffortId)) {
+        state.currentReasoningEffortId = null;
+      }
       return {
         models: options?.models ?? [],
         currentModelId: state.currentModelId ?? options?.currentModelId ?? null,
-        reasoningEfforts: options?.reasoningEfforts ?? [],
+        reasoningEfforts: efforts,
         currentReasoningEffortId: state.currentReasoningEffortId,
         contextUsage: null
       };
@@ -417,13 +431,20 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
       } else {
         await write();
       }
-      stateFor(conversation.key).currentModelId = modelId;
+      const state = stateFor(conversation.key);
+      state.currentModelId = modelId;
+      if (options.modelReasoningEfforts && !options.modelReasoningEfforts[modelId]?.some(effort => effort.id === state.currentReasoningEffortId)) {
+        state.currentReasoningEffortId = null;
+      }
     },
 
     async setReasoningEffort(conversation, effortId): Promise<void> {
       const options = await spec.modelOptions?.(conversation);
       if (!options) throw new Error(`${spec.displayName} doesn't support reasoning-effort selection in headless mode.`);
-      if (!options.reasoningEfforts.some((effort) => effort.id === effortId)) throw new Error(`Unknown reasoning effort "${effortId}" for ${spec.displayName}`);
+      const efforts = options.modelReasoningEfforts
+        ? options.modelReasoningEfforts[stateFor(conversation.key).currentModelId ?? options.currentModelId ?? ''] ?? []
+        : options.reasoningEfforts;
+      if (!efforts.some((effort) => effort.id === effortId)) throw new Error(`Unknown reasoning effort "${effortId}" for ${spec.displayName}`);
       stateFor(conversation.key).currentReasoningEffortId = effortId;
     },
 
@@ -851,12 +872,6 @@ interface AgyStreamResult {
   error?: string;
 }
 
-function runAgyModels(runtime?: { executable: string; state_root: string | null }) {
-  const result = execFile(runtime?.executable ?? 'agy', ['models'], { encoding: 'utf8', timeout: 10_000, env: agentChildEnv(runtime?.state_root ? { HOME: runtime.state_root } : {}) });
-  result.child.stdin?.end();
-  return result;
-}
-
 /** agy: print mode with NDJSON stdin/stdout so the prompt never touches
  * argv (issue #1009). `--input-format stream-json` reads one `{"event":
  * "user", "message": {"content": [{"type": "text", "text": "..."}]}}`
@@ -880,22 +895,13 @@ function runAgyModels(runtime?: { executable: string; state_root: string | null 
  * only when the session actually pinned one, so an unpinned session's argv
  * is unchanged. */
 export function agyBackendSpec(runtime?: { executable: string; state_root: string | null }): HeadlessBackendSpec {
+  const modelOptions = createAgyModelOptions(runtime);
   return {
+    dispose: modelOptions.dispose,
     id: 'agy',
     displayName: 'Agy',
     ...(runtime?.state_root ? { spawnEnv: async () => ({ HOME: runtime.state_root! }) } : {}),
-    modelOptions: async () => ({
-      models: String((await runAgyModels(runtime)).stdout)
-        .split('\n')
-        .flatMap((line) => {
-          const [id, name] = line.trim().split('\t');
-          return id && name ? [{ id, name }] : [];
-        }),
-      reasoningEfforts: ['low', 'medium', 'high'].map((id) => ({
-        id,
-        name: id[0].toUpperCase() + id.slice(1)
-      }))
-    }),
+    modelOptions,
     turnArgs: (opts = {}) => {
       const args = [
         runtime?.executable ?? 'agy',

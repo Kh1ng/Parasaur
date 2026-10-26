@@ -90,6 +90,11 @@ test('worker session replies preserve expected identity and omit worker-supplied
 test('worker model and command responses validate consumed fields and strip unknown values', () => {
   assert.deepEqual(parseWorkerChatReply({ ...models, models: [{ ...models.models[0], secret: 'omit' }],
     reasoningEfforts: [{ ...models.reasoningEfforts[0], secret: 'omit' }], contextUsage: { ...models.contextUsage, secret: 'omit' } }, { action: 'models' }), models);
+  const modelEfforts = { ...models, models: [{ ...models.models[0], reasoningEfforts: models.reasoningEfforts }] };
+  assert.deepEqual(parseWorkerChatReply({ ...modelEfforts, models: [{ ...modelEfforts.models[0], reasoningEfforts: [{ ...models.reasoningEfforts[0], secret: 'omit' }] }] }, { action: 'models' }), modelEfforts);
+  for (const reasoningEfforts of [null, {}, [{ id: 'high' }], [models.reasoningEfforts[0], models.reasoningEfforts[0]]]) {
+    assert.throws(() => parseWorkerChatReply({ ...models, models: [{ ...models.models[0], reasoningEfforts }] }, { action: 'models' }), /invalid chat response/);
+  }
   assert.deepEqual(parseWorkerChatReply({ ...models, bundledRuntime: true }, { action: 'models' }), { ...models, bundledRuntime: true });
   const commands = [{ name: 'help', description: 'Help', argsHint: 'topic' }];
   assert.deepEqual(parseWorkerChatReply([{ ...commands[0], secret: 'omit' }], { action: 'commands' }), commands);

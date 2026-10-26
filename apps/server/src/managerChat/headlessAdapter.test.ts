@@ -197,38 +197,32 @@ test('headless backends advertise no config options and refuse config changes', 
   await assert.rejects(backend.setReasoningEffort({ key: 'p', profile: 'p' }, 'high'), /headless mode/);
 });
 
-test('AGY advertises its live model catalog and native reasoning efforts', async () => {
+test('AGY advertises only native effort variants for the selected model', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-headless-agy-models-'));
-  const originalPath = process.env.PATH;
   try {
     writeFileSync(join(dir, 'agy'), `#!/bin/sh
+if [ "$1" = "--help" ]; then echo '  --effort Reasoning effort (low|medium|high|xhigh|max)' >&2; exit 0; fi
 cat >/dev/null
-printf 'Fetching available models...\\ngemini-3.7-flash-high\\tGemini 3.7 Flash (High)\\nclaude-sonnet-4-6\\tClaude Sonnet 4.6 (Thinking)\\n'
+printf 'gemini-3.8-flash-high\\tGemini 3.8 Flash (High)\\ngemini-3.8-flash-low\\tGemini 3.8 Flash (Low)\\nclaude-sonnet-4-6\\tClaude Sonnet 4.6 (Thinking)\\n'
 `, { mode: 0o755 });
-    process.env.PATH = `${dir}:${originalPath}`;
-
-    const backend = createHeadlessBackend(agyBackendSpec());
-    const summary = await backend.listModels({ key: 'p', profile: 'p' });
-    assert.deepEqual(summary.models, [
-      { id: 'gemini-3.7-flash-high', name: 'Gemini 3.7 Flash (High)' },
-      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Thinking)' }
+    const backend = createHeadlessBackend(agyBackendSpec({ executable: join(dir, 'agy'), state_root: null }));
+    const conversation = { key: 'p', profile: 'p' };
+    const summary = await backend.listModels(conversation);
+    assert.equal(summary.models.length, 3);
+    assert.deepEqual(summary.reasoningEfforts, []);
+    await backend.setModel(conversation, 'gemini-3.8-flash-high');
+    assert.deepEqual((await backend.listModels(conversation)).reasoningEfforts, [
+      { id: 'low', name: 'Low' }, { id: 'high', name: 'High' }
     ]);
-    assert.deepEqual(summary.reasoningEfforts, [
-      { id: 'low', name: 'Low' },
-      { id: 'medium', name: 'Medium' },
-      { id: 'high', name: 'High' }
-    ]);
-    await backend.setModel({ key: 'p', profile: 'p' }, 'claude-sonnet-4-6');
-    await backend.setReasoningEffort({ key: 'p', profile: 'p' }, 'high');
-    const selected = await backend.listModels({ key: 'p', profile: 'p' });
-    assert.equal(selected.currentModelId, 'claude-sonnet-4-6');
-    assert.equal(selected.currentReasoningEffortId, 'high');
-    await assert.rejects(backend.setModel({ key: 'p', profile: 'p' }, 'missing'), /Unknown model/);
-    await assert.rejects(backend.setReasoningEffort({ key: 'p', profile: 'p' }, 'ultra'), /Unknown reasoning effort/);
-  } finally {
-    process.env.PATH = originalPath;
-    rmSync(dir, { recursive: true, force: true });
-  }
+    await backend.setReasoningEffort(conversation, 'high');
+    await assert.rejects(backend.setReasoningEffort(conversation, 'medium'), /Unknown reasoning effort/);
+    await backend.setModel(conversation, 'claude-sonnet-4-6');
+    const selected = await backend.listModels(conversation);
+    assert.deepEqual(selected.reasoningEfforts, []);
+    assert.equal(selected.currentReasoningEffortId, null);
+    await assert.rejects(backend.setReasoningEffort(conversation, 'high'), /Unknown reasoning effort/);
+    await assert.rejects(backend.setModel(conversation, 'missing'), /Unknown model/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('AGY argv is fixed and content-free; the prompt travels over stdin as stream-json', () => {
