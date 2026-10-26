@@ -11,6 +11,7 @@ Set these environment variables on the central server:
 - `GAH_GITLAB_BOT_USERNAME`: bot username. Default: `parasaur`.
 - `GAH_GITLAB_PIPELINE_REPAIR`: set `1` to enable failed-pipeline repair. Default: off.
 - `GAH_GITLAB_PANEL_URL`: required public dashboard base URL, including any path prefix. Example: `https://panel.example.com/parasaur/`.
+- `GAH_GITLAB_EVENTS_RATE_LIMIT`: positive integer requests per minute per source IP. Default: `600`, also used for invalid values. Applies before secret verification and event classification, including unsupported events and invalid secrets.
 - `GAH_GITLAB_EVENTS_STORE_PATH`: optional receipt-file path. Default: `$XDG_STATE_HOME/gah/gitlab-events.json`, or `~/.local/state/gah/gitlab-events.json`.
 
 Configure a GitLab profile with `provider`, `repo`, `provider_api_base`, and `provider_project_id`.
@@ -50,7 +51,7 @@ Use hook and server logs to diagnose rejected deliveries.
 - `202`: the server saved a receipt and scheduled asynchronous authorization and dispatch.
 - `204`: an unsupported event, an inactive trigger, or a duplicate receipt.
 - `401`: the secret is absent, incorrect, or unconfigured.
-- `429`: more than 30 candidate events per minute from one client address.
+- `429`: the per-source-IP request limit was exceeded. Default: 600 requests per minute.
 - `503`: panel URL unavailable, receipt storage unavailable or full, or 64 asynchronous deliveries already pending.
 
 Invalid JSON returns `400`. Oversized JSON returns `413`.

@@ -246,22 +246,50 @@ test('hook route authenticates independently, acknowledges before dispatch, and 
   }
 });
 
-test('hook process starts are rate-limited but unrelated events remain cheap', async () => {
-  const saved = { GAH_GITLAB_HOOK_SECRET: process.env.GAH_GITLAB_HOOK_SECRET, GAH_GITLAB_PANEL_URL: process.env.GAH_GITLAB_PANEL_URL };
+test('hook rate limiting permits 600 requests and rejects request 601 before authentication', async () => {
+  const saved = { GAH_GITLAB_HOOK_SECRET: process.env.GAH_GITLAB_HOOK_SECRET, GAH_GITLAB_PANEL_URL: process.env.GAH_GITLAB_PANEL_URL,
+    GAH_GITLAB_EVENTS_RATE_LIMIT: process.env.GAH_GITLAB_EVENTS_RATE_LIMIT };
   Object.assign(process.env, { GAH_GITLAB_HOOK_SECRET: 'hook-test', GAH_GITLAB_PANEL_URL: options.panelUrl });
+  delete process.env.GAH_GITLAB_EVENTS_RATE_LIMIT;
   const app = express(); app.use(express.json());
   app.use('/api/integrations/gitlab', gitLabEventsRouter({ dedupe: new EventDedupe(), dispatch: async () => {} }));
   const server = await serve(app);
-  const send = (body: unknown) => fetch(`${server.base}/api/integrations/gitlab/events`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Parasaur-Hook-Secret': 'hook-test' }, body: JSON.stringify(body),
+  const send = (body: unknown, secret = 'hook-test') => fetch(`${server.base}/api/integrations/gitlab/events`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Parasaur-Hook-Secret': secret }, body: JSON.stringify(body),
   });
   try {
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 598; i++) {
       const body = fixture('note'); record(body.object_attributes).id = i + 1;
       assert.equal((await send(body)).status, 202);
     }
-    assert.equal((await send(fixture('note'))).status, 429);
     assert.equal((await send({ object_kind: 'push' })).status, 204);
+    assert.equal((await send(fixture('note'), 'wrong')).status, 401);
+    const limited = await send(fixture('note'), 'wrong');
+    assert.equal(limited.status, 429);
+    assert.equal(record(await limited.json()).error, 'rate_limited');
+    assert.equal(limited.headers.get('ratelimit-limit'), '600');
+    assert.equal((await send({ object_kind: 'push' })).status, 429);
+  } finally {
+    await server.close();
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
+
+test('hook rate limit is configurable per router', async () => {
+  const saved = { GAH_GITLAB_HOOK_SECRET: process.env.GAH_GITLAB_HOOK_SECRET,
+    GAH_GITLAB_EVENTS_RATE_LIMIT: process.env.GAH_GITLAB_EVENTS_RATE_LIMIT };
+  Object.assign(process.env, { GAH_GITLAB_HOOK_SECRET: 'hook-test', GAH_GITLAB_EVENTS_RATE_LIMIT: '2' });
+  const app = express(); app.use(express.json());
+  app.use('/api/integrations/gitlab', gitLabEventsRouter({ dedupe: new EventDedupe(), dispatch: async () => {} }));
+  const server = await serve(app);
+  const send = () => fetch(`${server.base}/api/integrations/gitlab/events`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Parasaur-Hook-Secret': 'hook-test' },
+    body: JSON.stringify({ object_kind: 'push' }),
+  });
+  try {
+    assert.equal((await send()).status, 204);
+    assert.equal((await send()).status, 204);
+    assert.equal((await send()).status, 429);
   } finally {
     await server.close();
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }

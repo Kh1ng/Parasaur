@@ -19,8 +19,10 @@ export function gitLabEventsRouter(deps: GitLabRouteDeps = {}): Router {
   let pending = 0;
   const dedupe = deps.dedupe ?? new EventDedupe(10_000, 86_400_000, Date.now,
     process.env.GAH_GITLAB_EVENTS_STORE_PATH || resolve(process.env.XDG_STATE_HOME || resolve(homedir(), '.local/state'), 'gah/gitlab-events.json'));
-  const limiter = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false,
-    message: { error: 'rate_limited' } });
+  const configuredLimit = Number(process.env.GAH_GITLAB_EVENTS_RATE_LIMIT);
+  const limit = Number.isSafeInteger(configuredLimit) && configuredLimit > 0 ? configuredLimit : 600;
+  router.use(rateLimit({ windowMs: 60_000, limit, standardHeaders: true, legacyHeaders: false,
+    message: { error: 'rate_limited' } }));
   router.post('/events', (req, res, next) => {
     if (!req.secure && !isLocalAddress(req.socket.remoteAddress ?? '') && process.env.GAH_ALLOW_INSECURE_HTTP !== '1') {
       return res.status(403).json({ error: 'https_required' });
@@ -33,7 +35,7 @@ export function gitLabEventsRouter(deps: GitLabRouteDeps = {}): Router {
     if (!event) return res.sendStatus(204);
     res.locals.gitLabEvent = event;
     next();
-  }, limiter, (req, res) => {
+  }, (req, res) => {
     const event: GitLabEvent = res.locals.gitLabEvent;
     const bot = process.env.GAH_GITLAB_BOT_USERNAME || 'parasaur';
     let panelUrl: string;
