@@ -1,9 +1,7 @@
-//! Deterministic controller/supervisor test harness for GAH.
-//!
-//! `ScenarioHarness` owns a hermetic environment — temp dir, config, fake
-//! provider/worker scripts, ledger — and runs the compiled `gah` binary as a
-//! subprocess against the real production path, with all external
-//! processes (gh/glab/workers) intercepted by fake shell scripts.
+//! Runs the real `gah` binary with isolated state and fake external CLIs.
+
+#[path = "central.rs"]
+pub mod central;
 
 use std::collections::HashMap;
 use std::env;
@@ -29,6 +27,7 @@ pub struct LoopResult {
     pub action_kind: String,
     pub action_details: String,
     pub exit_code: Option<i32>,
+    pub stderr: String,
     pub stderr_tail: String,
     pub call_counts: HashMap<String, u32>,
     pub ledger_entries: Vec<serde_json::Value>,
@@ -364,6 +363,10 @@ impl ScenarioHarness {
             )
             .env("XDG_STATE_HOME", self._temp.path().join("xdg-state"))
             .env("GAH_CONFIG", &self.config_path)
+            .env(
+                "GAH_COORDINATOR_IDENTITY_PATH",
+                self._temp.path().join("identity.json"),
+            )
             .env("GAH_LEDGER_PATH", &self.ledger_path)
             .env("GAH_EVENTS_PATH", &self.events_path)
             .env(
@@ -399,10 +402,7 @@ impl ScenarioHarness {
 
         let _ = self.ledger.write_to(&self.ledger_path);
 
-        // Host-state isolation: `gah_command` points XDG_STATE_HOME into
-        // the harness temp dir so availability, validation, and work-claim
-        // state reads go to a per-harness empty directory, not the host's
-        // real ~/.local/state/gah/.
+        // Availability and work claims stay in the harness's own state root.
         fs::create_dir_all(self._temp.path().join("xdg-state")).ok();
     }
 
@@ -473,6 +473,7 @@ impl ScenarioHarness {
             action_kind,
             action_details,
             exit_code,
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
             stderr_tail,
             call_counts,
             ledger_entries,
