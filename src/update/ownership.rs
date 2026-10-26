@@ -64,7 +64,7 @@ pub(super) fn unit_user(unit: &str) -> Option<String> {
         .replace('\r', "\n");
     let mut logical = String::new();
     for line in unit.lines() {
-        if line.trim_start().starts_with(['#', ';']) {
+        if line.trim_start_matches([' ', '\t']).starts_with(['#', ';']) {
             continue;
         }
         let trailing_slashes = line.bytes().rev().take_while(|byte| *byte == b'\\').count();
@@ -78,23 +78,15 @@ pub(super) fn unit_user(unit: &str) -> Option<String> {
     }
     let mut service = false;
     let mut user = None;
-    for line in logical.lines().map(str::trim) {
+    for line in logical.lines().map(|line| line.trim_matches([' ', '\t'])) {
         if line.starts_with('[') {
             service = line == "[Service]";
         } else if service {
             if let Some((key, value)) = line.split_once('=') {
-                if key.trim() == "User" {
-                    let value = value.trim();
-                    let value = value
-                        .strip_prefix('"')
-                        .and_then(|value| value.strip_suffix('"'))
-                        .or_else(|| {
-                            value
-                                .strip_prefix('\'')
-                                .and_then(|value| value.strip_suffix('\''))
-                        })
-                        .unwrap_or(value);
-                    user = Some(value.to_string());
+                if key.trim_matches([' ', '\t']) == "User" {
+                    // User= is a raw string, not a shell word: quotes and escapes
+                    // remain part of the account, as reported by systemctl show.
+                    user = Some(value.trim_matches([' ', '\t']).to_string());
                 }
             }
         }
@@ -115,12 +107,15 @@ fn account(value: &str) -> Result<PreviousAccount> {
 /// must stop the update before it changes any installed artifacts.
 pub(super) fn previous_account(unit_path: &Path) -> Result<PreviousAccount> {
     match std::fs::read_to_string(unit_path) {
-        Ok(unit) => account(
-            unit_user(&unit)
-                .as_deref()
-                .filter(|user| !user.is_empty())
-                .unwrap_or("root"),
-        ),
+        Ok(unit) => {
+            let value = unit_user(&unit).unwrap_or_default();
+            account(if value.is_empty() { "root" } else { &value }).with_context(|| {
+                format!(
+                    "unknown service account in {}: User={value:?}",
+                    unit_path.display()
+                )
+            })
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Ok(PreviousAccount::NotInstalled)
         }
@@ -177,7 +172,7 @@ fn effective_previous_account(
         }
         Ok(String::from_utf8(output.stdout)
             .context("systemd property is not UTF-8")?
-            .trim()
+            .trim_end_matches('\n')
             .to_string())
     };
     let load_state = match show("LoadState") {
@@ -193,8 +188,9 @@ fn effective_previous_account(
     };
     let effective = if load_state.as_deref() == Some("loaded") {
         // Unlike a missing User= directive, empty command output is unknown.
-        Some(account(&show("User")?).with_context(|| {
-            format!("cannot determine effective account for {service}: systemctl show -p User --value {service} did not return an explicit supported account")
+        let value = show("User")?;
+        Some(account(&value).with_context(|| {
+            format!("cannot determine effective account for {service} at {}: systemctl show -p User --value {service} returned unsupported User={value:?}", target.display())
         })?)
     } else {
         None
@@ -272,8 +268,13 @@ fn effective_previous_account(
         }
     }
     if let Some((path, value)) = &override_user {
-        let user = UserName::parse(if value.is_empty() { "root" } else { value })
-            .with_context(|| format!("reading User= in systemd drop-in {}", path.display()))?;
+        let user =
+            UserName::parse(if value.is_empty() { "root" } else { value }).with_context(|| {
+                format!(
+                    "unknown service account in systemd drop-in {}: User={value:?}",
+                    path.display()
+                )
+            })?;
         if user != *rendered_user {
             bail!("refusing to change the service account: systemd drop-in {} sets User={user} but the rendered unit sets User={rendered_user}; the drop-in survives the base unit update; adjust that drop-in first", path.display());
         }
@@ -547,13 +548,22 @@ fn checkout_anchor(repo: &Path) -> Result<PathBuf> {
             checkout.display()
         );
     }
-    let origin =
-        super::captured(&checkout, "git", &["remote", "get-url", "origin"]).with_context(|| {
-            format!(
-                "refusing ownership checkout {}: cannot prove origin repository",
-                checkout.display()
-            )
-        })?;
+    let mut command = std::process::Command::new("git");
+    command
+        .arg("-C")
+        .arg(&checkout)
+        .args(["config", "--get", "remote.origin.url"]);
+    let output = crate::runner::process::run_bounded(
+        command, std::time::Duration::from_millis(250),
+    ).with_context(|| format!("refusing ownership checkout {}: cannot prove origin repository (git probe failed or timed out)", checkout.display()))?;
+    if !output.status.success() {
+        bail!(
+            "refusing ownership checkout {}: cannot prove origin repository",
+            checkout.display()
+        );
+    }
+    let origin = String::from_utf8(output.stdout).context("origin URL is not UTF-8")?;
+    let origin = origin.trim();
     // Accept URL forms only: a similarly named local remote is not upstream.
     let origin = origin.to_ascii_lowercase();
     let repository = origin
@@ -606,9 +616,41 @@ fn ensure_state_boundary_access(root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Bound read-only filesystem validation, including metadata on automounts or
+/// TCC-protected paths. A stalled OS call cannot be cancelled; its worker may
+/// finish later, so probes must never mutate files or launch unbounded commands.
+fn read_only_probe<T: Send + 'static>(
+    path: &Path,
+    probe: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("ownership-probe".into())
+        .spawn(move || {
+            let _ = sender.send(probe());
+        })
+        .context("starting read-only ownership probe")?;
+    receiver
+        .recv_timeout(std::time::Duration::from_millis(750))
+        .with_context(|| {
+            format!(
+                "ownership boundary probe failed or timed out for {}",
+                path.display()
+            )
+        })?
+}
+
 /// Collect state boundaries from the exact file named by the rendered unit.
 /// Environment variables can nominate candidates, never authorize targets.
 pub(super) fn server_managed_paths(repo: &Path, config_path: &Path) -> Result<ServerManagedPaths> {
+    let repo_owned = repo.to_path_buf();
+    let config_owned = config_path.to_path_buf();
+    read_only_probe(repo, move || {
+        collect_managed_paths(&repo_owned, &config_owned)
+    })
+}
+
+fn collect_managed_paths(repo: &Path, config_path: &Path) -> Result<ServerManagedPaths> {
     let checkout = checkout_anchor(repo)?;
     let mut state_roots = BTreeSet::new();
     match std::fs::read_to_string(config_path) {
@@ -696,16 +738,22 @@ pub(super) fn server_managed_paths(repo: &Path, config_path: &Path) -> Result<Se
 
 /// A candidate must resolve strictly inside a trusted boundary. Broad roots,
 /// mount roots and home roots remain denied even if inside that boundary.
-fn confirmed_chown_target(path: &Path, anchors: &[PathBuf]) -> Option<PathBuf> {
-    let resolved = std::fs::canonicalize(path).ok()?;
-    if protected_root(&resolved)
-        || !anchors
-            .iter()
-            .any(|anchor| resolved != *anchor && resolved.starts_with(anchor))
-    {
-        return None;
-    }
-    Some(resolved)
+fn confirmed_chown_target(path: &Path, anchors: &[PathBuf]) -> Result<Option<PathBuf>> {
+    let candidate = path.to_path_buf();
+    let anchors = anchors.to_vec();
+    read_only_probe(path, move || {
+        let Ok(resolved) = std::fs::canonicalize(candidate) else {
+            return Ok(None);
+        };
+        if protected_root(&resolved)
+            || !anchors
+                .iter()
+                .any(|anchor| resolved != *anchor && resolved.starts_with(anchor))
+        {
+            return Ok(None);
+        }
+        Ok(Some(resolved))
+    })
 }
 
 /// Repair the server-managed paths for the account change (default), or
@@ -745,8 +793,9 @@ pub(super) fn repair_or_refuse(
     );
     let mut repaired = 0usize;
     for path in &managed.paths {
-        let Some(target) = confirmed_chown_target(path, &managed.anchors) else {
-            if path.exists() {
+        let Some(target) = confirmed_chown_target(path, &managed.anchors)? else {
+            let candidate = path.to_path_buf();
+            if read_only_probe(path, move || Ok(candidate.try_exists()?)).unwrap_or(false) {
                 eprintln!(
                     "[gah update] skipped ownership repair for {}: it is a protected root, or it \
                      resolves outside the trusted checkout and state boundaries. Inspect it, then run \

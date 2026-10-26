@@ -27,7 +27,7 @@ fn unit_user_reads_only_service_assignments() {
 }
 
 #[test]
-fn unit_user_accepts_systemd_line_endings_and_quoted_values() {
+fn unit_user_preserves_quotes_with_systemd_line_endings() {
     for ending in ["\r", "\r\n", "\n"] {
         let unit = [
             "[Service]",
@@ -39,10 +39,10 @@ fn unit_user_accepts_systemd_line_endings_and_quoted_values() {
             "User=ignored",
         ]
         .join(ending);
-        assert_eq!(unit_user(&unit).as_deref(), Some("agent"), "{unit:?}");
+        assert_eq!(unit_user(&unit).as_deref(), Some("\"agent\""), "{unit:?}");
         assert_eq!(
             unit_user(&format!("{unit}{ending}[Service]{ending}User=''{ending}")).as_deref(),
-            Some("")
+            Some("''")
         );
     }
 }
@@ -346,21 +346,21 @@ fn chown_targets_must_stay_under_the_anchors() {
         std::fs::create_dir_all(path).unwrap();
     }
     let anchors = vec![inside.canonicalize().unwrap()];
-    assert_eq!(confirmed_chown_target(&inside, &anchors), None);
-    assert_eq!(confirmed_chown_target(&outside, &anchors), None);
+    assert_eq!(confirmed_chown_target(&inside, &anchors).unwrap(), None);
+    assert_eq!(confirmed_chown_target(&outside, &anchors).unwrap(), None);
     // A symlink that stays under the anchor resolves to its target; one
     // that escapes is refused, and a dangling or missing path is nothing
     // to repair.
     let link = dir.path().join("link");
     #[cfg(unix)]
     std::os::unix::fs::symlink(&inside, &link).unwrap();
-    assert_eq!(confirmed_chown_target(&link, &anchors), None);
+    assert_eq!(confirmed_chown_target(&link, &anchors).unwrap(), None);
     let escape = dir.path().join("escape");
     #[cfg(unix)]
     std::os::unix::fs::symlink(&outside, &escape).unwrap();
-    assert_eq!(confirmed_chown_target(&escape, &anchors), None);
+    assert_eq!(confirmed_chown_target(&escape, &anchors).unwrap(), None);
     assert_eq!(
-        confirmed_chown_target(&dir.path().join("missing"), &anchors),
+        confirmed_chown_target(&dir.path().join("missing"), &anchors).unwrap(),
         None
     );
 }
@@ -618,7 +618,7 @@ fn matching_or_missing_previous_account_never_chowns() {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(
                 path,
-                format!("[Service]\nUser=agent\nUser\\\n=\"{}\"\n", current_user()),
+                format!("[Service]\nUser=agent\nUser\\\n={}\n", current_user()),
             )
             .unwrap();
         }
@@ -773,13 +773,16 @@ fn ownership_never_authorizes_roots_from_resolved_candidates() {
     assert!(error.to_string().contains("state boundary"));
     std::fs::remove_file(&state).unwrap();
     let managed = server_managed_paths(&repo, &config).unwrap();
-    assert_eq!(confirmed_chown_target(&state, &managed.anchors), None);
     assert_eq!(
-        confirmed_chown_target(&repo.join("config"), &managed.anchors),
+        confirmed_chown_target(&state, &managed.anchors).unwrap(),
         None
     );
     assert_eq!(
-        confirmed_chown_target(Path::new("/"), &[PathBuf::from("/")]),
+        confirmed_chown_target(&repo.join("config"), &managed.anchors).unwrap(),
+        None
+    );
+    assert_eq!(
+        confirmed_chown_target(Path::new("/"), &[PathBuf::from("/")]).unwrap(),
         None
     );
 }
@@ -940,8 +943,14 @@ fn ownership_proves_checkout_gitfiles_and_state_config_or_markers() {
     for root in [&repo, &state] {
         assert!(managed.anchors.contains(&root.canonicalize().unwrap()));
     }
-    assert!(confirmed_chown_target(&repo.join("config"), &managed.anchors).is_some());
-    assert!(confirmed_chown_target(&config, &managed.anchors).is_some());
+    assert!(
+        confirmed_chown_target(&repo.join("config"), &managed.anchors)
+            .unwrap()
+            .is_some()
+    );
+    assert!(confirmed_chown_target(&config, &managed.anchors)
+        .unwrap()
+        .is_some());
 
     let git_dir = dir.path().join("git-metadata");
     std::fs::rename(repo.join(".git"), &git_dir).unwrap();
@@ -1014,7 +1023,16 @@ fn ownership_state_system_prefix_and_symlink_marker_refuse_before_mutation() {
 #[test]
 fn ownership_unknown_or_root_systemctl_user_refuses_before_mutation() {
     let _exec = crate::test_support::ExecGuard::new();
-    for output in ["", " \t\n", "root\n", "garbage:uid\n"] {
+    for output in [
+        "",
+        " \t\n",
+        "root\n",
+        "garbage:uid\n",
+        "\"nextuser\"\n",
+        "'nextuser'\n",
+        " nextuser \n",
+        "\u{a0}nextuser\u{a0}\n",
+    ] {
         let dir = ownership_tempdir();
         let (repo, config, _) = repair_fixture(dir.path());
         let template = repo.join("packaging/systemd/gah-server.service");
@@ -1103,8 +1121,6 @@ fn ownership_continued_agent_drop_in_halts_at_preflight_before_khing_repair() {
         ("[Service]\rUser=agent\r", "disk", "agent"),
         ("[Service]\r\nUser=agent\r\n", "reported", "agent"),
         ("[Service]\nUser =agent\n", "disk", "agent"),
-        ("[Service]\nUser=\"agent\"\n", "reported", "agent"),
-        ("[Service]\nUser='agent'\n", "disk", "agent"),
         ("[Service]\nUser\\\n=agent\n", "disk", "agent"),
         ("[Service]\nUser=agent\n", "disk", "agent"),
         (
@@ -1224,7 +1240,7 @@ fn ownership_preflight_refuses_source_and_release_before_mutation() {
 if [ "$PWD" != '{repo}' ] && {{ [ "$1" != -C ] || [ "$2" != '{repo}' ]; }}; then exec '{real_git}' "$@"; fi
 printf '%s\n' "$*" >> '{log}'
 if [ "$3" = rev-parse ] && [ "$4" = --show-toplevel ]; then printf '%s\n' '{repo}'; exit 0; fi
-if [ "$1" = remote ] && [ "$2" = get-url ] && [ "$3" = origin ]; then echo https://github.com/Kh1ng/git-agent-harness.git; exit 0; fi
+if [ "$3" = config ] && [ "$4" = --get ] && [ "$5" = remote.origin.url ]; then echo https://github.com/Kh1ng/git-agent-harness.git; exit 0; fi
 exit 91
 "#,
             log = bin.path().join("git.log").display(),
@@ -1311,7 +1327,7 @@ exit 91
             .lines()
             .all(|line| line.ends_with("rev-parse --show-toplevel")
                 || line == "worktree list --porcelain"
-                || line == "remote get-url origin"),
+                || line.ends_with("config --get remote.origin.url")),
         "no mutating git command may run: {commands}"
     );
 }
@@ -1323,23 +1339,23 @@ fn ownership_protected_home_and_mount_roots_are_never_targets() {
     std::fs::create_dir(&child).unwrap();
     let anchor = dir.path().canonicalize().unwrap();
     assert_eq!(
-        confirmed_chown_target(dir.path(), std::slice::from_ref(&anchor)),
+        confirmed_chown_target(dir.path(), std::slice::from_ref(&anchor)).unwrap(),
         None
     );
     assert_eq!(
-        confirmed_chown_target(&child, &[anchor]),
+        confirmed_chown_target(&child, &[anchor]).unwrap(),
         Some(child.canonicalize().unwrap())
     );
     for root in ["/", "/home", "/Users", "/root", "/dev", "/proc", "/sys"] {
         assert_eq!(
-            confirmed_chown_target(Path::new(root), &[PathBuf::from("/")]),
+            confirmed_chown_target(Path::new(root), &[PathBuf::from("/")]).unwrap(),
             None,
             "{root}"
         );
     }
     if let Some(home) = std::env::var_os("HOME") {
         assert_eq!(
-            confirmed_chown_target(Path::new(&home), &[PathBuf::from("/")]),
+            confirmed_chown_target(Path::new(&home), &[PathBuf::from("/")]).unwrap(),
             None
         );
     }
@@ -1396,7 +1412,6 @@ fn ownership_without_systemctl_uses_the_complete_disk_configuration() {
         ("[Service]\rUser=agent\r", "agent"),
         ("[Service]\r\nUser=agent\r\n", "agent"),
         ("[Service]\nUser =agent\n", "agent"),
-        ("[Service]\nUser=\"agent\"\n", "agent"),
         ("[Service]\nUser=olduser\nUser=agent\n", "agent"),
         ("[Service]\nUser=agent\nUser=\n", "root"),
         ("[Unit]\nUser=agent\n", "olduser"),
@@ -1424,6 +1439,7 @@ fn ownership_without_systemctl_uses_the_complete_disk_configuration() {
             );
         }
     }
+    probes::assert_unknown_disk_accounts(&target, &drop_in);
     // Filename order spans directories, and the specific name masks the
     // same filename in the generic directory, including /dev/null masks.
     let generic = dir.path().join("service.d");
@@ -1464,3 +1480,5 @@ fn ownership_unwritable_state_boundary_stops_preflight() {
     }
     std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
+
+mod probes;
