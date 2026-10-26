@@ -163,7 +163,7 @@ export async function resolveInstanceAdapter(profile: string, backendId: string,
     case 'vibe':
     case 'agy':
     case 'openhands': {
-      const spec = runtime.runner_kind === 'vibe' ? vibeBackendSpec({ executable: runtime.executable, instance })
+      const spec = runtime.runner_kind === 'vibe' ? vibeBackendSpec({ executable: runtime.executable, instance, stateRoot: runtime.state_root })
         : runtime.runner_kind === 'agy' ? agyBackendSpec() : openhandsBackendSpec({ instanceCredential: Boolean(runtime.credential_id) });
       adapter = { ...createHeadlessBackend(instanceHeadlessSpec(profile, runtime, spec)), displayName: label } as ManagerAdapter;
       break;

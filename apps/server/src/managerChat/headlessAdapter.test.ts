@@ -863,3 +863,101 @@ test('a pinned Vibe turn persists the pinned model before spawning, so the CLI p
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/** The shared selection a config-backed (vibe-shaped) backend persists to
+ * and reads at spawn time, like Vibe's child reads `active_model` from its
+ * config at startup: one file per installation, shared by every
+ * conversation using it. */
+function sharedSelectionBackend(dir: string, options: { gate?: boolean } = {}): {
+  backend: ReturnType<typeof createHeadlessBackend>;
+  selection: string;
+  gate: string;
+} {
+  const selection = join(dir, 'selection.txt');
+  const gate = join(dir, 'spawn-gate');
+  const interpreter = join(dir, 'fake-python3');
+  writeFileSync(selection, 'none');
+  // The child reports the selection it sees when the gate opens — the
+  // gate stands in for a later spawn of the same turn (a tool
+  // continuation), which must still observe this turn's own pin. The
+  // wait is bounded so a broken test fails instead of hanging.
+  const gated = options.gate
+    ? `i=0\nwhile [ ! -f "${gate}" ] && [ "$i" -lt 500 ]; do sleep 0.02; i=$((i+1)); done\n`
+    : '';
+  writeFileSync(interpreter, `#!/bin/sh
+cat >/dev/null
+${gated}echo "ran-with: $(cat '${selection}')"
+`, { mode: 0o755 });
+  const spec: HeadlessBackendSpec = {
+    id: 'vibe-like',
+    displayName: 'Vibe-like',
+    turnArgs: () => [interpreter],
+    encodeStdin: (prompt) => prompt,
+    spawnEnv: async () => { await Promise.resolve(); return {}; },
+    modelOptions: async () => ({
+      models: [{ id: 'model-A', name: 'A' }, { id: 'model-B', name: 'B' }],
+      reasoningEfforts: [],
+      currentModelId: null
+    }),
+    applyModel: async (_profile, model) => { writeFileSync(selection, model); },
+    modelSelectionScope: () => join(dir, 'vibe-home')
+  };
+  return { backend: createHeadlessBackend(spec), selection, gate };
+}
+
+test('concurrent pinned turns on one installation serialize, so each turn runs with its own pinned model (#1510 round 2)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-serialize-'));
+  try {
+    const { backend } = sharedSelectionBackend(dir);
+    const turn = (model: string, prompt: string) =>
+      backend.runTurn(`p#conv-${model}`, {
+        prompt,
+        history: [],
+        onChunk: () => {},
+        onToolResult: () => {},
+        model
+      });
+
+    const [turnA, turnB] = await Promise.all([turn('model-A', 'a'), turn('model-B', 'b')]);
+    assert.match(turnA.reply, /model-A/, "turn A ran with A's pinned model");
+    assert.match(turnB.reply, /model-B/, "turn B ran with B's pinned model");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a setModel write waits for an in-flight pinned turn, so the turn never runs another session\'s selection (#1510 round 2)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-setmodel-race-'));
+  try {
+    const { backend, selection, gate } = sharedSelectionBackend(dir, { gate: true });
+    const turnPromise = backend.runTurn('p#conv-a', {
+      prompt: 'a',
+      history: [],
+      onChunk: () => {},
+      onToolResult: () => {},
+      model: 'model-A'
+    });
+    const setPromise = backend.setModel('p#conv-b', 'model-B');
+    // Let both contenders run: the pinned turn holds the installation's
+    // mutex, so the write queues behind it instead of landing mid-turn.
+    await new Promise(resolve => setImmediate(resolve));
+    writeFileSync(gate, 'now');
+    const result = await turnPromise;
+    await setPromise;
+    assert.match(result.reply, /model-A/, 'the gated spawn still saw the turn\'s own pin');
+    assert.equal(readFileSync(selection, 'utf8'), 'model-B', 'the queued write landed after the turn completed');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the Vibe spec scopes model serialization to its installation home (#1510 round 2)', () => {
+  const saved = { VIBE_HOME: process.env.VIBE_HOME };
+  try {
+    process.env.VIBE_HOME = '/custom/vibe-home';
+    assert.equal(vibeBackendSpec().modelSelectionScope?.(), '/custom/vibe-home');
+    assert.equal(vibeBackendSpec({ instance: 'vibe-work', stateRoot: '/state/root' }).modelSelectionScope?.(), join('/state/root', '.vibe'));
+  } finally {
+    if (saved.VIBE_HOME === undefined) delete process.env.VIBE_HOME; else process.env.VIBE_HOME = saved.VIBE_HOME;
+  }
+});

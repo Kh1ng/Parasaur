@@ -52,8 +52,13 @@ pub(crate) fn read_selection(vibe_home: &Path) -> Result<VibeModelSelection> {
 /// Parse the picker's view of a Vibe config. `models` is written either as
 /// an array of tables or as a table keyed by alias; `active_model` selects
 /// by alias or name — the same resolution session metadata gets in
-/// usage/vibe.rs. An active model no entry covers still appears as a
-/// selectable entry so the picker can mark what Vibe will actually run.
+/// usage/vibe.rs. The selection is reported through the matching entry's
+/// list id (its alias, or its name when no alias is set), so a picker
+/// comparing ids exactly marks the active entry: with
+/// `active_model = "devstral"` and an aliased `"local"` entry, the active
+/// id is `"local"`, not `"devstral"`. An active model no entry covers
+/// still appears as a selectable entry so the picker can mark what Vibe
+/// will actually run.
 pub(crate) fn parse_selection(config_text: &str) -> Result<VibeModelSelection> {
     let (models, active_model) = parse_configured(config_text)?;
     let mut options = models
@@ -63,27 +68,45 @@ pub(crate) fn parse_selection(config_text: &str) -> Result<VibeModelSelection> {
             name: model.display.clone().unwrap_or_else(|| model.name.clone()),
         })
         .collect::<Vec<_>>();
+    let mut active_id = None;
     if let Some(active) = &active_model {
-        let covered = models
-            .iter()
-            .any(|model| model.alias.as_deref() == Some(active.as_str()) || model.name == *active);
-        if !covered {
-            options.push(VibeModelOption {
-                id: active.clone(),
-                name: active.clone(),
-            });
+        match resolve_active(&models, active) {
+            Some(model) => {
+                active_id = Some(model.alias.clone().unwrap_or_else(|| model.name.clone()));
+            }
+            None => {
+                options.push(VibeModelOption {
+                    id: active.clone(),
+                    name: active.clone(),
+                });
+                active_id = Some(active.clone());
+            }
         }
     }
     Ok(VibeModelSelection {
         models: options,
-        active_model,
+        active_model: active_id,
     })
 }
 
+/// The configured entry `active_model` names, by alias or name — the same
+/// resolution Vibe's own session metadata gets in usage/vibe.rs.
+fn resolve_active<'a>(models: &'a [ConfiguredModel], active: &str) -> Option<&'a ConfiguredModel> {
+    models
+        .iter()
+        .find(|model| model.alias.as_deref() == Some(active) || model.name == active)
+}
+
 /// Persist `model` as Vibe's `active_model` for this home, atomically
-/// (temp file + rename) and byte-stable outside the edited key. Fails
-/// closed when the model is neither a configured entry nor the current
-/// active one, so GAH never writes a selection Vibe does not offer.
+/// (temp file + rename) and byte-stable outside the edited key. The edit
+/// is line-surgical — the replaced key's line ending and every other byte
+/// survive — and self-verifying: the result must re-parse with `model`
+/// active and every other parsed value unchanged, so a scanning bug can
+/// never corrupt the config; the worst it can do is refuse. Fails closed
+/// when the model is neither a configured entry nor the current active
+/// one, and refuses configs outside the safe subset for a line edit
+/// (multiline strings), so GAH never writes a selection Vibe does not
+/// offer and never mangles a config it cannot prove it edited correctly.
 pub(crate) fn set_active_model(vibe_home: &Path, model: &str) -> Result<()> {
     let path = vibe_home.join("config.toml");
     let text = std::fs::read_to_string(&path)
@@ -96,16 +119,11 @@ pub(crate) fn set_active_model(vibe_home: &Path, model: &str) -> Result<()> {
     if !known {
         bail!("model '{model}' is not configured for Vibe");
     }
-    let updated = edit_root_active_model(&text, model)?;
-    // Self-verifying write: any edit the round trip cannot reproduce is
-    // refused, so a scanning bug can never corrupt the config.
-    let verified = parse_configured(&updated)
-        .map(|(_, active)| active.as_deref() == Some(model))
-        .unwrap_or(false);
-    if !verified {
+    let edited = edit_active_model(&text, &path, model)?;
+    if !edit_preserves_config(&text, &edited, model) {
         bail!("cannot update Vibe's active model without changing the rest of its config");
     }
-    replace_file(&path, updated.as_bytes())
+    replace_file(&path, edited.as_bytes())
 }
 
 /// One `models` entry as Vibe's config defines it.
@@ -163,50 +181,131 @@ fn configured_model(value: &toml::Value) -> Option<ConfiguredModel> {
 
 /// Replace the root-level `active_model` key, or prepend one when absent —
 /// position zero is always inside the root region, so the key can never
-/// land inside a table. Every other byte of the config is preserved. The
-/// root scan stops at the first table header and skips multi-line string
-/// bodies; the caller re-parses the result before writing.
-fn edit_root_active_model(config_text: &str, model: &str) -> Result<String> {
+/// land inside a table. The replacement is spliced into the key line's
+/// exact byte range, so the line's own ending (LF or CRLF) and every other
+/// byte survive; a prepended key re-uses the file's detected line ending.
+/// Configs containing multiline strings outside comments are refused with
+/// an instruction to edit by hand: their bodies could hold a line that
+/// looks exactly like a root key, and the pre-verification parse cannot
+/// prove the scanner skipped them.
+fn edit_active_model(config_text: &str, path: &Path, model: &str) -> Result<String> {
+    let key = scan_root_active_model(config_text, path)?;
     let replacement = format!("active_model = {}", toml_basic_string(model));
-    let mut lines: Vec<String> = config_text.lines().map(str::to_string).collect();
-    let mut multiline: Option<&str> = None;
-    let mut replaced = false;
-    for line in lines.iter_mut() {
-        if let Some(delimiter) = multiline {
-            if line.matches(delimiter).count() % 2 == 1 {
-                multiline = None;
-            }
-            continue;
+    Ok(match key {
+        Some((start, end)) => {
+            let mut edited = String::with_capacity(config_text.len());
+            edited.push_str(&config_text[..start]);
+            edited.push_str(&replacement);
+            edited.push_str(&config_text[end..]);
+            edited
         }
+        None => {
+            let newline = if config_text.contains("\r\n") {
+                "\r\n"
+            } else {
+                "\n"
+            };
+            format!("{replacement}{newline}{config_text}")
+        }
+    })
+}
+
+/// Locate the root-level `active_model` key's byte range — the whole key
+/// line's content, its line ending excluded — and prove the config is in
+/// the safe subset for a line edit: no multiline strings (`"""` or `'''`)
+/// anywhere outside comments. The scan tracks exactly what a naive line
+/// walk cannot: `#` starts a comment only outside strings (and runs to
+/// end of line), quote characters open and close strings (`\` escapes
+/// the next character inside a basic string), and a `[` at line start
+/// ends the root table region. `parse_configured` has already validated
+/// the TOML, which is what lets this scan assume single-line strings
+/// close on their own line.
+fn scan_root_active_model(config_text: &str, path: &Path) -> Result<Option<(usize, usize)>> {
+    let mut found = None;
+    let mut root_region = true;
+    let mut offset = 0;
+    while offset < config_text.len() {
+        let line_feed = config_text[offset..].find('\n').map(|index| offset + index);
+        let line_end = line_feed.unwrap_or(config_text.len());
+        let mut content_end = line_end;
+        if content_end > offset && config_text.as_bytes()[content_end - 1] == b'\r' {
+            content_end -= 1;
+        }
+        let line = &config_text[offset..content_end];
         let trimmed = line.trim_start();
-        if trimmed.starts_with('[') {
-            break;
+        if root_region && trimmed.starts_with('[') {
+            root_region = false;
         }
-        if let Some(rest) = trimmed.strip_prefix("active_model") {
+        if root_region && found.is_none() && trimmed.starts_with("active_model") {
+            let rest = &trimmed["active_model".len()..];
             if rest.trim_start().starts_with('=') {
-                *line = replacement.clone();
-                replaced = true;
-                break;
+                found = Some((offset, content_end));
             }
         }
-        for delimiter in ["\"\"\"", "'''"] {
-            if line.matches(delimiter).count() % 2 == 1 {
-                multiline = Some(delimiter);
+        let mut in_basic = false;
+        let mut in_literal = false;
+        let mut characters = line.char_indices().peekable();
+        while let Some((index, character)) = characters.next() {
+            if in_basic {
+                if character == '\\' {
+                    // The escaped character (including \" and \\) is
+                    // string content, never a delimiter: consume it.
+                    characters.next();
+                } else if character == '"' {
+                    in_basic = false;
+                }
+            } else if in_literal {
+                if character == '\'' {
+                    in_literal = false;
+                }
+            } else {
+                match character {
+                    '#' => break, // comment: the rest of the line is not code
+                    '"' | '\'' => {
+                        let opener = if character == '"' { "\"\"\"" } else { "'''" };
+                        if line[index..].starts_with(opener) {
+                            bail!(
+                                "Vibe's configuration at {} contains a multiline string, which GAH cannot edit safely; set active_model by hand",
+                                path.display()
+                            );
+                        }
+                        if character == '"' {
+                            in_basic = true;
+                        } else {
+                            in_literal = true;
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
+        offset = line_feed.map_or(config_text.len(), |index| index + 1);
     }
-    let edited = if replaced {
-        // `lines()` drops the final newline; restore exactly what the
-        // original had so only the edited line differs.
-        let mut joined = lines.join("\n");
-        if config_text.ends_with('\n') {
-            joined.push('\n');
-        }
-        joined
-    } else {
-        format!("{replacement}\n{config_text}")
+    Ok(found)
+}
+
+/// The edit's self-verification: the edited text must parse, name exactly
+/// `model` as its root `active_model`, and be otherwise identical to the
+/// original's parse. Comparing the full parsed documents — with
+/// `active_model` removed from both — catches collateral damage the old
+/// value-only check could not: a multiline-string body overwritten by a
+/// desynchronized scanner still parses, just with different contents.
+fn edit_preserves_config(before: &str, after: &str, model: &str) -> bool {
+    let (Ok(mut before), Ok(mut after)) = (
+        toml::from_str::<toml::Value>(before),
+        toml::from_str::<toml::Value>(after),
+    ) else {
+        return false;
     };
-    Ok(edited)
+    let active = after.get("active_model").and_then(toml::Value::as_str);
+    if active != Some(model) {
+        return false;
+    }
+    if let (Some(before), Some(after)) = (before.as_table_mut(), after.as_table_mut()) {
+        before.remove("active_model");
+        after.remove("active_model");
+    }
+    before == after
 }
 
 /// Encode a TOML basic string, so an exotic alias can never break the key
@@ -331,6 +430,30 @@ name = "devstral"
     }
 
     #[test]
+    fn an_active_model_named_by_name_is_reported_by_the_alias_id() {
+        // The round-2 review's case: with active_model = "devstral" and an
+        // aliased "local" entry, the picker offers id "local", so the
+        // active selection must be reported as "local" too — otherwise no
+        // entry is marked active under an exact-id comparison.
+        let selection = parse_selection(
+            "active_model = \"devstral\"\n[[models]]\nname = \"devstral\"\nalias = \"local\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            selection.models,
+            vec![VibeModelOption {
+                id: "local".into(),
+                name: "devstral".into()
+            }]
+        );
+        assert_eq!(
+            selection.active_model.as_deref(),
+            Some("local"),
+            "the active model is reported by the matching entry's list id"
+        );
+    }
+
+    #[test]
     fn an_active_model_no_entry_covers_stays_selectable() {
         let selection = parse_selection("theme = \"auto\"\nactive_model = \"glm-5.3\"\n").unwrap();
         assert_eq!(
@@ -427,16 +550,91 @@ alias = "local"
     }
 
     #[test]
-    fn set_active_model_skips_multiline_string_bodies_when_scanning() {
-        let (_guard, home) = home_with(
-            "greeting = \"\"\"\n[not a table header]\n\"\"\"\nactive_model = \"local\"\n[[models]]\nname = \"devstral\"\nalias = \"local\"\n",
+    fn set_active_model_refuses_configs_with_multiline_strings() {
+        // The round-2 review's exact case: the `# """` comment desynced the
+        // old scanner into treating the multiline body as a root key.
+        let config = "# \"\"\" comment\n\
+                      greeting = \"\"\"\n\
+                      active_model = \"do-not-touch\"\n\
+                      \"\"\"\n\
+                      active_model = \"local\"\n\
+                      [[models]]\n\
+                      name = \"devstral\"\n\
+                      alias = \"local\"\n";
+        let (_guard, home) = home_with(config);
+        let error = set_active_model(&home, "local").unwrap_err().to_string();
+        assert!(error.contains("set active_model by hand"), "got: {error}");
+        assert_eq!(
+            fs::read_to_string(home.join("config.toml")).unwrap(),
+            config,
+            "a refused edit never touches the file"
         );
+    }
+
+    #[test]
+    fn a_comment_with_quotes_is_not_treated_as_a_multiline_string() {
+        // The `#` is outside any string, so the whole line — quotes
+        // included — is a comment: the config is in the safe subset and
+        // the edit still finds the real root key.
+        let config = "# \"\"\" comment\n\
+                      theme = \"auto\"\n\
+                      active_model = \"do-not-touch\"\n\
+                      [[models]]\n\
+                      name = \"devstral\"\n\
+                      alias = \"local\"\n";
+        let (_guard, home) = home_with(config);
         set_active_model(&home, "local").unwrap();
         let text = fs::read_to_string(home.join("config.toml")).unwrap();
         assert_eq!(
             text,
-            "greeting = \"\"\"\n[not a table header]\n\"\"\"\nactive_model = \"local\"\n[[models]]\nname = \"devstral\"\nalias = \"local\"\n",
-            "the existing key inside the root region is replaced in place"
+            "# \"\"\" comment\n\
+              theme = \"auto\"\n\
+              active_model = \"local\"\n\
+              [[models]]\n\
+              name = \"devstral\"\n\
+              alias = \"local\"\n",
+            "only the root active_model line changes; the comment survives"
+        );
+    }
+
+    #[test]
+    fn set_active_model_preserves_crlf_line_endings_byte_for_byte() {
+        let config = "theme = \"auto\"\r\n\
+                      active_model = \"old\"\r\n\
+                      [[models]]\r\n\
+                      name = \"devstral\"\r\n\
+                      alias = \"local\"\r\n";
+        let (_guard, home) = home_with(config);
+        set_active_model(&home, "local").unwrap();
+        let text = fs::read_to_string(home.join("config.toml")).unwrap();
+        assert_eq!(
+            text,
+            "theme = \"auto\"\r\n\
+              active_model = \"local\"\r\n\
+              [[models]]\r\n\
+              name = \"devstral\"\r\n\
+              alias = \"local\"\r\n",
+            "the edited line keeps its CRLF; every other byte is untouched"
+        );
+    }
+
+    #[test]
+    fn set_active_model_prepends_with_the_files_own_crlf_line_ending() {
+        let config = "theme = \"auto\"\r\n\
+                      [[models]]\r\n\
+                      name = \"devstral\"\r\n\
+                      alias = \"local\"\r\n";
+        let (_guard, home) = home_with(config);
+        set_active_model(&home, "local").unwrap();
+        let text = fs::read_to_string(home.join("config.toml")).unwrap();
+        assert_eq!(
+            text,
+            "active_model = \"local\"\r\n\
+              theme = \"auto\"\r\n\
+              [[models]]\r\n\
+              name = \"devstral\"\r\n\
+              alias = \"local\"\r\n",
+            "a prepended key re-uses the file's detected line ending"
         );
     }
 
@@ -460,10 +658,16 @@ alias = "local"
             "active_model = \"mistral-medium-3.5\"\n[[models]]\nname = \"mistral-vibe-cli-latest\"\nalias = \"mistral-medium-3.5\"\n",
         );
         set_active_model(&home, "mistral-vibe-cli-latest").unwrap();
+        assert!(
+            fs::read_to_string(home.join("config.toml"))
+                .unwrap()
+                .contains("active_model = \"mistral-vibe-cli-latest\""),
+            "a name selection is persisted in the form the user chose"
+        );
         assert_eq!(
             read_selection(&home).unwrap().active_model.as_deref(),
-            Some("mistral-vibe-cli-latest"),
-            "active_model selects by alias or name, like session metadata resolution"
+            Some("mistral-medium-3.5"),
+            "the selection resolves to the covering entry's list id, like session metadata"
         );
         let (_kept, active_only) = home_with("active_model = \"glm-5.3\"\n");
         set_active_model(&active_only, "glm-5.3").unwrap();
