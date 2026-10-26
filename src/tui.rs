@@ -17,7 +17,6 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Cell, Clear, List, ListItem, Paragraph, Row, Table};
 use ratatui::{DefaultTerminal, Frame};
-use time::OffsetDateTime;
 
 pub fn run(cfg: &GahConfig, profile: Option<&str>) -> Result<()> {
     if let Some(name) = profile {
@@ -71,7 +70,7 @@ fn event_loop(cfg: &GahConfig, terminal: &mut DefaultTerminal, state: &mut AppSt
 }
 
 fn do_refresh(cfg: &GahConfig, state: &mut AppState, profile_name: &str) {
-    let now = OffsetDateTime::now_utc();
+    let now = crate::clock::now_utc();
     match crate::status::build_snapshot(cfg, profile_name, now) {
         Ok(snapshot) => {
             state.snapshot = Some(snapshot);
@@ -470,4 +469,57 @@ fn centered_rect(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
     ])
     .areas(vertical);
     horizontal
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tui_snapshot_uses_injected_worker_clock() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _exec = crate::test_support::ExecGuard::new();
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("artifacts");
+        let session = root.join("sessions").join("run-1");
+        std::fs::create_dir_all(&session).unwrap();
+        std::fs::write(
+            session.join("running-worker.json"),
+            r#"{"profile":"test","work_id":null,"run_id":"run-1","mode":"fix","backend":"codex","runner":"codex","backend_instance":"codex","requested_model":null,"model":null,"actual_model":null,"node_id":null,"branch":null,"started_at":"2030-01-01T00:00:00Z","attempt":1,"last_activity_at":"2030-01-01T00:00:00Z","stale_after_seconds":900,"state":"running","owner_pid":null}"#,
+        )
+        .unwrap();
+
+        let bin = temp.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let gh = bin.join("gh");
+        std::fs::write(&gh, "#!/bin/sh\necho '[]'\n").unwrap();
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let _path = crate::test_support::PathGuard::set(&bin);
+
+        let config_path = temp.path().join("gah.toml");
+        std::fs::write(
+            &config_path,
+            format!(
+                "[profiles.test]\ndisplay_name = \"Test\"\nrepo_id = \"test/test\"\nprovider = \"github\"\nrepo = \"test/test\"\nlocal_path = \"{}\"\nartifact_root = \"{}\"\ndefault_target_branch = \"main\"\n",
+                temp.path().display(),
+                root.display()
+            ),
+        )
+        .unwrap();
+        let cfg = crate::config::load(Some(config_path.to_str().unwrap())).unwrap();
+        let _clock = crate::clock::set_for_test(
+            time::OffsetDateTime::parse(
+                "2030-01-01T00:15:01Z",
+                &time::format_description::well_known::Rfc3339,
+            )
+            .unwrap(),
+        );
+        let mut state = AppState::new(vec!["test".into()], Some("test".into()));
+        do_refresh(&cfg, &mut state, "test");
+        assert_eq!(
+            state.snapshot.unwrap().running_workers[0].state,
+            crate::running_workers::WorkerState::Stale
+        );
+    }
 }

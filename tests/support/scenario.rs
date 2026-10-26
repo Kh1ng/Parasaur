@@ -11,8 +11,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use tempfile::TempDir;
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 
 use super::fake_ledger::TestLedger;
 use super::{
@@ -68,6 +71,7 @@ pub struct ScenarioHarness {
     gah_bin: PathBuf,
     config_append: String,
     defaults_append: String,
+    now: OffsetDateTime,
 }
 
 impl ScenarioHarness {
@@ -165,7 +169,18 @@ impl ScenarioHarness {
             gah_bin,
             config_append: String::new(),
             defaults_append: String::new(),
+            now: OffsetDateTime::now_utc(),
         }
+    }
+
+    /// Set the UTC instant every subsequent `gah` child observes.
+    pub fn set_now(&mut self, now: OffsetDateTime) {
+        self.now = now;
+    }
+
+    /// Advance the instant every subsequent `gah` child observes.
+    pub fn advance(&mut self, by: Duration) {
+        self.now += time::Duration::try_from(by).expect("scenario clock advance is in range");
     }
 
     pub fn github_scenario(mut self, name: &str) -> Self {
@@ -351,6 +366,12 @@ impl ScenarioHarness {
             .env("GAH_CONFIG", &self.config_path)
             .env("GAH_LEDGER_PATH", &self.ledger_path)
             .env("GAH_EVENTS_PATH", &self.events_path)
+            .env(
+                "GAH_TEST_NOW",
+                self.now
+                    .format(&Rfc3339)
+                    .expect("scenario clock formats as RFC3339"),
+            )
             .env(
                 "PATH",
                 format!("{}:{}", self.bin_dir.display(), original_path()),

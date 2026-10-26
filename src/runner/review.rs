@@ -92,6 +92,12 @@ pub fn run_review_backend_for_identity(
     let hard_timeout_seconds = profile
         .review_hard_timeout_seconds
         .map(|seconds| seconds.max(1));
+    let hard_deadline = hard_timeout_seconds
+        .map(|seconds| crate::clock::Deadline::after_at(Duration::from_secs(seconds), start));
+    let startup_deadline = crate::clock::Deadline::after_at(
+        Duration::from_secs(profile.review_timeout_seconds()),
+        start,
+    );
     let stdout_path = session_dir.join("review-stdout.log");
     let stderr_path = session_dir.join("review-stderr.log");
     let _ = write_redacted_task(session_dir, prompt);
@@ -328,10 +334,8 @@ pub fn run_review_backend_for_identity(
 
     let idle_timeout_seconds = profile.review_timeout_seconds();
     let idle_timeout = Duration::from_secs(idle_timeout_seconds);
-    let hard_timeout = hard_timeout_seconds.map(Duration::from_secs);
     // A backend that emits no output is already indistinguishable from a stalled
     // launch after one idle window. Do not double the stall budget.
-    let startup_grace = idle_timeout;
     let poll_interval = Duration::from_millis(25);
     let worktree_poll_interval = Duration::from_secs(1);
     let process_group = child.id();
@@ -341,6 +345,7 @@ pub fn run_review_backend_for_identity(
     let mut last_process_activity = process_group_activity_snapshot(process_group);
     let mut last_worktree_poll = Instant::now();
     let mut last_progress_at = Instant::now();
+    let mut idle_deadline = crate::clock::Deadline::after_at(idle_timeout, last_progress_at);
     let mut last_progress_elapsed_secs = None;
     let mut saw_progress = false;
     let mut cleanup_error = None;
@@ -370,6 +375,8 @@ pub fn run_review_backend_for_identity(
                     last_stdout_len = stdout_len;
                     last_stderr_len = stderr_len;
                     last_progress_at = Instant::now();
+                    idle_deadline =
+                        crate::clock::Deadline::after_at(idle_timeout, last_progress_at);
                     last_progress_elapsed_secs = Some(start.elapsed().as_secs_f64());
                     saw_progress = true;
                 }
@@ -378,6 +385,8 @@ pub fn run_review_backend_for_identity(
                         if last_worktree_snapshot.as_ref() != Some(&snapshot) {
                             last_worktree_snapshot = Some(snapshot);
                             last_progress_at = Instant::now();
+                            idle_deadline =
+                                crate::clock::Deadline::after_at(idle_timeout, last_progress_at);
                             last_progress_elapsed_secs = Some(start.elapsed().as_secs_f64());
                             saw_progress = true;
                         }
@@ -388,6 +397,8 @@ pub fn run_review_backend_for_identity(
                             &activity,
                         ) {
                             last_progress_at = Instant::now();
+                            idle_deadline =
+                                crate::clock::Deadline::after_at(idle_timeout, last_progress_at);
                             last_progress_elapsed_secs = Some(start.elapsed().as_secs_f64());
                             saw_progress = true;
                         }
@@ -402,9 +413,9 @@ pub fn run_review_backend_for_identity(
                 // with no progress. A busy reviewer that keeps producing output
                 // completes regardless of how long it runs.
                 let stalled = if saw_progress {
-                    last_progress_at.elapsed() >= idle_timeout
+                    idle_deadline.reached()
                 } else {
-                    start.elapsed() >= startup_grace
+                    startup_deadline.reached()
                 };
                 if stalled {
                     cleanup_error = kill_process_group(&mut child);
@@ -413,7 +424,7 @@ pub fn run_review_backend_for_identity(
                 // Optional hard ceiling: a separate explicit safety policy. Even
                 // a continuously-active reviewer is killed here -- but classified
                 // as HardTimeout, never as a backend failure.
-                if hard_timeout.is_some_and(|timeout| start.elapsed() >= timeout) {
+                if hard_deadline.is_some_and(crate::clock::Deadline::reached) {
                     cleanup_error = kill_process_group(&mut child);
                     break Some(ReviewProcessOutcome::HardTimeout);
                 }
@@ -541,6 +552,55 @@ mod tests {
     use super::*;
     use crate::runner::backends::test_util::*;
     use crate::test_support::PathGuard;
+
+    #[test]
+    fn review_watchdog_obeys_clock() {
+        let _exec_guard = crate::test_support::ExecGuard::new();
+        let clock = crate::clock::set_for_test(time::OffsetDateTime::UNIX_EPOCH);
+        let f = fixture();
+        make_fake_bin(&f.bin_dir, "claude", "#!/bin/sh\necho ready\nsleep 2\n");
+        let _path = PathGuard::set(&f.bin_dir);
+        // Exercise idle expiry and hard expiry independently.
+        for idle in [60, 600] {
+            let mut profile = test_profile();
+            profile.review_timeout_seconds = Some(idle);
+            profile.review_hard_timeout_seconds = Some(120);
+            let handle = clock.handle();
+            let session = f.session_dir.clone();
+            let advance = std::thread::spawn(move || {
+                assert!(crate::runner::pipes::wait_until(
+                    Instant::now() + Duration::from_secs(5),
+                    || {
+                        fs::read_to_string(session.join("review-stdout.log"))
+                            .unwrap_or_default()
+                            .contains("ready")
+                    }
+                ));
+                // Allow the supervisor to observe the initial output before advancing.
+                std::thread::sleep(Duration::from_millis(100));
+                handle.advance(time::Duration::seconds(121));
+            });
+            let result = run_review_backend(
+                &profile,
+                "claude",
+                &f.worktree,
+                "task",
+                &f.session_dir,
+                None,
+                &[],
+            );
+            advance.join().unwrap();
+            assert_eq!(
+                result.outcome,
+                if idle == 60 {
+                    ReviewProcessOutcome::IdleTimeout
+                } else {
+                    ReviewProcessOutcome::HardTimeout
+                }
+            );
+            let _ = fs::remove_file(f.session_dir.join("review-stdout.log"));
+        }
+    }
 
     #[test]
     fn run_review_backend_times_out_and_preserves_partial_output() {

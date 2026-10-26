@@ -14,7 +14,7 @@ pub(in crate::dispatch) fn record_route_attempt(
     diagnostics.selected_subscription_capacity = Some(crate::routing::subscription::capacity(
         &route.identity,
         &crate::quota_store::load_account_observations(),
-        time::OffsetDateTime::now_utc(),
+        crate::clock::now_utc(),
     ));
     ledger
         .attempt_routing

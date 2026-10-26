@@ -110,20 +110,22 @@ fn model_specific_block_blocks_only_that_model() {
 fn expired_temporary_record_becomes_eligible() {
     let tmp = TempDir::new().unwrap();
     let p = path(&tmp);
-    let observed_at = OffsetDateTime::now_utc() - time::Duration::hours(2);
+    let observed_at = time::OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+    let clock = crate::clock::set_for_test(observed_at);
     record_unavailable(
         &p,
         "codex",
         None,
         Reason::RateLimited,
         Source::BackendError,
-        Some(observed_at + time::Duration::hours(1)), // expired an hour ago
+        Some(observed_at + time::Duration::hours(1)),
         None,
         observed_at,
     )
     .unwrap();
 
-    let decision = availability_for(&p, "codex", None, OffsetDateTime::now_utc()).unwrap();
+    clock.advance(time::Duration::hours(2));
+    let decision = availability_for(&p, "codex", None, crate::clock::now_utc()).unwrap();
     assert!(decision.eligible);
 }
 

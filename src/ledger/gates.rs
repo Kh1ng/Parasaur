@@ -93,7 +93,7 @@ pub fn is_entry_stale(entry: &LedgerEntry) -> bool {
     } else {
         return false;
     };
-    OffsetDateTime::now_utc() - entry_time > time::Duration::days(LEDGER_ENTRY_STALE_AFTER_DAYS)
+    crate::clock::now_utc() - entry_time > time::Duration::days(LEDGER_ENTRY_STALE_AFTER_DAYS)
 }
 
 /// Resolve the effective human gate for one work item using the same

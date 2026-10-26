@@ -8,7 +8,6 @@ use crate::routing::RouteDecision;
 use anyhow::Result;
 use std::collections::HashSet;
 use std::fmt;
-use time::OffsetDateTime;
 
 mod ci_wait;
 
@@ -305,7 +304,7 @@ fn candidate_is_available(
     let identity = profile
         .effective_routing(&crate::config::Defaults::default())
         .execution_identity_for_candidate(candidate);
-    availability::availability_for_identity(state_path, &identity, OffsetDateTime::now_utc())
+    availability::availability_for_identity(state_path, &identity, crate::clock::now_utc())
         .map(|decision| decision.eligible)
         .unwrap_or(true)
 }

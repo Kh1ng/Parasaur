@@ -53,7 +53,7 @@ pub fn decide_with_state(
         req,
         runtime,
         &availability::resolve_state_path(),
-        OffsetDateTime::now_utc(),
+        crate::clock::now_utc(),
         |backend| runner::backend_available_for_profile(profile, backend),
     )?;
     Ok(with_resolved_executable(profile, decision))
@@ -78,7 +78,7 @@ pub fn decide_for_task_with_state(
         runtime,
         RouteEvaluation {
             state_path: &availability::resolve_state_path(),
-            now: OffsetDateTime::now_utc(),
+            now: crate::clock::now_utc(),
         },
         |backend| runner::backend_available_for_profile(profile, backend),
     )?;

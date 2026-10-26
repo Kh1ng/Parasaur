@@ -509,7 +509,7 @@ fn boost_expiry(hours: f64) -> Result<String> {
     if !hours.is_finite() || hours <= 0.0 {
         anyhow::bail!("boost_hours must be greater than zero");
     }
-    let until = time::OffsetDateTime::now_utc() + time::Duration::seconds_f64(hours * 3600.0);
+    let until = crate::clock::now_utc() + time::Duration::seconds_f64(hours * 3600.0);
     Ok(until
         .replace_nanosecond(0)?
         .format(&time::format_description::well_known::Rfc3339)?)
@@ -539,4 +539,21 @@ fn parse_model_switch(value: &str) -> Result<(&str, &str, &str)> {
     });
     parsed
         .ok_or_else(|| anyhow::anyhow!("invalid agent_model '{value}' (expected backend/old=new)"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::boost_expiry;
+
+    #[test]
+    fn boost_expiry_uses_the_injected_clock() {
+        let _clock = crate::clock::set_for_test(
+            time::OffsetDateTime::parse(
+                "2030-01-01T00:00:00Z",
+                &time::format_description::well_known::Rfc3339,
+            )
+            .unwrap(),
+        );
+        assert_eq!(boost_expiry(1.0).unwrap(), "2030-01-01T01:00:00Z");
+    }
 }

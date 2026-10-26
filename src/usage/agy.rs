@@ -88,7 +88,7 @@ pub fn refresh(
     parse(
         &read_usage(executable, home)?,
         account,
-        OffsetDateTime::now_utc(),
+        crate::clock::now_utc(),
     )
 }
 
@@ -168,6 +168,28 @@ mod tests {
         );
         assert_eq!(records[1].quota_remaining_percent, Some(100.0));
         assert!(records.iter().all(|record| record.check_error.is_none()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agy_refresh_observations_use_the_injected_clock() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let executable = dir.path().join("agy");
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\ncase \"$*\" in\n  --help) echo --disable-slash-commands ;;\n  *) echo '{\"status\":\"SUCCESS\",\"command\":{\"name\":\"usage\",\"data\":{\"groups\":[{\"buckets\":[{\"id\":\"gemini-weekly\",\"remaining_fraction\":0.8},{\"id\":\"gemini-5h\",\"remaining_fraction\":0.7}]},{\"buckets\":[{\"id\":\"3p-weekly\",\"remaining_fraction\":0.6},{\"id\":\"3p-5h\",\"remaining_fraction\":0.5}]}]}}}' ;;\nesac\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let now = OffsetDateTime::parse("2030-01-01T00:00:00Z", &Rfc3339).unwrap();
+        let _clock = crate::clock::set_for_test(now);
+        let records = refresh(executable.to_str().unwrap(), "agy", None).unwrap();
+        assert_eq!(records.len(), 8);
+        assert!(records
+            .iter()
+            .all(|record| record.checked_at.as_deref() == Some("2030-01-01T00:00:00Z")));
     }
 
     #[test]

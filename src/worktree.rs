@@ -108,9 +108,26 @@ fn collect_pipes(
 }
 
 pub(crate) fn wait_with_timeout_for(
-    mut child: Child,
+    child: Child,
     context: &str,
     timeout: Duration,
+) -> Result<Output> {
+    wait_with_deadline_inner(child, context, None, Some(timeout))
+}
+
+pub(crate) fn wait_with_deadline_for(
+    child: Child,
+    context: &str,
+    deadline: crate::clock::Deadline,
+) -> Result<Output> {
+    wait_with_deadline_inner(child, context, Some(deadline), None)
+}
+
+fn wait_with_deadline_inner(
+    mut child: Child,
+    context: &str,
+    deadline: Option<crate::clock::Deadline>,
+    original_timeout: Option<Duration>,
 ) -> Result<Output> {
     // Read both pipes while the child runs. Waiting for exit before draining
     // deadlocks as soon as git emits more than the OS pipe capacity: git
@@ -123,7 +140,9 @@ pub(crate) fn wait_with_timeout_for(
         .stderr
         .take()
         .map(|pipe: ChildStderr| PipeCapture::spawn(pipe));
-    let started = Instant::now();
+    let deadline = deadline.unwrap_or_else(|| {
+        crate::clock::Deadline::after(original_timeout.expect("timeout is provided"))
+    });
     // Leave the leader unreaped until cleanup so its group id stays ours. An
     // error means it is not provably ours any more (ECHILD: already reaped):
     // return without signalling or waiting; the dropped captures stop
@@ -131,13 +150,16 @@ pub(crate) fn wait_with_timeout_for(
     while !crate::runner::exited_without_reaping(&child)
         .with_context(|| format!("{context}: lost track of the process; not cleaned up"))?
     {
-        if started.elapsed() >= timeout {
+        if deadline.reached() {
             // Kill the whole group: a hook or remote helper that inherited
             // the pipes would otherwise keep them open after git dies.
             let _ = crate::runner::kill_process_group(&mut child);
             let _ = child.wait();
             let _ = collect_pipes(stdout, stderr, context);
-            anyhow::bail!("{context} timed out after {}s", timeout.as_secs());
+            let elapsed = original_timeout
+                .unwrap_or_else(|| deadline.remaining())
+                .as_secs();
+            anyhow::bail!("{context} timed out after {elapsed}s");
         }
         thread::sleep(Duration::from_millis(100));
     }

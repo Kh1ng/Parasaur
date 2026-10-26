@@ -31,7 +31,7 @@ pub(super) fn record_capacity_deferral(
     work_id: Option<&str>,
     error: &anyhow::Error,
 ) -> Result<Option<String>> {
-    let route_state = route_state_fingerprint(cfg, &args.profile, time::OffsetDateTime::now_utc())
+    let route_state = route_state_fingerprint(cfg, &args.profile, crate::clock::now_utc())
         .ok()
         .map(|fingerprint| format!(" route_state={fingerprint}"))
         .unwrap_or_default();

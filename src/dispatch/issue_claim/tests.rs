@@ -156,6 +156,124 @@ fn assignees(issue: &Rc<RefCell<Issue>>) -> Vec<String> {
 }
 
 #[test]
+fn provider_claim_lease_expires_on_clock_advance() {
+    let clock = crate::clock::set_for_test(at(0));
+    let lease = IssueLease {
+        target: issue_7(),
+        state: Arc::new(Mutex::new(LeaseState {
+            lost: None,
+            deadline: Deadline::at(at(5)),
+        })),
+        stop: None,
+        renewer: None,
+    };
+    assert!(lease.ensure_held().is_ok());
+    clock.advance(time::Duration::minutes(6));
+    assert!(lease.ensure_held().is_err());
+}
+
+#[test]
+fn provider_claim_renewal_inherits_clock_and_advances_schedule() {
+    let _exec = ExecGuard::new();
+    let clock = crate::clock::set_for_test(at(0));
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let created = at(0).format(&Rfc3339).unwrap();
+    let calls = install_renewal_gh(
+        &bin,
+        &format!(
+            r#"case "$*" in
+        *'PATCH'*) printf '%s' "$*" > "$marker" ;;
+        *'comments?'*) echo '{{"id":21,"login":"{COLTON}","created_at":"{created}"}}' ;;
+        *) echo '{COLTON}' ;;
+    esac"#
+        ),
+    );
+    let _path = PathGuard::set(&bin);
+    let mut prof = profile(tmp.path());
+    prof.publishing.issue_claim = policy(&[]);
+    prof.publishing.issue_claim.ttl_minutes = 5;
+    let lease = IssueLease::start(
+        &prof,
+        &issue_7(),
+        COLTON.into(),
+        Deadline::at(at(5)),
+        Duration::from_secs(300),
+    );
+    // Start the renewer's wait before advancing its inherited clock.
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(!calls.exists());
+    clock.advance(time::Duration::seconds(101));
+    let expected = (crate::clock::now_utc() + time::Duration::minutes(5))
+        .format(&Rfc3339)
+        .unwrap();
+    assert!(
+        wait_for(
+            || std::fs::read_to_string(&calls)
+                .unwrap_or_default()
+                .contains(&expected),
+            Duration::from_secs(5)
+        ),
+        "renewal did not follow simulated advance with the inherited timestamp"
+    );
+    assert!(wait_for(
+        || lock(&lease.state).deadline.remaining() > Duration::from_secs(290),
+        Duration::from_secs(5)
+    ));
+    clock.advance(time::Duration::seconds(200));
+    assert!(
+        lease.ensure_held().is_ok(),
+        "renewal should extend past original expiry"
+    );
+}
+
+#[test]
+fn provider_claim_renewal_stops_when_simulated_lease_expires_mid_call() {
+    let _exec = ExecGuard::new();
+    let clock = crate::clock::set_for_test(at(0));
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let marker = install_renewal_gh(
+        &bin,
+        &format!(
+            r#"case "$*" in
+        *'PATCH'*) echo patch >> "$marker"; exec sleep 30 ;;
+        *'comments?'*) echo '{{"id":21,"login":"{COLTON}","created_at":"{}"}}' ;;
+        *) echo '{COLTON}' ;;
+    esac"#,
+            at(0).format(&Rfc3339).unwrap()
+        ),
+    );
+    let _path = PathGuard::set(&bin);
+    let mut prof = profile(tmp.path());
+    prof.publishing.issue_claim = policy(&[]);
+    prof.publishing.issue_claim.ttl_minutes = 5;
+    let lease = IssueLease::start(
+        &prof,
+        &issue_7(),
+        COLTON.into(),
+        Deadline::at(at(5)),
+        Duration::from_secs(300),
+    );
+    std::thread::sleep(Duration::from_millis(100));
+    clock.advance(time::Duration::seconds(101));
+    assert!(wait_for(
+        || std::fs::read_to_string(&marker)
+            .unwrap_or_default()
+            .contains("patch"),
+        Duration::from_secs(5)
+    ));
+    clock.advance(time::Duration::seconds(200));
+    assert!(wait_for(
+        || lease.ensure_held().is_err(),
+        Duration::from_secs(5)
+    ));
+    let calls = std::fs::read_to_string(marker).unwrap();
+    drop(lease);
+    assert_eq!(calls.lines().count(), 1, "renewal continued after expiry");
+}
+
+#[test]
 fn the_earliest_claim_comment_wins_a_contested_claim() {
     let contested = view(
         &[MICHAEL, COLTON],
@@ -429,7 +547,7 @@ fn a_lost_lease_stops_the_dispatch_with_a_claim_lost_error() {
         target: issue_7(),
         state: Arc::new(Mutex::new(LeaseState {
             lost: Some(LeaseLoss::Claim(format!("lease taken over by {MICHAEL}"))),
-            deadline: Instant::now() + Duration::from_secs(3600),
+            deadline: (Instant::now() + Duration::from_secs(3600)).into(),
         })),
         stop: None,
         renewer: None,
@@ -652,7 +770,7 @@ fn a_renewal_confirmed_after_the_deadline_loses_the_lease_for_good() {
         target: issue_7(),
         state: Arc::new(Mutex::new(LeaseState {
             lost: None,
-            deadline,
+            deadline: deadline.into(),
         })),
         stop: None,
         renewer: None,
@@ -661,17 +779,25 @@ fn a_renewal_confirmed_after_the_deadline_loses_the_lease_for_good() {
 
     // The renewal call returned success, but only seen 10 ms after the old
     // deadline, and nobody called `ensure_held` in between.
-    let held = confirm_renewal(&lease.state, extended, deadline + Duration::from_millis(10));
+    let held = confirm_renewal(
+        &lease.state,
+        extended.into(),
+        deadline + Duration::from_millis(10),
+    );
 
     assert!(!held);
-    assert_eq!(lock(&lease.state).deadline, deadline, "not extended");
+    assert_eq!(
+        lock(&lease.state).deadline.monotonic(),
+        deadline,
+        "not extended"
+    );
     for _ in 0..2 {
         let error = lease.ensure_held().unwrap_err();
         assert!(issue_claim_lost(&error).is_some());
         assert!(error.to_string().contains("expired"), "{error:#}");
     }
     // A later on-time success cannot revive it.
-    assert!(!confirm_renewal(&lease.state, extended, start));
+    assert!(!confirm_renewal(&lease.state, extended.into(), start));
     assert!(lease.ensure_held().is_err());
 }
 
@@ -680,16 +806,16 @@ fn a_renewal_confirmed_before_the_deadline_extends_the_lease() {
     let start = Instant::now();
     let state = Mutex::new(LeaseState {
         lost: None,
-        deadline: start + Duration::from_millis(150),
+        deadline: (start + Duration::from_millis(150)).into(),
     });
     let extended = start + Duration::from_secs(3600);
 
     assert!(confirm_renewal(
         &state,
-        extended,
+        extended.into(),
         start + Duration::from_millis(140)
     ));
-    assert_eq!(lock(&state).deadline, extended);
+    assert_eq!(lock(&state).deadline.monotonic(), extended);
 }
 
 #[test]
@@ -699,7 +825,7 @@ fn the_lease_expires_at_its_deadline_without_the_renewer() {
         target: issue_7(),
         state: Arc::new(Mutex::new(LeaseState {
             lost: None,
-            deadline: Instant::now() + Duration::from_millis(50),
+            deadline: (Instant::now() + Duration::from_millis(50)).into(),
         })),
         stop: None,
         renewer: None,
@@ -760,7 +886,7 @@ fn a_hung_renewal_cannot_keep_a_lease_past_its_confirmed_expiry() {
         &prof,
         &issue_7(),
         "me".into(),
-        deadline,
+        deadline.into(),
         claim_ttl(&prof.publishing.issue_claim),
     );
 
@@ -800,7 +926,7 @@ fn an_aging_claim_is_renewed_at_once_and_keeps_its_authority() {
         target: issue_7(),
         state: Arc::new(Mutex::new(LeaseState {
             lost: None,
-            deadline,
+            deadline: deadline.into(),
         })),
         stop: None,
         renewer: None,
@@ -814,11 +940,11 @@ fn an_aging_claim_is_renewed_at_once_and_keeps_its_authority() {
         renew(&colton, &policy, COLTON, &issue_7(), at(59)).unwrap(),
         None
     );
-    assert!(confirm_renewal(&lease.state, began + ttl, began));
+    assert!(confirm_renewal(&lease.state, (began + ttl).into(), began));
 
     // Even past the old expiry, both the local lease and provider claim hold.
     assert!(lease.ensure_held().is_ok());
-    assert_eq!(lock(&lease.state).deadline, began + ttl);
+    assert_eq!(lock(&lease.state).deadline.monotonic(), began + ttl);
     assert_eq!(
         standing(&issue.borrow().view, MICHAEL, &policy, at(61)),
         Standing::Theirs(COLTON.into())
@@ -841,7 +967,7 @@ fn start_renews_an_aging_claim_in_the_background() {
     let _exec_guard = ExecGuard::new();
     let tmp = tempfile::tempdir().unwrap();
     let bin = tmp.path().join("bin");
-    let claimed_at = (OffsetDateTime::now_utc() - time::Duration::minutes(59))
+    let claimed_at = (crate::clock::now_utc() - time::Duration::minutes(59))
         .format(&Rfc3339)
         .unwrap();
     let calls = install_renewal_gh(
@@ -870,16 +996,16 @@ esac"#
         })
     });
     let ttl = claim_ttl(&prof.publishing.issue_claim);
-    let lease = IssueLease::start(&prof, &issue_7(), COLTON.into(), deadline, ttl);
+    let lease = IssueLease::start(&prof, &issue_7(), COLTON.into(), deadline.into(), ttl);
     receive
         .recv_timeout(Duration::from_secs(120))
         .expect("start's background renewer did not confirm the aging claim at once");
     assert_eq!(std::fs::read_to_string(calls).unwrap(), "renewed\n");
-    assert_eq!(lock(&lease.state).deadline, began + ttl);
+    assert_eq!(lock(&lease.state).deadline.monotonic(), began + ttl);
     assert!(lease.ensure_held().is_ok());
     // Advance beyond the inherited expiry; confirmed authority remains.
     *clock.lock().unwrap() = deadline + Duration::from_secs(1);
-    assert!(*clock.lock().unwrap() < lock(&lease.state).deadline);
+    assert!(*clock.lock().unwrap() < lock(&lease.state).deadline.monotonic());
     assert!(lock(&lease.state).lost.is_none());
     drop(lease);
 }
@@ -1226,7 +1352,7 @@ esac
         &prof,
         &issue_7(),
         "me".into(),
-        Instant::now() + Duration::from_secs(30),
+        (Instant::now() + Duration::from_secs(30)).into(),
         claim_ttl(&prof.publishing.issue_claim),
     );
     assert!(wait_for(

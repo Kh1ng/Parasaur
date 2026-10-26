@@ -199,7 +199,7 @@ pub(super) fn order_candidates(
     }
 
     let original = candidates.clone();
-    let now = time::OffsetDateTime::now_utc();
+    let now = crate::clock::now_utc();
     let records = if is_load_balanced_mode(mode) {
         crate::quota_store::load_account_observations()
     } else {
@@ -629,7 +629,7 @@ pub(super) fn route_candidates(
     routing: &RoutingPolicy,
     raw: &[crate::config::CandidateConfig],
 ) -> Vec<RouteCandidate> {
-    let now = time::OffsetDateTime::now_utc();
+    let now = crate::clock::now_utc();
     // Load live observations lazily for candidates opted into quota pacing.
     let mut quota_observations: Option<Vec<crate::quota_store::QuotaObservationRecord>> = None;
     raw.iter()

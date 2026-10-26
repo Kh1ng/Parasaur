@@ -354,7 +354,7 @@ where
 
     let mut state = load_state(state_path)?;
     mutate(&mut state);
-    let dropped = apply_retention(&mut state, OffsetDateTime::now_utc());
+    let dropped = apply_retention(&mut state, crate::clock::now_utc());
 
     let mut value = serde_json::to_value(&state).context("serializing availability state")?;
     crate::redact::redact_json_value(&mut value);
@@ -969,7 +969,7 @@ pub mod cli {
 
     pub fn run(json: bool) -> Result<()> {
         let state_path = resolve_state_path();
-        let now = OffsetDateTime::now_utc();
+        let now = crate::clock::now_utc();
         let statuses = list_scopes(&state_path, now)?;
         let rows: Vec<Row> = statuses.iter().map(|s| Row::from_status(s, now)).collect();
 
@@ -1047,7 +1047,7 @@ pub mod cli {
         let quota_pool = quota_pool
             .map(|pool| crate::execution_identity::validate_operator_label("quota pool", pool))
             .transpose()?;
-        let now = OffsetDateTime::now_utc();
+        let now = crate::clock::now_utc();
         let record = AvailabilityRecord {
             backend: backend.clone(),
             backend_instance,

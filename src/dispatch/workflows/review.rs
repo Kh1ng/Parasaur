@@ -848,7 +848,7 @@ pub(in crate::dispatch) fn review(
                         crate::availability::clear_quota_failure(
                             &crate::availability::resolve_state_path(),
                             &route.identity,
-                            time::OffsetDateTime::now_utc(),
+                            crate::clock::now_utc(),
                         )?;
                         let repair = (format_only_repair_count < REVIEW_FORMAT_REPAIR_ATTEMPTS)
                             .then(|| review_gate_context.repair_instructions(&verdict))

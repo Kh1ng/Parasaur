@@ -5,7 +5,6 @@ use crate::routing::RoutingRuntimeState;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use time::format_description::well_known::Rfc3339;
-use time::OffsetDateTime;
 
 /// Coarse attribution for why a dispatch failed. Deliberately not
 /// exhaustively wired everywhere yet (TICKET-063): only the least ambiguous
@@ -774,9 +773,9 @@ impl LedgerEntry {
         session_dir: Option<&Path>,
     ) -> Self {
         Self {
-            timestamp: OffsetDateTime::now_utc()
+            timestamp: crate::clock::now_utc()
                 .format(&Rfc3339)
-                .unwrap_or_else(|_| OffsetDateTime::now_utc().unix_timestamp().to_string()),
+                .unwrap_or_else(|_| crate::clock::now_utc().unix_timestamp().to_string()),
             schema_version: LEDGER_SCHEMA_VERSION,
             skills: Vec::new(),
             session_id,
@@ -889,9 +888,9 @@ impl LedgerEntry {
     /// counters when it encounters a `clear_attempts` entry.
     pub fn new_clear_attempts(profile_name: &str, profile: &Profile, work_id: &str) -> Self {
         Self {
-            timestamp: OffsetDateTime::now_utc()
+            timestamp: crate::clock::now_utc()
                 .format(&Rfc3339)
-                .unwrap_or_else(|_| OffsetDateTime::now_utc().unix_timestamp().to_string()),
+                .unwrap_or_else(|_| crate::clock::now_utc().unix_timestamp().to_string()),
             schema_version: LEDGER_SCHEMA_VERSION,
             skills: Vec::new(),
             session_id: None,

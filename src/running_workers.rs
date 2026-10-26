@@ -78,11 +78,25 @@ fn owner_is_gone(pid: u32) -> bool {
 /// Renew only when the runner's idle watcher observes actual progress.
 /// Missing or unwritable observation artifacts must never affect execution.
 pub(crate) fn heartbeat(session: &Path) {
-    if let Ok(file) = fs::OpenOptions::new()
-        .write(true)
-        .open(session.join("running-worker.json"))
-    {
+    let path = session.join("running-worker.json");
+    if let Ok(file) = fs::OpenOptions::new().write(true).open(&path) {
         let _ = file.set_modified(std::time::SystemTime::now());
+    }
+    let Ok(bytes) = fs::read(&path) else { return };
+    let Ok(mut record) = serde_json::from_slice::<InvocationRecord>(&bytes) else {
+        return;
+    };
+    let Ok(timestamp) = crate::clock::now_utc().format(&Rfc3339) else {
+        return;
+    };
+    record.worker.last_activity_at = timestamp;
+    let temporary = path.with_extension("json.tmp");
+    if let Ok(bytes) = serde_json::to_vec(&record) {
+        if fs::write(&temporary, bytes).is_ok() && fs::rename(temporary, &path).is_ok() {
+            if let Ok(file) = fs::OpenOptions::new().write(true).open(path) {
+                let _ = file.set_modified(std::time::SystemTime::now());
+            }
+        }
     }
 }
 
@@ -128,9 +142,7 @@ impl InvocationGuard {
         let Some(context) = context else {
             return Self(None);
         };
-        let now = OffsetDateTime::now_utc()
-            .format(&Rfc3339)
-            .unwrap_or_default();
+        let now = crate::clock::now_utc().format(&Rfc3339).unwrap_or_default();
         let attempt = session
             .file_name()
             .and_then(|s| s.to_str())
@@ -199,18 +211,23 @@ pub fn observe(root: &Path, now: OffsetDateTime) -> Vec<RunningWorker> {
                 };
                 let owner_gone = record.owner_pid.is_some_and(owner_is_gone);
                 let mut row = record.worker;
-                let mut last = OffsetDateTime::parse(&row.started_at, &Rfc3339).unwrap_or(now);
-                if let Ok(modified) = fs::metadata(&path).and_then(|m| m.modified()) {
-                    last = last.max(OffsetDateTime::from(modified));
-                }
-                // Output and idle-watch heartbeats are activity; reads never renew it.
-                if let Ok(logs) = fs::read_dir(dir) {
-                    for log in logs
-                        .flatten()
-                        .filter(|log| log.file_name().to_string_lossy().ends_with(".log"))
-                    {
-                        if let Ok(modified) = log.metadata().and_then(|m| m.modified()) {
-                            last = last.max(OffsetDateTime::from(modified));
+                let mut last = OffsetDateTime::parse(&row.last_activity_at, &Rfc3339)
+                    .or_else(|_| OffsetDateTime::parse(&row.started_at, &Rfc3339))
+                    .unwrap_or(now);
+                // Legacy writers renew mtimes; simulated time must ignore host mtimes.
+                if crate::clock::override_now().is_none() {
+                    if let Ok(modified) = fs::metadata(&path).and_then(|m| m.modified()) {
+                        last = last.max(OffsetDateTime::from(modified));
+                    }
+                    // Output and idle-watch heartbeats are activity; reads never renew it.
+                    if let Ok(logs) = fs::read_dir(dir) {
+                        for log in logs
+                            .flatten()
+                            .filter(|log| log.file_name().to_string_lossy().ends_with(".log"))
+                        {
+                            if let Ok(modified) = log.metadata().and_then(|m| m.modified()) {
+                                last = last.max(OffsetDateTime::from(modified));
+                            }
                         }
                     }
                 }
@@ -317,6 +334,7 @@ mod tests {
         aged.started_at = (now - time::Duration::seconds(901))
             .format(&Rfc3339)
             .unwrap();
+        aged.last_activity_at = aged.started_at.clone();
         fs::write(
             session.join("running-worker.json"),
             serde_json::to_vec(&aged).unwrap(),
@@ -360,6 +378,7 @@ mod tests {
         )
         .unwrap();
         fs::write(session.join("backend-output.log"), "Agent output").unwrap();
+        heartbeat(&session);
         assert_eq!(
             observe(temp.path(), OffsetDateTime::now_utc())[0].state,
             WorkerState::Running
@@ -367,5 +386,95 @@ mod tests {
 
         drop(guard);
         assert!(observe(temp.path(), now).is_empty());
+    }
+
+    #[test]
+    fn legacy_heartbeat_remains_live() {
+        let temp = tempfile::tempdir().unwrap();
+        let session = temp.path().join("sessions/run/attempt-1");
+        fs::create_dir_all(&session).unwrap();
+        initialize(
+            session.parent().unwrap(),
+            &DispatchContext {
+                profile: "gah".into(),
+                work_id: Some("#1".into()),
+                run_id: "run".into(),
+                mode: "improve".into(),
+            },
+        );
+        let identity = crate::execution_identity::ExecutionIdentity::legacy_route(
+            "codex",
+            None::<String>,
+            "codex",
+            None::<String>,
+            None::<String>,
+        );
+        let _guard = InvocationGuard::start(&session, &identity, None, Some("#1"), 900);
+        let path = session.join("running-worker.json");
+        let mut record: InvocationRecord =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let now = crate::clock::now_utc();
+        let old = (now - time::Duration::seconds(901))
+            .format(&Rfc3339)
+            .unwrap();
+        record.worker.started_at = old.clone();
+        record.worker.last_activity_at = old;
+        fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+        // Previous binaries renewed only file mtimes, leaving the timestamp unchanged.
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(now.into())
+            .unwrap();
+        assert_eq!(observe(temp.path(), now)[0].state, WorkerState::Running);
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified((now - time::Duration::seconds(901)).into())
+            .unwrap();
+        fs::write(session.join("backend-output.log"), "progress").unwrap();
+        assert_eq!(observe(temp.path(), now)[0].state, WorkerState::Running);
+    }
+
+    #[test]
+    fn heartbeat_and_staleness_share_the_injected_clock() {
+        let temp = tempfile::tempdir().unwrap();
+        let session = temp.path().join("sessions/run/attempt-1");
+        fs::create_dir_all(&session).unwrap();
+        initialize(
+            session.parent().unwrap(),
+            &DispatchContext {
+                profile: "gah".into(),
+                work_id: Some("#1".into()),
+                run_id: "run".into(),
+                mode: "improve".into(),
+            },
+        );
+        let start = OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+        let clock = crate::clock::set_for_test(start);
+        let identity = crate::execution_identity::ExecutionIdentity::legacy_route(
+            "codex",
+            None::<String>,
+            "codex",
+            None::<String>,
+            None::<String>,
+        );
+        let _guard = InvocationGuard::start(&session, &identity, None, Some("#1"), 900);
+        assert_eq!(
+            observe(temp.path(), crate::clock::now_utc())[0].state,
+            WorkerState::Running
+        );
+        clock.advance(time::Duration::seconds(901));
+        assert_eq!(
+            observe(temp.path(), crate::clock::now_utc())[0].state,
+            WorkerState::Stale
+        );
+        heartbeat(&session);
+        assert_eq!(
+            observe(temp.path(), crate::clock::now_utc())[0].state,
+            WorkerState::Running
+        );
     }
 }
