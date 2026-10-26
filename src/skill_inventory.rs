@@ -241,6 +241,12 @@ pub struct SkillInventoryView {
     pub observation_stale: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drift: Option<SkillDrift>,
+    /// When the bound resolution was last fetched from central, and its age.
+    /// Absent for local banks and for caches written before #1532.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_cache_resolved_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_cache_age_seconds: Option<i64>,
 }
 
 /// Build the reportable view for one backend instance from its bound
@@ -289,6 +295,8 @@ pub fn view(
         observation_age_seconds,
         observation_stale,
         drift,
+        skill_cache_resolved_at: None,
+        skill_cache_age_seconds: None,
     }
 }
 

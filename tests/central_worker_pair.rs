@@ -293,7 +293,9 @@ fn outage_refuses_central_claim_then_explicit_local_mode_dispatches_warmed_skill
         .map(|entry| entry.unwrap().path())
         .collect();
     assert_eq!(caches.len(), 1);
-    let warmed: Value = serde_json::from_slice(&fs::read(&caches[0]).unwrap()).unwrap();
+    let mut warmed: Value = serde_json::from_slice(&fs::read(&caches[0]).unwrap()).unwrap();
+    assert!(warmed["resolved_at"].is_string(), "{warmed}");
+    warmed.as_object_mut().unwrap().remove("resolved_at");
     assert_eq!(warmed, resolution());
     harness.use_local_skills(&warmed);
     let local = harness.run_one_loop().unwrap();
