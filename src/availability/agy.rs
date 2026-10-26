@@ -10,6 +10,7 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 const TTL: Duration = Duration::from_secs(60);
+const RETRY_BACKOFF: Duration = Duration::from_secs(10);
 static WARNED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Debug, Deserialize)]
@@ -162,14 +163,17 @@ fn warn() {
 }
 
 type Runtime = (String, Option<PathBuf>);
+#[derive(Default)]
 struct Cached {
-    at: Instant,
+    refreshed_at: Option<Instant>,
+    retry_at: Option<Instant>,
     catalog: Catalog,
 }
 static CACHE: OnceLock<Mutex<HashMap<Runtime, Cached>>> = OnceLock::new();
 
-/// Resolve capacity using this installation's live inventory, throttling both
-/// successful and failed probes. Refresh replaces the inventory, removing retirees.
+/// Resolve capacity using this installation's live inventory. Failed refreshes
+/// retain the last good catalog with a separate retry backoff; successful
+/// inventories replace it, including empty inventories and retired models.
 pub(crate) fn pool(account: &str, model: &str, executable: &str, home: Option<&Path>) -> String {
     #[cfg(test)]
     if let Some(catalog) = tests::FIXTURE.with(|cell| cell.borrow().clone()) {
@@ -180,23 +184,29 @@ pub(crate) fn pool(account: &str, model: &str, executable: &str, home: Option<&P
         .get_or_init(Default::default)
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    if cache
-        .get(&key)
-        .is_none_or(|cached| cached.at.elapsed() >= TTL)
+    let cached = cache.entry(key).or_default();
+    if cached.refreshed_at.is_none_or(|at| at.elapsed() >= TTL)
+        && cached
+            .retry_at
+            .is_none_or(|retry_at| Instant::now() >= retry_at)
     {
-        let catalog = load(executable, home).unwrap_or_else(|_| {
-            warn();
-            Catalog::default()
-        });
-        cache.insert(
-            key.clone(),
-            Cached {
-                at: Instant::now(),
-                catalog,
-            },
-        );
+        match load(executable, home) {
+            Ok(catalog) => {
+                if cached.retry_at.take().is_some() {
+                    eprintln!("AGY metadata refresh recovered; using the updated quota catalog");
+                }
+                cached.catalog = catalog;
+                cached.refreshed_at = Some(Instant::now());
+            }
+            Err(_) => {
+                if cached.retry_at.is_none() {
+                    eprintln!("warning: AGY metadata refresh failed; retaining cached quota pools and retrying after 10 seconds");
+                }
+                cached.retry_at = Some(Instant::now() + RETRY_BACKOFF);
+            }
+        }
     }
-    cache[&key].catalog.pool(account, model)
+    cached.catalog.pool(account, model)
 }
 
 fn load(executable: &str, home: Option<&Path>) -> Result<Catalog> {

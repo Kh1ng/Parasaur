@@ -1,5 +1,5 @@
 /** AGY 1.3.6 exposes TSV models and the valid effort vocabulary in --help.
- * Cache each spec's installation for one minute, replacing retired entries. */
+ * Cache each spec's installation for one minute; failed commands retain the last inventory. */
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 import { agentChildEnv } from './childEnv.js';
@@ -57,27 +57,34 @@ export function createAgyModelOptions(runtime?: { executable: string; state_root
   let checkedAt = -Infinity;
   let cached: Options = { models: [], reasoningEfforts: [], modelReasoningEfforts: {} };
   let pending: Promise<Options> | undefined;
-  let warned = false;
+  let warning: string | undefined;
   let stopped = false;
   let timer: ReturnType<typeof setInterval> | undefined;
+  function warn(message: string) {
+    if (warning !== message) {
+      warning = message;
+      (deps.warn ?? console.warn)(message);
+    }
+  }
   function refresh(force = false): Promise<Options> {
     if (stopped) return Promise.resolve(cached);
     if (pending) return pending;
     if (!force && now() - checkedAt < 60_000) return Promise.resolve(cached);
     pending = (async () => {
-      let models: { stdout: string; stderr: string } | undefined;
       try {
-        models = await run(['models']);
+        const models = await run(['models']);
         const help = await run(['--help']);
-        cached = parseAgyModels(models.stdout, help.stdout + help.stderr);
-      } catch {
-        // Preserve readable models when only effort metadata changed shape.
-        try { cached = { models: modelRows(models?.stdout ?? '').map(model => ({ ...model, reasoningEfforts: [] })), reasoningEfforts: [], modelReasoningEfforts: {} }; }
-        catch { cached = { models: [], reasoningEfforts: [], modelReasoningEfforts: {} }; }
-        if (!warned) {
-          warned = true;
-          (deps.warn ?? console.warn)('[managerChat] Unrecognized AGY metadata; using no effort options and an account-scoped default quota pool.');
+        try {
+          cached = parseAgyModels(models.stdout, help.stdout + help.stderr);
+          warning = undefined;
+        } catch {
+          // Only successful commands can replace inventory or retire selections.
+          try { cached = { models: modelRows(models.stdout).map(model => ({ ...model, reasoningEfforts: [] })), reasoningEfforts: [], modelReasoningEfforts: {} }; }
+          catch { cached = { models: [], reasoningEfforts: [], modelReasoningEfforts: {} }; }
+          warn('[managerChat] Unrecognized AGY metadata; using no effort options and an account-scoped default quota pool.');
         }
+      } catch {
+        warn('[managerChat] AGY metadata invocation failed; retaining the cached models and effort options.');
       }
       checkedAt = now();
       return cached;

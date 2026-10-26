@@ -112,25 +112,98 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
         pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
         "agy-one:gemini-weekly"
     );
-    std::fs::write(home.join("models"), "").unwrap();
+    // Keep an exhausted reading attached to the same pool through failures.
+    let readings = crate::usage::agy::refresh(executable, "agy-one", Some(&home)).unwrap();
+    let key = (executable.to_string(), Some(home.clone()));
+    let cache = CACHE.get().unwrap();
+    let expire = || {
+        let mut entries = cache.lock().unwrap();
+        *entries
+            .get_mut(&key)
+            .unwrap()
+            .refreshed_at
+            .as_mut()
+            .unwrap() -= TTL;
+    };
+    let retry = || {
+        let mut entries = cache.lock().unwrap();
+        *entries.get_mut(&key).unwrap().retry_at.as_mut().unwrap() -= RETRY_BACKOFF;
+    };
+    expire();
+    let original = std::fs::read(&script).unwrap();
+    std::fs::write(
+        &script,
+        "#!/bin/sh\necho models >> \"$HOME/calls\"\nexit 1\n",
+    )
+    .unwrap();
+    let retained = pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home));
+    assert_eq!(retained, "agy-one:gemini-weekly");
+    let identity = crate::execution_identity::ExecutionIdentity::legacy_candidate(
+        "agy-one",
+        Some("gemini-3.8-flash-high"),
+        Some(retained),
+    );
+    let windows = crate::quota_store::latest_windows_for_identity(&readings, &identity);
+    assert_eq!(windows.len(), 1);
+    assert_eq!(windows[0].quota_remaining_percent, Some(0.0));
+    let calls = std::fs::read_to_string(home.join("calls")).unwrap();
     assert_eq!(
-        pool("agy-two", "gemini-3.8-flash-high", executable, Some(&home)),
-        "agy-two:gemini-weekly"
+        pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
+        "agy-one:gemini-weekly"
+    );
+    assert_eq!(std::fs::read_to_string(home.join("calls")).unwrap(), calls);
+    retry();
+    assert_eq!(
+        pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
+        "agy-one:gemini-weekly"
     );
     assert_eq!(
         std::fs::read_to_string(home.join("calls"))
             .unwrap()
             .lines()
             .count(),
-        3
+        7
     );
-    let cache = CACHE.get().unwrap();
-    cache
+    retry();
+    std::fs::remove_file(&script).unwrap();
+    assert_eq!(
+        pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
+        "agy-one:gemini-weekly"
+    );
+    std::fs::write(&script, original).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let recovered = String::from_utf8(USAGE.to_vec())
+        .unwrap()
+        .replace("gemini-weekly", "recovered-pool");
+    std::fs::write(home.join("usage"), recovered).unwrap();
+    retry();
+    assert_eq!(
+        pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
+        "agy-one:recovered-pool"
+    );
+    assert!(CACHE
+        .get()
+        .unwrap()
         .lock()
         .unwrap()
-        .get_mut(&(executable.to_string(), Some(home.clone())))
+        .get(&key)
         .unwrap()
-        .at -= TTL;
+        .retry_at
+        .is_none());
+    std::fs::write(home.join("usage"), USAGE).unwrap();
+    std::fs::write(home.join("models"), "").unwrap();
+    assert_eq!(
+        pool("agy-two", "gemini-3.8-flash-high", executable, Some(&home)),
+        "agy-two:recovered-pool"
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.join("calls"))
+            .unwrap()
+            .lines()
+            .count(),
+        10
+    );
+    expire();
     assert_eq!(
         pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
         "agy-one:default"
@@ -150,12 +223,7 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
         );
     }
     std::fs::write(home.join("models"), MODELS).unwrap();
-    cache
-        .lock()
-        .unwrap()
-        .get_mut(&(executable.to_string(), Some(home.clone())))
-        .unwrap()
-        .at -= TTL;
+    expire();
     let identity = |instance: &str| {
         routing.execution_identity_for_candidate(&crate::config::CandidateConfig {
             backend: "agy".into(),

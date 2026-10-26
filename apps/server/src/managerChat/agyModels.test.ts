@@ -92,3 +92,48 @@ test('agy refresh clears a selected effort or model when the provider retires it
   assert.deepEqual(retired.models, []);
   assert.deepEqual(retired.reasoningEfforts, []);
 });
+
+for (const failure of ['models exit', 'models spawn', 'help exit']) {
+  test(`agy ${failure} failure keeps the last good inventory and selection until recovery`, async t => {
+    let now = 0;
+    let failing = false;
+    let inventory = models;
+    let calls = 0;
+    const warnings: string[] = [];
+    const options = createAgyModelOptions(undefined, { now: () => now, warn: message => warnings.push(message), run: async args => {
+      calls++;
+      if (failing && args[0] === (failure === 'help exit' ? '--help' : 'models')) {
+        throw Object.assign(new Error('metadata invocation failed'), { code: failure === 'models spawn' ? 'ENOENT' : 1, stdout: '' });
+      }
+      return { stdout: args[0] === 'models' ? inventory : help, stderr: '' };
+    } });
+    const backend = createHeadlessBackend({ ...agyBackendSpec(), modelOptions: options, dispose: options.dispose });
+    t.after(() => backend.dispose?.());
+    const conversation = { key: 'transient-failure', profile: 'p' };
+    await backend.setModel(conversation, 'gemini-3.8-flash-high');
+    await backend.setReasoningEffort(conversation, 'low');
+    const good = await options();
+    failing = true;
+    for (now = 60_000; now <= 120_000; now += 60_000) {
+      const retained = await backend.listModels(conversation);
+      assert.equal(retained.models.length, 6);
+      assert.equal(retained.currentModelId, 'gemini-3.8-flash-high');
+      assert.equal(retained.currentReasoningEffortId, 'low');
+      assert.equal(await options(), good);
+      const count = calls;
+      await options();
+      assert.equal(calls, count);
+    }
+    assert.equal(warnings.length, 1);
+    failing = false;
+    inventory = models.split('\n').filter(line => !line.startsWith('gemini-3.8-flash-low\t')).join('\n');
+    const recovered = await backend.listModels(conversation);
+    assert.equal(recovered.models.length, 5);
+    assert.equal(recovered.currentModelId, 'gemini-3.8-flash-high');
+    assert.equal(recovered.currentReasoningEffortId, null);
+    failing = true;
+    now += 60_000;
+    await options();
+    assert.equal(warnings.length, 2);
+  });
+}
