@@ -366,7 +366,7 @@ fn failed_dispatch_releases_central_claim_exactly_once() {
 }
 
 #[test]
-fn fleet_observes_peer_claim_and_worker_does_not_double_claim() {
+fn fleet_observation_is_recorded_and_central_lease_prevents_double_claim() {
     let central = FakeCentral::new();
     let mut harness = worker(&central);
     let claimed_at = chrono::Utc::now().to_rfc3339();
@@ -395,12 +395,9 @@ fn fleet_observes_peer_claim_and_worker_does_not_double_claim() {
         }]);
     });
     let result = harness.run_one_loop().unwrap();
-    assert!(
-        result
-            .stderr
-            .contains("Peer worker (peer-worker): 1 claim(s), 1 work item(s)"),
-        "{result:?}"
-    );
+    assert!(result.stderr.contains(
+        "WARNING -- other node(s) report active work on profile 'test': Peer worker (peer-worker): 1 claim(s), 1 work item(s)"
+    ), "fleet observation fields were not reported: {result:?}");
     assert!(
         result.stderr.contains("registry_preflight_mode=warn"),
         "{result:?}"
@@ -418,7 +415,7 @@ fn fleet_observes_peer_claim_and_worker_does_not_double_claim() {
                         && details.contains("held by node 'peer-worker'")
                 })
         }),
-        "{result:?}"
+        "central lease refusal must be recorded in dispatch events: {result:?}"
     );
     assert_request_counts(
         &central,
