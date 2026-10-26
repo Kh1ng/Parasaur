@@ -9,17 +9,27 @@ def allocate(state):
 
 
 def create(state, kind, fields, provider='gh'):
+    branch = fields.get('head', fields.get('source_branch', ''))
+    existing = next((p for p in state[kind].values()
+                     if kind == 'pulls' and branch and p['branch'] == branch), None)
     counter = 'next_number' if provider == 'gh' else 'next_' + kind + '_number'
     number = state.get(counter, 1)
-    state[counter] = number + 1
-    branch = fields.get('head', fields.get('source_branch', ''))
+    if existing is None:
+        occupied = set(state[kind])
+        if provider == 'gh':
+            occupied |= set(state['issues']) | set(state['pulls'])
+        while str(number) in occupied:
+            number += 1
+        state[counter] = number + 1
+    else:
+        number = existing['number']
     if branch and branch not in state['branches']:
         # Production creates and pushes a real local branch before publication.
         head = subprocess.run(['git', 'rev-parse', '--verify', '--end-of-options', branch],
                               capture_output=True, text=True, check=False)
         if head.returncode == 0:
             state['branches'][branch] = head.stdout.strip()
-    item = dict(kind=kind, number=number, id=allocate(state), title=fields.get('title', ''),
+    item = dict(kind=kind, number=number, id=existing['id'] if existing else allocate(state), title=fields.get('title', ''),
                 body=fields.get('body', fields.get('description', '')), state='open',
                 assignees=[], labels=fields.get('labels', []), comments=[], reviews=[],
                 review_comments=[], discussions=[], versions=[], links=[], children=[], timeline=[],
@@ -29,6 +39,12 @@ def create(state, kind, fields, provider='gh'):
     if isinstance(item['labels'], str):
         item['labels'] = [label for label in item['labels'].split(',') if label]
     item['draft'] |= item['title'].startswith(('Draft: ', 'WIP: '))
+    if existing is not None:
+        # Publication fills in seeded metadata without discarding scenario history.
+        existing.update({key: item[key] for key in
+                         ['title', 'body', 'branch', 'base', 'sha', 'draft', 'updated_at']})
+        existing['labels'] = list(dict.fromkeys(existing['labels'] + item['labels']))
+        item = existing
     state[kind][str(number)] = item
     return item
 
@@ -81,7 +97,7 @@ def gitlab(state, item):
 def comment(state, fields):
     return dict(id=allocate(state), body=fields['body'], user=dict(login=state['login']),
                 author=dict(id=1, username=state['login']), created_at=state['now'],
-                updated_at=state['now'], system=False, resolvable=False, resolved=False)
+                updated_at=state['now'], system=False, type=None, resolvable=False, resolved=False)
 
 
 def merge(state, item, sha, delete):

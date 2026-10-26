@@ -242,14 +242,19 @@ def discussions(state, item, tail, method, fields):
             return item['discussions']
         if method == 'POST':
             note = comment(state, fields)
-            note.update(resolvable=True, position=fields.get('position'))
-            discussion = dict(id=str(allocate(state)), notes=[note])
+            note.update(type='DiffNote' if fields.get('position') else 'DiscussionNote',
+                        resolvable=True, position=fields.get('position'))
+            discussion = dict(id=str(allocate(state)), individual_note=False, notes=[note])
             item['discussions'].append(discussion)
             return discussion
     else:
         discussion = next(d for d in item['discussions'] if d['id'] == tail[0])
         if len(tail) > 1 and tail[1] == 'notes':
-            return notes(state, discussion['notes'], tail[2:], method, fields)
+            note = notes(state, discussion['notes'], tail[2:], method, fields)
+            if method == 'POST':
+                note.update(type='DiscussionNote', resolvable=True,
+                            resolved=discussion['notes'][0]['resolved'])
+            return note
         if len(tail) != 1:
             raise ValueError('unsupported discussion endpoint')
         if method == 'PUT':

@@ -519,6 +519,14 @@ fn forge_gitlab_lifecycle_and_structured_discussions() {
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
     let discussion: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(discussion["individual_note"], false);
+    assert_eq!(discussion["notes"][0]["type"], "DiffNote");
+    assert_eq!(
+        discussion["notes"][0]["position"],
+        json!({"head_sha":"source"})
+    );
+    assert_eq!(discussion["notes"][0]["resolvable"], true);
+    assert_eq!(discussion["notes"][0]["resolved"], false);
     let endpoint = format!(
         "projects/42/merge_requests/1/discussions/{}",
         discussion["id"].as_str().unwrap()
@@ -543,6 +551,9 @@ fn forge_gitlab_lifecycle_and_structured_discussions() {
     let resolved = api(&forge, "glab", &["api", &endpoint, "--method", "GET"]);
     assert_eq!(resolved["notes"][0]["resolved"], true);
     assert_eq!(resolved["notes"][1]["body"], "Addressed");
+    assert_eq!(resolved["notes"][1]["type"], "DiscussionNote");
+    assert_eq!(resolved["notes"][1]["resolvable"], true);
+    assert_eq!(resolved["notes"][1]["resolved"], true);
     call(
         &forge,
         "glab",
@@ -816,4 +827,151 @@ fn forge_native_relationships_branches_and_auto_merge() {
         )["state"],
         "merged"
     );
+}
+
+#[test]
+fn forge_creation_preserves_seeded_history_and_allocates_unused_numbers() {
+    let _guard = ExecGuard::new();
+    for provider in ["gh", "glab"] {
+        let tmp = test_tempdir();
+        let forge = FakeForge::new(&tmp.path().join("forge"), &tmp.path().join("bin"));
+        forge.pull(1, "gah/seeded", "head", "seeded");
+        forge.update(|s| {
+            let pull = &mut s["pulls"]["1"];
+            pull["comments"] = json!([{"id":10,"body":"keep this note"}]);
+            pull["reviews"] = json!([{"id":11,"state":"CHANGES_REQUESTED"}]);
+            pull["review_comments"] = json!([{"id":12,"body":"inline finding"}]);
+            pull["discussions"] = json!([{"id":"thread","individual_note":false,"notes":[]}]);
+            pull["versions"] = json!([{"id":13,"head_commit_sha":"head"}]);
+            pull["labels"] = json!(["gah-needs-fix"]);
+            pull["assignees"] = json!(["gah-bot"]);
+        });
+        let seeded = forge.state()["pulls"]["1"].clone();
+        for branch in ["gah/seeded", "gah/second"] {
+            if provider == "gh" {
+                call(
+                    &forge,
+                    provider,
+                    &[
+                        "pr",
+                        "create",
+                        "--head",
+                        branch,
+                        "--title",
+                        "published",
+                        "--body",
+                        "description",
+                    ],
+                );
+            } else {
+                call(
+                    &forge,
+                    provider,
+                    &[
+                        "api",
+                        "projects/42/merge_requests",
+                        "--method",
+                        "POST",
+                        "--raw-field",
+                        &format!("source_branch={branch}"),
+                        "--raw-field",
+                        "title=published",
+                        "--raw-field",
+                        "description=description",
+                    ],
+                );
+            }
+            let state = forge.state();
+            let published = &state["pulls"]["1"];
+            for key in [
+                "id",
+                "number",
+                "comments",
+                "reviews",
+                "review_comments",
+                "discussions",
+                "versions",
+                "labels",
+                "assignees",
+                "state",
+                "merged_at",
+                "merge_sha",
+            ] {
+                assert_eq!(published[key], seeded[key], "{provider}: {key}");
+            }
+            assert_eq!(published["title"], "published");
+            assert_eq!(published["body"], "description");
+        }
+        let state = forge.state();
+        assert_eq!(state["pulls"].as_object().unwrap().len(), 2);
+        assert_eq!(state["pulls"]["2"]["branch"], "gah/second");
+        assert_ne!(state["pulls"]["1"]["id"], state["pulls"]["2"]["id"]);
+    }
+}
+
+#[test]
+fn forge_gitlab_discussion_reaches_production_fix_discovery() {
+    let branch = "gah/discussion-fix";
+    let mut harness = ScenarioHarness::new("gitlab")
+        .worker_scenario("success")
+        .with_config_append(
+            "provider_api_base = \"https://gitlab.com/api/v4\"\nprovider_project_id = \"42\"\n\
+             [profiles.test.publishing]\ntrusted_issue_human_authors = [\"gah-bot\"]\n\
+             allow_pull_request_creation = false\nallow_commit_message_generation = false\n",
+        );
+    harness.create_remote_branch(branch);
+    let worker_root = test_tempdir();
+    let worker = crate::support::FakeBackend::new(worker_root.path(), "codex");
+    crate::support::write_executable(
+        &worker.bin_dir().join("codex"),
+        "#!/bin/sh\nprintf 'fixed\\n' > repaired.txt\n",
+    );
+    harness.install_custom_worker("codex", &worker);
+    let forge = harness.stateful_forge();
+    forge.pull(1, branch, "head", "change");
+    call(forge, "gh", &["pr", "ready", "1"]);
+    let thread = api(
+        forge,
+        "glab",
+        &[
+            "api",
+            "projects/42/merge_requests/1/discussions",
+            "--method",
+            "POST",
+            "--raw-field",
+            "body=Seeded finding must reach the repair worker",
+        ],
+    );
+    assert_eq!(thread["individual_note"], false);
+    assert_eq!(thread["notes"][0]["type"], "DiscussionNote");
+    assert_eq!(thread["notes"][0]["resolvable"], true);
+    assert_eq!(thread["notes"][0]["resolved"], false);
+    let original = std::env::var_os("GITLAB_PAT2");
+    std::env::set_var("GITLAB_PAT2", "fake-forge-token");
+    let result = harness.run_dispatch(&[
+        "--mode",
+        "fix",
+        "--existing-branch",
+        branch,
+        "--backend",
+        "codex",
+    ]);
+    match original {
+        Some(value) => std::env::set_var("GITLAB_PAT2", value),
+        None => std::env::remove_var("GITLAB_PAT2"),
+    }
+    let result = result.unwrap();
+    assert_eq!(result.exit_code, Some(0), "{result:?}");
+    let entries = crate::support::fake_ledger::TestLedger::read_from(&harness.ledger_path).unwrap();
+    let session = entries.last().unwrap()["session_dir"].as_str().unwrap();
+    let prompt =
+        std::fs::read_to_string(std::path::Path::new(session).join("attempt-1/task.md")).unwrap();
+    assert!(prompt.contains("Unresolved GitLab discussions"), "{prompt}");
+    assert!(
+        prompt.contains("Seeded finding must reach the repair worker"),
+        "{prompt}"
+    );
+    assert!(harness.stateful_forge().calls().iter().any(|args| args
+        .iter()
+        .any(|arg| arg == "projects/42/merge_requests/1/discussions?per_page=100&page=1")));
 }
