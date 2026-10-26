@@ -74,7 +74,10 @@ test('unknown agy help leaves metadata unavailable; parsed empty inventory can r
   assert.deepEqual(parseAgyModels('', help).models, []);
   const options = createAgyModelOptions(undefined, { warn: () => {}, run: async args => ({ stdout: args[0] === 'models' ? models : 'changed help', stderr: '' }) });
   t.after(() => options.dispose());
-  assert.equal((await options()).models.length, 0);
+  // Cold start on a build with unrecognised help: the model rows are still
+  // advertised (so a model can be selected) but nothing is confirmed, so no
+  // saved selection can be retired and no effort choices are offered.
+  assert.equal((await options()).models.length, 6);
   assert.equal(options.available(), false);
   assert.deepEqual((await options()).modelReasoningEfforts, {});
 });
@@ -180,3 +183,19 @@ for (const failure of ['hello', 'unknown help']) {
     assert.equal(options.version(), version);
   });
 }
+
+
+test('agy cold start on a build without a recognised --effort line advertises the model rows with no effort choices', async () => {
+  const run = async (args: string[]) => args[0] === 'models'
+    ? { stdout: models, stderr: '' }
+    : { stdout: 'Usage: agy [options] [prompt]\n  --model <id>  Select a model\n', stderr: '' };
+  const warnings: string[] = [];
+  const options = createAgyModelOptions(undefined, { now: () => 0, run, warn: message => warnings.push(message) });
+  const inventory = await options();
+  assert.equal(inventory.models.length, 6);
+  assert.ok(inventory.models.every(model => (model.reasoningEfforts ?? []).length === 0));
+  assert.equal(inventory.metadataAvailable, false);
+  assert.equal(options.available(), false);
+  assert.equal(warnings.length, 1);
+  options.dispose();
+});

@@ -23,18 +23,23 @@ export async function restoreProfileSelections(profile: string, backendId: strin
     ? await adapter.listModelsSnapshot({ key: profile, profile })
     : { version: await adapter.modelCatalogVersion?.(), summary: await adapter.listModels({ key: profile, profile }) };
   if (snapshot.available === false || await adapter.modelCatalogAvailable?.() === false) return snapshot.summary;
-  const summary = await validateSelections(profile, backendId, adapter, snapshot.summary);
+  // Only an adapter that positively confirms its catalog may retire a saved
+  // choice. A best-effort listing (OpenHands without a readable profile, ACP
+  // without a model option) is advertised, never treated as proof of retirement.
+  const confirmed = snapshot.available === true || await adapter.modelCatalogAvailable?.() === true;
+  const summary = await validateSelections(profile, backendId, adapter, snapshot.summary, confirmed);
   cache.set(key, { selection: selection(profile, backendId), version: snapshot.version, summary });
   return summary;
 }
 
 async function validateSelections(profile: string, backendId: string, adapter: ManagerAdapter,
-  initialSummary: Summary) {
+  initialSummary: Summary, confirmed: boolean) {
   const conversation = { key: profile, profile };
   let summary = initialSummary;
   const model = modelOverrideForProfile(profile, backendId);
   const effort = reasoningEffortOverrideForProfile(profile, backendId);
   if (model && !summary.models.some(item => item.id === model)) {
+    if (!confirmed) return summary;
     setModelOverrideForProfile(profile, backendId, null);
     setReasoningEffortOverrideForProfile(profile, backendId, null);
     console.warn(`[managerChat] Cleared unsupported persisted model and effort for ${profile}/${backendId}; using the backend default.`);
@@ -46,6 +51,7 @@ async function validateSelections(profile: string, backendId: string, adapter: M
   }
   const efforts = summary.models.find(item => item.id === (model ?? summary.currentModelId))?.reasoningEfforts ?? summary.reasoningEfforts;
   if (effort && !efforts.some(item => item.id === effort)) {
+    if (!confirmed) return summary;
     setReasoningEffortOverrideForProfile(profile, backendId, null);
     console.warn(`[managerChat] Cleared unsupported persisted effort for ${profile}/${backendId}.`);
   } else if (effort && effort !== summary.currentReasoningEffortId) {

@@ -76,8 +76,10 @@ export function createAgyModelOptions(runtime?: { executable: string; state_root
     pending = (async () => {
       const previous = { models: cached.models, reasoningEfforts: cached.reasoningEfforts,
         modelReasoningEfforts: cached.modelReasoningEfforts };
+      let rows: string | undefined;
       try {
         const models = await run(['models']);
+        rows = models.stdout;
         const help = await run(['--help']);
         cached = parseAgyModels(models.stdout, help.stdout + help.stderr);
         metadataAvailable = true;
@@ -85,6 +87,15 @@ export function createAgyModelOptions(runtime?: { executable: string; state_root
       } catch {
         // Only parsed metadata can retire a saved selection.
         metadataAvailable = false;
+        // Cold start on a build whose help has no recognisable --effort
+        // vocabulary: advertise the model rows with no effort choices so a
+        // model can still be selected, without treating them as proof of
+        // retirement. Any previously parsed catalog is retained instead.
+        if (cached.models.length === 0 && rows !== undefined) {
+          try {
+            cached = { models: modelRows(rows).map(model => ({ ...model, reasoningEfforts: [] })), reasoningEfforts: [], modelReasoningEfforts: {} };
+          } catch { /* malformed rows: keep the empty cache */ }
+        }
         warn('[managerChat] AGY metadata unavailable; retaining the cached models and effort options.');
       }
       if (JSON.stringify(previous) !== JSON.stringify({ models: cached.models, reasoningEfforts: cached.reasoningEfforts,
