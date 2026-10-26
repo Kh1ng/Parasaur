@@ -155,7 +155,7 @@ test('only the typed usage-limit code permits remote handoff and raw worker erro
   const adapter = workerChatConnection(registry, 'worker', 'demo', { repo: 'owner/repo', provider: 'github', web_url: 'https://github.com/owner/repo' }).adapter('claude');
   for (const code of ['usage_limit', undefined, 'unknown', 'malformed']) {
     event = code === 'malformed' ? 'private-token=do-not-copy' : { type: 'error', error: 'Quota exceeded; private-token=do-not-copy', ...(code ? { code } : {}) };
-    await assert.rejects(adapter.runTurn('demo', { prompt: 'hello', history: [], onChunk() {}, onToolResult() {} }), error => {
+    await assert.rejects(adapter.runTurn({ key: 'demo', profile: 'demo' }, { prompt: 'hello', history: [], onChunk() {}, onToolResult() {} }), error => {
       assert.ok(error instanceof Error);
       assert.equal(isUsageLimitError(error), code === 'usage_limit');
       assert.doesNotMatch(error.message, /private-token|do-not-copy/);
@@ -196,7 +196,7 @@ test('revocation, endpoint changes and secret rotation abort an idle worker stre
     const before = registry.getNode('worker');
     const connection = workerChatConnection(registry, 'worker', 'demo', { repo: 'owner/repo', provider: 'github', web_url: 'https://github.com/owner/repo' });
     const chunks: string[] = [];
-    await assert.rejects(connection.adapter('claude').runTurn('demo', {
+    await assert.rejects(connection.adapter('claude').runTurn({ key: 'demo', profile: 'demo' }, {
       prompt: 'hello', history: [], onToolResult() {},
       onChunk(chunk) {
         chunks.push(chunk);

@@ -23,7 +23,8 @@ test('OpenCode Manager Chat overrides a review-only default for its isolated ACP
 
   const toolCalls: string[] = [];
   try {
-    const result = await resolveAdapter('opencode').runTurn(`opencode-${Date.now()}`, {
+    const profile = `opencode-${Date.now()}`;
+    const result = await resolveAdapter('opencode').runTurn({ key: profile, profile }, {
       prompt: 'Read README.md and create manager-chat-edit.txt.',
       history: [],
       cwd: worktree,

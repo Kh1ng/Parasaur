@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { instanceAcpSpawn, instanceHeadlessSpec, bindOpenCodeModels } from './instanceLaunch.js';
 import type { BackendInstanceRuntime } from '../gahCli.js';
-import type { ManagerAdapter } from './registry.js';
+import type { ManagerAdapter, ManagerConversation } from './registry.js';
 
 const runtime = (runner: string): BackendInstanceRuntime => ({ backend_instance: `${runner}-work`, runner_kind: runner,
   logical_backend: runner, executable: `/tools/${runner}`, state_root: '/isolated/work', account_label: 'Work',
@@ -42,7 +42,7 @@ test('named headless launches preserve stdin bridge and model metadata without c
       '--model', 'openai/gpt', ...(runner === 'vibe' ? ['--adapter-program', '/tools/python', '--', '-c', 'fixed_stdin_bridge'] : ['--', '--print'])]);
     assert.equal(spec.encodeStdin('private transcript'), 'private transcript');
     assert.ok(!args.includes('private transcript'));
-    assert.deepEqual(await spec.spawnEnv?.('profile'), { LLM_BASE_URL: 'https://inference.example/v1' });
+    assert.deepEqual(await spec.spawnEnv?.({ key: 'profile', profile: 'profile' }), { LLM_BASE_URL: 'https://inference.example/v1' });
   }
 });
 
@@ -53,22 +53,22 @@ test('bound OpenCode filters billing providers and selects its account before an
     id: 'opencode', displayName: 'OpenCode', implemented: true,
     listModels: async () => ({ models: [{ id: 'openai/gpt', name: 'Direct OpenAI' }, { id: 'nous-portal/openai/gpt', name: 'Nous GPT' }],
       currentModelId: 'openai/gpt', reasoningEfforts: [], currentReasoningEffortId: null, contextUsage: null }),
-    setModel: async (_profile: string, model: string) => { selected.push(model); },
+    setModel: async (_conversation: ManagerConversation, model: string) => { selected.push(model); },
     listCommands: async () => [], setReasoningEffort: async () => {},
     steerTurn: async () => ({ outcome: 'injected' }), cancelTurn: async () => {},
-    runTurn: async (_profile: string, input: { model?: string | null }) => {
+    runTurn: async (_conversation: ManagerConversation, input: { model?: string | null }) => {
       turns.push(input.model!); return { reply: 'ok', model: input.model!, usage: null };
     }
   } as ManagerAdapter;
   const adapter = bindOpenCodeModels(source, runtime('opencode'));
-  assert.deepEqual((await adapter.listModels('p')).models.map(model => model.id), ['nous-portal/openai/gpt']);
-  assert.equal((await adapter.listModels('p')).currentModelId, null);
-  await assert.rejects(adapter.setModel('p', 'openai/gpt'), /different provider/);
+  assert.deepEqual((await adapter.listModels({ key: 'p', profile: 'p' })).models.map(model => model.id), ['nous-portal/openai/gpt']);
+  assert.equal((await adapter.listModels({ key: 'p', profile: 'p' })).currentModelId, null);
+  await assert.rejects(adapter.setModel({ key: 'p', profile: 'p' }, 'openai/gpt'), /different provider/);
   const input = { prompt: 'hello', history: [], onChunk: () => {}, onToolResult: () => {} };
-  await assert.rejects(adapter.runTurn('p', { ...input, model: 'openai/gpt' }), /different provider/);
-  await assert.rejects(adapter.runTurn('p', { ...input, model: 'nous-portal/missing' }), /no longer available/);
-  await assert.rejects(adapter.setModel('p', 'nous-portal/missing'), /no longer available/);
-  await adapter.runTurn('p', input);
+  await assert.rejects(adapter.runTurn({ key: 'p', profile: 'p' }, { ...input, model: 'openai/gpt' }), /different provider/);
+  await assert.rejects(adapter.runTurn({ key: 'p', profile: 'p' }, { ...input, model: 'nous-portal/missing' }), /no longer available/);
+  await assert.rejects(adapter.setModel({ key: 'p', profile: 'p' }, 'nous-portal/missing'), /no longer available/);
+  await adapter.runTurn({ key: 'p', profile: 'p' }, input);
   assert.deepEqual(selected, ['nous-portal/openai/gpt']);
   assert.deepEqual(turns, ['nous-portal/openai/gpt']);
   assert.equal(bindOpenCodeModels(source, runtime('hermes')), source, 'Hermes model vendor does not identify its billing provider');
@@ -77,5 +77,5 @@ test('bound OpenCode filters billing providers and selects its account before an
 test('bound OpenCode rejects unpinned turns with no matching provider model', async () => {
   const source = { listModels: async () => ({ models: [], currentModelId: null }) } as unknown as ManagerAdapter;
   const adapter = bindOpenCodeModels(source, runtime('opencode'));
-  await assert.rejects(adapter.runTurn('p', { prompt: 'hello', history: [], onChunk: () => {}, onToolResult: () => {} }), /no model/);
+  await assert.rejects(adapter.runTurn({ key: 'p', profile: 'p' }, { prompt: 'hello', history: [], onChunk: () => {}, onToolResult: () => {} }), /no model/);
 });

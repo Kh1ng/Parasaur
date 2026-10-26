@@ -191,13 +191,13 @@ async function run(request: HelperTaskRequest, deps: HelperTaskDeps): Promise<He
   try {
     const adapter = await adapterFor(request.profile, backend, backendInstance);
     const cwd = workingDirectory();
-    const catalog = await withTimeout(adapter.listModels(key, cwd), deps.timeoutMs ?? HELPER_TIMEOUT_MS, () => void adapter.cancelTurn(key));
+    const catalog = await withTimeout(adapter.listModels({ key, profile: request.profile }, cwd), deps.timeoutMs ?? HELPER_TIMEOUT_MS, () => void adapter.cancelTurn(key));
     const selectedModel = requestedModel ?? (backend === 'codex' ? lunaModel(catalog.models) : null);
     if (!selectedModel || !catalog.models.some(candidate => candidate.id === selectedModel)) {
       return fallback(request, 'missing_model', startedAt, now, attempted());
     }
     effectiveModel = selectedModel;
-    const result = await withTimeout(adapter.runTurn(key, {
+    const result = await withTimeout(adapter.runTurn({ key, profile: request.profile }, {
       prompt: prompt(request.kind, sanitizeHelperInput(request.input)),
       history: [],
       cwd,

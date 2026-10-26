@@ -198,7 +198,7 @@ export function createWorkerChatRouter(deps: {
         return void res.status(400).json({ error: 'Invalid backend instance.' });
       }
       const adapter = await adapterFor(backend, body.profile, backendInstance);
-      if (body.action === 'models') return void res.json(await adapter.listModels(key));
+      if (body.action === 'models') return void res.json(await adapter.listModels({ key, profile: body.profile }));
       if (body.action === 'commands') return void res.json(await adapter.listCommands(key));
       const settings = {
         backend,
@@ -273,8 +273,8 @@ export function createWorkerChatRouter(deps: {
       };
       res.once('close', disconnect);
       try {
-        const run = Promise.resolve().then(() => adapter.runTurn(key, {
-          prompt: body.prompt, history: body.history, profile: body.profile, cwd, model: settings.model, reasoningEffort: settings.reasoningEffort,
+        const run = Promise.resolve().then(() => adapter.runTurn({ key, profile: body.profile }, {
+          prompt: body.prompt, history: body.history, cwd, model: settings.model, reasoningEffort: settings.reasoningEffort,
           onChunk: text => emit({ type: 'chunk', text }),
           onToolResult: (name, text) => emit({ type: 'toolResult', name, text }),
           onToolCall: tool => emit({ type: 'toolCall', tool }),

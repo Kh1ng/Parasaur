@@ -12,7 +12,6 @@ import {
   createSession,
   getSession,
   listSessions,
-  profileFromChatKey,
   profileStorage,
   resolveSessionCwd,
   restoreSession,
@@ -347,15 +346,8 @@ test('chatKey keeps the bare profile for the default session', () => {
   assert.equal(chatKey('p'), 'p');
   assert.equal(chatKey('p', 'default'), 'p');
   assert.equal(chatKey('p', 'abc123'), 'p#abc123');
-});
-
-test('profileFromChatKey is the inverse of chatKey: the real profile out of a conversation key', () => {
-  assert.equal(profileFromChatKey(chatKey('p')), 'p');
-  assert.equal(profileFromChatKey(chatKey('p', 'default')), 'p');
-  assert.equal(profileFromChatKey(chatKey('p', 'abc123')), 'p');
-  assert.equal(profileFromChatKey('p#abc123'), 'p');
-  assert.equal(profileFromChatKey('p'), 'p');
-  assert.equal(profileFromChatKey('p#abc#123'), 'p#abc', 'session ids carry no #; the last separator splits');
+  assert.equal(chatKey('team#prod'), 'team#prod');
+  assert.equal(chatKey('team#prod', 's1'), 'team#prod#s1');
 });
 
 test('createSession stores the pinned model; updateSession switches backend/model in place', withEnv(async (env) => {

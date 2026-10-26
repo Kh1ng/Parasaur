@@ -142,11 +142,11 @@ test('a missing ACP command rejects the turn instead of crashing the server', as
   }));
 
   await assert.rejects(
-    backend.runTurn('profile', emptyTurnInput),
+    backend.runTurn({ key: 'profile', profile: 'profile' }, emptyTurnInput),
     /Hermes is not installed on this machine: the ".*gah-acp-command-that-does-not-exist" command was not found\./
   );
   // The failed connection must not be cached: the next turn tries again.
-  await assert.rejects(backend.runTurn('profile', emptyTurnInput), /Hermes is not installed/);
+  await assert.rejects(backend.runTurn({ key: 'profile', profile: 'profile' }, emptyTurnInput), /Hermes is not installed/);
 });
 
 test('detail-less ACP rejection surfaces code and bounded child diagnostics', async () => {
@@ -158,7 +158,7 @@ test('detail-less ACP rejection surfaces code and bounded child diagnostics', as
     }));
 
     await assert.rejects(
-      backend.runTurn('profile', emptyTurnInput),
+      backend.runTurn({ key: 'profile', profile: 'profile' }, emptyTurnInput),
       (error: unknown) => {
         assert.ok(error instanceof Error);
         assert.match(error.message, /^Internal error \[ACP code=-32603;/);
@@ -183,7 +183,7 @@ test('ACP rejection preserves nested detail without diagnostic decoration', asyn
     }), { consecutiveFailureReconnectThreshold: 2 });
 
     await assert.rejects(
-      backend.runTurn('profile', emptyTurnInput),
+      backend.runTurn({ key: 'profile', profile: 'profile' }, emptyTurnInput),
       (error: unknown) => error instanceof Error && error.message === 'Useful nested detail'
     );
   } finally {
@@ -206,10 +206,10 @@ test('Codex evicts after two consecutive ACP failures and rehydrates on the next
     }), { consecutiveFailureReconnectThreshold: 2 });
 
     await assert.rejects(
-      backend.runTurn('profile', { ...emptyTurnInput, prompt: 'fails once', history: durableHistory }),
+      backend.runTurn({ key: 'profile', profile: 'profile' }, { ...emptyTurnInput, prompt: 'fails once', history: durableHistory }),
       /consecutive failures=1\/2/
     );
-    const recovered = await backend.runTurn('profile', {
+    const recovered = await backend.runTurn({ key: 'profile', profile: 'profile' }, {
       ...emptyTurnInput,
       prompt: 'succeeds and resets the counter',
       history: durableHistory
@@ -222,15 +222,15 @@ test('Codex evicts after two consecutive ACP failures and rehydrates on the next
       { role: 'assistant' as const, text: recovered.reply, timestamp: 4 }
     ];
     await assert.rejects(
-      backend.runTurn('profile', { ...emptyTurnInput, prompt: 'fails after success', history: currentHistory }),
+      backend.runTurn({ key: 'profile', profile: 'profile' }, { ...emptyTurnInput, prompt: 'fails after success', history: currentHistory }),
       /consecutive failures=1\/2/
     );
     await assert.rejects(
-      backend.runTurn('profile', { ...emptyTurnInput, prompt: 'second consecutive failure', history: currentHistory }),
+      backend.runTurn({ key: 'profile', profile: 'profile' }, { ...emptyTurnInput, prompt: 'second consecutive failure', history: currentHistory }),
       /consecutive failures=2\/2; connection evicted/
     );
 
-    const rehydrated = await backend.runTurn('profile', {
+    const rehydrated = await backend.runTurn({ key: 'profile', profile: 'profile' }, {
       ...emptyTurnInput,
       prompt: 'next turn',
       history: currentHistory
@@ -254,7 +254,7 @@ test('cancel evicts a child only when its prompt ignores cancellation', { timeou
 
     let markPromptStarted!: () => void;
     const promptStarted = new Promise<void>((resolve) => { markPromptStarted = resolve; });
-    const stuck = backend.runTurn('profile', {
+    const stuck = backend.runTurn({ key: 'profile', profile: 'profile' }, {
       ...emptyTurnInput,
       onChunk: (text) => { if (text === 'stuck-prompt-started') markPromptStarted(); }
     });
@@ -262,7 +262,7 @@ test('cancel evicts a child only when its prompt ignores cancellation', { timeou
     await backend.cancelTurn('profile');
     await assert.rejects(stuck);
 
-    const recovered = await backend.runTurn('profile', emptyTurnInput);
+    const recovered = await backend.runTurn({ key: 'profile', profile: 'profile' }, emptyTurnInput);
     assert.equal(recovered.reply, 'recovered-after-cancel');
     assert.equal(Number(readFileSync(spawnCountPath, 'utf8')), 2);
   } finally {
@@ -279,7 +279,7 @@ test('an ACP child without spec env still gets only the allow-listed environment
   process.env.TDAI_GATEWAY_API_KEY = 'gateway-key';
   const backend = createAcpBackend('Hermes', () => ({ command: process.execPath, args: [fake.path, 'env-reply'] }));
   try {
-    const result = await backend.runTurn('profile', emptyTurnInput);
+    const result = await backend.runTurn({ key: 'profile', profile: 'profile' }, emptyTurnInput);
     assert.equal(result.reply, 'COORDINATOR_TOKEN=unset TDAI_GATEWAY_API_KEY=unset PATH=set');
   } finally {
     backend.dispose();
@@ -297,7 +297,7 @@ test('credential rotation retires an ACP child after its current prompt settles'
   try {
     let started!: () => void;
     const ready = new Promise<void>(resolve => { started = resolve; });
-    const turn = backend.runTurn('profile', { ...emptyTurnInput, onChunk: () => started() });
+    const turn = backend.runTurn({ key: 'profile', profile: 'profile' }, { ...emptyTurnInput, onChunk: () => started() });
     await ready;
     const pid = Number(readFileSync(count + '.pid', 'utf8'));
     backend.dispose();
@@ -327,7 +327,7 @@ test('each cached Claude connection keeps the runtime provenance of its own spaw
     ...defaultClaudeSpawn(searchPath), command: process.execPath, args: [fake.path, 'runtime-models']
   }));
   const provenance = async (profile: string) => {
-    const summary = await backend.listModels(profile);
+    const summary = await backend.listModels({ key: profile, profile });
     return { bundledRuntime: summary.bundledRuntime, model: summary.currentModelId };
   };
   const bundled = { bundledRuntime: true, model: 'bundled' };
