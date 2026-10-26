@@ -826,6 +826,64 @@ fn an_aging_claim_is_renewed_at_once_and_keeps_its_authority() {
     assert_eq!(issue.borrow().view.claims[0].id, 21);
 }
 
+/// Clock and confirmation channel carried from `start` into its renewer.
+pub(super) struct RenewalProbe {
+    pub(super) now: Arc<Mutex<Instant>>,
+    pub(super) confirmed: mpsc::Sender<()>,
+}
+
+thread_local! {
+    pub(super) static RENEWAL_PROBE: RefCell<Option<RenewalProbe>> = const { RefCell::new(None) };
+}
+
+#[test]
+fn start_renews_an_aging_claim_in_the_background() {
+    let _exec_guard = ExecGuard::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let claimed_at = (OffsetDateTime::now_utc() - time::Duration::minutes(59))
+        .format(&Rfc3339)
+        .unwrap();
+    let calls = install_renewal_gh(
+        &bin,
+        &format!(
+            r#"case "$*" in
+  *'PATCH'*) echo renewed >> "$marker" ;;
+  *'comments?'*) echo '{{"id":21,"login":"{COLTON}","created_at":"{claimed_at}"}}' ;;
+  *) echo '{COLTON}' ;;
+esac"#
+        ),
+    );
+    let _path = PathGuard::set(&bin);
+    let mut prof = profile(tmp.path());
+    prof.publishing.issue_claim = policy(&[]);
+    let began = Instant::now();
+    // Give provider subprocesses a watchdog, while the injected clock makes
+    // renewal and confirmation independent of their scheduling latency.
+    let deadline = began + Duration::from_secs(120);
+    let clock = Arc::new(Mutex::new(began));
+    let (confirmed, receive) = mpsc::channel();
+    RENEWAL_PROBE.with(|probe| {
+        *probe.borrow_mut() = Some(RenewalProbe {
+            now: Arc::clone(&clock),
+            confirmed,
+        })
+    });
+    let ttl = claim_ttl(&prof.publishing.issue_claim);
+    let lease = IssueLease::start(&prof, &issue_7(), COLTON.into(), deadline, ttl);
+    receive
+        .recv_timeout(Duration::from_secs(120))
+        .expect("start's background renewer did not confirm the aging claim at once");
+    assert_eq!(std::fs::read_to_string(calls).unwrap(), "renewed\n");
+    assert_eq!(lock(&lease.state).deadline, began + ttl);
+    assert!(lease.ensure_held().is_ok());
+    // Advance beyond the inherited expiry; confirmed authority remains.
+    *clock.lock().unwrap() = deadline + Duration::from_secs(1);
+    assert!(*clock.lock().unwrap() < lock(&lease.state).deadline);
+    assert!(lock(&lease.state).lost.is_none());
+    drop(lease);
+}
+
 /// A `gh` that answers the reads intake makes: the signed-in login, the
 /// open-issue list, each issue's claim comments, and its (absent) sub-issues.
 fn install_fake_gh(

@@ -1,6 +1,8 @@
 #[path = "controller_refill_regressions/node_recovery.rs"]
 mod node_recovery;
 mod support;
+#[path = "controller_refill_regressions/watchdog.rs"]
+mod watchdog;
 
 use std::fs;
 use std::process::{Command as ProcessCommand, Stdio};
@@ -442,7 +444,7 @@ fn parallel_loop_refills_with_missing_availability_after_a_fast_completion() {
             .unwrap(),
     );
 
-    let output = child.wait_with_output().unwrap();
+    let output = watchdog::wait_with_output(child);
     assert!(
         output.status.success(),
         "stderr: {}",
@@ -708,7 +710,7 @@ fn parallel_loop_reviews_a_finished_ticket_while_a_slow_sibling_still_runs() {
 
     // The reviewer releases the slow sibling itself. Draining output while
     // waiting avoids blocking either dispatch on the controller's pipe buffer.
-    let output = child.wait_with_output().unwrap();
+    let output = watchdog::wait_with_output(child);
     assert!(
         output.status.success(),
         "stderr: {}",

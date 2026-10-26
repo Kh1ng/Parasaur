@@ -25,6 +25,7 @@ thread_local! {
     /// the pid it lost.
     static LOSE_NEXT_HELPER_CHECK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static LOST_HELPER_PID: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static GROUP_SIGNAL_ERROR: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
     static HELPER_CHILD_OPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -122,20 +123,29 @@ fn helper_exited(child: &Child) -> std::io::Result<bool> {
     exited_without_reaping(child)
 }
 
-fn terminate_group(child: &mut std::process::Child, exited: bool) -> Option<String> {
+fn terminate_group(child: &mut Child, exited: bool) -> std::io::Result<Option<String>> {
     count_child_op();
-    let result = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
-    if result == -1 {
-        let error = std::io::Error::last_os_error();
+    #[cfg(test)]
+    let injected = GROUP_SIGNAL_ERROR.with(|error| error.take());
+    #[cfg(not(test))]
+    let injected = None;
+    let error = injected.map(std::io::Error::from_raw_os_error).or_else(|| {
+        let result = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
+        (result == -1).then(std::io::Error::last_os_error)
+    });
+    if let Some(error) = error {
+        // macOS may reject a zombie-only group if its leader exited after
+        // cleanup's first check. Confirm that exit before tolerating EPERM.
+        let exited = exited || (error.raw_os_error() == Some(libc::EPERM) && helper_exited(child)?);
         if error.raw_os_error() != Some(libc::ESRCH)
             && !(exited && error.raw_os_error() == Some(libc::EPERM))
         {
             let _ = child.kill();
-            return Some(format!("signaling helper process group: {error}"));
+            return Ok(Some(format!("signaling helper process group: {error}")));
         }
     }
     let _ = child.kill();
-    None
+    Ok(None)
 }
 
 pub(super) fn bounded_command_output(
@@ -160,8 +170,10 @@ pub(super) fn bounded_command_output(
         {
             let (_, receive) = ready.borrow_mut().take().unwrap();
             receive
-                .recv()
-                .expect("helper descendant must announce readiness");
+                .recv_timeout(Duration::from_secs(120))
+                .unwrap_or_else(|error| {
+                    panic!("{context} descendant did not announce readiness within 120s: {error}")
+                });
         }
     });
     let deadline = Instant::now() + timeout;
@@ -236,11 +248,15 @@ pub(super) fn bounded_command_output(
     let mut cleanup_deadline = cleanup_deadline;
     if !lost {
         match helper_exited(&child) {
-            Ok(exited) => {
-                if let Some(error) = terminate_group(&mut child, exited) {
-                    cleanup_failures.push(error);
+            Ok(exited) => match terminate_group(&mut child, exited) {
+                Ok(Some(error)) => cleanup_failures.push(error),
+                Ok(None) => {}
+                Err(error) => {
+                    lost = true;
+                    cleanup_failures
+                        .push(format!("lost track of {context} while signaling: {error}"));
                 }
-            }
+            },
             Err(error) => {
                 lost = true;
                 cleanup_failures.push(format!("lost track of {context} before cleanup: {error}"));
@@ -348,8 +364,30 @@ mod tests {
             assert!(Instant::now() < deadline);
             thread::sleep(Duration::from_millis(10));
         }
-        assert!(terminate_group(&mut child, true).is_none());
+        assert!(terminate_group(&mut child, true).unwrap().is_none());
         assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[test]
+    fn group_permission_error_rechecks_a_stale_exit_observation() {
+        for exited in [false, true] {
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", if exited { "exit 0" } else { "exec sleep 30" }]);
+            crate::runner::process::prepare_process_group(&mut command);
+            let mut child = command.spawn().unwrap();
+            if exited {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while !exited_without_reaping(&child).unwrap() {
+                    assert!(Instant::now() < deadline);
+                    thread::yield_now();
+                }
+            }
+            GROUP_SIGNAL_ERROR.with(|error| error.set(Some(libc::EPERM)));
+            // Cleanup saw a running child, but it may have exited before killpg.
+            let result = terminate_group(&mut child, false).unwrap();
+            child.wait().unwrap();
+            assert_eq!(result.is_none(), exited, "{result:?}");
+        }
     }
 
     /// After a failed exit check the pid may name another process, so the
