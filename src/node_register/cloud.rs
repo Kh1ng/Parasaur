@@ -4,6 +4,9 @@ use sha2::{Digest, Sha256};
 use std::sync::Mutex;
 use url::Url;
 
+mod heartbeat;
+pub(crate) use heartbeat::CloudHeartbeat;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CloudState {
     Healthy,
@@ -184,12 +187,12 @@ impl CloudRegistration {
     }
 }
 
-/// Best-effort cloud sink for `gah node register` and each existing controller
-/// pass, including startup. Local mode does not read cloud credentials or identity.
+/// Best-effort cloud sink for `gah node register`. Controller runs use
+/// `CloudHeartbeat` instead. Local mode reads no cloud credentials or identity.
 /// POST `{GAH_SUPABASE_URL}/rest/v1/rpc/register_cloud_node` upserts with a user
 /// JWT; POST `.../rest/v1/rpc/cloud_node_heartbeat` renews the device's 90s lease.
 /// Both send `apikey` and `Authorization: Bearer` headers. Requests time out after
-/// three seconds each. Failed upserts retry next pass; repeated failures of the
+/// three seconds each. Failed upserts retry next call; repeated failures of the
 /// same kind warn once. The sink counts failed attempts during each cloud session.
 /// No service-role key is read. See `docs/cloud-node-registration.md` for inputs.
 pub fn cloud_advisory(cfg: &GahConfig, opts: Option<&RegisterOptions>) {

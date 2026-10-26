@@ -20,6 +20,7 @@
 
 mod cloud;
 pub use cloud::cloud_advisory;
+pub(crate) use cloud::CloudHeartbeat;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
