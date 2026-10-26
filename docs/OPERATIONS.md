@@ -1310,6 +1310,11 @@ bounded, de-duplicated feed in `config/activity.jsonl` (override with
 `GAH_ACTIVITY_PATH`). A reconnect sends all entries after the client's last
 cursor. The durable feed itself does not use a client poller.
 
+Node outage, node recovery, low quota, and login-restored alerts are opt-in
+under **Notification preferences** on the Activity page. They are still
+recorded in the feed. Status changes such as finished, failed, review ready,
+and action required always notify.
+
 The current page always shows a new in-app alert. Select **Enable system
 alerts** on the Activity page to add platform delivery. On an HTTPS dashboard,
 supported browsers register Web Push so alerts can arrive after the page
