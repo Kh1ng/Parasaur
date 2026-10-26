@@ -1376,6 +1376,7 @@ export type HumanRequiredReasonCode =
   | 'policy_approval'
   | 'retry_budget_exhausted'
   | 'review_evidence_gate'
+  | 'publication_failed'
   | 'review_output_invalid_exhausted'
   | 'review_ceiling_exhausted'
   | 'merge_policy'

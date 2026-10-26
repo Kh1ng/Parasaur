@@ -114,23 +114,9 @@ fn publish_with(
     findings: &[ActionableReviewFinding],
     labels: &[&str],
 ) -> Result<()> {
-    api(
-        &format!("{path}/notes"),
-        "POST",
-        json!({"body": publication_body(summary)}),
-    )?;
-    let remove = super::GAH_REVIEW_STATE_LABELS
-        .iter()
-        .filter(|label| !labels.contains(label))
-        .copied()
-        .collect::<Vec<_>>()
-        .join(",");
-    let mut failed = api(
-        path,
-        "PUT",
-        json!({"add_labels": labels.join(","), "remove_labels": remove}),
-    )
-    .is_err();
+    let mut summary = summary.to_owned();
+    let mut discussions = Vec::new();
+    let mut failed = false;
     if !findings.is_empty() {
         let inline: Result<()> = (|| {
             let versions = api(&format!("{path}/versions"), "GET", Value::Null)?;
@@ -152,15 +138,37 @@ fn publish_with(
                 .context("version diffs missing")?;
             for finding in findings {
                 match positions::discussion(&version, diffs, finding) {
-                    Ok(body) => {
-                        failed |= api(&format!("{path}/discussions"), "POST", body).is_err();
-                    }
-                    Err(_) => failed = true,
+                    Ok(body) => discussions.push(body),
+                    Err(reason) => summary.push_str(&format!(
+                        "\n\n### Unpositioned finding: `{}`\n\n{}\n\nCould not position inline: {reason}.",
+                        finding.file, finding.summary,
+                    )),
                 }
             }
             Ok(())
         })();
         failed |= inline.is_err();
+    }
+    // Finish the summary before writing so position fallbacks need no extra note or retry.
+    api(
+        &format!("{path}/notes"),
+        "POST",
+        json!({"body": publication_body(&summary)}),
+    )?;
+    let remove = super::GAH_REVIEW_STATE_LABELS
+        .iter()
+        .filter(|label| !labels.contains(label))
+        .copied()
+        .collect::<Vec<_>>()
+        .join(",");
+    failed |= api(
+        path,
+        "PUT",
+        json!({"add_labels": labels.join(","), "remove_labels": remove}),
+    )
+    .is_err();
+    for discussion in discussions {
+        failed |= api(&format!("{path}/discussions"), "POST", discussion).is_err();
     }
     if failed {
         bail!("GitLab review partially published");

@@ -1,0 +1,14 @@
+[
+  {
+    "line": null,
+    "reason": "finding has no line"
+  },
+  {
+    "line": "2-3",
+    "reason": "finding line must be a number"
+  },
+  {
+    "line": "999",
+    "reason": "finding line outside diff"
+  }
+]

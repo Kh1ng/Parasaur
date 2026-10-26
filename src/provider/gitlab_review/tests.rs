@@ -74,31 +74,116 @@ fn gitlab_positions_cover_old_new_and_context_sides() {
 }
 
 #[test]
-fn gitlab_stale_head_or_bad_position_keeps_summary_without_wrong_discussion() {
-    for head in ["stale", "cccc"] {
-        let mut writes = vec![];
-        let result = publish_with(
-            &mut |p, m, b| {
-                if m != "GET" {
-                    writes.push((p.to_owned(), b));
-                }
-                Ok(if p.ends_with("/versions") {
+fn gitlab_stale_head_keeps_summary_without_wrong_discussion() {
+    let mut writes = vec![];
+    let result = publish_with(
+        &mut |p, m, b| {
+            if m != "GET" {
+                writes.push((p.to_owned(), b));
+            }
+            Ok(if p.ends_with("/versions") {
+                fixture("versions.json")
+            } else if p.ends_with("/versions/19") {
+                fixture("version.json")
+            } else {
+                json!({})
+            })
+        },
+        "mr/7",
+        "stale",
+        "summary",
+        &[finding("999")],
+        &[],
+    );
+    assert!(result.is_err());
+    assert_eq!(writes.iter().filter(|w| w.0.ends_with("/notes")).count(), 1);
+    assert!(!writes.iter().any(|w| w.0.ends_with("/discussions")));
+}
+
+#[test]
+fn gitlab_unpositioned_findings_publish_in_summary_alongside_positioned_discussions() {
+    for case in fixture("unpositioned-findings.json").as_array().unwrap() {
+        let mut unpositioned = finding("2");
+        unpositioned.line = case["line"].as_str().map(str::to_owned);
+        unpositioned.summary = "Check the fallback value".into();
+        let mut calls = vec![];
+        publish_with(
+            &mut |path, method, body| {
+                calls.push((path.to_owned(), method.to_owned(), body));
+                Ok(if path.ends_with("/versions") {
                     fixture("versions.json")
-                } else if p.ends_with("/versions/19") {
+                } else if path.ends_with("/versions/19") {
                     fixture("version.json")
                 } else {
                     json!({})
                 })
             },
             "mr/7",
-            head,
+            "cccc",
+            "Review summary",
+            &[unpositioned, finding("2")],
+            &[],
+        )
+        .unwrap();
+        let notes: Vec<_> = calls.iter().filter(|c| c.0.ends_with("/notes")).collect();
+        assert_eq!(notes.len(), 1);
+        let body = notes[0].2["body"].as_str().unwrap();
+        for expected in [
+            "Review summary",
+            "src/new.rs",
+            "Check the fallback value",
+            case["reason"].as_str().unwrap(),
+        ] {
+            assert!(body.contains(expected), "missing {expected}: {body}");
+        }
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|c| c.0.ends_with("/discussions"))
+                .count(),
+            1
+        );
+        let summary_index = calls.iter().position(|c| c.0.ends_with("/notes")).unwrap();
+        let discussion_index = calls
+            .iter()
+            .position(|c| c.0.ends_with("/discussions"))
+            .unwrap();
+        assert!(summary_index < discussion_index);
+    }
+}
+
+#[test]
+fn gitlab_publication_auth_failure_is_not_a_position_fallback() {
+    for denied_path in [
+        "mr/7/versions",
+        "mr/7/versions/19",
+        "mr/7/notes",
+        "mr/7",
+        "mr/7/discussions",
+    ] {
+        let result = publish_with(
+            &mut |path, _, _| {
+                if path == denied_path {
+                    bail!("401 Unauthorized");
+                }
+                Ok(if path.ends_with("/versions") {
+                    fixture("versions.json")
+                } else if path.ends_with("/versions/19") {
+                    fixture("version.json")
+                } else {
+                    json!({})
+                })
+            },
+            "mr/7",
+            "cccc",
             "summary",
-            &[finding("999")],
+            &[finding("2"), finding("999")],
             &[],
         );
-        assert!(result.is_err());
-        assert_eq!(writes.iter().filter(|w| w.0.ends_with("/notes")).count(), 1);
-        assert!(!writes.iter().any(|w| w.0.ends_with("/discussions")));
+        assert!(
+            result.is_err(),
+            "401 at {denied_path} must fail publication"
+        );
     }
 }
 
@@ -182,9 +267,16 @@ fn gitlab_reply_precedes_resolve_only_for_addressed_unchanged_thread_with_change
 fn gitlab_summary_failure_stops_inline_writes_and_collection_errors_fail_soft() {
     let mut count = 0;
     assert!(publish_with(
-        &mut |_, _, _| {
-            count += 1;
-            bail!("offline")
+        &mut |path, method, _| {
+            if method != "GET" {
+                count += 1;
+                bail!("offline");
+            }
+            Ok(if path.ends_with("/versions") {
+                fixture("versions.json")
+            } else {
+                fixture("version.json")
+            })
         },
         "mr/7",
         "cccc",

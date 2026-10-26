@@ -392,6 +392,15 @@ pub fn plan_remediation(context: RemediationContext<'_>) -> RemediationPlan {
             "Publishing is disabled for this profile, so GAH cannot safely publish or merge automatically",
             publishing_restriction_actions(profile_name, work_id),
         ),
+        HumanRequiredReason::PublicationFailed => no_auto(
+            profile_name,
+            work_id,
+            reference,
+            reason_code,
+            RemediationAuthority::Operator,
+            "Review publication failed; inspect provider access and the remote review before retrying",
+            inspect_actions(profile_name, work_id, reference),
+        ),
         HumanRequiredReason::ConfigurationInfra => {
             if context.blocker_kind == Some("backend_unavailable") {
                 plan_with_authority(
@@ -537,6 +546,10 @@ mod tests {
     #[test]
     fn human_review_and_merge_policy_remain_no_automatic_remediation() {
         let cases = [
+            (
+                HumanRequiredReason::PublicationFailed,
+                RemediationAuthority::Operator,
+            ),
             (
                 HumanRequiredReason::ReviewEvidenceGate,
                 RemediationAuthority::HumanReviewer,

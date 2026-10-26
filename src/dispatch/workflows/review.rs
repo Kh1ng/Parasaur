@@ -1044,8 +1044,9 @@ pub(in crate::dispatch) fn review(
                 .context("publishing review comment and labels")?
                 {
                     ledger.human_required = true;
-                    ledger.human_required_reason_code =
-                        Some(HumanRequiredReason::ReviewEvidenceGate.as_str().to_string());
+                    ledger.human_required_reason_code.get_or_insert_with(|| {
+                        HumanRequiredReason::PublicationFailed.as_str().to_string()
+                    });
                 }
             }
             if verdict.human_required {

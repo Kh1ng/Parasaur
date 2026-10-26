@@ -427,9 +427,11 @@ A finding's `line` is a new-side number, `new:<number>`, or `old:<number>`.
 When the reviewer has an exact replacement, its summary includes a fenced `suggestion` block.
 GitLab shows its native Apply suggestion action.
 Old-side findings cannot contain suggestions.
-Unpositioned findings remain visible in the summary.
+Findings with no line, a line range, or a line outside the diff remain in the summary with their file and the positioning failure reason.
+These fallbacks count as successful publication.
 Inline failures preserve the summary without retrying writes.
 One warning reports an incomplete publication, and the ledger requires human review.
+Publication failures use `publication_failed` unless the ledger already has a human-review reason.
 
 ### Fix review comments
 
