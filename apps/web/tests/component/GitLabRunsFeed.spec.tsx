@@ -122,3 +122,39 @@ test('renders nothing for page kinds that have no runs', async ({ mount, page })
   );
   await expect(component.getByTestId('gitlab-runs-list')).toHaveCount(0);
 });
+
+test('a stale response from the previous context never overwrites the current runs', async ({ mount, page }) => {
+  // The issue-42 request hangs until the test resolves it, so its response
+  // settles after the component has already moved to issue 43.
+  let resolveIssue42!: (body: GitLabRunsFeedResponse) => void;
+  const issue42 = new Promise<GitLabRunsFeedResponse>(resolve => { resolveIssue42 = resolve; });
+  const issue43: GitLabRunsFeedResponse = {
+    ...feed,
+    context: { ...feed.context, iid: 43 },
+    runs: feed.runs.map(run => ({ ...run, workId: '#43' }))
+  };
+  await page.route('**/api/integrations/gitlab/runs**', async route => {
+    const iid = new URL(route.request().url()).searchParams.get('iid');
+    if (iid === '42') {
+      const held = await issue42;
+      await route.fulfill({ json: held });
+    } else {
+      await route.fulfill({ json: issue43 });
+    }
+  });
+
+  const component = await mount(
+    <GitLabRunsFeed context={{ ...context, iid: 42 }} panelUrl="https://parasaur.example.test/" />
+  );
+  // Move to issue 43 while issue 42's response is still in flight; 43 loads.
+  await component.update(
+    <GitLabRunsFeed context={{ ...context, iid: 43 }} panelUrl="https://parasaur.example.test/" />
+  );
+  await expect(component.getByText('#43', { exact: true })).toHaveCount(2);
+
+  // The late issue-42 response is ignored: 43's runs stay, 42's never land.
+  resolveIssue42(feed);
+  await page.waitForTimeout(500);
+  await expect(component.getByText('#43', { exact: true })).toHaveCount(2);
+  await expect(component.getByText('#42', { exact: true })).toHaveCount(0);
+});

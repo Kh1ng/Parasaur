@@ -11,7 +11,7 @@ import {
   buildGitLabRunsFeed,
   ledgerEntryMatchesGitLabContext,
   matchingGitLabProfiles,
-  mrIidFromUrl,
+  parseGitLabResourceUrl,
   parseGitLabRunsQuery,
   sessionMatchesGitLabContext,
   type GitLabRunsContext
@@ -124,20 +124,33 @@ test('parseGitLabRunsQuery rejects an empty or malformed context', () => {
     ['zero limit', { project: 'a/b', kind: 'issue', iid: '42', limit: '0' }],
     ['limit above the cap', { project: 'a/b', kind: 'issue', iid: '42', limit: '101' }],
     ['malformed origin', { project: 'a/b', kind: 'issue', iid: '42', gitlab: 'not-a-url' }],
-    ['control characters in project', { project: 'a/b\u0000', kind: 'issue', iid: '42' }]
+    ['non-http origin', { project: 'a/b', kind: 'issue', iid: '42', gitlab: 'file:///tmp/example' }],
+    ['control characters in project', { project: 'a/b\u0000', kind: 'issue', iid: '42' }],
+    ['traversal in project', { project: '../../a b', kind: 'issue', iid: '42' }],
+    ['dot-only project segment', { project: '..', kind: 'issue', iid: '42' }],
+    ['empty project segment', { project: 'group//project', kind: 'issue', iid: '42' }],
+    ['trailing slash in project', { project: 'group/project/', kind: 'issue', iid: '42' }],
+    ['leading dash segment', { project: '-lead/segment', kind: 'issue', iid: '42' }]
   ] as const) {
     const parsed = parseGitLabRunsQuery(params as Record<string, unknown>);
     assert.equal('error' in parsed, true, `${name} must be rejected`);
   }
+  // A well-formed path and an http(s) origin parse.
+  const valid = parseGitLabRunsQuery({ project: 'group/sub-group/project.git', kind: 'issue', iid: '42', gitlab: 'https://gitlab.example.test' });
+  assert.equal('error' in valid, false);
 });
 
-test('mrIidFromUrl reads the iid from a GitLab MR URL only', () => {
-  assert.equal(mrIidFromUrl('https://gitlab.example.test/group/project/-/merge_requests/42'), 42);
-  assert.equal(mrIidFromUrl('https://gitlab.example.test/group/project/-/merge_requests/42/diffs'), 42);
-  assert.equal(mrIidFromUrl('https://github.com/owner/repo/pull/42'), null);
-  assert.equal(mrIidFromUrl('https://gitlab.example.test/group/project/-/issues/42'), null);
-  assert.equal(mrIidFromUrl(null), null);
-  assert.equal(mrIidFromUrl('not a url'), null);
+test('parseGitLabResourceUrl reads project, kind and iid from a GitLab resource URL only', () => {
+  assert.deepEqual(parseGitLabResourceUrl('https://gitlab.example.test/group/project/-/merge_requests/42'), { project: 'group/project', kind: 'merge_request', iid: 42 });
+  assert.deepEqual(parseGitLabResourceUrl('https://gitlab.example.test/group/project/-/merge_requests/42/diffs'), { project: 'group/project', kind: 'merge_request', iid: 42 });
+  assert.deepEqual(parseGitLabResourceUrl('https://gitlab.example.test/group/project/-/issues/42'), { project: 'group/project', kind: 'issue', iid: 42 });
+  assert.deepEqual(parseGitLabResourceUrl('https://gitlab.example.test/group/sub/project/-/issues/42'), { project: 'group/sub/project', kind: 'issue', iid: 42 });
+  assert.equal(parseGitLabResourceUrl('https://github.com/owner/repo/pull/42'), null);
+  assert.equal(parseGitLabResourceUrl('https://gitlab.example.test/group/project/-/epics/42'), null);
+  assert.equal(parseGitLabResourceUrl('https://gitlab.example.test/group/project/-/issues/forty-two'), null);
+  assert.equal(parseGitLabResourceUrl('https://gitlab.example.test/-/issues/42'), null);
+  assert.equal(parseGitLabResourceUrl('not a url'), null);
+  assert.equal(parseGitLabResourceUrl(null), null);
 });
 
 test('sessions match through the structured GitLab context recorded by the dispatcher', () => {
@@ -154,6 +167,26 @@ test('sessions match through the structured GitLab context recorded by the dispa
   assert.equal(sessionMatchesGitLabContext(session, context({ origin: 'https://other.example.test' })), false);
 });
 
+test('the structured context never bypasses the provider, repo and branch guards', () => {
+  const gitlab = { project: 'parasaur-test/group/project', kind: 'issue' as const, iid: 42, webUrl: 'https://gitlab.example.test/parasaur-test/group/project' };
+  // Dispatch metadata is accepted independently of provider/repo, so a
+  // foreign or mismatched session must not match through it.
+  assert.equal(sessionMatchesGitLabContext(liveSession({ gitlab }), context({ branch: 'gah/issue/project-42' })), false);
+  assert.equal(sessionMatchesGitLabContext(liveSession({ gitlab, branch: 'gah/issue/project-42' }), context({ branch: 'gah/issue/project-42' })), true);
+  assert.equal(sessionMatchesGitLabContext(liveSession({ gitlab, branch: 'main' }), context({ branch: 'gah/issue/project-42' })), false);
+  assert.equal(sessionMatchesGitLabContext(liveSession({ providerKind: 'github', gitlab }), context()), false);
+  assert.equal(sessionMatchesGitLabContext(liveSession({ repo: 'unrelated/repo', gitlab }), context()), false);
+  // A session whose structured context names another project never matches
+  // this one, whatever repo or target it carries.
+  assert.equal(sessionMatchesGitLabContext(liveSession({
+    gitlab: { project: 'other/project', kind: 'issue', iid: 42, webUrl: 'https://gitlab.example.test/other/project' }
+  }), context()), false);
+  assert.equal(sessionMatchesGitLabContext(liveSession({
+    repo: 'parasaur-test/group/project',
+    gitlab: { project: 'other/project', kind: 'issue', iid: 42, webUrl: 'https://gitlab.example.test/other/project' }
+  }), context()), false);
+});
+
 test('sessions started before the context field exist are derived from repo, target and mr', () => {
   assert.equal(sessionMatchesGitLabContext(liveSession({ target: '#42' }), context()), true);
   assert.equal(sessionMatchesGitLabContext(liveSession({ target: '42' }), context()), true);
@@ -162,6 +195,9 @@ test('sessions started before the context field exist are derived from repo, tar
   }), context()), true);
   // iid 421 must not match issue 42.
   assert.equal(sessionMatchesGitLabContext(liveSession({ target: '#421' }), context()), false);
+  assert.equal(sessionMatchesGitLabContext(liveSession({
+    target: 'GitLab instruction for https://gitlab.example.test/parasaur-test/group/project/-/issues/421:\n\nfix this'
+  }), context()), false);
   assert.equal(sessionMatchesGitLabContext(liveSession({ target: '#42' }), context({ kind: 'merge_request' })), false);
   assert.equal(sessionMatchesGitLabContext(liveSession({ providerKind: 'github', target: '#42' }), context()), false);
   assert.equal(sessionMatchesGitLabContext(liveSession({ repo: 'other/project', target: '#42' }), context()), false);
@@ -170,6 +206,34 @@ test('sessions started before the context field exist are derived from repo, tar
   // Branch narrowing applies to derived matches.
   assert.equal(sessionMatchesGitLabContext(liveSession({ target: '#42', branch: 'gah/issue/project-42' }), context({ branch: 'gah/issue/project-42' })), true);
   assert.equal(sessionMatchesGitLabContext(liveSession({ target: '#42', branch: 'main' }), context({ branch: 'gah/issue/project-42' })), false);
+});
+
+test('a link in an instruction body is never the run\'s context', () => {
+  // The authoritative URL names this project's issue 99; the body links
+  // another project's issue 42. Neither makes this a run for issue 42,
+  // and the run is not about issue 99 for a 42 query.
+  const bodyLink = 'GitLab instruction for https://gitlab.example.test/parasaur-test/group/project/-/issues/99:\n\n'
+    + 'See https://gitlab.example.test/parasaur-test/group-b/-/issues/42 first.';
+  assert.equal(sessionMatchesGitLabContext(liveSession({ target: bodyLink }), context()), false);
+  assert.equal(ledgerEntryMatchesGitLabContext(ledgerEntry({ target_summary: bodyLink }), context()), false);
+  // A body link to the same project's other issue is not that issue either:
+  // the authoritative URL decides, and it names issue 99.
+  const sameProjectLink = 'GitLab instruction for https://gitlab.example.test/parasaur-test/group/project/-/issues/99:\n\n'
+    + 'See https://gitlab.example.test/parasaur-test/group/project/-/issues/42 first.';
+  assert.equal(sessionMatchesGitLabContext(liveSession({ target: sameProjectLink }), context()), false);
+  // The authoritative URL naming another project's issue 42 is not this
+  // project's issue 42, whatever iid it carries.
+  const foreignProject = liveSession({
+    target: 'GitLab instruction for https://gitlab.example.test/parasaur-test/group-b/-/issues/42:\n\nfix this'
+  });
+  assert.equal(sessionMatchesGitLabContext(foreignProject, context()), false);
+  assert.equal(ledgerEntryMatchesGitLabContext(ledgerEntry({
+    target_summary: 'GitLab instruction for https://gitlab.example.test/parasaur-test/group-b/-/issues/42:'
+  }), context()), false);
+  // An MR URL from another project never matches this project's ledger row.
+  assert.equal(ledgerEntryMatchesGitLabContext(ledgerEntry({
+    mode: 'review', work_id: null, mr_url: 'https://gitlab.example.test/parasaur-test/group-b/-/merge_requests/7'
+  }), context({ kind: 'merge_request', iid: 7 })), false);
 });
 
 test('merge request sessions match by mr number or instruction URL', () => {
@@ -342,7 +406,11 @@ test('GET /api/integrations/gitlab/runs filters mixed ledger fixtures through th
         ['no context', ''],
         ['missing iid', '?project=parasaur-test/group/project&kind=issue'],
         ['unknown kind', '?project=parasaur-test/group/project&kind=pipeline&iid=42'],
-        ['limit above the cap', '?project=parasaur-test/group/project&kind=issue&iid=42&limit=101']
+        ['limit above the cap', '?project=parasaur-test/group/project&kind=issue&iid=42&limit=101'],
+        ['malformed project path', '?project=../..&kind=issue&iid=42'],
+        ['traversal project path', '?project=..%2F..%2Fa%20b&kind=issue&iid=42'],
+        ['non-http origin', '?project=parasaur-test/group/project&kind=issue&iid=42&gitlab=file%3A%2F%2F%2Ftmp%2Fexample'],
+        ['unconfigured origin', '?project=parasaur-test/group/project&kind=issue&iid=42&gitlab=https%3A%2F%2Funconfigured.example']
       ] as const) {
         const response = await feed(query);
         assert.equal(response.status, 400, `${name} must be a 400`);
@@ -391,6 +459,21 @@ test('GET /api/integrations/gitlab/runs filters mixed ledger fixtures through th
       const unknownBody = await unknown.json() as { runs: unknown[]; context: { profiles: string[] } };
       assert.deepEqual(unknownBody.runs, []);
       assert.deepEqual(unknownBody.context.profiles, []);
+      // The same holds on a configured origin: the origin is proven, the
+      // project simply is not configured for it.
+      const unknownOnOrigin = await feed('?project=nope/unknown&kind=issue&iid=1&gitlab=https%3A%2F%2Fgitlab.example.test');
+      assert.equal(unknownOnOrigin.status, 200);
+      assert.deepEqual((await unknownOnOrigin.json() as { runs: unknown[] }).runs, []);
+
+      // An origin-scoped query on the configured GitLab host still answers.
+      const scoped = await feed('?project=parasaur-test%2Fgroup%2Fproject&kind=issue&iid=42&gitlab=https%3A%2F%2Fgitlab.example.test');
+      assert.equal(scoped.status, 200);
+      const scopedBody = await scoped.json() as { runs: { id: string }[]; context: { profiles: string[] } };
+      assert.deepEqual(scopedBody.context.profiles, ['gl-profile']);
+      assert.deepEqual(scopedBody.runs.map(run => run.id), [
+        'ledger:gl-profile:2026-10-22T10:00:00Z:improve',
+        'ledger:gl-profile:2026-10-20T10:00:00Z:improve'
+      ]);
 
       // The dispatch route applies the same validation to a start request's
       // context: a malformed context is rejected before anything starts.
@@ -400,6 +483,9 @@ test('GET /api/integrations/gitlab/runs filters mixed ledger fixtures through th
       });
       assert.equal((await dispatch({ project: 'parasaur-test/group/project', kind: 'issue', iid: 42, webUrl: 'not-a-url' })).status, 400);
       assert.equal((await dispatch({ project: 'parasaur-test/group/project', kind: 'epic', iid: 42, webUrl: 'https://gitlab.example.test/a/b' })).status, 400);
+      assert.equal((await dispatch({ project: '../..', kind: 'issue', iid: 42, webUrl: 'https://gitlab.example.test/a/b' })).status, 400);
+      assert.equal((await dispatch({ project: 'parasaur-test/group/project', kind: 'issue', iid: -1, webUrl: 'https://gitlab.example.test/a/b' })).status, 400);
+      assert.equal((await dispatch({ project: 'parasaur-test/group/project', kind: 'issue', iid: 42, webUrl: 'file:///tmp/example' })).status, 400);
       assert.equal((await dispatch('not-an-object')).status, 400);
     });
   } finally {

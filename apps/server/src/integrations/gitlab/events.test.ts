@@ -10,6 +10,7 @@ import type { SessionOptions } from '../../sessions/SessionManager.js';
 import { classifyEvent, record, type GitLabEvent } from './classifier.js';
 import { EventDedupe } from './dedupe.js';
 import { dispatchGitLabEvent, type GitLabDispatchDeps } from './dispatcher.js';
+import { sessionMatchesGitLabContext } from './runsFeed.js';
 import { gitLabEventsRouter } from './route.js';
 import { verifyHookSecret } from './verifier.js';
 import { createServer } from '../../server.js';
@@ -151,6 +152,14 @@ for (const name of ['issue', 'merge_request', 'note', 'note-mr', 'pipeline']) {
     assert.equal(start.providerKind, 'gitlab'); assert.equal(start.manualWorker, undefined);
     assert.equal(start.requestId, `gitlab-${event(name).key}`);
     assert.equal(start.mode, name === 'merge_request' ? 'review' : name === 'note-mr' || name === 'pipeline' ? 'fix' : 'improve');
+    // The page context the runs feed filters by (#1595) rides every start,
+    // so origin-scoped queries see dispatcher runs without derivation.
+    assert.deepEqual(start.gitlab, {
+      project: 'team/project',
+      kind: name === 'merge_request' || name === 'note-mr' || name === 'pipeline' ? 'merge_request' : 'issue',
+      iid: 42,
+      webUrl: 'https://gitlab.example.com/team/project'
+    });
     if (name === 'note' || name === 'note-mr') {
       assert.ok(start.target?.endsWith(String(record(fixture(name).object_attributes).note)));
       assert.ok(start.target?.startsWith('GitLab instruction for https://gitlab.example.com/'));
@@ -317,6 +326,28 @@ test('note text crosses the session boundary only as worker target input', async
   assert.ok(dispatched[0].target?.endsWith(instruction));
   assert.equal(dispatched[0].mr, '42');
   assert.equal(dispatched[0].manualWorker, undefined);
+});
+
+test('a dispatched event is visible to origin-scoped feed queries through its recorded context', async () => {
+  const manager = createSessionManager({
+    disableCleanupTimer: true, providerRegistry: { isProviderAvailable: () => true }, pushBus: { publish() {} },
+    dispatchRunner: () => ({ promise: new Promise(() => {}), cancel: async () => ({ cancelled: true }) })
+  });
+  const h = harness({ start: input => manager.startSession(input) });
+  await dispatchGitLabEvent(event('note'), options, h.deps);
+  await new Promise(resolve => setImmediate(resolve));
+  const session = manager.getAllSessions().find(candidate => candidate.status !== 'stopped');
+  assert.ok(session, 'the dispatched run is live');
+  const scopedFeedContext = { project: 'team/project', kind: 'issue' as const, iid: 42, origin: 'https://gitlab.example.com', branch: null, limit: 20 };
+  // The recorded context proves the event's origin: the run shows up for an
+  // origin-scoped query, which pre-context derivation could never do.
+  assert.equal(sessionMatchesGitLabContext(session, scopedFeedContext), true);
+  // The same guards apply to it as to every structured session: another
+  // origin, project or iid never matches, and neither does a branch demand.
+  assert.equal(sessionMatchesGitLabContext(session, { ...scopedFeedContext, origin: 'https://other.example.com' }), false);
+  assert.equal(sessionMatchesGitLabContext(session, { ...scopedFeedContext, project: 'other/project' }), false);
+  assert.equal(sessionMatchesGitLabContext(session, { ...scopedFeedContext, iid: 43 }), false);
+  assert.equal(sessionMatchesGitLabContext(session, { ...scopedFeedContext, branch: 'gah/example-project-42' }), false);
 });
 
 test('bot actors require the bot allowlist and bot mention notes never dispatch', async () => {

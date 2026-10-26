@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Activity, ExternalLink, GitBranch } from 'lucide-react';
 import type { GitLabRunSummary, GitLabRunsFeedResponse } from '@git-agent-harness/contracts';
 import { gahApi } from '../api/client.js';
@@ -117,17 +117,23 @@ function RunRow({ run, detailHref, onOpenRun }: { run: GitLabRunSummary; detailH
  * sessions and durable ledger runs for this issue or merge request, newest
  * first, each with backend, model, test status and the resulting MR link.
  * Mountable from the embed view (/embed) and the standalone dashboard:
- * every data access goes through `fetchRuns`, and `onOpenRun` vs the
+ * every data access goes through `refresh`, and `onOpenRun` vs the
  * external deep link decides how a run detail opens.
  */
 export function GitLabRunsFeed({ context, panelUrl, onOpenRun, limit }: GitLabRunsFeedProps) {
   const [feed, setFeed] = useState<GitLabRunsFeedResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /** Monotonic request id: only the newest request may apply its result or
+   * its error, so a response that settles after the context changed can
+   * never overwrite the current context's runs. */
+  const requestIdRef = useRef(0);
+
   const kind = runKindOf(context.kind);
   const scoped = kind !== null && context.iid !== null ? { kind, iid: context.iid } : null;
   const refresh = () => {
     if (!scoped) return;
+    const request = ++requestIdRef.current;
     gahApi.getGitLabRuns({
       project: context.project,
       kind: scoped.kind,
@@ -136,11 +142,19 @@ export function GitLabRunsFeed({ context, panelUrl, onOpenRun, limit }: GitLabRu
       branch: context.ref ?? undefined,
       limit
     })
-      .then(result => { setFeed(result); setError(null); })
-      .catch(reason => { setError(reason instanceof Error ? reason.message : String(reason)); });
+      .then(result => { if (requestIdRef.current === request) { setFeed(result); setError(null); } })
+      .catch(reason => { if (requestIdRef.current === request) setError(reason instanceof Error ? reason.message : String(reason)); });
   };
 
-  useEffect(refresh, [context.project, scoped?.kind, scoped?.iid, context.gitlab, context.ref, limit]);
+  // A new context owns the panel: its runs (and errors) replace whatever
+  // the previous context loaded immediately, and the request guard above
+  // ignores the previous context's still-pending response — success or
+  // error — whenever it settles.
+  useEffect(() => {
+    setFeed(null);
+    setError(null);
+    refresh();
+  }, [context.project, scoped?.kind, scoped?.iid, context.gitlab, context.ref, limit]);
   useAutoRefresh(refresh, RUNS_REFRESH_MS);
 
   if (!scoped) return null;

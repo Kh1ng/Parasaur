@@ -342,6 +342,53 @@ test('trusted-LAN sockets receive a warning but cannot invoke session mutations'
   }
 });
 
+test('session.start validates the GitLab context with the same validator as the HTTP dispatch route', async (t) => {
+  const { getFleetDispatch } = await import('./wsServer.js');
+  const server = http.createServer();
+  const wss = createAuthorizedWebSocketServer(server, 'central');
+  createWebSocketHandler(wss);
+  const fleet = getFleetDispatch();
+  const started: unknown[] = [];
+  const start = t.mock.method(fleet, 'startSession', async (options: unknown) => { started.push(options); return { id: 'gitlab-ws-session' }; });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as AddressInfo).port;
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  try {
+    await nextWelcome(ws);
+    const sendStart = (gitlab: unknown, requestId: string) => {
+      const reply = new Promise<ServerMessage>(resolve => ws.once('message', data => resolve(JSON.parse(data.toString()))));
+      ws.send(JSON.stringify({
+        type: 'session.start', requestId, profile: 'gl-profile', providerKind: 'gitlab', instanceId: 'gitlab-0',
+        repo: 'team/project', mode: 'review', gitlab
+      }));
+      return reply;
+    };
+    // Network JSON is never trusted on shape: the same invalid contexts the
+    // HTTP route rejects must not reach SessionManager from the socket.
+    for (const [name, gitlab] of [
+      ['unknown kind and bad webUrl', { project: 'team/project', kind: 'pipeline', iid: -1, webUrl: 'bad' }],
+      ['traversal project path', { project: '../..', kind: 'issue', iid: 42, webUrl: 'https://gitlab.example.com/team/project' }],
+      ['non-http webUrl', { project: 'team/project', kind: 'issue', iid: 42, webUrl: 'file:///tmp/example' }],
+      ['not an object', 'not-an-object']
+    ] as const) {
+      const response = await sendStart(gitlab, name);
+      assert.equal(response.type, 'error', `${name} must be rejected`);
+      assert.match(JSON.stringify(response), /gitlab must be a valid context/);
+      assert.equal(start.mock.callCount(), 0, `${name} must not start a session`);
+    }
+    // A valid context passes through to the session like the HTTP route's.
+    const context = { project: 'team/project', kind: 'merge_request' as const, iid: 42, webUrl: 'https://gitlab.example.com/team/project' };
+    const response = await sendStart(context, 'valid');
+    assert.equal(response.type, 'session.started');
+    assert.equal(started.length, 1);
+    assert.deepEqual((started[0] as { gitlab: unknown }).gitlab, context);
+  } finally {
+    ws.terminate();
+    await new Promise<void>(resolve => wss.close(() => resolve()));
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
 /** Fake `gah` for #1598: the 30-day `events` window holds 250 old
  * `context_built` events with ~280 KB payloads (~70 MB, over the server's
  * events output cap) followed by 200 ordinary dispatch events, so the

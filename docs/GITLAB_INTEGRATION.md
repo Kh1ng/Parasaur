@@ -162,9 +162,8 @@ by:
 
 - the structured `gitlab` context recorded on the session by the GitLab
   event dispatcher (#1643): `options.gitlab = { project, kind, iid,
-  webUrl }` on every dispatch site in `dispatcher.ts`. A session carrying
-  it must still pass the common provider/repo/branch guards before it
-  counts;
+  webUrl }` on every dispatch it starts. A session carrying it must still
+  pass the common provider/repo/branch guards before it counts;
 - derivation for older sessions and ledger entries: GitLab provider +
   project path, `source_issue_number` / `#<iid>` work ids for issues,
   `mr:<iid>` work ids and MR URLs for merge requests, and the authoritative

@@ -6,7 +6,7 @@
  * /api/report/roles), and controller events (`gah events`). A GitLab
  * context is provider host (optional), project path, kind (issue |
  * merge_request) and iid; runs whose session carried the structured
- * GitLabDispatchContext (#1592's dispatcher records it) match directly,
+ * GitLabDispatchContext (#1643's dispatcher records it) match directly,
  * older or foreign runs match by the identities the ledger already keeps
  * (repo, source_issue_number, `mr:` work ids, MR URLs, target text).
  */
@@ -25,6 +25,7 @@ import type {
 import { readLedger } from '../../roleMetrics.js';
 import { runEvents, runProfileList, runReport } from '../../gahCli.js';
 import { getFleetDispatch } from '../../wsServer.js';
+import { isGitLabProjectPath } from './dispatchContext.js';
 
 /** Ledger modes that bookkeep policy, not a model doing a job. */
 const NOT_RUNS = new Set(['review_hold', 'review_hold_release', 'clear_attempts', 'tombstone']);
@@ -62,6 +63,19 @@ function originOf(url: string | null | undefined): string | null {
   }
 }
 
+/** The origin of an http(s) URL, or null for anything else: other schemes
+ * (`file:` URLs yield the opaque origin 'null') and unparseable values are
+ * not origins a panel could prove. */
+function httpOriginOf(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.hostname !== '' ? parsed.origin : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Parse and validate `GET /api/integrations/gitlab/runs` query parameters.
  * Every failure is a 400: an empty or malformed context must not quietly
@@ -69,7 +83,7 @@ function originOf(url: string | null | undefined): string | null {
  */
 export function parseGitLabRunsQuery(params: Record<string, unknown>): GitLabRunsContext | GitLabRunsQueryParseFailure {
   const project = typeof params.project === 'string' ? params.project.trim() : '';
-  if (!project || project.length > 512 || /[\x00-\x1f\x7f]/.test(project)) return { error: 'project is required: the full GitLab project path' };
+  if (!isGitLabProjectPath(project)) return { error: 'project is required: the full GitLab project path' };
   const kind = params.kind;
   if (kind !== 'issue' && kind !== 'merge_request') return { error: 'kind must be issue or merge_request' };
   const iid = positiveInt(typeof params.iid === 'string' ? params.iid : undefined);
@@ -77,8 +91,8 @@ export function parseGitLabRunsQuery(params: Record<string, unknown>): GitLabRun
   let origin: string | null = null;
   if (params.gitlab !== undefined) {
     if (typeof params.gitlab !== 'string' || !params.gitlab.trim()) return { error: 'gitlab must be the GitLab origin URL' };
-    origin = originOf(params.gitlab.trim());
-    if (origin === null) return { error: 'gitlab must be the GitLab origin URL' };
+    origin = httpOriginOf(params.gitlab.trim());
+    if (origin === null) return { error: 'gitlab must be the http(s) GitLab origin URL' };
   }
   let branch: string | null = null;
   if (params.branch !== undefined) {
@@ -94,23 +108,46 @@ export function parseGitLabRunsQuery(params: Record<string, unknown>): GitLabRun
   return { project, kind, iid, origin, branch, limit };
 }
 
-/** MR iid from a GitLab merge request URL, or null for anything else. */
-export function mrIidFromUrl(url: string | null | undefined): number | null {
+/**
+ * A GitLab resource URL — `<origin>/<project>/-/issues|merge_requests/<iid>`
+ * — parsed to its full project path, kind and iid, or null for anything
+ * else. Deep-link suffixes (`…/merge_requests/7/diffs`) keep the resource
+ * they point at.
+ */
+export function parseGitLabResourceUrl(url: string | null | undefined): { project: string; kind: GitLabContextKind; iid: number } | null {
   if (!url) return null;
+  let segments: string[];
   try {
-    const segments = new URL(url).pathname.split('/').filter(Boolean);
-    const at = segments.lastIndexOf('merge_requests');
-    if (at < 0 || at + 1 >= segments.length) return null;
-    return positiveInt(segments[at + 1]);
+    segments = new URL(url).pathname.split('/').filter(Boolean);
   } catch {
     return null;
   }
+  const at = segments.lastIndexOf('-');
+  if (at <= 0 || at + 2 >= segments.length) return null;
+  const kind: GitLabContextKind | null = segments[at + 1] === 'issues' ? 'issue'
+    : segments[at + 1] === 'merge_requests' ? 'merge_request' : null;
+  const iid = kind === null ? null : positiveInt(segments[at + 2]);
+  return kind !== null && iid !== null ? { project: segments.slice(0, at).join('/'), kind, iid } : null;
 }
 
-/** Issue/MR URL reference inside instruction text, e.g. the GitLab note
- * dispatcher's target: `…/-/issues/42:`. */
-function targetReferences(path: 'issues' | 'merge_requests', iid: number, target: string | null | undefined): boolean {
-  return target !== null && target !== undefined && new RegExp(`/-/${path}/${iid}(?![0-9])`).test(target);
+/** The authoritative resource URL of a GitLab note-instruction target
+ * (`GitLab instruction for <url>:\n\n…`, the note dispatcher's format), or
+ * null. Only this URL is context: the instruction text after the colon is a
+ * worker instruction, so a link it contains to another project's issue or
+ * MR is never this run's context. */
+function instructionResourceUrl(target: string | null | undefined): string | null {
+  if (!target) return null;
+  const match = /^GitLab instruction for (\S+):/.exec(target);
+  return match ? match[1] : null;
+}
+
+/** An embedded resource URL is context only when its full project path,
+ * kind and iid all equal the requested context; a URL naming another
+ * project — a link in an instruction body, an MR URL from another repo —
+ * is never this context. */
+function resourceUrlMatchesContext(url: string | null | undefined, context: GitLabRunsContext): boolean {
+  const resource = parseGitLabResourceUrl(url);
+  return resource !== null && resource.project === context.project && resource.kind === context.kind && resource.iid === context.iid;
 }
 
 /** The project+origin a structured context proves, or null when it cannot
@@ -122,19 +159,24 @@ function structuredContextProves(gitlab: GitLabDispatchContext | undefined, cont
 
 /** Whether a live dispatch session belongs to the GitLab context. */
 export function sessionMatchesGitLabContext(session: Session, context: GitLabRunsContext): boolean {
+  // Common guards for every match path: dispatch metadata is advisory, so a
+  // structured context never bypasses the run's own provider, repo or
+  // branch (POST /api/dispatch accepts the metadata independently of them).
+  if (session.providerKind !== 'gitlab' || session.repo !== context.project) return false;
+  if (context.branch !== null && session.branch !== context.branch) return false;
   if (session.gitlab) return structuredContextProves(session.gitlab, context);
   // Derivation for sessions started before the dispatcher recorded the
-  // context (#1592 adoption): the GitLab dispatcher starts gitlab sessions
+  // context (#1643 adoption): the GitLab dispatcher starts gitlab sessions
   // with repo = project path, target `#<iid>` (assigned issues) or
-  // instruction text embedding the resource URL, and mr = `<iid>`.
-  if (session.providerKind !== 'gitlab' || session.repo !== context.project) return false;
-  if (context.origin !== null) return false; // An unstructured session cannot prove its host.
-  if (context.branch !== null && session.branch !== context.branch) return false;
+  // instruction text embedding the resource URL, and mr = `<iid>`. An
+  // unstructured session cannot prove a demanded host.
+  if (context.origin !== null) return false;
   if (context.kind === 'merge_request') {
-    return session.mr === String(context.iid) || targetReferences('merge_requests', context.iid, session.target);
+    return session.mr === String(context.iid) || resourceUrlMatchesContext(instructionResourceUrl(session.target), context);
   }
   const target = session.target?.trim();
-  return target === `#${context.iid}` || target === String(context.iid) || targetReferences('issues', context.iid, session.target);
+  return target === `#${context.iid}` || target === String(context.iid)
+    || resourceUrlMatchesContext(instructionResourceUrl(session.target), context);
 }
 
 /** Whether a durable ledger entry belongs to the GitLab context. */
@@ -144,12 +186,12 @@ export function ledgerEntryMatchesGitLabContext(entry: LedgerEntry, context: Git
   if (NOT_RUNS.has(entry.mode)) return false;
   if (context.kind === 'merge_request') {
     return entry.work_id === `mr:${context.iid}`
-      || mrIidFromUrl(entry.mr_url) === context.iid
-      || targetReferences('merge_requests', context.iid, entry.target_summary);
+      || resourceUrlMatchesContext(entry.mr_url, context)
+      || resourceUrlMatchesContext(instructionResourceUrl(entry.target_summary), context);
   }
   return entry.source_issue_number === String(context.iid)
     || entry.work_id === `#${context.iid}`
-    || targetReferences('issues', context.iid, entry.target_summary);
+    || resourceUrlMatchesContext(instructionResourceUrl(entry.target_summary), context);
 }
 
 /** Coarse run status from a ledger record's outcome fields. */
@@ -318,9 +360,23 @@ const defaultDeps: GitLabRunsFeedDeps = {
   }
 };
 
+/** The query's `gitlab` origin must be a host a configured GitLab profile
+ * can prove: an unconfigured origin is a malformed context (400), not an
+ * empty feed pretending to know the host. */
+export class UnconfiguredGitLabOriginError extends Error {
+  constructor() {
+    super('gitlab must be the origin of a configured GitLab profile');
+    this.name = 'UnconfiguredGitLabOriginError';
+  }
+}
+
 /** Load every input and build the feed for a validated context. */
 export async function loadGitLabRunsFeed(context: GitLabRunsContext, deps: GitLabRunsFeedDeps = defaultDeps): Promise<GitLabRunsFeedResponse> {
   const profiles = await deps.listProfiles();
+  if (context.origin !== null
+    && !profiles.some(profile => profile.provider === 'gitlab' && originOf(profile.web_url) === context.origin)) {
+    throw new UnconfiguredGitLabOriginError();
+  }
   const matched = matchingGitLabProfiles(profiles, context);
   const [sessions, report, ...eventLists] = await Promise.all([
     deps.sessions(),

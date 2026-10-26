@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { loadGitLabRunsFeed, parseGitLabRunsQuery } from './runsFeed.js';
+import { loadGitLabRunsFeed, parseGitLabRunsQuery, UnconfiguredGitLabOriginError } from './runsFeed.js';
 
 /**
  * Read-only runs feed for the GitLab panel (#1595). Mounted under
@@ -19,6 +19,10 @@ export function gitLabRunsRouter(): Router {
     try {
       res.json(await loadGitLabRunsFeed(context));
     } catch (error) {
+      if (error instanceof UnconfiguredGitLabOriginError) {
+        res.status(400).json({ error: 'invalid_gitlab_context', message: error.message });
+        return;
+      }
       res.status(502).json({
         error: 'Failed to load GitLab runs feed',
         message: error instanceof Error ? error.message : String(error)
