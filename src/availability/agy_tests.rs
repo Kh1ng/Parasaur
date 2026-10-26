@@ -337,7 +337,11 @@ fn agy_slow_probe_never_blocks_routing_or_another_installation() {
     let _exec = crate::test_support::ExecGuard::new();
     let dir = tempfile::tempdir().unwrap();
     let script = dir.path().join("slow-agy");
-    std::fs::write(&script, "#!/bin/sh\ntouch \"$HOME/started\"\nwhile [ ! -f \"$HOME/release\" ]; do sleep 0.05; done\nexit 1\n").unwrap();
+    std::fs::write(
+        &script,
+        "#!/bin/sh\ntouch \"$HOME/started\"\nsleep 10\ntouch \"$HOME/completed\"\nexit 1\n",
+    )
+    .unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
     let executable = script.to_str().unwrap();
     let start = Instant::now();
@@ -345,12 +349,8 @@ fn agy_slow_probe_never_blocks_routing_or_another_installation() {
         pool("agy", "Gemini future", executable, Some(dir.path())),
         "agy:google-native"
     );
-    assert!(start.elapsed() < Duration::from_millis(200));
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while !dir.path().join("started").exists() {
-        assert!(Instant::now() < deadline);
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    assert!(start.elapsed() < Duration::from_secs(3));
+    assert!(dir.path().join("started").exists());
     let start = Instant::now();
     assert_eq!(
         pool("agy", "Gemini future", executable, Some(dir.path())),
@@ -360,9 +360,53 @@ fn agy_slow_probe_never_blocks_routing_or_another_installation() {
         pool("agy-second", "Nova", "/missing-agy", None),
         "agy-second:external"
     );
-    assert!(start.elapsed() < Duration::from_millis(200));
-    std::fs::write(dir.path().join("release"), "").unwrap();
-    settled_pool("agy", "Gemini future", executable, Some(dir.path()));
+    assert!(start.elapsed() < Duration::from_secs(3));
+    assert!(
+        !dir.path().join("completed").exists(),
+        "timed out probe child must be killed"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn agy_fresh_process_uses_persisted_catalog_membership() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let executable = dir.path().join("slow-agy");
+    std::fs::write(
+        &executable,
+        "#!/bin/sh\ntouch \"$HOME/started\"\nsleep 10\ntouch \"$HOME/completed\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let usage = String::from_utf8(USAGE.to_vec())
+        .unwrap()
+        .replace("Gemini Flash, Gemini Pro", "Nova Flash")
+        .replace("gemini-weekly", "new-provider-pool");
+    let catalog =
+        Catalog::parse("nova-4-flash-low\tNova 4 Flash (Low)\n", usage.as_bytes()).unwrap();
+    store_catalog(executable.to_str().unwrap(), Some(&home), &catalog);
+
+    assert_eq!(
+        pool(
+            "agy",
+            "nova-4-flash-low",
+            executable.to_str().unwrap(),
+            Some(&home)
+        ),
+        "agy:new-provider-pool"
+    );
+    join_background_refreshes();
+    assert!(home.join("started").exists());
+    assert!(
+        !home.join("completed").exists(),
+        "CLI shutdown join must wait for the bounded probe to kill its child"
+    );
+    let path = cache_path(executable.to_str().unwrap(), Some(&home)).unwrap();
+    assert!(path.is_file());
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]

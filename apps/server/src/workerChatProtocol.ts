@@ -65,6 +65,7 @@ export function parseWorkerChatEvent(value: unknown): WorkerChatEvent {
 type WorkerChatReply = import('./gahCli.js').SubscriptionRoute[] | import('./gahCli.js').QuotaFailure | import('@git-agent-harness/contracts').ChatSessionSummary
   | { session: import('@git-agent-harness/contracts').ChatSessionSummary }
   | Awaited<ReturnType<ManagerAdapter['listModels']>>
+  | { summary: Awaited<ReturnType<ManagerAdapter['listModels']>>; version?: string; available?: boolean }
   | Awaited<ReturnType<ManagerAdapter['listCommands']>>
   | HelperTaskResult
   | { branch: string; commit: string }
@@ -80,6 +81,14 @@ export function parseWorkerChatReply(value: unknown, request: Record<string, unk
   if (request.action === 'models' && request.catalogVersionOnly === true && object(value) && 'version' in value) {
     if (!nullableString(value.version) || (typeof value.version === 'string' && value.version.length > 256)) throw invalid();
     return { version: value.version };
+  }
+  if (request.action === 'models' && request.catalogSnapshot === true && object(value) && object(value.summary)) {
+    const summary = parseWorkerChatReply(value.summary, { action: 'models' });
+    if (!object(summary) || !('models' in summary) || !Array.isArray(summary.models) || !(value.version === undefined || nullableString(value.version))
+      || !(value.available === undefined || typeof value.available === 'boolean')) throw invalid();
+    return { summary: summary as Awaited<ReturnType<ManagerAdapter['listModels']>>,
+      ...(typeof value.version === 'string' ? { version: value.version } : {}),
+      ...(value.available === undefined ? {} : { available: value.available }) };
   }
   if (request.action === 'quota-failure') {
     if (!object(value) || !['hard', 'transient', 'other'].includes(String(value.kind)) || !measurement(value.resetAt, true) || !measurement(value.retryAfterMs, true)) throw invalid();

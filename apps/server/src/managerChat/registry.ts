@@ -87,6 +87,13 @@ export interface ManagerAdapter extends ManagerBackendInfo {
      * false (older workers and backends without a bundled fallback). */
     bundledRuntime?: boolean;
   }>;
+  /** Read a catalog and its revision from one inventory snapshot when supported. */
+  listModelsSnapshot?(conversation: ManagerConversation): Promise<{
+    summary: Awaited<ReturnType<ManagerAdapter['listModels']>>;
+    version?: string;
+    available?: boolean;
+  }>;
+  modelCatalogAvailable?(): boolean | Promise<boolean>;
   /** Cheap inventory revision; changes when background discovery replaces the catalog. */
   modelCatalogVersion?(): string | undefined | Promise<string | undefined>;
   setModel(conversation: ManagerConversation, modelId: string): Promise<void>;

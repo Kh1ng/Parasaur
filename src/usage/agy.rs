@@ -3,7 +3,7 @@ use crate::quota_store::QuotaObservationRecord;
 use anyhow::{bail, Context, Result};
 use std::path::Path;
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
@@ -16,12 +16,43 @@ pub(crate) fn run(
     args: &[&str],
     seconds: u64,
 ) -> Result<Vec<u8>> {
+    run_until(
+        executable,
+        home,
+        args,
+        Instant::now() + Duration::from_secs(seconds),
+    )
+}
+
+/// Execute a metadata command within a shared probe deadline.
+pub(crate) fn run_until(
+    executable: &str,
+    home: Option<&Path>,
+    args: &[&str],
+    deadline: Instant,
+) -> Result<Vec<u8>> {
     let mut command = Command::new(executable);
     command.args(args);
     if let Some(home) = home {
         command.env("HOME", home);
     }
-    let output = crate::runner::process::run_bounded(command, Duration::from_secs(seconds))
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            command.pre_exec(|| {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::getppid() == 1 {
+                    libc::kill(libc::getpid(), libc::SIGKILL);
+                }
+                Ok(())
+            });
+        }
+    }
+    let timeout = deadline.saturating_duration_since(Instant::now());
+    let output = crate::runner::process::run_bounded(command, timeout)
         .context("Antigravity metadata command timed out or could not be started")?;
     if !output.status.success() {
         bail!("Antigravity metadata command failed ({})", output.status);

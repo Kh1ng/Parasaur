@@ -206,6 +206,12 @@ export function createWorkerChatRouter(deps: {
         return void res.json({ success: true });
       }
       if (body.action === 'models' && body.catalogVersionOnly === true) return void res.json({ version: await adapter.modelCatalogVersion?.() ?? null });
+      if (body.action === 'models' && body.catalogSnapshot === true) {
+        const snapshot = adapter.listModelsSnapshot
+          ? await adapter.listModelsSnapshot({ key, profile: body.profile })
+          : { summary: await adapter.listModels({ key, profile: body.profile }), version: await adapter.modelCatalogVersion?.() };
+        return void res.json(snapshot);
+      }
       if (body.action === 'models') return void res.json(await adapter.listModels({ key, profile: body.profile }));
       if (body.action === 'commands') return void res.json(await adapter.listCommands(key));
       const settings = {

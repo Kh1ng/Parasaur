@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,13 +11,13 @@ import { RegistryService } from './registryService.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { addRemoteProject } from './projectCatalog.js';
 import { configureChatRouting } from './chatRouting.js';
-import { modelOverrideForProfile, reasoningEffortOverrideForProfile, setBackendForProfile, setModelOverrideForProfile } from './managerChat/settingsStore.js';
+import { modelOverrideForProfile, reasoningEffortOverrideForProfile, setBackendForProfile, setModelOverrideForProfile, setReasoningEffortOverrideForProfile } from './managerChat/settingsStore.js';
 import { listModelsForProfile, sendManagerChatMessage, setSessionLogOptions, setModelForProfile, setReasoningEffortForProfile } from './managerChat/ManagerChatManager.js';
 import { createHeadlessBackend, agyBackendSpec } from './managerChat/headlessAdapter.js';
 import { resolveAdapter } from './managerChat/registry.js';
-import { parseAgyModels } from './managerChat/agyModels.js';
+import { createAgyModelOptions, parseAgyModels } from './managerChat/agyModels.js';
 
-for (const remote of [true, false]) test(`${remote ? 'remote' : 'local'} AGY persisted selections are validated before the next CLI turn`, async t => {
+for (const remote of [true, false]) test(`${remote ? 'coordinator/worker' : 'local'} AGY restores persisted selections after a cold probe failure and catalog race`, async t => {
   const root = mkdtempSync(join(tmpdir(), 'gah-remote-agy-'));
   const saved = { ...process.env };
   Object.assign(process.env, {
@@ -34,6 +33,9 @@ for (const remote of [true, false]) test(`${remote ? 'remote' : 'local'} AGY per
   const fixture: ProfileSummary = JSON.parse(readFileSync(new URL('../tests/fixtures/gah/responses/profile-list.json', import.meta.url), 'utf8'))[0];
   const profile = { ...fixture, name: 'worker-agy', local_path: root, worktree_base: join(root, 'worktrees') };
   let inventory = parseAgyModels(readFileSync(new URL('../../../tests/fixtures/agy/models.tsv', import.meta.url), 'utf8'), readFileSync(new URL('../../../tests/fixtures/agy/help.txt', import.meta.url), 'utf8'));
+  const helpText = readFileSync(new URL('../../../tests/fixtures/agy/help.txt', import.meta.url), 'utf8');
+  let failInitialProbe = true;
+  let now = 0;
   const argv = join(root, 'argv.json');
   const executable = join(root, 'agy');
   writeFileSync(executable, `#!/usr/bin/env node
@@ -45,9 +47,14 @@ console.log(JSON.stringify({event:'result', result:{status:'SUCCESS', response:'
   let modelWrites = 0;
   let effortWrites = 0;
   const makeAdapter = () => {
-    const backend = createHeadlessBackend({ ...agyBackendSpec({ executable, state_root: null }), modelOptions: async () => inventory });
+    const modelOptions = createAgyModelOptions(undefined, { now: () => now, run: async args => {
+      if (failInitialProbe && args[0] === 'models') throw Object.assign(new Error('probe failed'), { code: 1 });
+      return { stdout: args[0] === 'models' ? inventory.models.map(model => `${model.id}\t${model.name}`).join('\n') : '', stderr: args[0] === '--help' ? helpText : '' };
+    } });
+    const backend = createHeadlessBackend({ ...agyBackendSpec({ executable, state_root: null }), modelOptions, modelCatalogVersion: modelOptions.version, dispose: modelOptions.dispose });
     return { ...backend,
-      modelCatalogVersion: () => createHash('sha256').update(JSON.stringify(inventory)).digest('hex'),
+      modelCatalogVersion: modelOptions.version,
+      listModelsSnapshot: async (...args: Parameters<NonNullable<typeof backend.listModelsSnapshot>>) => { modelReads++; return backend.listModelsSnapshot!(...args); },
       listModels: async (...args: Parameters<typeof backend.listModels>) => { modelReads++; return backend.listModels(...args); },
       setModel: async (...args: Parameters<typeof backend.setModel>) => { modelWrites++; return backend.setModel(...args); },
       setReasoningEffort: async (...args: Parameters<typeof backend.setReasoningEffort>) => { effortWrites++; return backend.setReasoningEffort(...args); }
@@ -89,6 +96,19 @@ console.log(JSON.stringify({event:'result', result:{status:'SUCCESS', response:'
     Object.assign(localAdapter, adapter);
   }
   setBackendForProfile(chatProfile, 'agy');
+  // A prior server process persisted these choices. A first-probe failure must
+  // leave them intact so the recovered inventory can restore and use them.
+  setModelOverrideForProfile(chatProfile, 'agy', 'gemini-3.8-flash-high');
+  setReasoningEffortOverrideForProfile(chatProfile, 'agy', 'low');
+  await sendManagerChatMessage(chatProfile, '/status', undefined, undefined, undefined, nodeId);
+  assert.equal(modelOverrideForProfile(chatProfile, 'agy'), 'gemini-3.8-flash-high');
+  assert.equal(reasoningEffortOverrideForProfile(chatProfile, 'agy'), 'low');
+  assert.deepEqual(JSON.parse(readFileSync(argv, 'utf8')), ['--input-format', 'stream-json', '--output-format', 'stream-json', '--dangerously-skip-permissions', '--sandbox', '--model', 'gemini-3.8-flash-high', '--effort', 'low']);
+  failInitialProbe = false;
+  now = 60_000;
+  await sendManagerChatMessage(chatProfile, '/status', undefined, undefined, undefined, nodeId);
+  assert.ok(JSON.parse(readFileSync(argv, 'utf8')).includes('gemini-3.8-flash-high'));
+  assert.ok(JSON.parse(readFileSync(argv, 'utf8')).includes('low'));
   await setModelForProfile(chatProfile, 'gemini-3.8-flash-high', nodeId);
   assert.equal((await adapter.listModels({ key: profile.name, profile: profile.name })).currentModelId, 'gemini-3.8-flash-high');
   await setReasoningEffortForProfile(chatProfile, 'low', nodeId);
@@ -96,8 +116,8 @@ console.log(JSON.stringify({event:'result', result:{status:'SUCCESS', response:'
   const beforeTurns = [modelReads, modelWrites, effortWrites];
   for (let turn = 0; turn < 3; turn++) {
     await sendManagerChatMessage(chatProfile, '/status', undefined, undefined, undefined, nodeId);
-    assert.deepEqual([modelReads - beforeTurns[0], modelWrites - beforeTurns[1], effortWrites - beforeTurns[2]], [1, 0, 0],
-      'three unchanged turns restore once and add no further worker model/effort calls');
+    assert.deepEqual([modelReads - beforeTurns[0], modelWrites - beforeTurns[1], effortWrites - beforeTurns[2]], [0, 0, 0],
+      'three unchanged turns reuse the validation performed while restoring the persisted choice');
   }
   adapter.dispose?.();
   adapter = makeAdapter();
@@ -139,10 +159,37 @@ console.log(JSON.stringify({event:'result', result:{status:'SUCCESS', response:'
   await setReasoningEffortForProfile(chatProfile, 'high', nodeId);
   await sendManagerChatMessage(chatProfile, '/status', undefined, undefined, undefined, nodeId);
   inventory = { models: [], reasoningEfforts: [], modelReasoningEfforts: {} };
+  now += 60_000;
+  await adapter.listModelsSnapshot!({ key: profile.name, profile: profile.name }); // Model discovery refreshes the catalog revision.
   await sendManagerChatMessage(chatProfile, '/status', undefined, undefined, undefined, nodeId);
   assert.ok(!JSON.parse(readFileSync(argv, 'utf8')).includes('--model'));
   assert.equal(modelOverrideForProfile(chatProfile, 'agy'), undefined);
   assert.equal(reasoningEffortOverrideForProfile(chatProfile, 'agy'), undefined);
   assert.equal(warnings.filter(w => w.includes('persisted')).length, 3);
   await assert.rejects(setReasoningEffortForProfile(chatProfile, 'turbo', nodeId));
+
+  inventory = parseAgyModels(readFileSync(new URL('../../../tests/fixtures/agy/models.tsv', import.meta.url), 'utf8'), helpText);
+  now += 60_000;
+  await adapter.listModelsSnapshot!({ key: profile.name, profile: profile.name });
+  await setModelForProfile(chatProfile, 'gemini-3.8-flash-high', nodeId);
+  await setReasoningEffortForProfile(chatProfile, 'high', nodeId);
+  let retireAfterSnapshot = true;
+  const catalogAdapter = remote ? adapter : localAdapter;
+  const originalSnapshot = catalogAdapter.listModelsSnapshot!.bind(catalogAdapter);
+  catalogAdapter.listModelsSnapshot = async conversation => {
+    const snapshot = await originalSnapshot(conversation);
+    if (retireAfterSnapshot) {
+      retireAfterSnapshot = false;
+      inventory = { models: [], reasoningEfforts: [], modelReasoningEfforts: {} };
+      now += 60_000;
+      await originalSnapshot(conversation); // Successful empty refresh lands after summary A.
+    }
+    return snapshot;
+  };
+  await sendManagerChatMessage(chatProfile, '/status', undefined, undefined, undefined, nodeId);
+  for (let turn = 0; turn < 3; turn++) await sendManagerChatMessage(chatProfile, '/status', undefined, undefined, undefined, nodeId);
+  const retiredArgs: string[] = JSON.parse(readFileSync(argv, 'utf8'));
+  assert.ok(!retiredArgs.includes('--model') && !retiredArgs.includes('--effort'));
+  assert.equal(modelOverrideForProfile(chatProfile, 'agy'), undefined);
+  assert.equal(reasoningEffortOverrideForProfile(chatProfile, 'agy'), undefined);
 });

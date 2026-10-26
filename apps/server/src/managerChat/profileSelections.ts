@@ -15,16 +15,23 @@ export async function restoreProfileSelections(profile: string, backendId: strin
   if (!cache) { cache = new Map(); restored.set(scope, cache); }
   const key = JSON.stringify([profile, backendId]);
   const previous = cache.get(key);
-  const version = await adapter.modelCatalogVersion?.();
-  if (!refresh && previous?.selection === selection(profile, backendId) && previous.version === version) return previous.summary;
-  const summary = await validateSelections(profile, backendId, adapter);
-  cache.set(key, { selection: selection(profile, backendId), version: await adapter.modelCatalogVersion?.(), summary });
+  if (!refresh && previous?.selection === selection(profile, backendId)) {
+    const version = await adapter.modelCatalogVersion?.();
+    if (previous.version === version) return previous.summary;
+  }
+  const snapshot = adapter.listModelsSnapshot
+    ? await adapter.listModelsSnapshot({ key: profile, profile })
+    : { version: await adapter.modelCatalogVersion?.(), summary: await adapter.listModels({ key: profile, profile }) };
+  if (snapshot.available === false || await adapter.modelCatalogAvailable?.() === false) return snapshot.summary;
+  const summary = await validateSelections(profile, backendId, adapter, snapshot.summary);
+  cache.set(key, { selection: selection(profile, backendId), version: snapshot.version, summary });
   return summary;
 }
 
-async function validateSelections(profile: string, backendId: string, adapter: ManagerAdapter) {
+async function validateSelections(profile: string, backendId: string, adapter: ManagerAdapter,
+  initialSummary: Summary) {
   const conversation = { key: profile, profile };
-  let summary = await adapter.listModels(conversation);
+  let summary = initialSummary;
   const model = modelOverrideForProfile(profile, backendId);
   const effort = reasoningEffortOverrideForProfile(profile, backendId);
   if (model && !summary.models.some(item => item.id === model)) {

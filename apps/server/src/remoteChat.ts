@@ -101,6 +101,13 @@ export function workerChatConnection(registry: RegistryService, nodeId: string, 
         },
         listCommands: () => command('commands'),
         listModels: () => command('models'),
+        listModelsSnapshot: async () => {
+          const result = await command<{ summary: Awaited<ReturnType<ManagerAdapter['listModels']>>; version?: string | null; available?: boolean }
+            | Awaited<ReturnType<ManagerAdapter['listModels']>>>('models', { catalogSnapshot: true });
+          if ('summary' in result) return { summary: result.summary, version: result.version ?? undefined, available: result.available };
+          // Older workers do not return snapshots; fingerprint their full catalog summary.
+          return { summary: result, version: createHash('sha256').update(JSON.stringify([result.models, result.reasoningEfforts])).digest('hex') };
+        },
         modelCatalogVersion: async () => {
           const result = await command<{ version: string | null } | Awaited<ReturnType<ManagerAdapter['listModels']>>>('models', { catalogVersionOnly: true });
           // Older workers return their full summary for this optional query.

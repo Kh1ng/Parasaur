@@ -97,6 +97,8 @@ export interface HeadlessBackendSpec {
     models: ManagerModelInfo[];
     reasoningEfforts: ManagerReasoningEffortInfo[];
     modelReasoningEfforts?: Record<string, ManagerReasoningEffortInfo[]>;
+    catalogVersion?: string;
+    metadataAvailable?: boolean;
     /** The backend's own current model, for backends whose selection lives
      * outside this process (vibe's config file, OpenHands' configured
      * profile model); an in-memory selection still wins when one was made
@@ -193,6 +195,29 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
       states.set(key, state);
     }
     return state;
+  }
+
+  async function listModelSnapshot(conversation: ManagerConversation) {
+    const options = await spec.modelOptions?.(conversation);
+    const state = stateFor(conversation.key);
+    if (options?.modelReasoningEfforts && state.currentModelId && !options.models.some(model => model.id === state.currentModelId)) {
+      state.currentModelId = null;
+    }
+    const efforts = options?.modelReasoningEfforts
+      ? options.modelReasoningEfforts[state.currentModelId ?? options.currentModelId ?? ''] ?? []
+      : options?.reasoningEfforts ?? [];
+    if (options?.modelReasoningEfforts && !efforts.some(effort => effort.id === state.currentReasoningEffortId)) {
+      state.currentReasoningEffortId = null;
+    }
+    const summary = {
+      models: options?.models ?? [],
+      currentModelId: state.currentModelId ?? options?.currentModelId ?? null,
+      reasoningEfforts: efforts,
+      currentReasoningEffortId: state.currentReasoningEffortId,
+      contextUsage: null
+    };
+    return { summary, ...(options?.catalogVersion ? { version: options.catalogVersion } : {}),
+      ...(options?.metadataAvailable === undefined ? {} : { available: options.metadataAvailable }) };
   }
 
   return {
@@ -397,25 +422,10 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     },
 
     modelCatalogVersion: spec.modelCatalogVersion,
+    listModelsSnapshot: listModelSnapshot,
+
     async listModels(conversation) {
-      const options = await spec.modelOptions?.(conversation);
-      const state = stateFor(conversation.key);
-      if (options?.modelReasoningEfforts && state.currentModelId && !options.models.some(model => model.id === state.currentModelId)) {
-        state.currentModelId = null;
-      }
-      const efforts = options?.modelReasoningEfforts
-        ? options.modelReasoningEfforts[state.currentModelId ?? options.currentModelId ?? ''] ?? []
-        : options?.reasoningEfforts ?? [];
-      if (options?.modelReasoningEfforts && !efforts.some(effort => effort.id === state.currentReasoningEffortId)) {
-        state.currentReasoningEffortId = null;
-      }
-      return {
-        models: options?.models ?? [],
-        currentModelId: state.currentModelId ?? options?.currentModelId ?? null,
-        reasoningEfforts: efforts,
-        currentReasoningEffortId: state.currentReasoningEffortId,
-        contextUsage: null
-      };
+      return (await listModelSnapshot(conversation)).summary;
     },
 
     async setModel(conversation, modelId): Promise<void> {

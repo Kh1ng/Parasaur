@@ -8,7 +8,7 @@ import type { ManagerModelInfo, ManagerReasoningEffortInfo } from './registry.js
 
 const execFile = promisify(execFileCallback);
 type Options = { models: ManagerModelInfo[]; reasoningEfforts: ManagerReasoningEffortInfo[];
-  modelReasoningEfforts: Record<string, ManagerReasoningEffortInfo[]> };
+  modelReasoningEfforts: Record<string, ManagerReasoningEffortInfo[]>; catalogVersion?: string; metadataAvailable?: boolean };
 
 function modelRows(output: string): ManagerModelInfo[] {
   const models: ManagerModelInfo[] = [];
@@ -58,6 +58,7 @@ export function createAgyModelOptions(runtime?: { executable: string; state_root
   let checkedAt = -Infinity;
   let cached: Options = { models: [], reasoningEfforts: [], modelReasoningEfforts: {} };
   let version = randomUUID();
+  let metadataAvailable = false;
   let pending: Promise<Options> | undefined;
   let warning: string | undefined;
   let stopped = false;
@@ -73,24 +74,30 @@ export function createAgyModelOptions(runtime?: { executable: string; state_root
     if (pending) return pending;
     if (!force && now() - checkedAt < 60_000) return Promise.resolve(cached);
     pending = (async () => {
-      const previous = cached;
+      const previous = { models: cached.models, reasoningEfforts: cached.reasoningEfforts,
+        modelReasoningEfforts: cached.modelReasoningEfforts };
       try {
         const models = await run(['models']);
         const help = await run(['--help']);
         try {
           cached = parseAgyModels(models.stdout, help.stdout + help.stderr);
+          metadataAvailable = true;
           warning = undefined;
         } catch {
           // Only successful commands can replace inventory or retire selections.
           try { cached = { models: modelRows(models.stdout).map(model => ({ ...model, reasoningEfforts: [] })), reasoningEfforts: [], modelReasoningEfforts: {} }; }
           catch { cached = { models: [], reasoningEfforts: [], modelReasoningEfforts: {} }; }
+          metadataAvailable = true;
           warn('[managerChat] Unrecognized AGY metadata; using no effort options and an account-scoped default quota pool.');
         }
       } catch {
         warn('[managerChat] AGY metadata invocation failed; retaining the cached models and effort options.');
       }
-      if (JSON.stringify(previous) !== JSON.stringify(cached)) version = randomUUID();
+      if (JSON.stringify(previous) !== JSON.stringify({ models: cached.models, reasoningEfforts: cached.reasoningEfforts,
+        modelReasoningEfforts: cached.modelReasoningEfforts })) version = randomUUID();
       checkedAt = now();
+      cached.catalogVersion = version;
+      cached.metadataAvailable = metadataAvailable;
       return cached;
     })().finally(() => { pending = undefined; });
     return pending;
@@ -104,5 +111,6 @@ export function createAgyModelOptions(runtime?: { executable: string; state_root
     }
     return refresh();
   };
-  return Object.assign(read, { version: () => version, dispose: () => { stopped = true; clearInterval(timer); } });
+  return Object.assign(read, { version: () => version, available: () => metadataAvailable,
+    dispose: () => { stopped = true; clearInterval(timer); } });
 }
