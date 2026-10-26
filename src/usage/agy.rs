@@ -179,7 +179,7 @@ mod tests {
         let executable = dir.path().join("agy");
         std::fs::write(
             &executable,
-            "#!/bin/sh\ncase \"$*\" in\n  --help) echo --disable-slash-commands ;;\n  *) echo '{\"status\":\"SUCCESS\",\"command\":{\"name\":\"usage\",\"data\":{\"groups\":[{\"buckets\":[{\"id\":\"gemini-weekly\",\"remaining_fraction\":0.8},{\"id\":\"gemini-5h\",\"remaining_fraction\":0.7}]},{\"buckets\":[{\"id\":\"3p-weekly\",\"remaining_fraction\":0.6},{\"id\":\"3p-5h\",\"remaining_fraction\":0.5}]}]}}}' ;;\nesac\n",
+            "#!/bin/sh\ncase \"$*\" in\n  --help) echo --disable-slash-commands ;;\n  *) echo '{\"status\":\"SUCCESS\",\"command\":{\"name\":\"usage\",\"data\":{\"groups\":[{\"buckets\":[{\"id\":\"gemini-weekly\",\"window\":\"weekly\",\"remaining_fraction\":0.8},{\"id\":\"gemini-5h\",\"window\":\"5h\",\"remaining_fraction\":0.7}]},{\"buckets\":[{\"id\":\"3p-weekly\",\"window\":\"weekly\",\"remaining_fraction\":0.6},{\"id\":\"3p-5h\",\"window\":\"5h\",\"remaining_fraction\":0.5}]}]}}}' ;;\nesac\n",
         )
         .unwrap();
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();

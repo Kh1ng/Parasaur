@@ -551,8 +551,8 @@ export function createCliRouterQuotaObserver(deps: CliRouterDeps = {}) {
     const previousScopes = provider === 'antigravity' ? agyScopes.get(key) : undefined;
     const missing = (previousScopes ?? []).filter(scope => !hasReading || !routable.some(quota => quota.quotaPool === scope.quotaPool && quota.window === scope.window));
     if (provider === 'antigravity' && !result.quotaError) {
-      // Only a complete inventory can retire scopes; malformed groups retain their last identities.
-      agyScopes.set(key, [...routable, ...(result.agyComplete ? [] : missing)].map(scope => ({ quotaPool: scope.quotaPool, window: scope.window })));
+      // Only a complete inventory with readings can retire scopes; malformed or empty groups retain their last identities.
+      agyScopes.set(key, [...routable, ...(result.agyComplete && hasReading ? [] : missing)].map(scope => ({ quotaPool: scope.quotaPool, window: scope.window })));
     }
     const observations: (Partial<CliRouterQuota> | undefined)[] = provider === 'antigravity'
       ? [...(hasReading ? routable : []), ...missing, ...(!hasReading && !previousScopes?.length ? agyFallbackPools.map(quotaPool => ({ quotaPool })) : [])]

@@ -1168,3 +1168,34 @@ test('AGY observer keeps exhausted Nova Flash separate from full external quota'
     ['agy:gemini-flash-weekly', 'weekly', 0], ['agy:external', 'weekly', 100]
   ]);
 });
+
+
+test('AGY observer keeps persisted scopes across an empty but well-formed groups reply', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'gah-empty-groups-agy-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const records: Record<string, unknown>[] = [];
+  let reply: () => { status: number; body: unknown } = () => ({ status: 200, body: { status_code: 200, body: { groups: [
+    { buckets: [{ bucketId: 'gemini-flash-weekly', window: 'weekly', remainingFraction: 0 }] }
+  ] } } });
+  const rec = recordingFetch(c => {
+    if (c.url.endsWith('/auth-files')) return { status: 200, body: { files: [file({ id: 'empty', provider: 'antigravity', project_id: 'p' })] } };
+    if (c.url.endsWith('/api-call')) return reply();
+    return { status: 404, body: {} };
+  });
+  const stored = { url: 'https://empty-groups.example.com', apiKey: 'k', managementKey: 'm', accountBackends: { empty: 'agy' } };
+  const account = { ...file({ id: 'empty', provider: 'antigravity', project_id: 'p' }), quota: null, model_quotas: null };
+  const observer = createCliRouterQuotaObserver({ agyScopesPath: join(root, 'scopes.json'),
+    readSettingsFn: () => stored, fetchFn: rec.fn, recordQuotaFn: async record => { records.push(record); } });
+  await observer.observeAccount(account, stored, true);
+  assert.deepEqual(records.map(record => [record.quota_pool, record.quota_remaining_percent]), [['agy:gemini-flash-weekly', 0]]);
+  // An empty groups array is well-formed but carries no reading: the known scope is invalidated, not forgotten.
+  reply = () => ({ status: 200, body: { status_code: 200, body: { groups: [] } } });
+  records.length = 0;
+  await observer.observeAccount(account, stored, true);
+  assert.deepEqual(records.map(record => [record.quota_pool, record.quota_remaining_percent !== undefined, Boolean(record.check_error)]), [['agy:gemini-flash-weekly', false, true]]);
+  // A later failure still invalidates that same scope instead of the generic fallback pools.
+  reply = () => ({ status: 500, body: {} });
+  records.length = 0;
+  await observer.observeAccount(account, stored, true);
+  assert.deepEqual(records.map(record => record.quota_pool), ['agy:gemini-flash-weekly']);
+});

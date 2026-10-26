@@ -83,9 +83,68 @@ pub fn refresh_and_store(
     state_path: &Path,
 ) -> Result<Option<QuotaObservationRecord>> {
     let records = crate::usage::agy::refresh(executable, account, home)?;
+    let now = crate::clock::now_utc();
+    let records = with_retired_scopes(state_path, account, records, now)?;
     let first = append_scoped(state_path, records, None)?;
-    append(state_path, &probe_marker(account, crate::clock::now_utc()))?;
+    append(state_path, &probe_marker(account, now))?;
     Ok(first)
+}
+
+/// A scope (pool, window) this account reported before but not in this
+/// successful response gets a failed check, so its last balance stops driving
+/// routing instead of surviving until it ages out. Mirrors `AgyQuotaScopes`
+/// in apps/server: only a successful inventory retires scopes; a failed probe
+/// never reaches here and keeps every reading.
+fn with_retired_scopes(
+    state_path: &Path,
+    account: &str,
+    mut records: Vec<QuotaObservationRecord>,
+    now: OffsetDateTime,
+) -> Result<Vec<QuotaObservationRecord>> {
+    let prefix = format!("{account}:");
+    let timestamp = now.format(&Rfc3339)?;
+    let scope = |record: &QuotaObservationRecord| {
+        (
+            record.backend.clone(),
+            record.backend_instance.clone(),
+            record.quota_pool.clone(),
+            record.quota_window.clone(),
+        )
+    };
+    let mut seen: std::collections::HashSet<_> = records.iter().map(scope).collect();
+    for previous in super::load(state_path)? {
+        let is_scope = previous.usage_source.as_deref() == Some(crate::usage::agy::USAGE_SOURCE)
+            && previous
+                .quota_pool
+                .as_deref()
+                .is_some_and(|pool| pool.starts_with(&prefix))
+            && previous.quota_window.is_some();
+        if !is_scope || !seen.insert(scope(&previous)) {
+            continue;
+        }
+        let (pool, window) = (
+            previous.quota_pool.clone().unwrap_or_default(),
+            previous.quota_window.clone().unwrap_or_default(),
+        );
+        records.push(QuotaObservationRecord {
+            backend: previous.backend,
+            backend_instance: previous.backend_instance,
+            credential_id: None,
+            model: None,
+            quota_pool: previous.quota_pool,
+            quota_window: previous.quota_window,
+            quota_remaining_percent: None,
+            quota_reset_at: None,
+            observed_at: None,
+            checked_at: Some(timestamp.clone()),
+            check_error: Some(format!(
+                "Antigravity usage no longer reports the {window} window for {pool}"
+            )),
+            usage_source: Some(crate::usage::agy::USAGE_SOURCE.into()),
+            account_usage: None,
+        });
+    }
+    Ok(records)
 }
 
 fn probe_marker(account: &str, now: OffsetDateTime) -> QuotaObservationRecord {
@@ -234,5 +293,43 @@ mod tests {
             accounts(&profile)[1],
             ("agy-second", Some(PathBuf::from("/accounts/second")))
         );
+    }
+
+    #[test]
+    fn a_window_missing_from_a_successful_response_retires_its_last_balance() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("quota.jsonl");
+        let now = OffsetDateTime::parse("2030-01-01T00:00:00Z", &Rfc3339).unwrap();
+        append(&path, &reading("agy", crate::usage::agy::USAGE_SOURCE, now)).unwrap();
+        append(&path, &reading("agy", "cli_router", now)).unwrap();
+        let mut fresh = reading("agy", crate::usage::agy::USAGE_SOURCE, now);
+        fresh.backend_instance = Some("agy:external".into());
+        fresh.quota_pool = Some("agy:external".into());
+        let later = now + time::Duration::hours(1);
+        let records = super::with_retired_scopes(&path, "agy", vec![fresh], later).unwrap();
+        assert_eq!(records.len(), 2);
+        let retired = &records[1];
+        assert_eq!(retired.quota_pool.as_deref(), Some("agy:google-native"));
+        assert_eq!(retired.quota_window.as_deref(), Some("weekly"));
+        assert_eq!(retired.quota_remaining_percent, None);
+        assert_eq!(retired.observed_at, None);
+        assert_eq!(retired.checked_at.as_deref(), Some("2030-01-01T01:00:00Z"));
+        assert!(retired
+            .check_error
+            .as_deref()
+            .unwrap()
+            .contains("no longer reports"));
+        // Another account's scopes and other sources are untouched.
+        let other = super::with_retired_scopes(&path, "agy-second", vec![], later).unwrap();
+        assert!(other.is_empty());
+        // Reporting the window again produces no retirement record.
+        let again = super::with_retired_scopes(
+            &path,
+            "agy",
+            vec![reading("agy", crate::usage::agy::USAGE_SOURCE, later)],
+            later,
+        )
+        .unwrap();
+        assert_eq!(again.len(), 1);
     }
 }
