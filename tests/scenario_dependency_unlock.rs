@@ -19,7 +19,7 @@ fn harness() -> ScenarioHarness {
     );
     support::write_executable(
         &harness.bin_dir.join("agy"),
-        "#!/bin/sh\nset -eu\nif [ \"$1\" = --version ]; then echo 'test 1.0'; exit 0; fi\n\
+        "#!/bin/sh\nset -eu\ncase \"$1\" in --version) echo 'test 1.0'; exit 0;; models|--help) exit 0;; esac\nif [ \"$2\" = /usage ]; then exit 0; fi\n\
          echo change >> implementation.txt\necho work complete\n",
     );
     let _ = harness.stateful_forge();
