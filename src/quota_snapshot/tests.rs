@@ -95,6 +95,53 @@ fn credential_bound_candidates_expect_no_ambient_source() {
 }
 
 #[test]
+fn vibe_account_pool_display_uses_the_same_windows_as_routing() {
+    let pool = "mistral-dashboard:verified-customer";
+    let candidate = CandidateConfig {
+        backend: "vibe".into(),
+        quota_pool: Some(pool.into()),
+        included_in_quota: true,
+        ..Default::default()
+    };
+    let routing = RoutingPolicy {
+        pm_candidates: Some(vec![candidate.clone()]),
+        ..Default::default()
+    };
+    let record: quota_store::QuotaObservationRecord = serde_json::from_value(serde_json::json!({
+        "backend": "mistral-dashboard", "backend_instance": pool, "quota_pool": pool,
+        "quota_window": "vibe-code-included-monthly", "quota_remaining_percent": 40,
+        "observed_at": "2026-10-03T00:00:00Z", "quota_reset_at": "2026-11-01T00:00:00Z"
+    }))
+    .unwrap();
+    let records = [record];
+    let displayed = build_candidates(
+        &routing,
+        &test_profile_for_notifications(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &records,
+    );
+    let identity = routing.execution_identity_for_candidate(&candidate);
+    assert_eq!(displayed.len(), 1);
+    assert_eq!(
+        serde_json::to_value(&displayed[0].quota_observations).unwrap(),
+        serde_json::to_value(quota_store::latest_windows_for_identity(
+            &records, &identity
+        ))
+        .unwrap()
+    );
+    assert_eq!(
+        displayed[0].quota_observations[0].quota_remaining_percent,
+        Some(40.0)
+    );
+    assert!(expected_quota_sources(&routing, &source_configuration(false, true, true)).is_empty());
+    let missing = expected_quota_sources(&routing, &source_configuration(true, false, true));
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0].backend, "mistral-dashboard");
+}
+
+#[test]
 fn a_nous_portal_candidate_without_credentials_expects_the_portal_source() {
     let routing = RoutingPolicy {
         pm_candidates: Some(vec![CandidateConfig {

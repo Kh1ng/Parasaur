@@ -1468,6 +1468,25 @@ Vibe candidates in that pool then see the account's monthly allowance, become
 exhausted at 0% remaining, and gain reset pressure. Unbound pools never inherit
 another connection's readings.
 
+Nodes with a desktop cookie can bind a Vibe candidate directly to a verified
+dashboard account. After a successful dashboard refresh, run
+`gah quota list --json`. Set the Vibe candidate's `quota_pool` to the exact
+`mistral-dashboard:<account hash>` pool from that output.
+
+The quota store derives the same allowance scope for the collector and reader.
+The execution backend and instance stay unchanged. `vibe-monthly` alone does
+not bind an ambient dashboard account. A named `quota_sources` connection or
+execution credential takes precedence over this account pool.
+
+Existing dashboard observations need no file migration. The selector resolves
+the explicit account pool at read time and preserves failed-check invalidation
+and credential rotation rules. Quota display and routing use that selector.
+Monthly allowances stay outside weekly pacing. A different account or an
+unbound Vibe route inherits nothing.
+
+The dispatching node must have its own cookie or named connection and fresh
+observations. Readings relayed from other nodes remain display-only.
+
 ### Provider login health
 
 Every node runs `gah auth-health` at server start and every 30 minutes. It

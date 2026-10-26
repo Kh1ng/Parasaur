@@ -1,21 +1,29 @@
 //! Select account windows without crossing a named credential or retired source.
-use super::{has_quota_data, QuotaObservationRecord};
+use super::{has_quota_data, QuotaObservationRecord, QuotaScope};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 fn observation_matches_identity(
     record: &QuotaObservationRecord,
     identity: &crate::execution_identity::ExecutionIdentity,
 ) -> bool {
-    record.backend == identity.logical_backend
+    let source = QuotaScope::new(
+        &record.backend,
+        record.backend_instance.as_deref(),
+        record.quota_pool.as_deref(),
+    );
+    let target = QuotaScope::new(
+        &identity.logical_backend,
+        Some(&identity.backend_instance),
+        identity.quota_pool.as_deref(),
+    );
+    source.backend == target.backend
         && (record.model.is_none() || record.model == identity.effective_model)
-        && record
+        && source
             .backend_instance
-            .as_deref()
-            .is_none_or(|instance| instance == identity.backend_instance)
-        && record
+            .is_none_or(|instance| Some(instance) == target.backend_instance)
+        && source
             .quota_pool
-            .as_deref()
-            .is_none_or(|pool| Some(pool) == identity.quota_pool.as_deref())
+            .is_none_or(|pool| Some(pool) == target.quota_pool)
 }
 
 /// Latest reading for each limit window belonging to this execution identity.

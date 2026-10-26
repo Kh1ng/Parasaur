@@ -5,6 +5,8 @@ mod parse;
 pub(crate) use login::sign_in;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod vibe_routing_tests;
 
 use crate::quota_store::{self, QuotaObservationRecord};
 use anyhow::{bail, Context, Result};

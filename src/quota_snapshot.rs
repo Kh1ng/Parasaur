@@ -461,7 +461,12 @@ fn expected_quota_sources(
         if identity.credential_id.is_some() || identity.quota_source.is_some() {
             continue;
         }
-        let expected = match identity.logical_backend.as_str() {
+        let scope = quota_store::QuotaScope::new(
+            &identity.logical_backend,
+            Some(&identity.backend_instance),
+            identity.quota_pool.as_deref(),
+        );
+        let expected = match scope.backend {
             "vibe" if !configuration.vibe_admin => Some(checks::ExpectedQuotaSource {
                 backend: "vibe".into(),
                 credential_id: None,
@@ -695,10 +700,6 @@ fn aggregate_observations(
                 .map(convert_group_observation),
         );
     }
-    for account in quota_store::latest_windows_for_identity(account_quota, identity) {
-        out.push((*account).clone());
-    }
-
     // A bound source may report a provider account distinct from its runner
     // instance/pool. Its exact credential ID owns the reading; broad ledger
     // aggregates have no source identity and cannot describe this account.
@@ -728,6 +729,14 @@ fn aggregate_observations(
                 None => observation.model.is_none(),
             }
     });
+
+    // The store selector owns account bindings and invalidation. Re-filtering
+    // its result by execution backend would discard a bound allowance source.
+    out.extend(
+        quota_store::latest_windows_for_identity(account_quota, identity)
+            .into_iter()
+            .cloned(),
+    );
 
     let mut seen = BTreeSet::new();
     out.retain(|obs| {

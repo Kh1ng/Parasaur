@@ -26,6 +26,7 @@ mod compatibility_tests;
 mod identity;
 mod instances;
 mod retention;
+mod scope;
 pub use agy::{launch as agy_launch, refresh_and_store as refresh_agy_and_store};
 pub(crate) use identity::current_source_records;
 pub use identity::{
@@ -33,6 +34,7 @@ pub use identity::{
     latest_windows_for_identity_and_credential,
 };
 pub use retention::{compact, RetentionPolicy};
+pub(crate) use scope::QuotaScope;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(from = "QuotaObservationRecordRaw")]
