@@ -4,7 +4,9 @@
  * Hermes and OpenCode speak ACP natively; Codex and Claude use their
  * official ACP bridge packages. Vibe, AGY, and OpenHands use the headless adapter,
  * which preserves transcript replay; AGY also advertises its CLI-native
- * model and reasoning-effort options, and Vibe its config-native models (#1510).
+ * model and reasoning-effort options, Vibe its config-native models (#1510),
+ * and OpenHands its profile provider's models with the configured one
+ * marked (#1512).
  */
 
 import {

@@ -41,7 +41,7 @@ export function instanceHeadlessSpec(profile: string, runtime: BackendInstanceRu
       if (runtime.runner_kind === 'vibe') args.push('--adapter-program', original[0]);
       return [findGahBinary(), ...args, '--', ...original.slice(1)];
     },
-    ...(spec.spawnEnv ? { spawnEnv: async (gahProfile: string) => ownerEnvironment(await spec.spawnEnv!(gahProfile)) ?? {} } : {})
+    ...(spec.spawnEnv ? { spawnEnv: async (gahProfile: string, opts?: { model?: string | null }) => ownerEnvironment(await spec.spawnEnv!(gahProfile, opts)) ?? {} } : {})
   };
 }
 

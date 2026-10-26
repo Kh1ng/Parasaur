@@ -120,6 +120,17 @@ export function chatKey(profile: string, sessionId?: string): string {
   return sessionId && sessionId !== 'default' ? `${profile}#${sessionId}` : profile;
 }
 
+/** The inverse of chatKey: the real GAH profile out of a conversation key.
+ * Session ids never contain '#', so the last separator splits the key;
+ * a bare profile key (the default session) has no separator and passes
+ * through unchanged. Profile-scoped operations (gah CLI --profile,
+ * runConfigShowProfile's exact-key lookup) must resolve through this
+ * before use — never receive the composite key worker chat lists with. */
+export function profileFromChatKey(key: string): string {
+  const separator = key.lastIndexOf('#');
+  return separator === -1 ? key : key.slice(0, separator);
+}
+
 export function worktreeDirName(repoId: string, sessionId: string): string {
   return `gah-chat-${repoId}-${sessionId}`;
 }

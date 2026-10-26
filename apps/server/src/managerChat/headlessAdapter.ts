@@ -19,8 +19,10 @@
  * worktree binding (cwd per conversation), backend interchange, quota
  * handoff, and the event-sourced log — everything except streaming, native
  * slash commands, and the permission round-trip, which need a structured
- * protocol. AGY's CLI-native model/effort options are exposed, and Vibe's
- * config-native model selection is exposed through the gah CLI (#1510).
+ * protocol. AGY's CLI-native model/effort options are exposed, Vibe's
+ * config-native model selection is exposed through the gah CLI (#1510), and
+ * OpenHands lists its profile provider's models with the configured one
+ * marked (#1512).
  */
 
 import { spawn, execFile as execFileCallback, execFileSync } from 'node:child_process';
@@ -29,6 +31,8 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import type { ChatTranscriptTurn, ChatUsage } from '@git-agent-harness/contracts';
 import { runConfigShowProfile, runVibeModelSummary, runVibeSetModel } from '../gahCli.js';
+import { boundedUpstreamFetch } from '../cliRouter.js';
+import { profileFromChatKey } from './chatSessions.js';
 import type { ManagerAdapter, ManagerCommandInfo, ManagerModelInfo, ManagerReasoningEffortInfo } from './registry.js';
 import { isInsideWorkingDirectory } from './permissionPolicy.js';
 import { agentChildEnv } from './childEnv.js';
@@ -74,27 +78,34 @@ export interface HeadlessBackendSpec {
   /** Encode this turn's full prompt (history already replayed in) for the
    * backend's stdin channel. */
   encodeStdin: (prompt: string) => string;
-  /** Extra environment resolved for this GAH profile. Secret values stay in
-   * the server process and child environment; they never enter argv or API responses. */
-  spawnEnv?: (gahProfile: string) => Promise<Record<string, string>>;
+  /** Extra environment resolved for this GAH profile and this turn's pinned
+   * model, for backends whose model selection is an env the child reads
+   * (OpenHands' LLM_MODEL) rather than a CLI flag. Secret values stay in
+   * the server process and child environment; they never enter argv or
+   * API responses. */
+  spawnEnv?: (gahProfile: string, opts?: { model?: string | null }) => Promise<Record<string, string>>;
   /** Extract the reply text from a finished process, or throw a
    * descriptive error. Default: trimmed stdout on exit 0, else an error
    * built from stderr. */
   parseReply?: (result: HeadlessProcessResult) => string;
-  /** Selectable CLI-native options for headless backends that expose them.
-   * Receives the GAH profile so a backend whose options come from a
-   * profile-scoped source (vibe's own config, per instance) can resolve it. */
+  /** Selectable options for headless backends that expose them. Receives
+   * the GAH profile so a backend whose options come from a profile-scoped
+   * source (vibe's own config per instance, OpenHands' profile file) can
+   * resolve it. The adapter resolves conversation keys first
+   * (profileFromChatKey), so this always sees the bare profile. */
   modelOptions?: (gahProfile: string) => Promise<{
     models: ManagerModelInfo[];
     reasoningEfforts: ManagerReasoningEffortInfo[];
     /** The backend's own current model, for backends whose selection lives
-     * outside this process (vibe's config file); in-memory selection still
-     * wins when one was made here. */
+     * outside this process (vibe's config file, OpenHands' configured
+     * profile model); an in-memory selection still wins when one was made
+     * here. */
     currentModelId?: string | null;
   }>;
   /** Persist a model selection for backends with no CLI flag to carry it
    * (vibe writes `active_model` into its own config). Called by setModel
-   * after validation, and before a turn whose session pinned a model. */
+   * after validation, and before a turn whose session pinned a model.
+   * The adapter resolves conversation keys first (profileFromChatKey). */
   applyModel?: (gahProfile: string, modelId: string) => Promise<void>;
   /** Identifies the installation-global resource `applyModel` persists to
    * (vibe's config home — the one config file every conversation using
@@ -209,18 +220,22 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
         // explicit pin writes; the in-memory fallback was already persisted
         // by setModel.
         if (input.model && spec.applyModel) {
-          await spec.applyModel(input.profile ?? gahProfile, input.model);
+          await spec.applyModel(input.profile ?? profileFromChatKey(gahProfile), input.model);
         }
 
         // One non-interactive invocation: fixed argv, prompt over stdin.
         const invoke = async (prompt: string): Promise<string> => {
+          // The same resolved pin feeds argv (agy's --model) and the child
+          // env (OpenHands' LLM_MODEL) so every backend honors it the one
+          // way it supports (#1512).
+          const pinnedModel = input.model === undefined ? state.currentModelId : input.model;
           const args = spec.turnArgs({
-            model: input.model === undefined ? state.currentModelId : input.model,
+            model: pinnedModel,
             reasoningEffort: input.reasoningEffort === undefined ? state.currentReasoningEffortId : input.reasoningEffort
           });
           const child = spawn(args[0], args.slice(1), {
             cwd,
-            env: agentChildEnv(await spec.spawnEnv?.(input.profile ?? gahProfile)),
+            env: agentChildEnv(await spec.spawnEnv?.(input.profile ?? profileFromChatKey(gahProfile), { model: pinnedModel })),
             stdio: ['pipe', 'pipe', 'pipe']
           });
           state.child = child;
@@ -361,7 +376,13 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     },
 
     async listModels(gahProfile) {
-      const options = await spec.modelOptions?.(gahProfile);
+      // Profile-scoped options see the real GAH profile: worker chat lists
+      // with the composite conversation key chatKey builds (`profile#session`,
+      // chatSessions.ts), and a profile-scoped source (OpenHands' profile
+      // file, vibe's own config) can only answer for the bare profile —
+      // the session half must never reach runConfigShowProfile's exact-key
+      // lookup. Conversation state below stays keyed by the full key.
+      const options = await spec.modelOptions?.(profileFromChatKey(gahProfile));
       const state = stateFor(gahProfile);
       return {
         models: options?.models ?? [],
@@ -373,14 +394,15 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     },
 
     async setModel(gahProfile, modelId): Promise<void> {
-      const options = await spec.modelOptions?.(gahProfile);
+      const profile = profileFromChatKey(gahProfile);
+      const options = await spec.modelOptions?.(profile);
       if (!options) throw new Error(`${spec.displayName} doesn't support model selection in headless mode.`);
       if (!options.models.some((model) => model.id === modelId)) throw new Error(`Unknown model "${modelId}" for ${spec.displayName}`);
       // The write takes the same per-installation mutex as a pinned turn:
       // landing between another turn's applyModel and its child's config
       // read (or a tool continuation's spawn) would make that turn run
       // this write's model instead of its own pin.
-      const write = async () => { await spec.applyModel?.(gahProfile, modelId); };
+      const write = async () => { await spec.applyModel?.(profile, modelId); };
       const scope = spec.applyModel ? spec.modelSelectionScope?.() : undefined;
       if (scope) {
         await withModelSelectionLock(scope, write);
@@ -391,7 +413,7 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     },
 
     async setReasoningEffort(gahProfile, effortId): Promise<void> {
-      const options = await spec.modelOptions?.(gahProfile);
+      const options = await spec.modelOptions?.(profileFromChatKey(gahProfile));
       if (!options) throw new Error(`${spec.displayName} doesn't support reasoning-effort selection in headless mode.`);
       if (!options.reasoningEfforts.some((effort) => effort.id === effortId)) throw new Error(`Unknown reasoning effort "${effortId}" for ${spec.displayName}`);
       stateFor(gahProfile).currentReasoningEffortId = effortId;
@@ -502,9 +524,22 @@ export function vibeBackendSpec(overrides: {
   };
 }
 
-async function resolveOpenhandsEnv(gahProfile: string, includeApiKey = true): Promise<Record<string, string>> {
+/** The parsed contents of ~/.openhands/profiles/<name>.json. Fields stay
+ * null when absent so env resolution can require them while the model
+ * listing (#1512) can proceed with only the configured model. */
+interface OpenhandsProfile {
+  name: string;
+  baseUrl: string | null;
+  apiKey: string | null;
+  model: string | null;
+}
+
+/** Read the OpenHands profile this GAH profile is bound to (oh_profile).
+ * Returns null when the GAH profile binds none; throws on a malformed
+ * name or profile file, exactly as a spawned turn would. */
+async function readOpenhandsProfile(gahProfile: string): Promise<OpenhandsProfile | null> {
   const { oh_profile: profile } = await runConfigShowProfile(gahProfile);
-  if (!profile) return {};
+  if (!profile) return null;
   if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(profile)) {
     throw new Error(`Invalid OpenHands profile name "${profile}".`);
   }
@@ -520,25 +555,119 @@ async function resolveOpenhandsEnv(gahProfile: string, includeApiKey = true): Pr
     throw new Error(`OpenHands profile "${profile}" is not a JSON object.`);
   }
   const value = parsed as Record<string, unknown>;
+  const field = (key: 'base_url' | 'api_key' | 'model'): string | null => {
+    const raw = value[key];
+    return typeof raw === 'string' && raw.length > 0 ? raw : null;
+  };
+  return { name: profile, baseUrl: field('base_url'), apiKey: field('api_key'), model: field('model') };
+}
+
+async function resolveOpenhandsEnv(
+  gahProfile: string,
+  includeApiKey = true,
+  /** The session's pinned model (#1512): OpenHands has no model flag, so
+   * the pin travels as LLM_MODEL ahead of the ambient env and the profile. */
+  pinnedModel?: string | null
+): Promise<Record<string, string>> {
+  const config = await readOpenhandsProfile(gahProfile);
+  if (!config) return {};
   const required = (key: 'base_url' | 'api_key' | 'model'): string => {
-    const field = value[key];
-    if (typeof field !== 'string' || field.length === 0) {
-      throw new Error(`OpenHands profile "${profile}" is missing ${key}.`);
+    const field = key === 'base_url' ? config.baseUrl : key === 'api_key' ? config.apiKey : config.model;
+    if (!field) {
+      throw new Error(`OpenHands profile "${config.name}" is missing ${key}.`);
     }
     return field;
   };
   return {
     LLM_BASE_URL: process.env.LLM_BASE_URL ?? required('base_url'),
     ...(includeApiKey ? { LLM_API_KEY: process.env.LLM_API_KEY ?? required('api_key') } : {}),
-    LLM_MODEL: process.env.LLM_MODEL ?? required('model'),
+    LLM_MODEL: pinnedModel ?? process.env.LLM_MODEL ?? required('model'),
     OPENHANDS_SUPPRESS_BANNER: '1'
   };
 }
 
+/** Picker deadline for a provider model listing (#1512): the listing is
+ * optional, so it must never hold the picker hostage. */
+const OPENHANDS_MODELS_TIMEOUT_MS = 5_000;
+
+/** Last listing diagnostic logged per OpenHands profile, the same
+ * once-per-transition shape wsServer uses for its events refresh
+ * (#1598/#1616): the picker can poll listModels repeatedly, so the
+ * SAME failure repeating stays quiet, a different failure logs and
+ * replaces it, and a success clears the entry so a failure after
+ * recovery logs again. */
+const openhandsListingFailures = new Map<string, string>();
+
+/** One sanitized diagnostic per listing failure (#1512): the OpenHands
+ * profile and a status or error class only — never the URL, the API
+ * key, the response body, or exception text or stack. */
+function warnOpenhandsListingUnavailable(profile: string, detail: string): void {
+  if (openhandsListingFailures.get(profile) === detail) return;
+  openhandsListingFailures.set(profile, detail);
+  console.warn(`[managerChat] openhands model listing unavailable for ${profile}: ${detail}`);
+}
+
+/** Ask the profile's LLM provider for its OpenAI-compatible /v1/models
+ * inventory (#1512) — the same listing source the gah-router refresher
+ * uses (cliRouter's bounded fetch: no redirects, size cap, short
+ * deadline). OpenHands itself offers no inventory: its CLI has no models
+ * command and its profile names one model. Best-effort by design: any
+ * failure logs the single sanitized diagnostic above and returns an
+ * empty list, and the picker falls back to the configured model. */
+async function listOpenhandsModels(
+  profile: string,
+  baseUrl: string,
+  apiKey: string,
+  fetchFn?: typeof globalThis.fetch
+): Promise<string[]> {
+  const trimmed = baseUrl.replace(/\/+$/, '');
+  // LiteLLM base URLs normally end in /v1 (the API root); profiles with a
+  // bare origin get the conventional /v1 prefix appended.
+  const url = trimmed.endsWith('/v1') ? `${trimmed}/models` : `${trimmed}/v1/models`;
+  try {
+    const result = await boundedUpstreamFetch({
+      url,
+      headers: { Authorization: `Bearer ${apiKey}` },
+      timeoutMs: OPENHANDS_MODELS_TIMEOUT_MS,
+      fetchFn
+    });
+    if (result.status !== 200) {
+      warnOpenhandsListingUnavailable(profile, `http ${result.status}`);
+      return [];
+    }
+    const body = result.body as { data?: Array<{ id?: unknown }> };
+    if (!body?.data || !Array.isArray(body.data)) {
+      warnOpenhandsListingUnavailable(profile, 'malformed response');
+      return [];
+    }
+    const ids: string[] = [];
+    for (const entry of body.data) {
+      const id = entry?.id;
+      if (typeof id === 'string' && id.length > 0 && id.length <= 200 && !/[\x00-\x1F\x7F]/.test(id)) ids.push(id);
+    }
+    openhandsListingFailures.delete(profile);
+    return ids;
+  } catch (error) {
+    // The error CLASS only: an exception's message or stack can carry the
+    // URL or upstream text, none of which may reach the log.
+    const name = (error instanceof Error ? error.name : 'error').replace(/[\x00-\x1F\x7F]/g, '').slice(0, 60);
+    warnOpenhandsListingUnavailable(profile, name || 'error');
+    return [];
+  }
+}
+
 /** OpenHands accepts a task file but not a raw stdin task. `/dev/stdin`
- * keeps the replayed transcript off argv while satisfying its headless CLI. */
+ * keeps the replayed transcript off argv while satisfying its headless CLI.
+ * Model selection is env-driven (`--override-with-envs` + LLM_MODEL): the
+ * picker lists the profile provider's models with the configured one
+ * marked (#1512), and a chosen model reaches the child as LLM_MODEL. */
 export function openhandsBackendSpec(
-  overrides: { resolveEnv?: (gahProfile: string) => Promise<Record<string, string>>; instanceCredential?: boolean } = {}
+  overrides: {
+    resolveEnv?: (gahProfile: string, opts?: { model?: string | null }) => Promise<Record<string, string>>;
+    instanceCredential?: boolean;
+    /** Test seam for the provider /v1/models listing; no real network. */
+    fetchFn?: typeof globalThis.fetch;
+  } = {}
 ): HeadlessBackendSpec {
   return {
     id: 'openhands',
@@ -554,7 +683,41 @@ export function openhandsBackendSpec(
       '--override-with-envs'
     ],
     encodeStdin: (prompt) => prompt,
-    spawnEnv: overrides.resolveEnv ?? (profile => resolveOpenhandsEnv(profile, !overrides.instanceCredential)),
+    spawnEnv: overrides.resolveEnv ?? ((profile, opts) => resolveOpenhandsEnv(profile, !overrides.instanceCredential, opts?.model)),
+    modelOptions: async (gahProfile) => {
+      // The listing is best-effort end to end: a GAH profile that binds no
+      // OpenHands profile lists no models instead of failing the picker.
+      // The adapter resolves conversation keys (profile#session) to their
+      // real profile before calling here, so the session half never
+      // reaches runConfigShowProfile's exact-key lookup. A turn still
+      // validates the profile strictly (resolveOpenhandsEnv throws on the
+      // same files).
+      let config: OpenhandsProfile | null;
+      try {
+        config = await readOpenhandsProfile(gahProfile);
+      } catch {
+        config = null;
+      }
+      if (!config) return { models: [], reasoningEfforts: [], currentModelId: null };
+      const current = process.env.LLM_MODEL ?? config.model;
+      // An instance's credential (not this profile) owns its provider
+      // endpoint and key, so there is nothing here to list against; the
+      // picker shows the configured model only. Otherwise the listing
+      // credentials are a profile-only PAIR: the ambient LLM_API_KEY and
+      // LLM_BASE_URL never substitute for either half, so the profile key
+      // cannot be sent to an unrelated ambient endpoint and an ambient key
+      // cannot be sent to the profile endpoint. A profile missing either
+      // half has nothing to list against either — the picker falls back
+      // to the configured model.
+      const apiKey = overrides.instanceCredential ? null : config.apiKey;
+      const baseUrl = config.baseUrl;
+      const ids = baseUrl && apiKey ? await listOpenhandsModels(config.name, baseUrl, apiKey, overrides.fetchFn) : [];
+      const models: ManagerModelInfo[] = [];
+      for (const id of current ? [current, ...ids] : ids) {
+        if (!models.some((model) => model.id === id)) models.push({ id, name: id });
+      }
+      return { models, reasoningEfforts: [], currentModelId: current };
+    },
     parseReply: parseOpenhandsReply
   };
 }
