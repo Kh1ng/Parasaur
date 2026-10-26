@@ -3,6 +3,8 @@ mod node_recovery;
 mod support;
 #[path = "controller_refill_regressions/watchdog.rs"]
 mod watchdog;
+#[path = "controller_refill_regressions/worktree_isolation.rs"]
+mod worktree_isolation;
 
 use std::fs;
 use std::process::{Command as ProcessCommand, Stdio};
