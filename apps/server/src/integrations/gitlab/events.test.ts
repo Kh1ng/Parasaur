@@ -13,6 +13,7 @@ import { dispatchGitLabEvent, type GitLabDispatchDeps } from './dispatcher.js';
 import { sessionMatchesGitLabContext } from './runsFeed.js';
 import { gitLabEventsRouter } from './route.js';
 import { verifyHookSecret } from './verifier.js';
+import { DeviceAccess, DEVICE_COOKIE } from '../../deviceAccess.js';
 import { createServer } from '../../server.js';
 import { agentChildEnv } from '../../managerChat/childEnv.js';
 import { createSessionManager } from '../../sessions/SessionManager.js';
@@ -147,7 +148,13 @@ test('receipts survive restarts, expire, stay bounded, and reject corrupt state'
 for (const name of ['issue', 'merge_request', 'note', 'note-mr', 'pipeline']) {
   test(`${name} reaches the shared dispatch entry and posts a panel run link`, async () => {
     const h = harness();
-    await dispatchGitLabEvent(event(name), options, h.deps);
+    let recorded: string | undefined;
+    await dispatchGitLabEvent(event(name), { ...options, onStarted: id => {
+      recorded = id;
+      assert.equal(h.starts.length, 1);
+      assert.ok(h.calls.every(args => !args.includes('POST')), 'start receipt precedes provider publication');
+    } }, h.deps);
+    assert.equal(recorded, 'run-example');
     assert.equal(h.starts.length, 1);
     const start = h.starts[0];
     assert.equal(start.profile, 'example'); assert.equal(start.repo, 'team/project');
@@ -364,11 +371,14 @@ test('a full durable queue refuses new work with 503 but keeps fast authenticati
     assert.equal((await send(fixture('issue'))).status, 202);
     const full = await send(fixture('note'));
     assert.equal(full.status, 503);
+    assert.equal(full.headers.get('retry-after'), '30');
     assert.equal(record(await full.json()).error, 'gitlab_event_queue_full');
     assert.equal((await send(fixture('issue'))).status, 204);
     assert.equal((await send(fixture('note'), 'wrong')).status, 401);
     assert.equal((await send({ object_kind: 'push' })).status, 204);
     assert.equal(store.ready().length, 1);
+    store.begin(event('issue').key);
+    assert.ok(Number((await send(fixture('note'))).headers.get('retry-after')) > 3500);
     store.complete(event('issue').key);
     assert.equal((await send(fixture('note'))).status, 202, 'refusal did not reserve a receipt');
   } finally {
@@ -461,6 +471,60 @@ test('unavailable receipts and panel configuration refuse work without dispatch'
     assert.equal(calls, 0);
   } finally {
     await server.close(); rmSync(dir, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
+
+
+test('queue recovery API requires owner API auth, retries once, and discards with receipt retained', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gitlab-recovery-api-'));
+  const saved = { COORDINATOR_TOKEN: process.env.COORDINATOR_TOKEN, GAH_MUTATION_STORE_PATH: process.env.GAH_MUTATION_STORE_PATH };
+  Object.assign(process.env, { COORDINATOR_TOKEN: 'owner-queue-test', GAH_MUTATION_STORE_PATH: join(dir, 'mutations') });
+  const path = join(dir, 'events.json');
+  const store = new GitLabEventStore(10, 86_400_000, Date.now, path);
+  for (const name of ['issue', 'note']) {
+    store.enqueue(delivery(name));
+    for (let i = 0; i < 3; i++) store.failed(event(name).key);
+  }
+  let starts = 0;
+  const access = new DeviceAccess(join(dir, 'devices.json'));
+  const app = createServer({ deviceAccess: access, gitLabEvents: { store, dispatch: async () => { starts++; }, findDispatch: async () => undefined } });
+  app.locals.gitLabEventsQueue.stop();
+  const server = await serve(app);
+  const base = `${server.base}/api/integrations/gitlab/queue`;
+  const headers = { Authorization: 'Bearer owner-queue-test', 'Idempotency-Key': 'gitlab-retry-key-0001' };
+  try {
+    const denied = await fetch(base, { headers: { Origin: 'https://foreign.example', 'X-Forwarded-Proto': 'https', 'X-Parasaur-Hook-Secret': 'hook-only' } });
+    assert.equal(denied.status, 401, 'hook credentials cannot inspect queue');
+    const offer = access.create({ id: 'queue-node', name: 'Queue', origin: server.base });
+    const paired = access.redeem(offer.code, 'queue-node', server.base, 'Phone');
+    const deviceHeaders = { Origin: server.base, Cookie: `${DEVICE_COOKIE}=${paired.token}`, 'Idempotency-Key': 'device-queue-test-0001' };
+    assert.equal((await fetch(base, { headers: deviceHeaders })).status, 403);
+    assert.equal((await fetch(`${base}/dead-letters/${event('issue').key}/retry`, { method: 'POST', headers: deviceHeaders })).status, 403);
+    assert.equal((await fetch(base, { method: 'POST', headers: { Origin: 'https://foreign.example', 'X-Forwarded-Proto': 'https' } })).status, 401);
+    const summary = await (await fetch(base, { headers })).json() as { pending: unknown[]; deadLetters: Array<{ id: string }> };
+    assert.equal(summary.deadLetters.length, 2);
+    assert.equal(JSON.stringify(summary).includes('object_attributes'), false, 'summary excludes payload');
+    const retry = `${base}/dead-letters/${event('issue').key}/retry`;
+    assert.equal((await fetch(retry, { method: 'POST', headers: { Authorization: headers.Authorization } })).status, 400, 'mutation guard requires idempotency key');
+    assert.equal((await fetch(retry, { method: 'POST', headers })).status, 200);
+    assert.equal((await fetch(retry, { method: 'POST', headers })).status, 409);
+    assert.equal((await fetch(retry, { method: 'POST', headers: { ...headers, 'Idempotency-Key': 'gitlab-retry-key-0002' } })).status, 404);
+    assert.equal(store.summary().pending.length, 1);
+    assert.equal(store.summary().pending[0].attempts, 0);
+    const discard = `${base}/dead-letters/${event('note').key}/discard`;
+    assert.equal((await fetch(discard, { method: 'POST', headers: { ...headers, 'Idempotency-Key': 'gitlab-discard-key-0001' } })).status, 200);
+    const restarted = new GitLabEventStore(10, 86_400_000, Date.now, path);
+    assert.equal(restarted.summary().deadLetters.length, 0);
+    assert.equal(restarted.enqueue(delivery('note')), 'duplicate');
+    app.locals.gitLabEventsQueue.start();
+    await app.locals.gitLabEventsQueue.drain();
+    assert.equal(starts, 1);
+    assert.equal(store.summary().pending.length, 0);
+  } finally {
+    app.locals.gitLabEventsQueue.stop();
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
   }
 });

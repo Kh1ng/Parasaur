@@ -1,7 +1,9 @@
 import { classifyEvent, type GitLabEvent } from './classifier.js';
-import { DISPATCH_RETRY_MS, GitLabEventStore, MAX_DISPATCH_ATTEMPTS } from './eventStore.js';
+import { DISPATCH_RETRY_MS, GitLabEventStore, MAX_DISPATCH_ATTEMPTS, type DispatchMarker } from './eventStore.js';
 
-export type GitLabDispatch = (event: GitLabEvent, options: { bot: string; panelUrl: string }) => Promise<void>;
+export type GitLabDispatchOptions = { bot: string; panelUrl: string; onStarted?: (sessionId: string) => void };
+export type GitLabDispatch = (event: GitLabEvent, options: GitLabDispatchOptions) => Promise<void>;
+export type FindGitLabDispatch = (identity: DispatchMarker) => Promise<{ id: string } | undefined>;
 
 /** Replay accepted deliveries independently of HTTP requests; serialize drains and isolate poison work. */
 export class GitLabEventQueue {
@@ -11,7 +13,8 @@ export class GitLabEventQueue {
   private stopped = false;
   private storeFailed = false;
 
-  constructor(private readonly store: GitLabEventStore, private readonly dispatch: GitLabDispatch) {}
+  constructor(private readonly store: GitLabEventStore, private readonly dispatch: GitLabDispatch,
+    private readonly findDispatch: FindGitLabDispatch = async () => undefined) {}
 
   /** Start only once fleet dispatch is initialized. Provider calls run in the background. */
   start(): void {
@@ -54,9 +57,19 @@ export class GitLabEventQueue {
       for (const entry of ready) {
         if (this.stopped) return;
         const event = classifyEvent(entry.body, entry.bot, entry.pipelineEnabled, entry.eventUuid);
+        // A saved session is a durable start receipt even after fleet retention expires.
+        // Otherwise inspect the fleet request identity before attempting another start.
+        if (entry.started) {
+          const previous = await this.findDispatch(entry.started);
+          if (entry.started.sessionId || previous) {
+            this.store.complete(entry.key);
+            continue;
+          }
+        }
+        this.store.begin(entry.key);
         let failed = false;
         try {
-          if (event) await this.dispatch(event, { bot: entry.bot, panelUrl: entry.panelUrl });
+          if (event) await this.dispatch(event, { bot: entry.bot, panelUrl: entry.panelUrl, onStarted: id => this.store.started(entry.key, id) });
         } catch { failed = true; }
         if (failed) {
           if (this.store.failed(entry.key)) {

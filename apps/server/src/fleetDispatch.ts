@@ -878,6 +878,12 @@ export class FleetDispatchCoordinator {
     this.remoteTransports.set(sessionId, transport);
   }
 
+  /** Inspect a durable request receipt without expiring/reconciling its lease. */
+  getSessionByRequestId(requestId: string): Session | undefined {
+    this.leaseStore.assertReadable();
+    return this.leaseStore.getByRequestId(requestId)?.session;
+  }
+
   getSession(sessionId: string): Session | undefined {
     return this.localTransport.getSession(sessionId)
       ?? this.leaseStore.getBySessionId(sessionId)?.session;

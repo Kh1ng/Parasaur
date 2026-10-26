@@ -4,6 +4,8 @@ import { closeSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, rea
 import { join, resolve } from 'node:path';
 
 type Operation =
+  | 'gitlab.dead_letter.retry'
+  | 'gitlab.dead_letter.discard'
   | 'loop.start'
   | 'loop.stop'
   | 'hold.set'
@@ -88,6 +90,7 @@ export function mutationSafety(nodeId: string, directory = process.env.GAH_MUTAT
     if (actor === 'unauthenticated') return reject(401, 'authentication_required', 'Authenticate before changing node state.');
     if ((
       operation === 'ledger.clear_attempts' ||
+      operation.startsWith('gitlab.dead_letter.') ||
       operation.startsWith('route_approval.') ||
       operation.startsWith('external_approval.') ||
       operation.startsWith('backend_instance.') ||

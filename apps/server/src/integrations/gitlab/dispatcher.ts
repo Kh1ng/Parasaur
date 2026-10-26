@@ -4,6 +4,7 @@ import { execProviderCli } from '../../managerChat/providerCli.js';
 import { assertIssueNotManaged } from '../../managedIssues.js';
 import type { SessionOptions } from '../../sessions/SessionManager.js';
 import { getFleetDispatch } from '../../wsServer.js';
+import type { GitLabDispatchOptions } from './queue.js';
 import { record, type GitLabEvent } from './classifier.js';
 
 export type GitLabDispatchDeps = {
@@ -35,7 +36,7 @@ function trusted(author: Record<string, unknown>, policy: EventPolicySummary, pr
 /** Resolve configured project and authoritative author policy before starting any worker. */
 export async function dispatchGitLabEvent(
   event: GitLabEvent,
-  options: { bot: string; panelUrl: string },
+  options: GitLabDispatchOptions,
   deps: GitLabDispatchDeps = defaults
 ): Promise<void> {
   const profiles = (await deps.listProfiles()).filter(profile => profile.provider === 'gitlab'
@@ -108,6 +109,7 @@ export async function dispatchGitLabEvent(
       webUrl: event.project.url
     }
   });
+  options.onStarted?.(session.id);
   if (!policy.allow_issue_comments || profile.delivery_mode === 'handoff') return;
   const url = new URL(options.panelUrl);
   url.searchParams.set('page', 'work');

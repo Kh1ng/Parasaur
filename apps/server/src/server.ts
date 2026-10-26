@@ -1,5 +1,6 @@
 import { notificationChannelFailure } from './notifyDelivery.js';
 import { gitLabEventsRouter, type GitLabRouteDeps } from './integrations/gitlab/route.js';
+import { gitLabQueueRouter } from './integrations/gitlab/queueRoute.js';
 import { gitLabRunsRouter } from './integrations/gitlab/runsRoute.js';
 import { GitLabIdentity, type GitLabIdentityProvider } from './integrations/gitlab/identity.js';
 import { parseSkillSelections } from './skillSelections.js';
@@ -395,6 +396,7 @@ export function createServer(
   if (node.role === 'central') {
     const gitLabEvents = gitLabEventsRouter(configDeps.gitLabEvents);
     app.locals.gitLabEventsQueue = gitLabEvents.queue;
+    app.locals.gitLabEventsStore = gitLabEvents.store;
     app.use('/api/integrations/gitlab', gitLabEvents);
   }
   if (node.role === 'central') {
@@ -436,6 +438,8 @@ export function createServer(
   if (node.role === 'central') app.use('/api/integrations/gitlab', gitLabRunsRouter());
   const mutation = mutationSafety(getCoordinatorIdentity(undefined, coordinatorPort).node_id);
   app.use(workerRouteGuard(node));
+  if (node.role === 'central') app.use('/api/integrations/gitlab',
+    gitLabQueueRouter(app.locals.gitLabEventsStore, app.locals.gitLabEventsQueue, mutation));
   if (node.role === 'central' && (configDeps.webPushNotifications || configDeps.apnsNotifications)) {
     app.use('/api/push', rateLimit({
       windowMs: 60_000,

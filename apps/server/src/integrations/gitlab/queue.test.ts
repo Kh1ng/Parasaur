@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { classifyEvent } from './classifier.js';
-import { DISPATCH_RETRY_MS, GitLabEventStore, MAX_DISPATCH_ATTEMPTS, type GitLabDelivery } from './eventStore.js';
+import { DISPATCH_LEASE_MS, DISPATCH_RETRY_MS, GitLabEventStore, MAX_DISPATCH_ATTEMPTS, type GitLabDelivery } from './eventStore.js';
 import { GitLabEventQueue } from './queue.js';
 
 function delivery(name = 'issue', eventUuid?: string): GitLabDelivery {
@@ -75,7 +75,8 @@ test('poison attempts survive restarts, do not block healthy work, and log the d
     const store = fresh();
     assert.equal(store.enqueue(poison), 'duplicate');
     assert.equal(store.enqueue(delivery('merge_request')), 'new');
-    assert.equal(store.enqueue(delivery('pipeline')), 'queue_full', 'dead letters count against the bound and are never evicted');
+    assert.equal(store.enqueue(delivery('pipeline')), 'new', 'dead letters do not consume pending capacity');
+    assert.equal(store.enqueue(delivery('note-mr')), 'queue_full');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -170,4 +171,97 @@ test('invalid queue state fails closed and keeps the original file', () => {
       assert.equal(readFileSync(path, 'utf8'), contents);
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('restart after a start and lease expiry uses durable session receipt even after fleet forgets', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gitlab-started-'));
+  try {
+    const path = join(dir, 'events.json');
+    let now = 0;
+    let starts = 0;
+    let probes = 0;
+    const fresh = () => new GitLabEventStore(10, 100, () => now, path);
+    const store = fresh();
+    const accepted = delivery();
+    store.enqueue(accepted);
+    const complete = store.complete.bind(store);
+    store.complete = () => { throw new Error('crash before dequeue'); };
+    const queue = new GitLabEventQueue(store, async (_event, options) => {
+      starts++;
+      options.onStarted?.('session-original');
+    });
+    await queue.drain();
+    const saved = fresh().summary().pending[0];
+    assert.deepEqual(saved.started, { requestId: `gitlab-${accepted.key}`, sessionId: 'session-original' });
+    store.complete = complete;
+    now += DISPATCH_LEASE_MS + 1;
+    const restarted = fresh();
+    await new GitLabEventQueue(restarted, async () => { starts++; }, async identity => {
+      probes++;
+      assert.equal(identity.sessionId, 'session-original');
+      return undefined; // Expired/removed fleet lease must not erase the durable start receipt.
+    }).drain();
+    assert.equal(starts, 1);
+    assert.equal(probes, 1);
+    assert.equal(restarted.summary().pending.length, 0);
+    assert.equal(restarted.enqueue(accepted), 'duplicate');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('crash between fleet start and session receipt reconciles request identity after lease expiry', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gitlab-start-window-'));
+  try {
+    const path = join(dir, 'events.json');
+    let now = 0;
+    const store = new GitLabEventStore(10, 100, () => now, path);
+    const accepted = delivery();
+    store.enqueue(accepted);
+    store.begin(accepted.key);
+    let starts = 1; // Fleet started but the process died before onStarted/dequeue.
+    now += DISPATCH_LEASE_MS + 1;
+    const restarted = new GitLabEventStore(10, 100, () => now, path);
+    await new GitLabEventQueue(restarted, async () => { starts++; }, async identity => {
+      assert.deepEqual(identity, { requestId: `gitlab-${accepted.key}` });
+      return { id: 'fleet-session' };
+    }).drain();
+    assert.equal(starts, 1);
+    assert.equal(restarted.summary().pending.length, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('pending default/env capacity, dead-letter bound, and lease retry delay are independent', () => {
+  const saved = process.env.GAH_GITLAB_EVENTS_QUEUE_CAPACITY;
+  try {
+    delete process.env.GAH_GITLAB_EVENTS_QUEUE_CAPACITY;
+    assert.equal(new GitLabEventStore().summary().capacity, 256);
+    process.env.GAH_GITLAB_EVENTS_QUEUE_CAPACITY = '2';
+    assert.equal(new GitLabEventStore().summary().capacity, 2);
+    for (const invalid of ['0', '-1', '1.5', 'bad']) {
+      process.env.GAH_GITLAB_EVENTS_QUEUE_CAPACITY = invalid;
+      assert.equal(new GitLabEventStore().summary().capacity, 256);
+    }
+    let now = 0;
+    const store = new GitLabEventStore(10, 100, () => now, undefined, 1, 1);
+    const first = delivery();
+    store.enqueue(first);
+    assert.equal(store.retryAfter(), 30);
+    store.begin(first.key);
+    now = 1500;
+    assert.equal(store.retryAfter(), 3599);
+    for (let i = 0; i < 3; i++) store.failed(first.key);
+    assert.equal(store.summary().deadLetters.length, 1);
+    const second = delivery('note');
+    assert.equal(store.enqueue(second), 'new');
+    for (let i = 0; i < 4; i++) store.failed(second.key);
+    assert.equal(store.summary().deadLetters.length, 1, 'no dead letter is evicted');
+    assert.equal(store.summary().pending.length, 1, 'overflow poison remains pending');
+    assert.equal(store.recover(first.key, 'retry'), 'queue_full');
+    store.complete(second.key);
+    assert.equal(store.recover(first.key, 'retry'), 'ok');
+    assert.equal(store.recover(first.key, 'retry'), 'not_found');
+    assert.equal(store.summary().pending.length, 1);
+  } finally {
+    if (saved === undefined) delete process.env.GAH_GITLAB_EVENTS_QUEUE_CAPACITY;
+    else process.env.GAH_GITLAB_EVENTS_QUEUE_CAPACITY = saved;
+  }
 });

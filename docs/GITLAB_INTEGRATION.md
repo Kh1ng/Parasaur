@@ -491,7 +491,7 @@ described under "Redelivery and limits" above.
 dead letters together. The default remains
 `$XDG_STATE_HOME/gah/gitlab-events.json`, or
 `~/.local/state/gah/gitlab-events.json` when `XDG_STATE_HOME` is unset.
-There is no separate queue file or new environment variable. The server
+There is no separate queue file. The server
 reads the old receipt-array format and upgrades it on the next write to
 `{ version: 1, receipts, pending, deadLetters }`.
 Existing receipts remain deduplicated. Previously acknowledged events
@@ -524,8 +524,16 @@ the fleet coordinator records its dispatch lease. The queue then removes
 the payload and refreshes its receipt for 24 hours. Queued-run comment
 failure still cannot trigger another dispatch.
 
-If the server stops before queue completion, replay preserves
-`gitlab-<receipt hash>` as the fleet request ID to reuse the recorded lease.
+Before dispatch, the queue saves a `started` marker with the
+`gitlab-<receipt hash>` request ID and a one-hour lease in `retryAt`.
+After fleet start returns, the dispatcher saves the session ID before
+optional comment publication or dequeue. If the server stops before queue
+completion, replay waits for the lease, then checks the saved marker and
+fleet dispatch receipt. A saved session ID proves that the event already
+started, even after the fleet lease expires. An existing fleet request
+receipt also completes the entry without another start. Otherwise, replay
+uses the same request ID and rechecks current dispatch policy.
+A failed fleet lookup retains pending work without another dispatch.
 Pending and dead-letter receipts remain pinned even after
 24 hours. HTTP redelivery of either returns `204` without a
 second drain. The worker serializes drains, and each ready entry gets one attempt
@@ -535,10 +543,17 @@ using `createServer`, call `app.locals.gitLabEventsQueue.start()` after
 initializing fleet dispatch and `.stop()` during shutdown. The standard
 `bin.ts` does both. Worker nodes have no GitLab event queue.
 
-The combined pending and dead-letter limit is 64 entries. Nothing in
-either list expires or gets evicted. New qualifying events receive
-`503 gitlab_event_queue_full` when that limit is reached, without reserving
-a receipt. The existing 10,000-receipt bound still returns
+`GAH_GITLAB_EVENTS_QUEUE_CAPACITY` sets the pending limit, with a default
+of 256. It accepts a positive safe integer. Invalid values use the default.
+Dead letters have a separate limit of 64 and do not consume pending capacity.
+Nothing in either list expires or gets evicted. If the dead-letter list is
+full, failed work remains pending until recovery frees a dead-letter slot.
+A lower pending limit preserves previously accepted work across restart.
+New qualifying events receive `503 gitlab_event_queue_full` at the pending
+limit, without a new receipt. The response includes `Retry-After` in seconds
+until the oldest outstanding lease or retry expires, rounded up.
+Without an outstanding lease or retry, the delay is 30 seconds.
+The existing 10,000-receipt bound still returns
 `503 gitlab_event_store_full`. Unsupported events still return `204` and
 invalid hook credentials still return `401` before storage access. The
 rate limiter and `GAH_GITLAB_EVENTS_RATE_LIMIT` behavior are unchanged.
@@ -547,18 +562,50 @@ Dispatch failures retry after at least 30 seconds, on the background
 worker's 30-second tick or a new acceptance. Failure counts and retry times
 survive restart. After three failures the entry moves atomically to
 `deadLetters`, with one log line for that transition. Other ready entries
-continue. Dead letters are not replayed automatically and still count
-against the 64-entry bound. Storage failures retain pending work, retry on
+continue. Dead letters do not replay automatically. Storage failures retain
+pending work, retry on
 later ticks, and log once per failure/recovery transition without payload
 or provider error text. Corrupt stores fail closed and remain in place
 for inspection.
 
-To inspect or recover dead letters, stop the server and back up the store.
-Check fleet sessions, leases, and provider state before retrying a run.
-For an intentional retry, move only that entry from `deadLetters` to
-`pending`, set `attempts` and `retryAt` to `0`, and keep its receipt and
-identity fields. Restart to replay it. To discard a dead letter after
-inspection, remove only that entry and retain its receipt until expiry.
+### Queue recovery API
+
+The queue API requires normal `/api` authentication and owner access.
+Hook secrets and paired-device credentials do not authorize recovery.
+Workers do not expose these routes. Mutation guards require an
+`Idempotency-Key` with 16–128 letters, digits, underscores, or hyphens.
+
+- `GET /api/integrations/gitlab/queue` returns `pending` and `deadLetters`
+  arrays, `capacity`, and `deadLetterCapacity`. Each entry contains `id`,
+  `attempts`, `retryAt`, and an optional `started` marker with request/session IDs.
+  The response excludes accepted payloads and provider errors.
+- `POST /api/integrations/gitlab/queue/dead-letters/:id/retry` moves one entry
+  to pending and resets its attempt count and retry time. It preserves the
+  receipt and dispatch identity. The worker rechecks current dispatch policy.
+- `POST /api/integrations/gitlab/queue/dead-letters/:id/discard` removes one
+  dead letter and retains its receipt for 24 hours. It starts no worker.
+
+Both mutations return `200 {"ok":true}` after the atomic store write.
+A repeated idempotency key returns `409`. A missing dead letter returns `404`.
+A full pending queue rejects retry with `503` and `Retry-After`.
+A store error returns `503` without a successful acknowledgement.
+
+Before retry, inspect the saved dispatch identity and current fleet sessions.
+Use the entry's `id` from the GET response in the mutation URL.
+For example, with an owner token already in `COORDINATOR_TOKEN`:
+
+```sh
+curl -fsS -H "Authorization: Bearer $COORDINATOR_TOKEN" \
+  "$GAH_SERVER_URL/api/integrations/gitlab/queue"
+curl -fsS -X POST -H "Authorization: Bearer $COORDINATOR_TOKEN" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  "$GAH_SERVER_URL/api/integrations/gitlab/queue/dead-letters/$EVENT_ID/retry"
+# To discard instead, use a new idempotency key and replace /retry with /discard.
+```
+
+Recovery is API-only in this change. The Rust CLI has no existing `gitlab`
+command group, so this change adds no `gah gitlab queue` command.
+
 Do not downgrade to a receipt-only server while this store contains queued
 work. Older servers cannot read the new format.
 
