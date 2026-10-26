@@ -1,16 +1,17 @@
-import type { EventPolicySummary } from '@git-agent-harness/contracts';
+import type { EventPolicySummary, Session } from '@git-agent-harness/contracts';
 import { runConfigShowProfile, runProfileList } from '../../gahCli.js';
 import { execProviderCli } from '../../managerChat/providerCli.js';
 import { assertIssueNotManaged } from '../../managedIssues.js';
-import type { SessionOptions } from '../../sessions/SessionManager.js';
+import type { RoutedSessionOptions } from '../../fleetDispatch.js';
 import { getFleetDispatch } from '../../wsServer.js';
+import type { GitLabDispatchOptions } from './queue.js';
 import { record, type GitLabEvent } from './classifier.js';
 
 export type GitLabDispatchDeps = {
   listProfiles: typeof runProfileList;
   config: typeof runConfigShowProfile;
   cli: typeof execProviderCli;
-  start: (options: SessionOptions) => Promise<{ id: string }>;
+  start: (options: RoutedSessionOptions) => Promise<Pick<Session, 'id' | 'leaseState'>>;
   managed: typeof assertIssueNotManaged;
 };
 
@@ -35,7 +36,7 @@ function trusted(author: Record<string, unknown>, policy: EventPolicySummary, pr
 /** Resolve configured project and authoritative author policy before starting any worker. */
 export async function dispatchGitLabEvent(
   event: GitLabEvent,
-  options: { bot: string; panelUrl: string },
+  options: GitLabDispatchOptions,
   deps: GitLabDispatchDeps = defaults
 ): Promise<void> {
   const profiles = (await deps.listProfiles()).filter(profile => profile.provider === 'gitlab'
@@ -44,9 +45,9 @@ export async function dispatchGitLabEvent(
   const profile = profiles[0];
   const policy = (await deps.config(profile.name)).event_policy;
   if (!policy) return; // Older CLIs cannot prove author trust.
-  const api = async (path: string, fields: string[] = []) => {
+  const api = async (path: string) => {
     const { stdout } = await deps.cli('glab', ['api', path, '--hostname', new URL(profile.web_url!).host,
-      '--method', fields.length ? 'POST' : 'GET', ...fields.flatMap(field => ['--raw-field', field])], profile.local_path);
+      '--method', 'GET'], profile.local_path);
     return JSON.parse(stdout || 'null') as unknown;
   };
   const project = `projects/${encodeURIComponent(profile.repo)}`;
@@ -55,19 +56,19 @@ export async function dispatchGitLabEvent(
   const actor = record(await api(`users/${event.actorId}`));
   if ((event.kind === 'note' && typeof actor.username === 'string' && actor.username.toLowerCase() === options.bot.toLowerCase()) || !trusted(actor, policy, event.project.id)) return;
 
-  let dispatch: Pick<SessionOptions, 'mode' | 'target' | 'mr'>;
-  let comment: { resource: 'issues' | 'merge_requests'; iid: number };
+  let dispatch: Pick<RoutedSessionOptions, 'mode' | 'target' | 'mr'>;
+  let context: { resource: 'issues' | 'merge_requests'; iid: number };
   switch (event.kind) {
     case 'issue': {
       const issue = record(await api(`${project}/issues/${event.iid}`));
       if (issue.state !== 'opened' || !trusted(record(issue.author), policy, event.project.id)) return;
       dispatch = { mode: 'improve', target: `#${event.iid}` };
-      comment = { resource: 'issues', iid: event.iid };
+      context = { resource: 'issues', iid: event.iid };
       break;
     }
     case 'merge_request':
       dispatch = { mode: 'review', mr: String(event.iid) };
-      comment = { resource: 'merge_requests', iid: event.iid };
+      context = { resource: 'merge_requests', iid: event.iid };
       break;
     case 'note':
       dispatch = {
@@ -75,7 +76,7 @@ export async function dispatchGitLabEvent(
         target: `GitLab instruction for ${event.project.url}/-/${event.resource}/${event.iid}:\n\n${event.instruction}`,
         ...(event.resource === 'merge_requests' ? { mr: String(event.iid) } : {}),
       };
-      comment = { resource: event.resource, iid: event.iid };
+      context = { resource: event.resource, iid: event.iid };
       // Preserve the issue's managed fence even though the note is the worker's target text.
       if (event.resource === 'issues') await deps.managed({ profile: profile.name, mode: dispatch.mode, target: `#${event.iid}` });
       break;
@@ -86,7 +87,7 @@ export async function dispatchGitLabEvent(
         && mr.source_project_id === event.project.id && mr.sha === event.sha && Number.isSafeInteger(mr.iid) && Number(mr.iid) > 0) : undefined;
       if (!mr) return;
       dispatch = { mode: 'fix', mr: String(mr.iid), target: `Repair failed GitLab pipeline ${event.pipelineId} on ${event.branch}. Inspect the pipeline jobs and fix the failure.` };
-      comment = { resource: 'merge_requests', iid: Number(mr.iid) };
+      context = { resource: 'merge_requests', iid: Number(mr.iid) };
       break;
     }
     default: {
@@ -97,26 +98,20 @@ export async function dispatchGitLabEvent(
   await deps.managed({ profile: profile.name, ...dispatch });
   const session = await deps.start({
     profile: profile.name, repo: profile.repo, providerKind: 'gitlab', instanceId: 'gitlab-0',
-    requestId: `gitlab-${event.key}`, ...dispatch,
+    requestId: options.requestId ?? `gitlab-${event.key}`, retainReceipt: true, ...dispatch,
     // The page context the runs feed filters by (#1595): recording it here
     // lets origin-scoped queries see dispatcher-started runs without
     // deriving them from target text.
     gitlab: {
       project: event.project.repo,
-      kind: comment.resource === 'issues' ? 'issue' : 'merge_request',
-      iid: comment.iid,
+      kind: context.resource === 'issues' ? 'issue' : 'merge_request',
+      iid: context.iid,
       webUrl: event.project.url
     }
   });
-  if (!policy.allow_issue_comments || profile.delivery_mode === 'handoff') return;
-  const url = new URL(options.panelUrl);
-  url.searchParams.set('page', 'work');
-  url.searchParams.set('profile', profile.name);
-  url.searchParams.set('session', session.id);
-  try {
-    await api(`${project}/${comment.resource}/${comment.iid}/notes`, [`body=Parasaur queued a run: [open run](${url.href}).`]);
-  } catch {
-    // The run exists. A failed comment must never trigger a second dispatch.
-    console.error('[gitlab-events] Queued-run comment failed.');
+  if (session.leaseState === 'expired' || session.leaseState === 'uncertain_reconciling') {
+    throw new Error('GitLab dispatch outcome is unknown');
   }
+  // Provider publication belongs to the CLI, whose #1619 gate can refuse
+  // asynchronously after fleet start. Runs remain visible in the panel feed.
 }

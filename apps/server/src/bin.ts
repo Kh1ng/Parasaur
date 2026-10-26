@@ -190,6 +190,8 @@ async function main() {
     }
   });
   markReadinessCheck('webSocket', true);
+  // Replay accepted hooks only after the shared fleet dispatcher is ready.
+  app.locals.gitLabEventsQueue?.start();
   
   // Node liveness scheduler (issue #883): polls registered nodes on an
   // interval instead of only reacting to dashboard/dispatch activity, so a
@@ -253,6 +255,7 @@ async function main() {
     shuttingDown = true;
     logLifecycle('Shutting down...');
     registryService.stopLivenessScheduler();
+    app.locals.gitLabEventsQueue?.stop();
     stopChatMaintenanceScheduler();
     stopWorkerAutoUpdate?.();
     authHealthProber.stop();
