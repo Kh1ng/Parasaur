@@ -11,3 +11,5 @@ export * from './planning.js';
 export * from './pairing.js';
 export * from './cli-capabilities.js';
 export * from './cli-router.js';
+
+export * from './agent-versions.js';

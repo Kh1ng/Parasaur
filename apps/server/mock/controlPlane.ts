@@ -21,6 +21,7 @@ import type {
   ActivityNotificationPreferences,
   AdminUpdatePendingInfo,
   AdminUpdateState,
+  AgentVersionsSnapshot,
   FleetUpdateResult,
   NodeSummary,
   ReleaseChannelStatus,
@@ -210,6 +211,7 @@ interface MockState {
   loopRunning: boolean;
   workerSessions: Session[];
   adminUpdate: AdminUpdateState;
+  agentVersions: AgentVersionsSnapshot;
   workerUpdates: Map<string, WorkerUpdateStatus>;
   nodeAutoUpdate: Map<string, boolean>;
   gitPrs: ChatPrSummary[];
@@ -641,6 +643,9 @@ function createState(scenario: MockScenarioName, reset: number, previewOrigin?: 
     loopRunning: true,
     workerSessions: [],
     adminUpdate: structuredClone(MOCK_ADMIN_IDLE),
+    agentVersions: { can_update: true, nodes: [{ node_id: 'mock-central', display_name: 'Mock central', auto_update: false,
+      updates_enabled: true, error: null, updates: [], versions: [{ backend: 'codex', installed: '0.110.0', latest: '0.120.0',
+        outdated: true, source: 'npm:@openai/codex', update_command: 'codex update', error: null }] }] },
     workerUpdates: new Map([['mock-worker', structuredClone(MOCK_WORKER_IDLE)]]),
     nodeAutoUpdate: new Map([['mock-worker', false]]),
     gitPrs: structuredClone(MOCK_PRS),
@@ -1889,6 +1894,17 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       updatedAt: new Date(FIXED_NOW + number).toISOString()
     });
     res.json({ url });
+  });
+
+  app.get('/api/agents/versions', (_req, res) => res.json(state.agentVersions));
+  app.post('/api/agents/update', (req, res) => {
+    const node = state.agentVersions.nodes.find(n => n.node_id === req.body?.node_id);
+    const row = node?.versions.find(v => v.backend === req.body?.backend);
+    if (!node || !row) return res.status(400).json({ message: 'Unknown mock node or CLI.' });
+    node.updates = [{ backend: row.backend, status: 'success', before: row.installed, after: row.latest,
+      started_at: new Date(FIXED_NOW).toISOString(), finished_at: new Date(FIXED_NOW + 1000).toISOString(), error: null }];
+    row.installed = row.latest; row.outdated = false;
+    res.status(202).json({ accepted: true });
   });
 
   app.get('/api/admin/update', (_req, res) => res.json(MOCK_ADMIN_PENDING));

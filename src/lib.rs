@@ -1,6 +1,7 @@
 // Library module for testing
 // This makes the modules accessible to integration tests
 
+pub mod agents;
 pub mod auth_health;
 pub mod availability;
 pub mod backend_kind;

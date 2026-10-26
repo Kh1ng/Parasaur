@@ -6,6 +6,7 @@ import { useUiStore } from '../store/uiStore.js';
 import { useGahStore } from '../store/gahStore.js';
 import { useAutoRefresh } from '../hooks/useAutoRefresh.js';
 import { useWsReconnectRefresh } from '../hooks/useWsReconnectRefresh.js';
+import { AgentCliVersions } from '../components/AgentCliVersions.js';
 import { PageHeader } from '../components/ui/PageHeader.js';
 import { LiveAgentsCard, liveRowTitle } from '../components/LiveAgentsCard.js';
 import type { WatchableRun } from '../components/AgentLiveView.js';
@@ -96,6 +97,8 @@ export function AgentsPage({ sessions, deviceAgents, onNavigate, onWatchRun }: {
         ] as const).map(([id, label]) => <button key={id} type="button" aria-pressed={view === id}
           onClick={() => setView(id)} className={`min-h-11 rounded-md px-4 py-2 text-sm font-medium ${view === id ? 'bg-accent/15 text-primary ring-1 ring-accent/40' : 'text-secondary hover:bg-overlay/5'}`}>{label}</button>)}
       </nav>
+
+      <AgentCliVersions />
 
       {view === 'activity' && <>
       <LiveAgentsCard profile={profile || null} sessions={sessions} controllerRuns={controllerActivity}

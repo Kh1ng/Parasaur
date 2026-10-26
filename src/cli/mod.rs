@@ -107,6 +107,7 @@ pub fn run() -> Result<()> {
         } => commands::doctor::run(profile.as_deref(), config_path.as_deref(), validate, json)?,
 
         Commands::Update(args) => commands::update::run(args)?,
+        Commands::Agents(args) => crate::agents::run(args.command)?,
 
         Commands::Init {
             profile,

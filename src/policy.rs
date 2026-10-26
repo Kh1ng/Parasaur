@@ -24,7 +24,7 @@ fn repo_allows_action(repo: &RepoPolicy, action: &str) -> bool {
             "edit-issue" => repo.allow_issue_write,
             "merge" | "review" | "mark-ready" => repo.allow_provider_mutation,
             "git-push" => repo.allow_push,
-            "git-push-prod" => repo.allow_project_write,
+            "git-push-prod" | "update-agent-cli" => repo.allow_project_write,
             _ => false,
         },
         _ => false,
@@ -114,6 +114,21 @@ mod tests {
         assert!(!repo_allows_action(&policy, "unknown"));
         for action in ["merge", "review", "mark-ready"] {
             assert!(repo_allows_action(&policy, action));
+        }
+    }
+
+    #[test]
+    fn agent_updates_require_project_write_and_known_write_trust() {
+        let mut policy = policy();
+        for trust in ["read_only", "future_mode", "draft_pr_allowed"] {
+            for allowed in [true, false] {
+                policy.trust_mode = trust.into();
+                policy.allow_project_write = allowed;
+                assert_eq!(
+                    repo_allows_action(&policy, "update-agent-cli"),
+                    trust == "draft_pr_allowed" && allowed
+                );
+            }
         }
     }
 

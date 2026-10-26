@@ -156,6 +156,8 @@ import {
   type StartAdminUpdateResult
 } from './adminUpdate.js';
 import { getReleaseStatus } from './releaseFeed.js';
+import { AgentCliVersions } from './agentCliVersions.js';
+import { AgentCliFleet, agentCliRouter } from './agentCliRoutes.js';
 import { WorkerUpdateService } from './workerUpdate.js';
 import { WorkerUpdateBroker, WorkerUpdateError } from './workerUpdateBroker.js';
 import type { WebPushNotifications } from './webPush.js';
@@ -197,6 +199,8 @@ type CreateServerOptions = Partial<ConfigEffectiveDeps> & {
   getReleaseStatus?: typeof getReleaseStatus;
   /** This worker's release update service (#1416); central drives it through the broker. */
   workerUpdates?: WorkerUpdateService;
+  agentCliVersions?: AgentCliVersions;
+  agentCliFleet?: AgentCliFleet;
   /** Central's coordinator-driven worker update broker (#1416). */
   workerUpdateBroker?: WorkerUpdateBroker;
   cliRouterQuotaObserver?: ReturnType<typeof createCliRouterQuotaObserver>;
@@ -440,6 +444,9 @@ export function createServer(
   app.use(workerRouteGuard(node));
   if (node.role === 'central') app.use('/api/integrations/gitlab',
     gitLabQueueRouter(app.locals.gitLabEventsStore, app.locals.gitLabEventsQueue, mutation));
+  const agentCliVersions = configDeps.agentCliVersions ?? new AgentCliVersions(getCoordinatorIdentity(undefined, coordinatorPort));
+  const agentCliFleet = configDeps.agentCliFleet ?? (node.role === 'central' ? new AgentCliFleet(agentCliVersions, registryService) : undefined);
+  app.use('/api/agents', agentCliRouter(agentCliVersions, agentCliFleet, mutation));
   if (node.role === 'central' && (configDeps.webPushNotifications || configDeps.apnsNotifications)) {
     app.use('/api/push', rateLimit({
       windowMs: 60_000,

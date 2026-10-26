@@ -16,6 +16,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+mod agents;
 mod operations;
 mod request_schemas;
 use operations::*;
@@ -354,6 +355,7 @@ pub fn generate_manifest() -> CapabilityManifest {
     add_quota_operations(&mut manifest);
     add_claims_operations(&mut manifest);
     add_node_operations(&mut manifest);
+    agents::add_operations(&mut manifest);
 
     manifest
 }

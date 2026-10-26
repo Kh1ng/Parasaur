@@ -5,7 +5,7 @@ import { delimiter, join } from 'node:path';
 import { test } from 'node:test';
 
 import { createAcpBackend } from './managerChat/acpAdapter.js';
-import { defaultClaudeSpawn } from './managerChat/registry.js';
+import { defaultClaudeSpawn, resolveAdapter, invalidateAgentModels } from './managerChat/registry.js';
 
 const FAKE_ACP_SOURCE = String.raw`
 const fs = require('node:fs');
@@ -20,6 +20,7 @@ if (spawnCountPath) {
   fs.writeFileSync(spawnCountPath, String(spawnNumber));
 }
 let promptNumber = 0;
+let pendingPrompt;
 const lines = readline.createInterface({ input: process.stdin });
 
 function respond(message) {
@@ -29,7 +30,7 @@ function respond(message) {
 lines.on('line', (line) => {
   const request = JSON.parse(line);
   if (request.method === 'initialize') {
-    respond({ jsonrpc: '2.0', id: request.id, result: { protocolVersion: request.params.protocolVersion } });
+    respond({ jsonrpc: '2.0', id: request.id, result: { protocolVersion: request.params.protocolVersion, _meta: { steering: { supported: true } } } });
     return;
   }
   if (request.method === 'session/new' && mode === 'runtime-models') {
@@ -43,6 +44,24 @@ lines.on('line', (line) => {
   if (request.method === 'session/new') {
     respond({ jsonrpc: '2.0', id: request.id, result: { sessionId: 'fake-session' } });
     return;
+  }
+  if (mode === 'refresh-cancel') {
+    if (request.method === 'session/prompt') {
+      pendingPrompt = request.id;
+      respond({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'fake-session',
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'active' } } } });
+      return;
+    }
+    if (request.method === '_session/steering') {
+      fs.writeFileSync(spawnCountPath + '.steered', 'yes');
+      respond({ jsonrpc: '2.0', id: request.id, result: { outcome: 'injected' } });
+      return;
+    }
+    if (request.method === 'session/cancel') {
+      fs.writeFileSync(spawnCountPath + '.cancelled', 'yes');
+      respond({ jsonrpc: '2.0', id: pendingPrompt, result: { stopReason: 'cancelled' } });
+      return;
+    }
   }
   if (request.method === 'session/prompt' && mode === 'retire-prompt') {
     fs.writeFileSync(spawnCountPath + '.pid', String(process.pid));
@@ -343,6 +362,35 @@ test('each cached Claude connection keeps the runtime provenance of its own spaw
     assert.deepEqual(await provenance('b'), cli, 'B still runs the installed CLI it was spawned with');
     assert.deepEqual(await provenance('a'), bundled);
   } finally {
+    backend.dispose();
+    rmSync(fake.dir, { recursive: true, force: true });
+  }
+});
+
+
+test('model invalidation keeps a live ACP prompt steerable and cancellable', { timeout: 5000 }, async () => {
+  const fake = fakeAcpScript();
+  const count = join(fake.dir, 'count');
+  const backend = createAcpBackend('Codex', () => ({ command: process.execPath, args: [fake.path, 'refresh-cancel', count] }));
+  const adapter = resolveAdapter('codex');
+  const original = adapter.invalidateModels;
+  adapter.invalidateModels = backend.invalidateModels;
+  try {
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    const turn = backend.runTurn({ key: 'profile', profile: 'profile' }, { ...emptyTurnInput, onChunk: () => started() });
+    await ready;
+    invalidateAgentModels('codex');
+    assert.equal(resolveAdapter('codex'), adapter);
+    assert.deepEqual(await backend.steerTurn('profile', 'continue'), { outcome: 'injected' });
+    await backend.cancelTurn('profile');
+    await turn;
+    assert.equal(readFileSync(count + '.steered', 'utf8'), 'yes');
+    assert.equal(readFileSync(count + '.cancelled', 'utf8'), 'yes');
+    await backend.listModels({ key: 'profile', profile: 'profile' });
+    assert.equal(readFileSync(count, 'utf8'), '2', 'next catalog query starts an updated connection');
+  } finally {
+    adapter.invalidateModels = original;
     backend.dispose();
     rmSync(fake.dir, { recursive: true, force: true });
   }

@@ -1028,3 +1028,8 @@ export const cliRouterApi = {
   refreshAccount: (body: { id: string }) =>
     postJson<CliRouterSnapshot, typeof body>('/api/cli-router/accounts/refresh', body),
 };
+
+export const agentCliApi = {
+  versions: () => getJson<import('@git-agent-harness/contracts').AgentVersionsSnapshot>('/api/agents/versions'),
+  update: (node_id: string, backend: string) => postJson<{ accepted: boolean }, { node_id: string; backend: string }>('/api/agents/update', { node_id, backend }),
+};

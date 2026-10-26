@@ -507,6 +507,21 @@ fn save_state(state: &WorkClaimState) -> Result<()> {
 /// A claim held on another host expires after this; see `WorkClaim::is_stale`.
 const CLAIM_MAX_AGE_SECS: u64 = 3600;
 
+/// Requires the exclusive maintenance lock to keep claim admission closed.
+pub(crate) fn ensure_node_idle() -> Result<()> {
+    with_locked_state(|state| {
+        if state
+            .claims
+            .values()
+            .flatten()
+            .any(|claim| !claim.detail().is_stale)
+        {
+            anyhow::bail!("Node has active dispatches; retry after they finish");
+        }
+        Ok(())
+    })
+}
+
 /// Claim a work_id for a profile and persist to file
 /// Atomically claim work across independent GAH processes.
 pub fn try_claim_work(profile: &str, work_id: &str) -> Result<bool> {
@@ -519,6 +534,9 @@ pub fn try_claim_manual_work(profile: &str, work_id: &str) -> Result<bool> {
 }
 
 fn try_claim_with_mode(profile: &str, work_id: &str, manual_worker: bool) -> Result<bool> {
+    let Some(_admission) = crate::agents::dispatch_admission()? else {
+        return Ok(false);
+    };
     with_locked_state(|state| {
         state.ensure_v2();
 

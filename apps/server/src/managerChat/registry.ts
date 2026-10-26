@@ -26,6 +26,8 @@ import type { PermissionAsk } from './permissionPolicy.js';
 import { runBackendInstanceRuntime } from '../gahCli.js';
 import { bindOpenCodeModels, instanceAcpSpawn, instanceHeadlessSpec } from './instanceLaunch.js';
 import { findInstalledExecutable } from './installedExecutable.js';
+import { readAgentUpdates } from '../agentCliState.js';
+import { createCliRouterModelRefresher } from '../cliRouter.js';
 
 export type { ManagerCommandInfo, ManagerModelInfo, ManagerReasoningEffortInfo };
 
@@ -91,6 +93,8 @@ export interface ManagerAdapter extends ManagerBackendInfo {
   cancelTurn(gahProfile: string): Promise<void>;
   /** Release processes when a selected credential or instance changes. */
   dispose?(): void;
+  /** Refresh catalogs while retaining controllers for active prompts. */
+  invalidateModels?(): void;
 }
 
 function acpManagerAdapter(
@@ -117,15 +121,17 @@ export function defaultClaudeSpawn(searchPath?: string): SpawnSpec & { bundledRu
   };
 }
 
-const REGISTRY: Record<string, ManagerAdapter> = {
-  hermes: acpManagerAdapter('hermes', 'Hermes', hermesSpawnSpec),
-  codex: acpManagerAdapter('codex', 'Codex', codexSpawnSpec, { consecutiveFailureReconnectThreshold: 2 }),
-  claude: acpManagerAdapter('claude', 'Claude', () => defaultClaudeSpawn()),
-  opencode: acpManagerAdapter('opencode', 'OpenCode', opencodeSpawnSpec),
-  vibe: { ...createHeadlessBackend(vibeBackendSpec()) } as ManagerAdapter,
-  agy: { ...createHeadlessBackend(agyBackendSpec()) } as ManagerAdapter,
-  openhands: { ...createHeadlessBackend(openhandsBackendSpec()) } as ManagerAdapter
+const DEFAULT_ADAPTERS: Record<string, () => ManagerAdapter> = {
+  hermes: () => acpManagerAdapter('hermes', 'Hermes', hermesSpawnSpec),
+  codex: () => acpManagerAdapter('codex', 'Codex', codexSpawnSpec, { consecutiveFailureReconnectThreshold: 2 }),
+  claude: () => acpManagerAdapter('claude', 'Claude', () => defaultClaudeSpawn()),
+  opencode: () => acpManagerAdapter('opencode', 'OpenCode', opencodeSpawnSpec),
+  vibe: () => ({ ...createHeadlessBackend(vibeBackendSpec()) }) as ManagerAdapter,
+  agy: () => ({ ...createHeadlessBackend(agyBackendSpec()) }) as ManagerAdapter,
+  openhands: () => ({ ...createHeadlessBackend(openhandsBackendSpec()) }) as ManagerAdapter
 };
+
+const REGISTRY = Object.fromEntries(Object.entries(DEFAULT_ADAPTERS).map(([id, create]) => [id, create()]));
 
 export const DEFAULT_BACKEND_ID = 'hermes';
 
@@ -134,6 +140,7 @@ export function listManagerBackends(): ManagerBackendInfo[] {
 }
 
 export function resolveAdapter(backendId: string): ManagerAdapter {
+  void refreshUpdatedAgentModels();
   const adapter = REGISTRY[backendId];
   if (!adapter) {
     throw new Error(`Unknown manager backend "${backendId}"`);
@@ -141,11 +148,12 @@ export function resolveAdapter(backendId: string): ManagerAdapter {
   return adapter;
 }
 
-const INSTANCE_ADAPTERS = new Map<string, { runtime: string; adapter: ManagerAdapter }>();
+const INSTANCE_ADAPTERS = new Map<string, { runtime: string; runnerKind: string; adapter: ManagerAdapter }>();
 
 /** Resolve one named account to its own ACP process and connection map. */
 export async function resolveInstanceAdapter(profile: string, backendId: string, instance?: string | null): Promise<ManagerAdapter> {
   if (!instance) return resolveAdapter(backendId);
+  void refreshUpdatedAgentModels();
   const key = `${profile}\0${instance}`;
   const runtime = await runBackendInstanceRuntime(profile, instance);
   if (runtime.logical_backend !== backendId) throw new Error(`Backend instance "${instance}" does not serve ${backendId}.`);
@@ -179,6 +187,32 @@ export async function resolveInstanceAdapter(profile: string, backendId: string,
   }
   adapter = bindOpenCodeModels(adapter, runtime);
   cached?.adapter.dispose?.();
-  INSTANCE_ADAPTERS.set(key, { runtime: runtimeKey, adapter });
+  INSTANCE_ADAPTERS.set(key, { runtime: runtimeKey, runnerKind: runtime.runner_kind, adapter });
   return adapter;
+}
+
+/** New connections discover models from the updated CLI; active prompts finish. */
+export function invalidateAgentModels(backend: string): void {
+  REGISTRY[backend]?.invalidateModels?.();
+  for (const entry of INSTANCE_ADAPTERS.values()) {
+    if (entry.runnerKind === backend) entry.adapter.invalidateModels?.();
+  }
+}
+
+const modelUpdateRevisions = new Map<string, string>();
+const updatedRouterModels = createCliRouterModelRefresher();
+
+/** Also observes terminal updates made outside this server, before reusing models. */
+export function refreshUpdatedAgentModels(): Promise<void> {
+  let updates;
+  try { updates = readAgentUpdates(); } catch { return Promise.resolve(); }
+  let changed = false;
+  for (const update of updates) {
+    const revision = update.finished_at ?? update.started_at;
+    if (update.status !== 'success' || modelUpdateRevisions.get(update.backend) === revision) continue;
+    modelUpdateRevisions.set(update.backend, revision);
+    invalidateAgentModels(update.backend);
+    changed = true;
+  }
+  return changed ? updatedRouterModels.refresh() : Promise.resolve();
 }

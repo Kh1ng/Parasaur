@@ -69,6 +69,54 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
   "schema_version": 1,
   "manifest_version": "v1",
   "operations": {
+    "agents.check-update-policy": {
+      "operation_id": "agents.check-update-policy",
+      "display_name": "Agent CLI check-update-policy",
+      "class": "read",
+      "profile_scope": "global",
+      "request_schema": null,
+      "response_schema": null,
+      "streaming": "none",
+      "idempotency": "idempotent",
+      "secret_fields": [],
+      "remote_disposition": "local_only",
+      "local_only_reason": "filesystem_access_required",
+      "documentation": "Node-local agent CLI inventory and owner-approved updates",
+      "cli_command_path": "gah agents check-update-policy",
+      "is_stable": true
+    },
+    "agents.update": {
+      "operation_id": "agents.update",
+      "display_name": "Agent CLI update",
+      "class": "admin",
+      "profile_scope": "global",
+      "request_schema": null,
+      "response_schema": null,
+      "streaming": "none",
+      "idempotency": "non_idempotent",
+      "secret_fields": [],
+      "remote_disposition": "remote_available",
+      "local_only_reason": null,
+      "documentation": "Node-local agent CLI inventory and owner-approved updates",
+      "cli_command_path": "gah agents update",
+      "is_stable": true
+    },
+    "agents.versions": {
+      "operation_id": "agents.versions",
+      "display_name": "Agent CLI versions",
+      "class": "read",
+      "profile_scope": "global",
+      "request_schema": null,
+      "response_schema": null,
+      "streaming": "none",
+      "idempotency": "idempotent",
+      "secret_fields": [],
+      "remote_disposition": "remote_available",
+      "local_only_reason": null,
+      "documentation": "Node-local agent CLI inventory and owner-approved updates",
+      "cli_command_path": "gah agents versions",
+      "is_stable": true
+    },
     "auth.health": {
       "operation_id": "auth.health",
       "display_name": "Check Provider Logins",
@@ -1347,6 +1395,9 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
     }
   },
   "command_path_to_operation_id": {
+    "gah agents check-update-policy": "agents.check-update-policy",
+    "gah agents update": "agents.update",
+    "gah agents versions": "agents.versions",
     "gah auth-health": "auth.health",
     "gah availability": "availability.get",
     "gah availability clear": "availability.clear",
@@ -1471,9 +1522,12 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
     "quota.snapshot",
     "claims.list",
     "claims.clear",
-    "claims.reclaim"
+    "claims.reclaim",
+    "agents.versions",
+    "agents.update"
   ],
   "local_only_operations": {
+    "agents.check-update-policy": "filesystem_access_required",
     "auth.health": "local_backend_execution_required",
     "candidates.convert": "filesystem_access_required",
     "config.set_vibe_model": "filesystem_access_required",
@@ -1499,6 +1553,33 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
     "update.cli": "local_backend_execution_required"
   },
   "request_schemas": {
+    "agents.update": {
+      "properties": {
+        "backend": {
+          "description": "Installed agent CLI to update.",
+          "enum": [
+            "claude",
+            "codex",
+            "agy",
+            "vibe",
+            "opencode"
+          ],
+          "type": "string"
+        },
+        "node_id": {
+          "description": "Registered node ID; omit for the local node.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "backend"
+      ],
+      "type": "object"
+    },
+    "agents.versions": {
+      "properties": {},
+      "type": "object"
+    },
     "availability.clear": {
       "properties": {},
       "type": "object"
@@ -1843,6 +1924,10 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
           "description": "Backend instance qualifier.",
           "type": "string"
         },
+        "manualWorker": {
+          "description": "Launch an explicit extra job outside automatic node and worker admission; retains work claims and route policy.",
+          "type": "boolean"
+        },
         "mode": {
           "description": "Dispatch mode: improve, fix, pm, review, experiment.",
           "type": "string"
@@ -1865,6 +1950,10 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
         },
         "providerKind": {
           "description": "Provider for the work identity: github or gitlab.",
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "description": "Native reasoning for this manual launch only.",
           "type": "string"
         },
         "repo": {
@@ -2490,6 +2579,13 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
     },
     "profile.set": {
       "properties": {
+        "agent_effort": {
+          "description": "Native task reasoning settings, each codex|claude=effort; default clears the override.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "agent_model": {
           "description": "Model switches for a backend's routing candidates, each backend/old=new.",
           "items": {

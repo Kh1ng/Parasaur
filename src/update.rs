@@ -63,6 +63,7 @@ pub fn run(args: UpdateArgs) -> Result<()> {
         args.repair_ownership,
     )?;
     let update_lock = acquire_update_lock(&repo)?;
+    let maintenance_lock = crate::agents::maintenance_lock()?;
     // Set when this process is the newly installed CLI finishing an update
     // the previous binary started; the plan was already accepted.
     let resumed = env::var_os(reexec::ENV).is_some();
@@ -147,6 +148,7 @@ pub fn run(args: UpdateArgs) -> Result<()> {
     // (`git pull && gah update` is the common case), so always hand over.
     if !resumed {
         drop(update_lock);
+        drop(maintenance_lock);
         return reexec::continue_with(&binary, &args, &repo);
     }
     // Both roles install user units below; keep them alive past logout. Done
