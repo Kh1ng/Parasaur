@@ -13,6 +13,8 @@ use serde::Deserialize;
 const HUMAN_REVIEWER: &str = "human";
 const PAGE: usize = 100;
 
+pub(crate) mod verdicts;
+
 #[derive(Debug, Deserialize)]
 struct RestReview {
     id: u64,
@@ -23,6 +25,8 @@ struct RestReview {
     body: Option<String>,
     #[serde(default)]
     commit_id: Option<String>,
+    #[serde(default)]
+    submitted_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,6 +96,20 @@ fn github_get<T: for<'de> Deserialize<'de>>(endpoint: &str, what: &str) -> Resul
         );
     }
     serde_json::from_slice(&out.stdout).with_context(|| format!("parsing GitHub REST {what}"))
+}
+
+/// Read complete REST collections for both repair imports and the merge gate.
+fn github_pages<T: for<'de> Deserialize<'de>>(endpoint: &str, what: &str) -> Result<Vec<T>> {
+    let mut all = Vec::new();
+    for page in 1.. {
+        let rows: Vec<T> = github_get(&format!("{endpoint}?per_page={PAGE}&page={page}"), what)?;
+        let done = rows.len() < PAGE;
+        all.extend(rows);
+        if done {
+            return Ok(all);
+        }
+    }
+    unreachable!("pagination returns at the last page")
 }
 
 /// The marker that ties an imported review to the provider review it came
@@ -164,11 +182,8 @@ pub(crate) fn pending_review_entries(
         else {
             continue;
         };
-        let reviews: Vec<RestReview> = github_get(
-            &format!(
-                "repos/{}/pulls/{number}/reviews?per_page={PAGE}",
-                profile.repo
-            ),
+        let reviews: Vec<RestReview> = github_pages(
+            &format!("repos/{}/pulls/{number}/reviews", profile.repo),
             "pull request reviews",
         )?;
         for request in outstanding(reviews) {
@@ -181,11 +196,8 @@ pub(crate) fn pending_review_entries(
             {
                 continue;
             }
-            let comments: Vec<RestReviewComment> = github_get(
-                &format!(
-                    "repos/{}/pulls/{number}/comments?per_page={PAGE}",
-                    profile.repo
-                ),
+            let comments: Vec<RestReviewComment> = github_pages(
+                &format!("repos/{}/pulls/{number}/comments", profile.repo),
                 "pull request review comments",
             )?;
             let inline = comments
@@ -222,6 +234,7 @@ mod tests {
             state: state.into(),
             body: Some(format!("review {id}")),
             commit_id: Some("abc".into()),
+            submitted_at: None,
         }
     }
 

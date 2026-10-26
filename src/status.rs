@@ -510,6 +510,15 @@ fn build_snapshot_inner(
                             incomplete_snapshot: true,
                         });
                     }
+                    if let Err(error) =
+                        sync::requested_changes::verdicts::project(profile, &mut row)
+                    {
+                        errors.push(StatusError {
+                            subsystem: "merge_review".into(),
+                            message: format!("{error:#}"),
+                            incomplete_snapshot: true,
+                        });
+                    }
                     row
                 })
                 .collect();

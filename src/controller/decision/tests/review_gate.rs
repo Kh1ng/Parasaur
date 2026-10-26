@@ -140,3 +140,56 @@ fn review_ci_failure_with_existing_opinion_does_not_escalate() {
         NextAction::NoOp { .. }
     ));
 }
+
+#[test]
+fn current_head_review_veto_defers_merge_without_a_durable_hold() {
+    let mut snapshot = empty_snapshot();
+    snapshot.profile.merge_policy = crate::config::MergePolicy::Auto;
+    let mut candidate = reviewed_mr("gah/1641", "READY_FOR_HUMAN", "APPROVE");
+    candidate.draft = false;
+    candidate.ci_passed = true;
+    candidate.id = Some("42".into());
+    candidate.source_sha = Some("H".into());
+    let _exec = crate::test_support::ExecGuard::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("gh");
+    std::fs::write(
+        &path,
+        r#"#!/bin/sh
+case "$4" in
+  */issues/42/comments*) /bin/cat "${0%/*}/comments.json" ;;
+  *) echo '[]' ;;
+esac
+"#,
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let comments = tmp.path().join("comments.json");
+    std::fs::write(&comments, serde_json::json!([{
+        "id":1,"user":{"login":"foreign"},"created_at":"2026-10-25T00:00:00Z",
+        "body":"GAH review verdict: `NEEDS_FIX`\n<!-- gah-review-head-v1 {\"head\":\"H\",\"backend\":\"codex\",\"model\":null} -->"
+    }]).to_string()).unwrap();
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            crate::provider::clear_test_provider_path();
+        }
+    }
+    crate::provider::set_test_provider_path(tmp.path().to_str().unwrap());
+    let _reset = Reset;
+    let profile = crate::config::tests::test_profile_for_notifications();
+    crate::sync::requested_changes::verdicts::project(&profile, &mut candidate).unwrap();
+    snapshot.merge_requests.push(candidate);
+    match decide_next_action(&snapshot) {
+        NextAction::WaitUntil { reason, .. } => assert!(reason.contains("veto from foreign")),
+        other => panic!("expected WaitUntil, got {other:?}"),
+    }
+    std::fs::write(comments, "[]").unwrap();
+    crate::sync::requested_changes::verdicts::project(&profile, &mut snapshot.merge_requests[0])
+        .unwrap();
+    assert!(matches!(
+        decide_next_action(&snapshot),
+        NextAction::MergeMr { .. }
+    ));
+}

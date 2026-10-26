@@ -231,9 +231,7 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
     // visible, though, so a held queue at the intake cap cannot collapse into
     // an indefinite "nothing actionable" / backpressure NoOp loop.
     let mut review_held_mrs: Vec<&crate::sync::SyncMrJson> = Vec::new();
-    // Issue #156: READY_FOR_HUMAN MRs whose CI is non-terminal / unknown
-    // (GitLab head_pipeline gap). They wait for CI to resolve and are not
-    // silently dropped.
+    // CI and current-head review vetoes are transient merge gates, not durable holds.
     let mut wait_and_recheck_mrs: Vec<&crate::sync::SyncMrJson> = Vec::new();
 
     for mr in &mrs {
@@ -294,6 +292,10 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
                 }
             }
             "READY_FOR_HUMAN" => {
+                if mr.merge_review_block_reason.is_some() {
+                    wait_and_recheck_mrs.push(mr);
+                    continue;
+                }
                 let work_id_str = mr.work_id.as_deref().unwrap_or("");
                 if snapshot.review_held_work_ids.contains(work_id_str) {
                     // A manager session is actively reviewing this MR out of
@@ -437,17 +439,17 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
             ),
         };
     }
-    // Issue #156: a READY_FOR_HUMAN MR whose CI is non-terminal / unknown
-    // (GitLab head_pipeline gap) must surface as a visible WaitUntil re-check,
-    // never an indefinite silent no-op. Prefer it over the no-op fallback below.
+    // Re-observe pending CI or reviewer vetoes so an approval can reopen merging.
     if let Some(mr) = wait_and_recheck_mrs.first() {
         let until = now_plus(Duration::from_secs(300));
         return NextAction::WaitUntil {
             until,
-            reason: format!(
+            reason: mr.merge_review_block_reason.as_ref().map(|reason| {
+                format!("MR on branch '{}' cannot merge: {reason}; waiting to re-check", mr.branch)
+            }).unwrap_or_else(|| format!(
                 "MR on branch '{}' is READY_FOR_HUMAN but CI is not yet conclusively resolved (pending/running/missing) -- waiting to re-check before merge",
                 mr.branch
-            ),
+            )),
         };
     }
     if let Some(parent) = snapshot

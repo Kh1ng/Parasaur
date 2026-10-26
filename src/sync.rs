@@ -118,6 +118,9 @@ pub struct SyncMrJson {
     pub review_verdict: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub review_gate_reason: Option<String>,
+    /// Current provider opinions can veto merging without authorizing a repair.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merge_review_block_reason: Option<String>,
     /// Immutable source and independently-versioned lifecycle generation used
     /// to decide whether historical review-derived gates remain authoritative.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -367,6 +370,7 @@ pub fn sync_mr_to_json(
         effective_model,
         review_verdict,
         review_gate_reason,
+        merge_review_block_reason: None,
         source_sha: mr.source_sha.clone(),
         last_reviewed_head: None,
         merge_commit_sha: mr.merge_commit_sha.clone(),
