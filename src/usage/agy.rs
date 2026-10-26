@@ -201,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn agy_unknown_provider_groups_do_not_become_routing_identities() {
+    fn distinct_agy_provider_groups_route_to_their_own_weekly_balance() {
         let output = br#"{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[
             {"description":"Models within this group: Gemini Flash","buckets":[{"id":"gemini-flash-weekly","window":"weekly","remaining_fraction":0}]},
             {"description":"Models within this group: Gemini Pro","buckets":[{"id":"gemini-pro-weekly","window":"weekly","remaining_fraction":0.8}]},
@@ -211,9 +211,8 @@ mod tests {
         let catalog = crate::availability::AgyCatalog::parse(
             "flash\tGemini Flash\npro\tGemini Pro\nsonnet\tClaude Sonnet\nopus\tClaude Opus\n",
             output,
-        );
-        assert!(catalog.is_err());
-        let catalog = catalog.unwrap_or_default();
+        )
+        .unwrap();
         let records = parse(output, "agy", OffsetDateTime::UNIX_EPOCH).unwrap();
         for (model, pool, balance) in [
             ("flash", "gemini-flash-weekly", 0.0),
@@ -221,12 +220,12 @@ mod tests {
             ("sonnet", "3p-sonnet-weekly", 30.0),
             ("opus", "3p-opus-weekly", 60.0),
         ] {
-            let pool = format!("agy:{pool}");
-            assert_eq!(catalog.pool("agy", model), "agy:external");
+            let routed_pool = catalog.pool("agy", model);
+            assert_eq!(routed_pool, format!("agy:{pool}"));
             let identity = crate::execution_identity::ExecutionIdentity::legacy_candidate(
                 "agy",
                 Some(model),
-                Some(pool),
+                Some(routed_pool),
             );
             let windows = crate::quota_store::latest_windows_for_identity(&records, &identity);
             assert_eq!(windows.len(), 1);

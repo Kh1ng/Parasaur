@@ -54,7 +54,10 @@ struct PoolRule {
     bucket_ids: Vec<String>,
 }
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PoolPolicy {
+    identifier_characters: String,
+    identifier_max_length: usize,
     pools: Vec<PoolRule>,
 }
 
@@ -94,16 +97,16 @@ pub(crate) fn groups(output: &[u8]) -> Result<Vec<Group>> {
     {
         bail!("Antigravity did not return a usage result");
     }
-    let groups: Vec<Group> = serde_json::from_value(root["command"]["data"]["groups"].clone())?;
-    if groups.is_empty()
-        || groups.iter().any(|group| {
-            group.buckets.is_empty()
-                || group
-                    .buckets
-                    .iter()
-                    .any(|bucket| !label(&bucket.id) || !label(&bucket.window))
-        })
-    {
+    let mut groups: Vec<Group> = serde_json::from_value(root["command"]["data"]["groups"].clone())?;
+    // Invalid group identities must not discard unrelated valid inventory.
+    groups.retain(|group| {
+        !group.buckets.is_empty()
+            && group
+                .buckets
+                .iter()
+                .all(|bucket| label(&bucket.id) && label(&bucket.window))
+    });
+    if groups.is_empty() {
         bail!("Antigravity usage returned invalid quota groups");
     }
     let mut ids = HashSet::new();
@@ -118,11 +121,12 @@ pub(crate) fn groups(output: &[u8]) -> Result<Vec<Group>> {
 }
 
 fn label(value: &str) -> bool {
+    let policy = pool_policy();
     !value.is_empty()
-        && value.len() <= 100
+        && value.len() <= policy.identifier_max_length
         && value
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+            .all(|c| policy.identifier_characters.contains(c))
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -175,21 +179,16 @@ impl Catalog {
                 pools.insert(name.to_string(), (*pool).to_string());
             }
         }
-        let catalog = Self { pools };
-        catalog.validate()?;
+        let mut catalog = Self { pools };
+        catalog.retain_valid_entries();
         Ok(catalog)
     }
 
-    // Disk and provider catalogs must use identities owned by the shared policy.
-    fn validate(&self) -> Result<()> {
-        if self.pools.iter().any(|(model, pool)| {
-            model.trim().is_empty()
-                || model.chars().any(char::is_control)
-                || !pool_policy().pools.iter().any(|rule| rule.id == *pool)
-        }) {
-            bail!("invalid Antigravity catalog identity");
-        }
-        Ok(())
+    // Catalog entries follow the same grammar as provider groups and the observer.
+    fn retain_valid_entries(&mut self) {
+        self.pools.retain(|model, pool| {
+            !model.trim().is_empty() && !model.chars().any(char::is_control) && label(pool)
+        });
     }
 
     pub fn pool(&self, account: &str, model: &str) -> String {
@@ -421,10 +420,15 @@ fn cache_path(executable: &str, home: Option<&Path>) -> Option<PathBuf> {
 
 fn read_persisted(executable: &str, home: Option<&Path>) -> Option<Catalog> {
     let path = cache_path(executable, home)?;
-    let catalog: Catalog = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;
-    if catalog.validate().is_err() {
-        let _ = std::fs::remove_file(path);
-        return None;
+    let mut catalog: Catalog = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;
+    let original_len = catalog.pools.len();
+    catalog.retain_valid_entries();
+    if catalog.pools.len() != original_len {
+        if catalog.pools.is_empty() {
+            let _ = std::fs::remove_file(path);
+            return None;
+        }
+        store_catalog(executable, home, &catalog);
     }
     Some(catalog)
 }

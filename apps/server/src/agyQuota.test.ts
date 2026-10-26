@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
-import { agyGroupPool, agyPool } from './agyQuota.js';
+import { agyGroupPool, agyLabel, agyPool } from './agyQuota.js';
 
 test('AGY quota warnings reset after good metadata', t => {
   const warnings: unknown[] = [];
@@ -21,5 +21,15 @@ test('AGY pool identity matches the shared Rust conformance fixture', () => {
   for (const { model, buckets, pool } of cases) {
     assert.equal(agyPool(model, buckets), pool);
     if (buckets.length) assert.equal(agyGroupPool(buckets), pool);
+  }
+});
+
+
+test('AGY pool labels match the shared Rust conformance fixture', () => {
+  const cases: { label: string; valid: boolean }[] = JSON.parse(readFileSync(
+    new URL('../../../tests/fixtures/agy/pool-labels.json', import.meta.url), 'utf8'));
+  for (const { label, valid } of cases) {
+    assert.equal(agyLabel(label), valid, JSON.stringify(label));
+    assert.equal(agyGroupPool([label]) !== undefined, valid, JSON.stringify(label));
   }
 });

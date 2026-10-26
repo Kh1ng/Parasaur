@@ -1147,3 +1147,24 @@ test('AGY observer preserves separate flash and pro weekly balances', async t =>
     ['agy:gemini-flash-weekly', 'weekly', 0], ['agy:gemini-pro-weekly', 'weekly', 80]
   ]);
 });
+
+
+test('AGY observer keeps exhausted Nova Flash separate from full external quota', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'gah-nova-agy-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const records: Record<string, unknown>[] = [];
+  const rec = recordingFetch(c => {
+    if (c.url.endsWith('/auth-files')) return { status: 200, body: { files: [file({ id: 'nova', provider: 'antigravity', project_id: 'p' })] } };
+    if (c.url.endsWith('/api-call')) return { status: 200, body: { status_code: 200, body: { groups: [
+      { displayName: 'Nova Flash', buckets: [{ bucketId: 'gemini-flash-weekly', window: 'weekly', remainingFraction: 0 }] },
+      { buckets: [{ bucketId: '3p-weekly', window: 'weekly', remainingFraction: 1 }] }
+    ] } } };
+  });
+  const observer = createCliRouterQuotaObserver({ agyScopesPath: join(root, 'scopes.json'),
+    readSettingsFn: () => ({ url: 'https://nova.example.com', apiKey: 'k', managementKey: 'm', accountBackends: { nova: 'agy' } }),
+    fetchFn: rec.fn, recordQuotaFn: async record => { records.push(record); } });
+  await observer.refresh();
+  assert.deepEqual(records.map(record => [record.quota_pool, record.quota_window, record.quota_remaining_percent]), [
+    ['agy:gemini-flash-weekly', 'weekly', 0], ['agy:external', 'weekly', 100]
+  ]);
+});

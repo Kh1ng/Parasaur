@@ -502,7 +502,7 @@ fn agy_corrupt_cache_falls_back_and_successful_probe_rewrites_it() {
     let usage = String::from_utf8(USAGE.to_vec())
         .unwrap()
         .replace("Gemini Flash, Gemini Pro", "Nova Flash");
-    for (index, invalid) in ["", "unknown-pool", "google-native:bad"].iter().enumerate() {
+    for (index, invalid) in ["", "bad pool", "google-native:bad"].iter().enumerate() {
         let script = dir.path().join(format!("agy-{index}"));
         std::fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -550,21 +550,6 @@ fn agy_corrupt_cache_falls_back_and_successful_probe_rewrites_it() {
     }
 }
 
-#[test]
-fn agy_parsed_catalog_rejects_unknown_pool_identities() {
-    let usage = String::from_utf8(USAGE.to_vec())
-        .unwrap()
-        .replace("gemini-weekly", "unknown-pool");
-    let catalog = Catalog::parse(MODELS, usage.as_bytes());
-    assert!(catalog.is_err());
-    assert_eq!(
-        catalog
-            .unwrap_or_default()
-            .pool("agy", "gemini-3.8-flash-high"),
-        "agy:google-native"
-    );
-}
-
 #[cfg(unix)]
 #[test]
 fn agy_routing_uses_the_usage_capability_gate_and_shared_deadline() {
@@ -590,4 +575,67 @@ fn agy_routing_uses_the_usage_capability_gate_and_shared_deadline() {
         assert!(start.elapsed() < Duration::from_secs(2));
         assert!(!dir.path().join("inference").exists());
     }
+}
+
+#[test]
+fn agy_pool_labels_match_shared_typescript_conformance_fixture() {
+    #[derive(Deserialize)]
+    struct Case {
+        label: String,
+        valid: bool,
+    }
+    let cases: Vec<Case> =
+        serde_json::from_str(include_str!("../../tests/fixtures/agy/pool-labels.json")).unwrap();
+    for case in cases {
+        assert_eq!(label(&case.label), case.valid, "{:?}", case.label);
+        let mut catalog = Catalog {
+            pools: HashMap::from([("nova".into(), case.label.clone())]),
+        };
+        catalog.retain_valid_entries();
+        assert_eq!(catalog.pools.contains_key("nova"), case.valid);
+    }
+}
+
+#[test]
+fn agy_invalid_group_does_not_discard_valid_provider_inventory() {
+    for invalid in ["", "bad pool", "bad:pool"] {
+        let mut usage: serde_json::Value = serde_json::from_slice(USAGE).unwrap();
+        usage["command"]["data"]["groups"][0]["description"] =
+            "Models within this group: Nova Flash".into();
+        usage["command"]["data"]["groups"][0]["buckets"][0]["id"] = "gemini-flash-weekly".into();
+        usage["command"]["data"]["groups"][1]["buckets"][0]["id"] = invalid.into();
+        let catalog = Catalog::parse(
+            "nova-4-flash-low\tNova 4 Flash (Low)\n",
+            &serde_json::to_vec(&usage).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            catalog.pool("agy", "nova-4-flash-low"),
+            "agy:gemini-flash-weekly"
+        );
+    }
+}
+
+#[test]
+fn agy_mixed_cache_keeps_valid_provider_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let executable = dir.path().join("agy");
+    let executable = executable.to_str().unwrap();
+    let path = cache_path(executable, Some(dir.path())).unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&serde_json::json!({
+            "pools": { "nova": "gemini-flash-weekly", "broken": "", "bad": "bad:pool" }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    for _ in 0..2 {
+        let catalog = read_persisted(executable, Some(dir.path())).unwrap();
+        assert_eq!(catalog.pool("agy", "nova"), "agy:gemini-flash-weekly");
+        assert_eq!(catalog.pool("agy", "broken"), "agy:external");
+        assert_eq!(catalog.pools.len(), 1);
+    }
+    std::fs::remove_file(path).unwrap();
 }

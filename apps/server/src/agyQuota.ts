@@ -10,7 +10,9 @@ export function agyPool(model: string, ids: string[] = []): string {
   return rule?.id ?? bucket!;
 }
 export const agyFallbackPools = policy.pools.map(rule => rule.id);
-export const agyLabel = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9_.-]{1,100}$/.test(value);
+export const agyLabel = (value: unknown): value is string => typeof value === 'string'
+  && value.length > 0 && value.length <= policy.identifierMaxLength
+  && [...value].every(character => policy.identifierCharacters.includes(character));
 
 let warned = false;
 export function agyGroupPool(ids: unknown[]): string | undefined {

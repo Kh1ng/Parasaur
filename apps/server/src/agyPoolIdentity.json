@@ -1,4 +1,6 @@
 {
+  "identifierCharacters": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-",
+  "identifierMaxLength": 100,
   "pools": [
     {
       "id": "google-native",
