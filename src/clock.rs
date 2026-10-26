@@ -2,6 +2,67 @@
 //!
 //! `GAH_TEST_NOW` is process-local. Child processes receive it only when a
 //! harness explicitly adds it to their command environment.
+//!
+//! Remaining host-clock reads outside this seam, excluding test fixtures:
+//! - `src/agents/state.rs:69`
+//! - `src/agents/state.rs:75`
+//! - `src/auth_health.rs:310`
+//! - `src/auth_health.rs:580`
+//! - `src/cli/commands/diag.rs:51`
+//! - `src/cli/commands/manager_log.rs:13`
+//! - `src/cli/commands/profile.rs:512`
+//! - `src/cli/commands/skills.rs:87`
+//! - `src/cli/commands/skills.rs:119`
+//! - `src/credentials/quota.rs:74`
+//! - `src/credentials/quota.rs:99`
+//! - `src/credentials/quota.rs:151`
+//! - `src/credentials/quota.rs:157`
+//! - `src/dispatch/workflows/pm/plans.rs:150`
+//! - `src/dispatch/workflows/pm/plans.rs:250`
+//! - `src/dispatch/workflows/pm/plans.rs:306`
+//! - `src/dispatch/workflows/pm.rs:300`
+//! - `src/doctor.rs:143`
+//! - `src/ledger/approvals.rs:124`
+//! - `src/ledger/approvals.rs:461`
+//! - `src/ledger/jsonl.rs:346`
+//! - `src/ledger/paid_route_notify.rs:37`
+//! - `src/ledger/reconcile.rs:372`
+//! - `src/ledger/reconcile.rs:472`
+//! - `src/ledger/summary.rs:1126`
+//! - `src/ledger/summary.rs:1188`
+//! - `src/notifications.rs:518`
+//! - `src/notifications.rs:618`
+//! - `src/notifications.rs:774`
+//! - `src/quota_store/agy.rs:89`
+//! - `src/quota_store/retention.rs:193`
+//! - `src/server.rs:91`
+//! - `src/sync.rs:393`
+//! - `src/telemetry/exporter.rs:233`
+//! - `src/telemetry/exporter.rs:235`
+//! - `src/telemetry/exporter.rs:284`
+//! - `src/telemetry/exporter.rs:286`
+//! - `src/telemetry/health.rs:189`
+//! - `src/telemetry/health.rs:191`
+//! - `src/telemetry/health.rs:354`
+//! - `src/telemetry/mod.rs:230`
+//! - `src/telemetry/mod.rs:267`
+//! - `src/telemetry/records.rs:550`
+//! - `src/tui.rs:74`
+//! - `src/usage/agy.rs:59`
+//! - `src/usage/claude.rs:95`
+//! - `src/usage/claude.rs:100`
+//! - `src/usage/claude.rs:134`
+//! - `src/usage/mistral_dashboard.rs:123`
+//! - `src/usage/mistral_dashboard.rs:128`
+//! - `src/usage/mistral_dashboard.rs:176`
+//! - `src/usage/nous.rs:17`
+//! - `src/usage/nous.rs:26`
+//! - `src/usage/nous.rs:152`
+//! - `src/usage/vibe_admin.rs:411`
+//! - `src/usage.rs:641`
+//! - `src/usage_attribution.rs:204`
+//! - `src/work_claim.rs:656`
+//! - `src/work_claim.rs:705`
 
 use std::sync::OnceLock;
 #[cfg(test)]
@@ -40,11 +101,7 @@ pub fn init() {
 
 /// Return the configured test instant, or the current UTC time in production.
 pub fn now_utc() -> OffsetDateTime {
-    #[cfg(test)]
-    if let Some(clock) = test_clock() {
-        return *clock.now.lock().expect("test clock mutex poisoned");
-    }
-    env_now().unwrap_or_else(OffsetDateTime::now_utc)
+    override_now().unwrap_or_else(OffsetDateTime::now_utc)
 }
 
 /// Return the same instant as a Chrono UTC value for legacy claim metadata.
@@ -54,21 +111,26 @@ pub fn now_chrono() -> chrono::DateTime<chrono::Utc> {
         .expect("UTC clock instant is representable by Chrono")
 }
 
-/// Wait for a wall-clock deadline while measuring fallback wait time monotonically.
-/// Advancing a test clock wakes the waiter immediately; a frozen clock still
-/// reaches the deadline after its original real duration.
+/// Return simulated time only when an override is installed; never read host UTC.
+pub(crate) fn override_now() -> Option<OffsetDateTime> {
+    #[cfg(test)]
+    if let Some(clock) = test_clock() {
+        return Some(*clock.now.lock().expect("test clock mutex poisoned"));
+    }
+    env_now()
+}
+
+/// Wait until an absolute expiry, converting its initial remaining time once.
 pub fn wait_until(deadline: OffsetDateTime, shutdown_requested: impl Fn() -> bool) -> bool {
-    let remaining = deadline - now_utc();
-    let duration = Duration::try_from(remaining).unwrap_or_default();
-    let monotonic_deadline = Instant::now() + duration;
+    wait(Deadline::at(deadline), shutdown_requested)
+}
+
+fn wait(deadline: Deadline, shutdown_requested: impl Fn() -> bool) -> bool {
     loop {
         if shutdown_requested() {
             return false;
         }
-        if now_utc() >= deadline {
-            return true;
-        }
-        let remaining = monotonic_deadline.saturating_duration_since(Instant::now());
+        let remaining = deadline.remaining();
         if remaining.is_zero() {
             return true;
         }
@@ -87,38 +149,80 @@ pub fn wait_until(deadline: OffsetDateTime, shutdown_requested: impl Fn() -> boo
     }
 }
 
-/// A wall-clock deadline with a monotonic fallback for real waiting.
-#[derive(Clone, Copy)]
+/// A monotonic budget that also expires on simulated advance with an active override.
+/// Relative production deadlines never read UTC, even at construction.
+#[derive(Debug, Clone, Copy)]
 pub struct Deadline {
-    wall: OffsetDateTime,
+    wall: Option<OffsetDateTime>,
     monotonic: Instant,
 }
 
 impl Deadline {
     pub fn after(duration: Duration) -> Self {
-        let wall_duration = time::Duration::try_from(duration).unwrap_or_default();
+        Self::after_at(duration, Instant::now())
+    }
+
+    pub(crate) fn after_at(duration: Duration, now: Instant) -> Self {
         Self {
-            wall: now_utc() + wall_duration,
+            wall: override_now()
+                .map(|wall| wall + time::Duration::try_from(duration).unwrap_or_default()),
+            monotonic: now + duration,
+        }
+    }
+
+    /// Convert a provider's absolute expiry once, retaining monotonic production time.
+    pub(crate) fn at(wall: OffsetDateTime) -> Self {
+        let duration = Duration::try_from(wall - now_utc()).unwrap_or_default();
+        Self {
+            wall: override_now().map(|_| wall),
             monotonic: Instant::now() + duration,
         }
     }
 
     pub fn reached(self) -> bool {
-        now_utc() >= self.wall || Instant::now() >= self.monotonic
+        self.reached_at(Instant::now())
+    }
+
+    pub(crate) fn reached_at(self, now: Instant) -> bool {
+        now >= self.monotonic
+            || self
+                .wall
+                .zip(override_now())
+                .is_some_and(|(deadline, now)| now >= deadline)
     }
 
     pub fn remaining(self) -> Duration {
-        let wall = Duration::try_from(self.wall - now_utc()).unwrap_or_default();
-        wall.min(self.monotonic.saturating_duration_since(Instant::now()))
+        self.remaining_at(Instant::now())
+    }
+
+    pub(crate) fn remaining_at(self, now: Instant) -> Duration {
+        let remaining = self.monotonic.saturating_duration_since(now);
+        match self.wall.zip(override_now()) {
+            Some((deadline, now)) => {
+                remaining.min(Duration::try_from(deadline - now).unwrap_or_default())
+            }
+            None => remaining,
+        }
+    }
+
+    pub(crate) fn monotonic(self) -> Instant {
+        self.monotonic
     }
 }
 
-/// Wait for a duration using a monotonic timeout and wake early on simulated advance.
+#[cfg(test)]
+impl From<Instant> for Deadline {
+    fn from(monotonic: Instant) -> Self {
+        Self {
+            wall: None,
+            monotonic,
+        }
+    }
+}
+
+/// Wait for a monotonic duration and wake early on simulated advance.
 pub fn wait_for(duration: Duration, shutdown_requested: impl Fn() -> bool) -> bool {
-    wait_until(
-        now_utc() + time::Duration::try_from(duration).unwrap_or_default(),
-        shutdown_requested,
-    )
+    wait(Deadline::after(duration), shutdown_requested)
 }
 
 fn env_now() -> Option<OffsetDateTime> {
@@ -129,8 +233,6 @@ fn env_now() -> Option<OffsetDateTime> {
             .map(|value| value.to_offset(UtcOffset::UTC))
     })
 }
-
-// ponytail: roughly 300 other wall-clock reads stay outside these targeted domains: availability, claims and retry resets, worker heartbeats, controller deadlines, and watchdog deadlines.
 
 #[cfg(test)]
 pub(crate) struct TestClockGuard {
@@ -173,6 +275,11 @@ pub(crate) fn set_for_test(now: OffsetDateTime) -> TestClockGuard {
 }
 
 #[cfg(test)]
+pub(crate) fn test_clock_handle() -> Option<TestClockHandle> {
+    test_clock().map(TestClockHandle)
+}
+
+#[cfg(test)]
 fn test_clock() -> Option<Arc<SimulatedClock>> {
     TEST_NOW.with(|current| current.borrow().clone())
 }
@@ -210,6 +317,23 @@ impl Drop for TestClockScope {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clock_deadline_ignores_utc_jump_without_override() {
+        let clock = set_for_test(OffsetDateTime::UNIX_EPOCH);
+        let deadline = Deadline::after(Duration::from_secs(60));
+        clock.advance(time::Duration::hours(1));
+        assert!(deadline.reached());
+        // Model removal of the override after UTC jumped, with the same budget.
+        let installed = TEST_NOW.with(|current| current.borrow_mut().take());
+        assert!(!deadline.reached());
+        assert!(deadline.remaining() > Duration::from_secs(59));
+        let production = Deadline::after(Duration::from_secs(60));
+        assert!(production.wall.is_none());
+        assert!(!production.reached());
+        assert!(production.reached_at(production.monotonic));
+        TEST_NOW.with(|current| *current.borrow_mut() = installed);
+    }
 
     #[test]
     fn test_clock_parses_rfc3339_and_normalizes_to_utc() {

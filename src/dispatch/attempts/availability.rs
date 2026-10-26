@@ -10,10 +10,15 @@ use super::*;
 /// local reset displaying as "~14h remaining" on a UTC-5 host). Falls back
 /// to UTC only if the local offset genuinely can't be determined.
 fn now_with_local_offset() -> OffsetDateTime {
-    let local_offset_seconds = chrono::Local::now().offset().local_minus_utc();
+    let now = crate::clock::now_utc();
+    let utc = chrono::DateTime::from_timestamp(now.unix_timestamp(), now.nanosecond())
+        .expect("UTC clock instant is representable by Chrono");
+    let local_offset_seconds =
+        chrono::TimeZone::offset_from_utc_datetime(&chrono::Local, &utc.naive_utc())
+            .local_minus_utc();
     let offset =
         time::UtcOffset::from_whole_seconds(local_offset_seconds).unwrap_or(time::UtcOffset::UTC);
-    crate::clock::now_utc().to_offset(offset)
+    now.to_offset(offset)
 }
 
 pub(in crate::dispatch) fn mark_backend_unavailable_from_output_for_identity(
@@ -343,5 +348,38 @@ mod transition_tests {
             record_review_outcome(&cfg, &profile, &identity, &review).unwrap();
         }
         assert_eq!(fs::read_to_string(&notices).unwrap().lines().count(), 2);
+    }
+}
+
+#[cfg(test)]
+mod clock_tests {
+    #[test]
+    fn availability_local_offset_uses_injected_january() {
+        const CHILD: &str = "GAH_TIMEZONE_CLOCK_PROBE";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "dispatch::attempts::availability::clock_tests::availability_local_offset_uses_injected_january", "--nocapture"])
+                .env(CHILD, "1").env("TZ", "America/Chicago")
+                .output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return;
+        }
+        let _clock = crate::clock::set_for_test(
+            time::OffsetDateTime::parse(
+                "2026-01-01T00:00:00Z",
+                &time::format_description::well_known::Rfc3339,
+            )
+            .unwrap(),
+        );
+        let now = super::now_with_local_offset();
+        assert_eq!(
+            now.unix_timestamp(),
+            crate::clock::now_utc().unix_timestamp()
+        );
+        assert_eq!(now.offset().whole_seconds(), -21600);
     }
 }

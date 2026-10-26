@@ -65,6 +65,39 @@ fn parasaur_link_runs_the_same_cli_under_its_own_name() {
         .stdout(predicate::str::contains("Usage: parasaur dispatch"));
 }
 
+#[test]
+fn clock_override_requires_explicit_cli_child_opt_in() {
+    const CHILD: &str = "GAH_CLOCK_ISOLATION_PROBE";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "args::clock_override_requires_explicit_cli_child_opt_in",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("GAH_TEST_NOW", "2026-01-01T00:00:00Z")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        return;
+    }
+    super::gah_command()
+        .args(["--version"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("GAH_TEST_NOW").not());
+    super::gah_command()
+        .env("GAH_TEST_NOW", "2026-01-01T00:00:00Z")
+        .args(["doctor"])
+        .assert()
+        .stderr(predicate::str::contains("WARNING: GAH_TEST_NOW is set"));
+}
+
 /// The top-level version flag resolves and advertises the built version.
 #[test]
 fn version_works() {

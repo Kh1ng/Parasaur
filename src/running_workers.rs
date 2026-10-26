@@ -211,11 +211,26 @@ pub fn observe(root: &Path, now: OffsetDateTime) -> Vec<RunningWorker> {
                 };
                 let owner_gone = record.owner_pid.is_some_and(owner_is_gone);
                 let mut row = record.worker;
-                // The writer and reader use the same clock; filesystem mtimes
-                // use the host clock and diverge under simulated time.
-                let last = OffsetDateTime::parse(&row.last_activity_at, &Rfc3339)
+                let mut last = OffsetDateTime::parse(&row.last_activity_at, &Rfc3339)
                     .or_else(|_| OffsetDateTime::parse(&row.started_at, &Rfc3339))
                     .unwrap_or(now);
+                // Legacy writers renew mtimes; simulated time must ignore host mtimes.
+                if crate::clock::override_now().is_none() {
+                    if let Ok(modified) = fs::metadata(&path).and_then(|m| m.modified()) {
+                        last = last.max(OffsetDateTime::from(modified));
+                    }
+                    // Output and idle-watch heartbeats are activity; reads never renew it.
+                    if let Ok(logs) = fs::read_dir(dir) {
+                        for log in logs
+                            .flatten()
+                            .filter(|log| log.file_name().to_string_lossy().ends_with(".log"))
+                        {
+                            if let Ok(modified) = log.metadata().and_then(|m| m.modified()) {
+                                last = last.max(OffsetDateTime::from(modified));
+                            }
+                        }
+                    }
+                }
                 // Also bound legacy records, PID reuse after reboot, and platforms
                 // without a PID probe. Healthy workers renew through the idle watch.
                 if (now - last).whole_seconds() >= 86_400 {
@@ -371,6 +386,56 @@ mod tests {
 
         drop(guard);
         assert!(observe(temp.path(), now).is_empty());
+    }
+
+    #[test]
+    fn legacy_heartbeat_remains_live() {
+        let temp = tempfile::tempdir().unwrap();
+        let session = temp.path().join("sessions/run/attempt-1");
+        fs::create_dir_all(&session).unwrap();
+        initialize(
+            session.parent().unwrap(),
+            &DispatchContext {
+                profile: "gah".into(),
+                work_id: Some("#1".into()),
+                run_id: "run".into(),
+                mode: "improve".into(),
+            },
+        );
+        let identity = crate::execution_identity::ExecutionIdentity::legacy_route(
+            "codex",
+            None::<String>,
+            "codex",
+            None::<String>,
+            None::<String>,
+        );
+        let _guard = InvocationGuard::start(&session, &identity, None, Some("#1"), 900);
+        let path = session.join("running-worker.json");
+        let mut record: InvocationRecord =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let now = crate::clock::now_utc();
+        let old = (now - time::Duration::seconds(901))
+            .format(&Rfc3339)
+            .unwrap();
+        record.worker.started_at = old.clone();
+        record.worker.last_activity_at = old;
+        fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+        // Previous binaries renewed only file mtimes, leaving the timestamp unchanged.
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(now.into())
+            .unwrap();
+        assert_eq!(observe(temp.path(), now)[0].state, WorkerState::Running);
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified((now - time::Duration::seconds(901)).into())
+            .unwrap();
+        fs::write(session.join("backend-output.log"), "progress").unwrap();
+        assert_eq!(observe(temp.path(), now)[0].state, WorkerState::Running);
     }
 
     #[test]

@@ -54,6 +54,7 @@
 
 use super::attempts::{reserve_backend_attempt, BackendAdmissionGuard};
 use super::DispatchArgs;
+use crate::clock::Deadline;
 use crate::config::{IssueClaimMode, IssueClaimPolicy, Profile};
 use crate::execution_identity::ExecutionIdentity;
 use crate::ledger::LedgerEntry;
@@ -314,7 +315,7 @@ fn claim_or_lose(
             profile,
             target,
             me,
-            instant_at(expires_at, crate::clock::now_utc(), Instant::now()),
+            Deadline::at(expires_at),
             claim_ttl(policy),
         )),
     }
@@ -324,12 +325,6 @@ fn claim_ttl(policy: &IssueClaimPolicy) -> Duration {
     Duration::from_secs(u64::from(policy.ttl_minutes) * 60)
 }
 
-/// The monotonic instant of wall-clock time `at`, given that `now` is
-/// `now_instant`. A time already past maps to `now_instant`.
-fn instant_at(at: OffsetDateTime, now: OffsetDateTime, now_instant: Instant) -> Instant {
-    now_instant + Duration::try_from(at - now).unwrap_or_default()
-}
-
 /// A won claim, renewed in the background while the dispatch runs. Renewal
 /// is the dispatch's proof of life: a loop that crashes stops renewing, and
 /// its claim lapses `ttl_minutes` later. Dropping the lease stops renewal and
@@ -337,7 +332,8 @@ fn instant_at(at: OffsetDateTime, now: OffsetDateTime, now_instant: Instant) -> 
 /// held once a pull request for the issue is open).
 ///
 /// The lease's authority ends at its deadline: the claim's confirmed expiry
-/// on the provider, on the monotonic clock. [`IssueLease::ensure_held`]
+/// on the provider, using a monotonic budget or active simulated expiry.
+/// [`IssueLease::ensure_held`]
 /// enforces it by itself, so a renewal that hangs or fails cannot keep a
 /// dispatch authorized past the point where another loop may take the issue.
 #[derive(Debug)]
@@ -355,7 +351,7 @@ struct LeaseState {
     /// When the claim expires unless a renewal is confirmed first. A renewal
     /// moves it to a TTL after the renewal began, which is no later than the
     /// time the provider records for it.
-    deadline: Instant,
+    deadline: Deadline,
 }
 
 #[derive(Debug, Clone)]
@@ -369,11 +365,13 @@ impl IssueLease {
         profile: &Profile,
         target: &ClaimTarget,
         me: String,
-        deadline: Instant,
+        deadline: Deadline,
         ttl: Duration,
     ) -> Self {
         #[cfg(test)]
         let probe = tests::RENEWAL_PROBE.with(|probe| probe.borrow_mut().take());
+        #[cfg(test)]
+        let clock = crate::clock::test_clock_handle();
         let state = Arc::new(Mutex::new(LeaseState {
             lost: None,
             deadline,
@@ -383,6 +381,8 @@ impl IssueLease {
         let claimed = target.clone();
         let thread_state = Arc::clone(&state);
         let renewer = std::thread::spawn(move || {
+            #[cfg(test)]
+            let _clock_scope = clock.as_ref().map(|clock| clock.install());
             let now = || {
                 #[cfg(test)]
                 if let Some(probe) = &probe {
@@ -394,13 +394,26 @@ impl IssueLease {
             let mut failed = false;
             loop {
                 let deadline = lock(&thread_state).deadline;
-                let wait =
-                    next_renewal_wait(deadline.saturating_duration_since(now()), ttl, failed);
-                if !matches!(stopped.recv_timeout(wait), Err(RecvTimeoutError::Timeout)) {
-                    return;
+                let wait = next_renewal_wait(deadline.remaining_at(now()), ttl, failed);
+                let renewal_deadline = Deadline::after_at(wait, now());
+                loop {
+                    let remaining = renewal_deadline.remaining_at(now());
+                    // Only simulated clocks need polling for advances. Production
+                    // keeps the original single interruptible monotonic wait.
+                    let wait = if crate::clock::override_now().is_some() {
+                        remaining.min(Duration::from_millis(25))
+                    } else {
+                        remaining
+                    };
+                    if !matches!(stopped.recv_timeout(wait), Err(RecvTimeoutError::Timeout)) {
+                        return;
+                    }
+                    if renewal_deadline.reached_at(now()) {
+                        break;
+                    }
                 }
                 let began = now();
-                if began >= deadline {
+                if deadline.reached_at(began) {
                     lose(
                         &thread_state,
                         "the claim expired before a renewal was confirmed",
@@ -411,12 +424,13 @@ impl IssueLease {
                 // claim it renews expires; past that, it proves nothing.
                 let board = GithubBoard {
                     profile: &profile,
-                    deadline: Some(deadline),
+                    deadline: Some(deadline.monotonic()),
                 };
+                let extended = Deadline::after_at(ttl, began);
                 match renew(&board, &policy, &me, &claimed, crate::clock::now_utc()) {
                     Ok(None) => {
                         failed = false;
-                        if !confirm_renewal(&thread_state, began + ttl, now()) {
+                        if !confirm_renewal(&thread_state, extended, now()) {
                             return;
                         }
                         #[cfg(test)]
@@ -460,7 +474,7 @@ impl IssueLease {
     /// the item.
     fn ensure_held(&self) -> Result<()> {
         let mut state = lock(&self.state);
-        if state.lost.is_none() && Instant::now() >= state.deadline {
+        if state.lost.is_none() && state.deadline.reached() {
             state.lost = Some(LeaseLoss::Claim(
                 "the claim expired before a renewal was confirmed".to_string(),
             ));
@@ -493,9 +507,9 @@ fn lose(state: &Mutex<LeaseState>, reason: &str) {
 /// when another loop could have taken the issue, so the lease is lost even
 /// though the call succeeded and even if nobody checked in that gap.
 /// Returns whether the lease still holds.
-fn confirm_renewal(state: &Mutex<LeaseState>, extended: Instant, now: Instant) -> bool {
+fn confirm_renewal(state: &Mutex<LeaseState>, extended: Deadline, now: Instant) -> bool {
     let mut state = lock(state);
-    if state.lost.is_none() && now >= state.deadline {
+    if state.lost.is_none() && state.deadline.reached_at(now) {
         state.lost = Some(LeaseLoss::Claim(
             "the claim expired before its renewal was confirmed".to_string(),
         ));
