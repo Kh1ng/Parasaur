@@ -15,7 +15,7 @@
 //! or one of the configured state roots.
 
 use anyhow::{bail, Context, Result};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// A validated system account name, safe to include in diagnostics and argv.
@@ -55,16 +55,15 @@ pub(super) enum PreviousAccount {
 }
 
 /// Read the last User assignment in the Service section. An empty assignment
-/// resets systemd to root; directives in other sections have no effect.
+/// resets systemd to root; directives in other sections have no effect. This
+/// fallback also reads files not yet reflected in systemd's cached properties.
 pub(super) fn unit_user(unit: &str) -> Option<String> {
-    unit_users(unit).pop()
-}
-
-/// Read logical systemd lines, including continuations across comment blocks.
-/// Keep every assignment so a conflicting drop-in cannot hide behind a reset.
-fn unit_users(unit: &str) -> Vec<String> {
+    let unit = unit
+        .trim_start_matches('\u{feff}')
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
     let mut logical = String::new();
-    for line in unit.trim_start_matches('\u{feff}').lines() {
+    for line in unit.lines() {
         if line.trim_start().starts_with(['#', ';']) {
             continue;
         }
@@ -78,19 +77,29 @@ fn unit_users(unit: &str) -> Vec<String> {
         }
     }
     let mut service = false;
-    let mut users = Vec::new();
+    let mut user = None;
     for line in logical.lines().map(str::trim) {
         if line.starts_with('[') {
             service = line == "[Service]";
         } else if service {
             if let Some((key, value)) = line.split_once('=') {
                 if key.trim() == "User" {
-                    users.push(value.trim().to_string());
+                    let value = value.trim();
+                    let value = value
+                        .strip_prefix('"')
+                        .and_then(|value| value.strip_suffix('"'))
+                        .or_else(|| {
+                            value
+                                .strip_prefix('\'')
+                                .and_then(|value| value.strip_suffix('\''))
+                        })
+                        .unwrap_or(value);
+                    user = Some(value.to_string());
                 }
             }
         }
     }
-    users
+    user
 }
 
 fn account(value: &str) -> Result<PreviousAccount> {
@@ -150,7 +159,14 @@ fn effective_previous_account(
     service: &str,
     rendered_user: &UserName,
 ) -> Result<PreviousAccount> {
-    let on_disk = previous_account(target)?;
+    let on_disk = match std::fs::read_to_string(target) {
+        Ok(unit) => Some(unit),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("reading installed unit {}", target.display()))
+        }
+    };
     let show = |property: &str| -> Result<String> {
         let output = std::process::Command::new("systemctl")
             .args(["show", "-p", property, "--value", service])
@@ -164,8 +180,18 @@ fn effective_previous_account(
             .trim()
             .to_string())
     };
-    let load_state = show("LoadState")?;
-    let effective = if load_state == "loaded" {
+    let load_state = match show("LoadState") {
+        Ok(state) => Some(state),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            None
+        }
+        Err(error) => return Err(error),
+    };
+    let effective = if load_state.as_deref() == Some("loaded") {
         // Unlike a missing User= directive, empty command output is unknown.
         Some(account(&show("User")?).with_context(|| {
             format!("cannot determine effective account for {service}: systemctl show -p User --value {service} did not return an explicit supported account")
@@ -173,37 +199,50 @@ fn effective_previous_account(
     } else {
         None
     };
-    let mut drop_ins: BTreeSet<PathBuf> = show("DropInPaths")?
-        .split_whitespace()
-        .map(PathBuf::from)
-        .collect();
+    let reported = if load_state.is_some() {
+        show("DropInPaths")?
+    } else {
+        String::new()
+    };
+    let reported: Vec<PathBuf> = reported.split_whitespace().map(PathBuf::from).collect();
     // A first install can still have persistent drop-ins. Also inspect the
     // standard search directories so newly added overrides cannot hide in
     // systemd's cached property values until daemon-reload.
-    let mut drop_in_dirs = vec![format!("{service}.d"), "service.d".into()];
+    let mut drop_in_dirs = vec![format!("{service}.d")];
     if let Some(stem) = service.strip_suffix(".service") {
         drop_in_dirs.extend(
             stem.match_indices('-')
-                .map(|(index, _)| format!("{}.service.d", &stem[..=index])),
+                .map(|(index, _)| format!("{}.service.d", &stem[..=index]))
+                .rev(),
         );
     }
-    for base in target.parent().into_iter().chain([
-        Path::new("/etc/systemd/system"),
-        Path::new("/run/systemd/system"),
-        Path::new("/usr/local/lib/systemd/system"),
-        Path::new("/usr/lib/systemd/system"),
-        Path::new("/lib/systemd/system"),
-    ]) {
-        for directory in &drop_in_dirs {
+    drop_in_dirs.push("service.d".into());
+    let bases: Vec<_> = target
+        .parent()
+        .into_iter()
+        .chain([
+            Path::new("/etc/systemd/system"),
+            Path::new("/run/systemd/system"),
+            Path::new("/usr/local/lib/systemd/system"),
+            Path::new("/usr/lib/systemd/system"),
+            Path::new("/lib/systemd/system"),
+        ])
+        .collect();
+    // Select the highest-priority file for each name, then apply names in
+    // lexical order, just as systemd does across its drop-in directories.
+    let mut drop_ins = BTreeMap::new();
+    for directory in &drop_in_dirs {
+        for base in &bases {
             match std::fs::read_dir(base.join(directory)) {
                 Ok(entries) => {
                     for entry in entries {
-                        let path = entry?.path();
+                        let entry = entry?;
+                        let path = entry.path();
                         if path
                             .extension()
                             .is_some_and(|extension| extension == "conf")
                         {
-                            drop_ins.insert(path);
+                            drop_ins.entry(entry.file_name()).or_insert(path);
                         }
                     }
                 }
@@ -219,19 +258,38 @@ fn effective_previous_account(
             }
         }
     }
-    for path in drop_ins {
-        let body = std::fs::read_to_string(&path)
-            .with_context(|| format!("reading systemd drop-in {}", path.display()))?;
-        for value in unit_users(&body) {
-            let user = UserName::parse(if value.is_empty() { "root" } else { &value })
-                .with_context(|| format!("reading User= in systemd drop-in {}", path.display()))?;
-            if user != *rendered_user {
-                bail!("refusing to change the service account: systemd drop-in {} sets User={user} but the rendered unit sets User={rendered_user}; the drop-in survives the base unit update; adjust that drop-in first", path.display());
-            }
+    for path in reported {
+        if let Some(name) = path.file_name() {
+            drop_ins.entry(name.to_owned()).or_insert(path);
         }
     }
-    if load_state == "not-found" && matches!(on_disk, PreviousAccount::NotInstalled) {
-        return Ok(on_disk);
+    let mut override_user = None;
+    for path in drop_ins.into_values() {
+        let body = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading systemd drop-in {}", path.display()))?;
+        if let Some(value) = unit_user(&body) {
+            override_user = Some((path, value));
+        }
+    }
+    if let Some((path, value)) = &override_user {
+        let user = UserName::parse(if value.is_empty() { "root" } else { value })
+            .with_context(|| format!("reading User= in systemd drop-in {}", path.display()))?;
+        if user != *rendered_user {
+            bail!("refusing to change the service account: systemd drop-in {} sets User={user} but the rendered unit sets User={rendered_user}; the drop-in survives the base unit update; adjust that drop-in first", path.display());
+        }
+    }
+    if load_state.is_none() {
+        if on_disk.is_none() {
+            return Ok(PreviousAccount::NotInstalled);
+        }
+        return match override_user {
+            Some((_, value)) => account(if value.is_empty() { "root" } else { &value }),
+            None => previous_account(target),
+        };
+    }
+    let load_state = load_state.unwrap();
+    if load_state == "not-found" && on_disk.is_none() {
+        return Ok(PreviousAccount::NotInstalled);
     }
     if load_state != "loaded" {
         bail!("cannot determine effective account for {service}: systemd LoadState={load_state}");
@@ -239,14 +297,11 @@ fn effective_previous_account(
     // Read the fragment as well, including vendor units outside /etc. Never
     // let a successful show hide an unreadable or vanished base unit.
     let fragment = show("FragmentPath")?;
-    if fragment.is_empty()
-        || matches!(
-            previous_account(Path::new(&fragment))?,
-            PreviousAccount::NotInstalled
-        )
-    {
+    if fragment.is_empty() {
         bail!("systemd did not report a readable installed fragment for {service}");
     }
+    std::fs::read_to_string(&fragment)
+        .with_context(|| format!("reading installed systemd fragment {fragment}"))?;
     effective.context("systemd did not report the effective account")
 }
 
@@ -291,7 +346,7 @@ impl ServerUnit {
                 .unwrap_or("root"),
         )?;
         let previous = effective_previous_account(&target, service, &rendered_user)?;
-        // Every drop-in User= agrees with the rendered account after reload.
+        // The effective drop-in User= agrees with the rendered account after reload.
         let change = account_change(previous, new_user)
             .with_context(|| format!("planning ownership repair for {service}"))?;
         let managed = if change.is_some() {

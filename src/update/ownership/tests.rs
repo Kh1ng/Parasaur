@@ -27,6 +27,27 @@ fn unit_user_reads_only_service_assignments() {
 }
 
 #[test]
+fn unit_user_accepts_systemd_line_endings_and_quoted_values() {
+    for ending in ["\r", "\r\n", "\n"] {
+        let unit = [
+            "[Service]",
+            "User =first",
+            "# User=ignored",
+            "; User=ignored",
+            "User = \"agent\"",
+            "[Unit]",
+            "User=ignored",
+        ]
+        .join(ending);
+        assert_eq!(unit_user(&unit).as_deref(), Some("agent"), "{unit:?}");
+        assert_eq!(
+            unit_user(&format!("{unit}{ending}[Service]{ending}User=''{ending}")).as_deref(),
+            Some("")
+        );
+    }
+}
+
+#[test]
 fn unit_user_reads_continued_assignments_and_skips_comment_blocks() {
     for unit in [
         "[Service]\nUser\\\n=agent\n",
@@ -389,6 +410,10 @@ fn refusal_names_both_accounts_and_the_paths() {
 /// render hermetic (the tracked template needs a Node path).
 fn unit_install_shims(unit_target: &Path) -> TempDir {
     let bin = ownership_tempdir();
+    let cached_user = std::fs::read_to_string(unit_target)
+        .ok()
+        .and_then(|unit| unit_user(&unit))
+        .unwrap_or_default();
     let sudo_log = bin.path().join("sudo-argv.log");
     for (name, body) in [
             (
@@ -411,7 +436,7 @@ if [ "$1" = show ]; then
   case "$3" in
     LoadState) if [ -f '{target}' ]; then echo loaded; else echo not-found; fi ;;
     FragmentPath) echo '{target}' ;;
-    User) cat '{target}' '{target}.d/'*.conf 2>/dev/null | sed -n 's/^User=//p' | tail -1 ;;
+    User) echo '{cached_user}' ;;
     DropInPaths) for f in '{target}.d/'*.conf; do [ ! -f "$f" ] || printf '%s ' "$f"; done ;;
   esac
 fi
@@ -591,7 +616,11 @@ fn matching_or_missing_previous_account_never_chowns() {
         if drop_in {
             let path = units.join("gah-server.service.d/override.conf");
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, format!("[Service]\nUser\\\n={}\n", current_user())).unwrap();
+            std::fs::write(
+                path,
+                format!("[Service]\nUser=agent\nUser\\\n=\"{}\"\n", current_user()),
+            )
+            .unwrap();
         }
         let bin = unit_install_shims(&units.join("gah-server.service"));
         let _path = crate::test_support::PathGuard::set(bin.path().to_str().unwrap());
@@ -1070,14 +1099,42 @@ fn ownership_persistent_user_drop_in_refuses_before_any_chown() {
 #[test]
 fn ownership_continued_agent_drop_in_halts_at_preflight_before_khing_repair() {
     let _exec = crate::test_support::ExecGuard::new();
-    for (body, discovery) in [
-        ("[Service]\nUser\\\n=agent\n", "disk"),
-        ("[Service]\nUser=agent\n", "disk"),
-        ("[Service]\nUser\\\n# comment\n =agent\n", "reported"),
-        ("[Service]\\\n\nUser=agent\n", "reported"),
-        ("[Service]\nDescription=escaped\\\\\nUser=agent\n", "disk"),
-        ("[Service]\nDescription=space\\ \nUser=agent\n", "reported"),
-        ("[Service]\nUser=agent\nUser=khing\n", "disk"),
+    for (body, discovery, effective) in [
+        ("[Service]\rUser=agent\r", "disk", "agent"),
+        ("[Service]\r\nUser=agent\r\n", "reported", "agent"),
+        ("[Service]\nUser =agent\n", "disk", "agent"),
+        ("[Service]\nUser=\"agent\"\n", "reported", "agent"),
+        ("[Service]\nUser='agent'\n", "disk", "agent"),
+        ("[Service]\nUser\\\n=agent\n", "disk", "agent"),
+        ("[Service]\nUser=agent\n", "disk", "agent"),
+        (
+            "[Service]\nUser\\\n# comment\n =agent\n",
+            "reported",
+            "agent",
+        ),
+        ("[Service]\\\n\nUser=agent\n", "reported", "agent"),
+        (
+            "[Service]\nDescription=escaped\\\\\nUser=agent\n",
+            "disk",
+            "agent",
+        ),
+        (
+            "[Service]\nDescription=space\\ \nUser=agent\n",
+            "reported",
+            "agent",
+        ),
+        ("[Service]\nUser=khing\nUser=agent\n", "disk", "agent"),
+        ("[Service]\nUser=agent\nUser=\n", "reported", "root"),
+        (
+            "[Service]\nUser=agent\n[Unit]\nUser=khing\n",
+            "reported",
+            "agent",
+        ),
+        (
+            "[Service]\nUser=agent\n# User=khing\n; User=khing\n",
+            "disk",
+            "agent",
+        ),
     ] {
         let dir = ownership_tempdir();
         let (repo, config, _) = repair_fixture(dir.path());
@@ -1104,7 +1161,10 @@ fn ownership_continued_agent_drop_in_halts_at_preflight_before_khing_repair() {
         let shim = shim
             .lines()
             .map(|line| {
-                if line.trim_start().starts_with("DropInPaths)") {
+                if line.trim_start().starts_with("User)") {
+                    // The drop-in can be newer than systemd's cached User.
+                    "    User) echo agent ;;".into()
+                } else if line.trim_start().starts_with("DropInPaths)") {
                     if discovery == "reported" {
                         format!("    DropInPaths) echo '{}' ;;", drop_in.display())
                     } else {
@@ -1127,7 +1187,8 @@ fn ownership_continued_agent_drop_in_halts_at_preflight_before_khing_repair() {
         )
         .unwrap_err();
         let message = format!("{error:#}");
-        for expected in [drop_in.to_str().unwrap(), "User=agent", "User=khing"] {
+        let effective = format!("User={effective}");
+        for expected in [drop_in.to_str().unwrap(), &effective, "User=khing"] {
             assert!(message.contains(expected), "{body:?}: {message}");
         }
         let steps = std::fs::read_to_string(bin.path().join("steps.log")).unwrap();
@@ -1304,6 +1365,84 @@ fn ownership_first_install_also_refuses_persistent_user_drop_in() {
         "{error:#}"
     );
     assert!(!bin.path().join("sudo-argv.log").exists());
+}
+
+#[test]
+fn ownership_without_systemctl_uses_the_complete_disk_configuration() {
+    let _exec = crate::test_support::ExecGuard::new();
+    let dir = ownership_tempdir();
+    // Hide systemctl only in a child process, without racing other tests' git.
+    const CHILD: &str = "GAH_TEST_OWNERSHIP_WITHOUT_SYSTEMCTL";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "update::ownership::tests::ownership_without_systemctl_uses_the_complete_disk_configuration", "--nocapture"])
+            .env(CHILD, "1")
+            .env("PATH", dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let target = dir.path().join("gah-server.service");
+    std::fs::write(&target, "[Service]\nUser=olduser\n").unwrap();
+    let drop_in = dir.path().join("gah-server.service.d/90-user.conf");
+    std::fs::create_dir_all(drop_in.parent().unwrap()).unwrap();
+    for (body, expected) in [
+        ("[Service]\rUser=agent\r", "agent"),
+        ("[Service]\r\nUser=agent\r\n", "agent"),
+        ("[Service]\nUser =agent\n", "agent"),
+        ("[Service]\nUser=\"agent\"\n", "agent"),
+        ("[Service]\nUser=olduser\nUser=agent\n", "agent"),
+        ("[Service]\nUser=agent\nUser=\n", "root"),
+        ("[Unit]\nUser=agent\n", "olduser"),
+        ("[Service]\n# User=agent\n; User=agent\n", "olduser"),
+    ] {
+        std::fs::write(&drop_in, body).unwrap();
+        let user = UserName::parse(expected).unwrap();
+        let previous =
+            super::effective_previous_account(&target, "gah-server.service", &user).unwrap();
+        match previous {
+            PreviousAccount::Root => assert_eq!(expected, "root"),
+            PreviousAccount::User(user) => assert_eq!(user.as_str(), expected),
+            PreviousAccount::NotInstalled => panic!("installed unit was missed"),
+        }
+        if unit_user(body).is_some() {
+            let error = super::effective_previous_account(
+                &target,
+                "gah-server.service",
+                &UserName::parse("khing").unwrap(),
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains(drop_in.to_str().unwrap()),
+                "{error:#}"
+            );
+        }
+    }
+    // Filename order spans directories, and the specific name masks the
+    // same filename in the generic directory, including /dev/null masks.
+    let generic = dir.path().join("service.d");
+    std::fs::create_dir_all(&generic).unwrap();
+    std::fs::write(generic.join("10-user.conf"), "[Service]\nUser=first\n").unwrap();
+    std::fs::write(generic.join("90-user.conf"), "[Service]\nUser=ignored\n").unwrap();
+    std::fs::write(&drop_in, "[Service]\nUser=agent\n").unwrap();
+    let user = UserName::parse("agent").unwrap();
+    let previous = super::effective_previous_account(&target, "gah-server.service", &user).unwrap();
+    assert!(matches!(previous, PreviousAccount::User(actual) if actual == user));
+    #[cfg(unix)]
+    {
+        std::fs::remove_file(&drop_in).unwrap();
+        std::os::unix::fs::symlink("/dev/null", &drop_in).unwrap();
+        let user = UserName::parse("first").unwrap();
+        let previous =
+            super::effective_previous_account(&target, "gah-server.service", &user).unwrap();
+        assert!(matches!(previous, PreviousAccount::User(actual) if actual == user));
+    }
 }
 
 #[cfg(unix)]
