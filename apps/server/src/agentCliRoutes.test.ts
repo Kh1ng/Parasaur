@@ -101,3 +101,83 @@ test('owner and scheduled updates refuse node policy before any installer launch
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('scheduled fleet ticks contain policy refusals and log only state transitions', async (t) => {
+  const logs = t.mock.method(console, 'warn', () => {});
+  const unhandled: unknown[] = [];
+  const onUnhandled = (error: unknown) => { unhandled.push(error); };
+  process.on('unhandledRejection', onUnhandled);
+  let blocked = true; let launches = 0;
+  const local = new AgentCliVersions(node, { ...options, optedIn: () => true,
+    checkPolicy: async () => {
+      if (blocked) throw new AgentCliError(403, 'agent_update_policy_blocked', 'POLICY BLOCKED: update-agent-cli');
+    }, launch: async () => { launches++; } });
+  const fleet = new AgentCliFleet(local, { getNodes: () => [], getNode: () => undefined });
+  const ticks = async () => {
+    // Match bin.ts: the timer discards the promise and relies on the scheduled boundary.
+    const timer = setInterval(() => { void fleet.scheduledUpdate(); }, 5 * 60_000);
+    try {
+      for (let i = 0; i < 3; i++) {
+        t.mock.timers.tick(5 * 60_000);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+    } finally { clearInterval(timer); }
+  };
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  try {
+    await ticks();
+    assert.deepEqual(unhandled, []);
+    assert.equal(launches, 0);
+    assert.equal(logs.mock.callCount(), 1);
+    assert.match(String(logs.mock.calls[0].arguments[0]), /skip.*policy/i);
+    blocked = false;
+    await ticks();
+    assert.ok(launches > 0);
+    blocked = true;
+    await ticks();
+    assert.equal(logs.mock.callCount(), 2, 'refusal after recovery is a new transition');
+    assert.deepEqual(unhandled, []);
+  } finally { process.off('unhandledRejection', onUnhandled); }
+});
+
+test('read-only central still schedules an opted-in worker, which enforces its own policy', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  let centralLaunches = 0; let workerLaunches = 0; let workerPolicyChecks = 0;
+  const local = new AgentCliVersions(node, { ...options, optedIn: () => true,
+    checkPolicy: async () => { throw new AgentCliError(403, 'agent_update_policy_blocked', 'Read-only central'); },
+    launch: async () => { centralLaunches++; } });
+  const worker: RegisteredNode = { node_id: 'worker', display_name: 'Worker', advertised_url: 'http://127.0.0.1:3774',
+    version: '1', schema_digest: 'digest', transport_mode: 'loopback', secret_ref: '' };
+  const workerService = new AgentCliVersions(worker, { ...options, optedIn: () => true,
+    checkPolicy: async () => { workerPolicyChecks++; }, launch: async () => { workerLaunches++; } });
+  const calls: string[] = [];
+  const fleet = new AgentCliFleet(local, { getNodes: () => [worker], getNode: () => worker }, async (url, init) => {
+    calls.push(String(url));
+    assert.equal(init?.method, 'POST');
+    await workerService.scheduledUpdate();
+    return new Response('{}');
+  });
+  await fleet.scheduledUpdate();
+  assert.deepEqual(calls, ['http://127.0.0.1:3774/api/agents/scheduled-update']);
+  assert.equal(centralLaunches, 0);
+  assert.equal(workerLaunches, 1);
+  assert.equal(workerPolicyChecks, 1);
+});
+
+test('scheduled sweep contains registry failures and skips policy checks when not opted in', async (t) => {
+  const logs = t.mock.method(console, 'warn', () => {});
+  let policyChecks = 0; let registryFailed = true;
+  const local = new AgentCliVersions(node, { ...options, checkPolicy: async () => { policyChecks++; } });
+  const fleet = new AgentCliFleet(local, {
+    getNodes: () => { if (registryFailed) throw new Error('Registry unavailable'); return []; },
+    getNode: () => undefined,
+  });
+  for (let tick = 0; tick < 3; tick++) await assert.doesNotReject(fleet.scheduledUpdate());
+  assert.equal(logs.mock.callCount(), 1);
+  registryFailed = false;
+  await fleet.scheduledUpdate();
+  assert.equal(policyChecks, 0);
+  registryFailed = true;
+  await fleet.scheduledUpdate();
+  assert.equal(logs.mock.callCount(), 2);
+});

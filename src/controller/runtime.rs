@@ -913,9 +913,8 @@ fn run_parallel_once(
                         )?;
 
                         if let Some(work_id) = action_work_id.as_deref() {
-                            if !crate::work_claim::try_claim_work(&claim_scope, work_id)? {
-                                continue;
-                            }
+                            // Reserve in memory on the tick; maintenance checks and
+                            // claim acquisition run in the worker before any action.
                             executed_work_ids.insert(work_id.to_string());
                         }
                         if let Some(key) = action_intake_key(&action) {
@@ -949,8 +948,20 @@ fn run_parallel_once(
                         active += 1;
                         scope.spawn(move || {
                             let _node_capacity_lease = node_capacity_lease;
+                            let mut claimed_work_id = None;
                             let result =
                                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    if let Some(work_id) = work_id_for_thread.as_deref() {
+                                        if !crate::work_claim::try_claim_work(
+                                            &claim_scope_for_thread,
+                                            work_id,
+                                        )? {
+                                            return Ok(format!(
+                                                "{HELD_ELSEWHERE_PREFIX}claim unavailable for '{work_id}'"
+                                            ));
+                                        }
+                                        claimed_work_id = Some(work_id);
+                                    }
                                     execute_action(
                                         cfg,
                                         &profile_for_thread,
@@ -971,7 +982,7 @@ fn run_parallel_once(
                                     (outcome.clone(), outcome)
                                 }
                             };
-                            if let Some(work_id) = work_id_for_thread.as_deref() {
+                            if let Some(work_id) = claimed_work_id {
                                 let _ = crate::work_claim::release_owned_work(
                                     &claim_scope_for_thread,
                                     work_id,

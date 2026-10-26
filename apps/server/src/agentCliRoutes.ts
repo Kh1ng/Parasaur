@@ -11,6 +11,8 @@ interface Registry { getNodes(): RegisteredNode[]; getNode(id: string): Register
 
 /** Fixed worker routes and registry-owned destinations, never request-supplied URLs. */
 export class AgentCliFleet {
+  private readonly scheduledSkips = new Map<string | undefined, string>();
+
   constructor(readonly local: AgentCliVersions, private readonly registry: Registry,
     private readonly doFetch: typeof fetch = fetch) {}
 
@@ -56,14 +58,32 @@ export class AgentCliFleet {
     await this.remote(node, 'update', { backend });
   }
 
+  private scheduledOutcome(nodeId: string | undefined, result: PromiseSettledResult<unknown>): void {
+    if (result.status === 'fulfilled') {
+      this.scheduledSkips.delete(nodeId);
+      return;
+    }
+    const reason = result.reason instanceof AgentCliError ? result.reason.code : 'agent_update_unavailable';
+    // Same failure stays quiet; recovery or a different reason starts a new transition.
+    if (this.scheduledSkips.get(nodeId) === reason) return;
+    this.scheduledSkips.set(nodeId, reason);
+    console.warn(`Agent CLI scheduled update skipped for ${nodeId ?? 'fleet'}: ${reason}.`);
+  }
+
+  /** Timer boundary: each node owns its policy; refusals and failures never escape. */
   async scheduledUpdate(): Promise<void> {
-    // Each node enforces its own opt-in and admin policy, including current GAH nodes.
-    await this.local.checkPolicy();
-    await Promise.allSettled([
-      this.local.scheduledUpdate(),
-      ...this.registry.getNodes().filter(n => n.node_id !== this.local.node.node_id)
-        .map(node => this.remote(node, 'scheduled-update', {})),
-    ]);
+    try {
+      const workers = this.registry.getNodes().filter(n => n.node_id !== this.local.node.node_id);
+      const nodes = [this.local.node, ...workers];
+      const results = await Promise.allSettled([
+        this.local.scheduledUpdate(),
+        ...workers.map(node => this.remote(node, 'scheduled-update', {})),
+      ]);
+      results.forEach((result, index) => this.scheduledOutcome(nodes[index].node_id, result));
+      this.scheduledOutcome(undefined, { status: 'fulfilled', value: undefined });
+    } catch (reason) {
+      this.scheduledOutcome(undefined, { status: 'rejected', reason });
+    }
   }
 }
 
