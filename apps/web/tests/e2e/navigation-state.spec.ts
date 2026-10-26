@@ -54,3 +54,17 @@ test('a mobile conversation link restores its project and chat after reload and 
   await page.goto('/?page=chat&profile=fixture&chat=default');
   await expect(chatSelect).toHaveValue('');
 });
+
+test('a queued GitLab run link opens its dispatch session', async ({ page, request }) => {
+  const mock = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+  expect((await request.post(`${mock}/api/mock/scenario`, { data: { name: 'normal' } })).ok()).toBe(true);
+  const queued = await request.post(`${mock}/api/dispatch`, { data: { profile: 'fixture', mode: 'improve', target: '#42' } });
+  expect(queued.ok()).toBe(true);
+  const { session } = await queued.json();
+  expect(session).toBeTruthy();
+  await page.goto(`/?page=work&profile=fixture&session=${encodeURIComponent(session.id)}`);
+  const dialog = page.getByRole('dialog', { name: /^Session:/ });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(session.id, { exact: true })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get('session')).toBeNull();
+});
