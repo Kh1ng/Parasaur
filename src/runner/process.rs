@@ -646,6 +646,7 @@ fn spawn_with_idle_watch_with_shutdown(
         })
         .filter(|seconds| *seconds > 0)
         .map(Duration::from_secs);
+    let hard_deadline = hard_timeout.map(crate::clock::Deadline::after);
     cmd.env_remove(HARD_TIMEOUT_ENV);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     prepare_process_group(&mut cmd);
@@ -654,6 +655,8 @@ fn spawn_with_idle_watch_with_shutdown(
     // first edit immediately; sampling after spawn would absorb that real
     // change into the baseline and later misclassify it as no progress.
     let initial_worktree_snapshot = worktree_progress_snapshot(worktree);
+    // Test time is scoped to the process unless a harness opts a child in.
+    cmd.env_remove("GAH_TEST_NOW");
     let mut child = cmd.spawn().with_context(|| spawn_context.to_string())?;
     // Issue #116: start sampling the backend's whole process tree immediately
     // after spawn. Sampling runs for the whole attempt -- success, idle kill,
@@ -677,6 +680,7 @@ fn spawn_with_idle_watch_with_shutdown(
     // that kept three workers occupied for ten minutes before the controller
     // could reroute them.
     let startup_grace = idle_timeout;
+    let startup_deadline = crate::clock::Deadline::after(startup_grace);
     let poll_interval = Duration::from_millis(500);
     let worktree_poll_interval = Duration::from_secs(1);
     let mut last_seen_len = fs::metadata(log_path).map(|m| m.len()).unwrap_or(0);
@@ -685,6 +689,7 @@ fn spawn_with_idle_watch_with_shutdown(
     let mut last_process_activity = process_group_activity_snapshot(process_group);
     let mut last_worktree_poll = Instant::now();
     let mut last_progress_at = Instant::now();
+    let mut idle_deadline = crate::clock::Deadline::after(idle_timeout);
     let mut saw_progress = false;
     let mut had_attempt_progress_at_kill = false;
     let mut killed_for_idle = false;
@@ -711,6 +716,7 @@ fn spawn_with_idle_watch_with_shutdown(
                         .unwrap_or(last_seen_len);
                     if output_counts_as_progress {
                         last_progress_at = Instant::now();
+                        idle_deadline = crate::clock::Deadline::after(idle_timeout);
                         saw_progress = true;
                     }
                     last_seen_len = current_len;
@@ -722,6 +728,7 @@ fn spawn_with_idle_watch_with_shutdown(
                     last_seen_len = current_len;
                     if output_counts_as_progress {
                         last_progress_at = Instant::now();
+                        idle_deadline = crate::clock::Deadline::after(idle_timeout);
                         saw_progress = true;
                     }
                 }
@@ -730,6 +737,7 @@ fn spawn_with_idle_watch_with_shutdown(
                         if last_worktree_snapshot.as_ref() != Some(&snapshot) {
                             last_worktree_snapshot = Some(snapshot);
                             last_progress_at = Instant::now();
+                            idle_deadline = crate::clock::Deadline::after(idle_timeout);
                             saw_progress = true;
                         }
                     }
@@ -739,6 +747,7 @@ fn spawn_with_idle_watch_with_shutdown(
                             &activity,
                         ) {
                             last_progress_at = Instant::now();
+                            idle_deadline = crate::clock::Deadline::after(idle_timeout);
                             saw_progress = true;
                         }
                         last_process_activity = Some(activity);
@@ -751,11 +760,11 @@ fn spawn_with_idle_watch_with_shutdown(
                     }
                 }
                 let stalled = if saw_progress {
-                    last_progress_at.elapsed() >= idle_timeout
+                    idle_deadline.reached()
                 } else {
-                    start.elapsed() >= startup_grace
+                    startup_deadline.reached()
                 };
-                if hard_timeout.is_some_and(|timeout| start.elapsed() >= timeout) {
+                if hard_deadline.is_some_and(crate::clock::Deadline::reached) {
                     cleanup_error = kill_process_group(&mut child);
                     killed_for_hard_timeout = true;
                     break Some(-1);
@@ -774,7 +783,9 @@ fn spawn_with_idle_watch_with_shutdown(
                     killed_for_idle = true;
                     break Some(-1);
                 }
-                thread::sleep(poll_interval);
+                let _ = crate::clock::wait_for(poll_interval, || {
+                    shutdown_requested.load(Ordering::SeqCst)
+                });
             }
             Err(error) => {
                 // Not provably ours any more (ECHILD: already reaped), so its
@@ -943,6 +954,8 @@ mod tests {
     fn hard_timeout_terminates_active_process_group() {
         let _exec_guard = ExecGuard::new();
         let f = fixture();
+        let start = time::OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+        let clock = crate::clock::set_for_test(start);
         make_fake_bin(
             &f.bin_dir,
             "backend-hard-timeout",
@@ -950,7 +963,13 @@ mod tests {
         );
         let log_path = f.session_dir.join("backend-hard-timeout.log");
         let mut command = Command::new(f.bin_dir.join("backend-hard-timeout"));
-        command.env(HARD_TIMEOUT_ENV, "1");
+        command.env(HARD_TIMEOUT_ENV, "120");
+        let handle = clock.handle();
+        let advance = thread::spawn(move || {
+            let _scope = handle.install();
+            thread::sleep(Duration::from_millis(100));
+            handle.advance(time::Duration::seconds(120));
+        });
         let started = Instant::now();
         let result = spawn_with_idle_watch(
             command,
@@ -960,12 +979,13 @@ mod tests {
             "launching hard-timeout test backend",
         )
         .unwrap();
+        advance.join().unwrap();
 
         assert_eq!(result.0, -1);
         assert!(started.elapsed() < Duration::from_secs(5));
         let log = fs::read_to_string(log_path).unwrap();
         assert!(!log.contains("leaked"));
-        assert!(log.contains("configured 1s hard wall-clock timeout"));
+        assert!(log.contains("configured 120s hard wall-clock timeout"));
     }
 
     #[cfg(unix)]

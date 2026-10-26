@@ -1495,3 +1495,6 @@ mod claim_work_id;
 
 #[path = "tests/central_lease.rs"]
 mod central_lease;
+
+#[path = "tests/clock.rs"]
+mod clock;

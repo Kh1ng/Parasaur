@@ -110,7 +110,8 @@ fn model_specific_block_blocks_only_that_model() {
 fn expired_temporary_record_becomes_eligible() {
     let tmp = TempDir::new().unwrap();
     let p = path(&tmp);
-    let observed_at = crate::clock::now_utc();
+    let observed_at = time::OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+    let clock = crate::clock::set_for_test(observed_at);
     record_unavailable(
         &p,
         "codex",
@@ -123,8 +124,8 @@ fn expired_temporary_record_becomes_eligible() {
     )
     .unwrap();
 
-    let after_cooldown = observed_at + time::Duration::hours(2);
-    let decision = availability_for(&p, "codex", None, after_cooldown).unwrap();
+    clock.advance(time::Duration::hours(2));
+    let decision = availability_for(&p, "codex", None, crate::clock::now_utc()).unwrap();
     assert!(decision.eligible);
 }
 

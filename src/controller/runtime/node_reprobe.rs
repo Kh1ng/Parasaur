@@ -2,7 +2,7 @@ use super::node_capacity;
 use crate::controller::NextAction;
 use anyhow::Result;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const REPROBE_INTERVAL: Duration = Duration::from_secs(15);
 const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -35,14 +35,14 @@ pub(super) enum WaitOutcome<T> {
 /// normal launch path reacquires its fail-closed lease.
 #[derive(Default)]
 pub(super) struct NodeCapacityReprobe {
-    deadline: Option<Instant>,
+    deadline: Option<crate::clock::Deadline>,
     actions: Vec<NextAction>,
 }
 
 impl NodeCapacityReprobe {
     pub(super) fn schedule(&mut self, action: NextAction) {
         self.admitted(&action);
-        self.deadline = Some(Instant::now() + interval());
+        self.deadline = Some(crate::clock::Deadline::after(interval()));
         self.actions.push(action);
     }
 
@@ -87,9 +87,7 @@ impl NodeCapacityReprobe {
         let deadline = self
             .deadline
             .ok_or_else(|| anyhow::anyhow!("node-capacity re-probe has no deadline"))?;
-        let wait = deadline
-            .saturating_duration_since(Instant::now())
-            .min(SHUTDOWN_POLL_INTERVAL);
+        let wait = deadline.remaining().min(SHUTDOWN_POLL_INTERVAL);
 
         match done_rx.recv_timeout(wait) {
             // A rejected dispatch also completes a worker. Its completion
@@ -102,7 +100,7 @@ impl NodeCapacityReprobe {
                 if crate::runner::shutdown_requested() {
                     return Ok(WaitOutcome::Shutdown);
                 }
-                if Instant::now() < deadline {
+                if !deadline.reached() {
                     return Ok(WaitOutcome::KeepWaiting);
                 }
 
@@ -122,12 +120,12 @@ impl NodeCapacityReprobe {
                         eprintln!(
                             "gah loop: node capacity remains deferred at {active_workers}/{parallel_limit}: {reason}"
                         );
-                        self.deadline = Some(Instant::now() + interval());
+                        self.deadline = Some(crate::clock::Deadline::after(interval()));
                         Ok(WaitOutcome::KeepWaiting)
                     }
                     Err(error) => {
                         eprintln!("gah loop: node capacity re-probe failed closed: {error}");
-                        self.deadline = Some(Instant::now() + interval());
+                        self.deadline = Some(crate::clock::Deadline::after(interval()));
                         Ok(WaitOutcome::KeepWaiting)
                     }
                 }

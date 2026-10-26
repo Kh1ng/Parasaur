@@ -11,7 +11,7 @@ use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::sync::mpsc::sync_channel;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[path = "runtime/profile_lock.rs"]
 mod profile_lock;
@@ -221,18 +221,7 @@ fn wait_for_loop_interval(delay: Duration) -> bool {
 }
 
 fn wait_interruptibly(delay: Duration, shutdown_requested: impl Fn() -> bool) -> bool {
-    const POLL_INTERVAL: Duration = Duration::from_millis(250);
-    let deadline = Instant::now() + delay;
-    loop {
-        if shutdown_requested() {
-            return false;
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return true;
-        }
-        std::thread::sleep(remaining.min(POLL_INTERVAL));
-    }
+    crate::clock::wait_for(delay, shutdown_requested)
 }
 
 /// Total memory of this node when the platform exposes it. `gah config
