@@ -143,6 +143,8 @@ export interface UpstreamFetchOptions {
   headers?: Record<string, string>;
   method?: string;
   body?: string;
+  /** Per-call response deadline in ms; defaults to the router's upstream budget. */
+  timeoutMs?: number;
   /** Override for testing */
   fetchFn?: typeof globalThis.fetch;
 }
@@ -154,7 +156,7 @@ export interface UpstreamFetchOptions {
 export async function boundedUpstreamFetch(opts: UpstreamFetchOptions): Promise<{ status: number; body: unknown }> {
   const fetchFn = opts.fetchFn ?? globalThis.fetch;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? UPSTREAM_TIMEOUT_MS);
   try {
     const response = await fetchFn(opts.url, {
       method: opts.method ?? 'GET',

@@ -697,6 +697,209 @@ test('bound OpenHands profile supplies model metadata without requiring or retur
 });
 
 
+/** A fake `gah` for the OpenHands picker (#1512): binds the GAH profile to
+ * OpenHands profile "work", whose file the test writes per case. */
+function fakeOpenhandsGah(dir: string): string {
+  const cli = join(dir, 'gah');
+  writeFileSync(cli, '#!/bin/sh\ncat >/dev/null\necho \'{"profiles":{"work":{"oh_profile":"work"}}}\'\n', { mode: 0o755 });
+  return cli;
+}
+
+function writeOpenhandsProfile(dir: string, profile: Record<string, unknown>): void {
+  mkdirSync(join(dir, '.openhands', 'profiles'), { recursive: true });
+  writeFileSync(join(dir, '.openhands', 'profiles', 'work.json'), JSON.stringify(profile));
+}
+
+/** Records each (url, Authorization) the listing asked for and answers with
+ * the queued status/body — no real network. */
+function recordingFetch(responses: Array<{ status: number; body: unknown }>): {
+  fetchFn: typeof globalThis.fetch;
+  requested: { url: string; authorization: string }[];
+} {
+  const requested: { url: string; authorization: string }[] = [];
+  let index = 0;
+  return {
+    requested,
+    fetchFn: async (url: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      requested.push({ url: String(url), authorization: headers.get('Authorization') ?? '' });
+      const queued = responses[Math.min(index, responses.length - 1)];
+      index += 1;
+      return new Response(JSON.stringify(queued.body), { status: queued.status });
+    }
+  };
+}
+
+test('OpenHands lists the provider\'s models with the configured one marked, read from the profile provider (#1512)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-'));
+  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY,
+    LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
+  try {
+    process.env.HOME = dir;
+    process.env.GAH_BINARY = fakeOpenhandsGah(dir);
+    delete process.env.LLM_MODEL;
+    delete process.env.LLM_BASE_URL;
+    delete process.env.LLM_API_KEY;
+    writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', base_url: 'https://provider.example/v1', api_key: 'profile-key' });
+    const { fetchFn, requested } = recordingFetch([
+      { status: 200, body: { data: [{ id: 'openai/gpt-4o' }, { id: 'openai/o3' }, { id: 'anthropic/claude-sonnet-4.6' }] } }
+    ]);
+    const backend = createHeadlessBackend(openhandsBackendSpec({ fetchFn }));
+
+    const summary = await backend.listModels('work');
+    assert.deepEqual(summary.models, [
+      { id: 'openai/gpt-4o', name: 'openai/gpt-4o' },
+      { id: 'openai/o3', name: 'openai/o3' },
+      { id: 'anthropic/claude-sonnet-4.6', name: 'anthropic/claude-sonnet-4.6' }
+    ]);
+    assert.equal(summary.currentModelId, 'openai/gpt-4o', 'the configured profile model is the one marked');
+    assert.deepEqual(summary.reasoningEfforts, []);
+    assert.deepEqual(requested, [{ url: 'https://provider.example/v1/models', authorization: 'Bearer profile-key' }],
+      'a LiteLLM-style base_url already ending in /v1 lists at /models');
+
+    // Choosing a model marks it in-memory without a config write.
+    await backend.setModel('work', 'anthropic/claude-sonnet-4.6');
+    assert.equal((await backend.listModels('work')).currentModelId, 'anthropic/claude-sonnet-4.6');
+    await assert.rejects(backend.setModel('work', 'not-offered'), /Unknown model/);
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the OpenHands listing is optional: a provider failure or a missing key falls back to the configured model (#1512)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-fallback-'));
+  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY,
+    LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
+  try {
+    process.env.HOME = dir;
+    process.env.GAH_BINARY = fakeOpenhandsGah(dir);
+    delete process.env.LLM_MODEL;
+    delete process.env.LLM_BASE_URL;
+    delete process.env.LLM_API_KEY;
+    writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', base_url: 'https://bare-provider.example', api_key: 'profile-key' });
+    const { fetchFn, requested } = recordingFetch([{ status: 503, body: { error: 'unavailable' } }]);
+    const failing = createHeadlessBackend(openhandsBackendSpec({ fetchFn }));
+
+    const summary = await failing.listModels('work');
+    assert.deepEqual(summary.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }],
+      'a failing listing leaves exactly the configured model selectable');
+    assert.equal(summary.currentModelId, 'openai/gpt-4o');
+    assert.deepEqual(requested, [{ url: 'https://bare-provider.example/v1/models', authorization: 'Bearer profile-key' }],
+      'a bare-origin base_url gets the conventional /v1 prefix');
+
+    // A profile without an api_key never makes a network call.
+    writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', base_url: 'https://provider.example/v1' });
+    const { fetchFn: unused, requested: none } = recordingFetch([{ status: 200, body: { data: [] } }]);
+    const keyless = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: unused })).listModels('work');
+    assert.deepEqual(none, []);
+    assert.deepEqual(keyless.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }]);
+
+    // The ambient LLM_MODEL a turn would actually run is the one marked.
+    process.env.LLM_MODEL = 'openai/env-model';
+    const envMarked = await failing.listModels('work');
+    assert.equal(envMarked.currentModelId, 'openai/env-model');
+    assert.ok(envMarked.models.some((model) => model.id === 'openai/env-model'));
+    delete process.env.LLM_MODEL;
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a GAH profile with no bound OpenHands profile lists no models (#1512)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-unbound-'));
+  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY };
+  const cli = join(dir, 'gah');
+  try {
+    process.env.HOME = dir;
+    process.env.GAH_BINARY = cli;
+    writeFileSync(cli, '#!/bin/sh\ncat >/dev/null\necho \'{"profiles":{"work":{}}}\'\n', { mode: 0o755 });
+    const summary = await createHeadlessBackend(openhandsBackendSpec()).listModels('work');
+    assert.deepEqual(summary.models, []);
+    assert.equal(summary.currentModelId, null);
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a credential-bound OpenHands instance lists only its configured model, never the profile key (#1512)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-instance-'));
+  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY,
+    LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
+  try {
+    process.env.HOME = dir;
+    process.env.GAH_BINARY = fakeOpenhandsGah(dir);
+    delete process.env.LLM_MODEL;
+    delete process.env.LLM_BASE_URL;
+    delete process.env.LLM_API_KEY;
+    writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', base_url: 'https://source.example/v1', api_key: 'old-profile-key' });
+    const { fetchFn, requested } = recordingFetch([{ status: 200, body: { data: [{ id: 'openai/o3' }] } }]);
+    const summary = await createHeadlessBackend(openhandsBackendSpec({ instanceCredential: true, fetchFn })).listModels('work');
+    assert.deepEqual(requested, [], 'the instance\'s credential owns its provider endpoint and key; there is nothing here to list against');
+    assert.deepEqual(summary.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }]);
+    assert.equal(summary.currentModelId, 'openai/gpt-4o');
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('choosing an OpenHands model is honored on the next turn as LLM_MODEL (#1512)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-setmodel-'));
+  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY, PATH: process.env.PATH,
+    LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
+  try {
+    process.env.HOME = dir;
+    process.env.GAH_BINARY = fakeOpenhandsGah(dir);
+    delete process.env.LLM_MODEL;
+    delete process.env.LLM_BASE_URL;
+    delete process.env.LLM_API_KEY;
+    writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', base_url: 'https://provider.example/v1', api_key: 'profile-key' });
+    writeFileSync(join(dir, 'openhands'), `#!/bin/sh
+node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({model:process.env.LLM_MODEL}))' "${join(dir, 'record.json')}" "$@"
+echo '{"source":"agent","kind":"MessageEvent","llm_message":{"content":[{"type":"text","text":"openhands reply"}]}}'
+`, { mode: 0o755 });
+    process.env.PATH = `${dir}:${saved.PATH}`;
+    const { fetchFn } = recordingFetch([
+      { status: 200, body: { data: [{ id: 'openai/gpt-4o' }, { id: 'openai/o3' }, { id: 'anthropic/claude-sonnet-4.6' }] } }
+    ]);
+    const backend = createHeadlessBackend(openhandsBackendSpec({ fetchFn }));
+    const record = () => JSON.parse(readFileSync(join(dir, 'record.json'), 'utf8')) as { model: string };
+    const turn = (model?: string | null) => backend.runTurn('work', {
+      prompt: 'go', history: [], onChunk: () => {}, onToolResult: () => {}, ...(model !== undefined ? { model } : {})
+    });
+
+    // setModel pins the conversation; the next turn carries it as LLM_MODEL.
+    await backend.setModel('work', 'anthropic/claude-sonnet-4.6');
+    await turn();
+    assert.equal(record().model, 'anthropic/claude-sonnet-4.6', 'the choice reached the OpenHands child ahead of the profile model');
+
+    // An explicit per-turn model wins the same way, without a prior setModel.
+    await turn('openai/o3');
+    assert.equal(record().model, 'openai/o3');
+
+    // An unpinned turn leaves the profile's configured model in place.
+    await turn(null);
+    assert.equal(record().model, 'openai/gpt-4o');
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
 test('a named Vibe instance derives its Python bridge from the selected launcher', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-vibe-selected-launcher-'));
   const selected = join(dir, 'selected-vibe');
