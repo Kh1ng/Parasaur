@@ -318,11 +318,12 @@ pub(super) fn parse(
     );
     let allowance = budget_bytes.and_then(|bytes| budget(bytes, end).ok());
     let checked = end.format(&Rfc3339)?;
+    let scope = crate::quota_store::QuotaScope::new("mistral-dashboard", None, Some(&identity));
     Ok(QuotaObservationRecord {
-        backend: "mistral-dashboard".into(),
-        backend_instance: Some(identity.clone()),
+        backend: scope.backend.into(),
+        backend_instance: scope.backend_instance.map(str::to_owned),
         model: None,
-        quota_pool: Some(identity),
+        quota_pool: scope.quota_pool.map(str::to_owned),
         quota_window: Some("vibe-code-included-monthly".into()),
         quota_remaining_percent: allowance.as_ref().map(|(used, _)| 100.0 - used),
         quota_reset_at: allowance.map(|(_, reset)| reset),
