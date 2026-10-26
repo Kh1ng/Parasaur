@@ -1,3 +1,4 @@
+import { panelActor } from './panelIdentity.js';
 import type { RequestHandler } from 'express';
 import { createHash } from 'node:crypto';
 import { closeSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs';
@@ -75,7 +76,7 @@ export function mutationSafety(nodeId: string, directory = process.env.GAH_MUTAT
   return operation => (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     const principal = res.locals.authPrincipal;
-    const actor = principal?.kind === 'owner' ? 'owner' : principal?.kind === 'device' ? `device:${principal.id}` : 'unauthenticated';
+    const actor = principal?.kind === 'panel' ? panelActor(principal.identity) : principal?.kind === 'owner' ? 'owner' : principal?.kind === 'device' ? `device:${principal.id}` : 'unauthenticated';
     const key = req.get('Idempotency-Key');
     const target = digest(canonical({ params: req.params, body: req.body ?? null, query: req.query }));
     const operationId = digest(canonical([nodeId, actor, operation, key ?? null]));
@@ -86,6 +87,7 @@ export function mutationSafety(nodeId: string, directory = process.env.GAH_MUTAT
       return res.status(status).json({ error: code, message, operationId });
     };
     if (actor === 'unauthenticated') return reject(401, 'authentication_required', 'Authenticate before changing node state.');
+    const paidRouteAllowed = operation.startsWith('route_approval.') && principal?.kind === 'panel' && principal.identity.canApprovePaidRoutes === true;
     if ((
       operation === 'ledger.clear_attempts' ||
       operation.startsWith('route_approval.') ||
@@ -95,7 +97,7 @@ export function mutationSafety(nodeId: string, directory = process.env.GAH_MUTAT
       operation.startsWith('config.prompt_policy.') ||
       operation.startsWith('messaging_bridge.') ||
       operation.startsWith('cli_router.')
-    ) && principal.kind !== 'owner') return reject(403, 'owner_required', 'This operation requires owner access.');
+    ) && principal.kind !== 'owner' && !paidRouteAllowed) return reject(403, 'owner_required', 'This operation requires owner access.');
     if (!key || !/^[A-Za-z0-9_-]{16,128}$/.test(key)) return reject(400, 'idempotency_key_required', 'Supply an Idempotency-Key of 16–128 letters, digits, underscores, or hyphens.');
 
     try {

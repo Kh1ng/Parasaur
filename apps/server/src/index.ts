@@ -16,3 +16,6 @@ export * from './sessions/SessionManager.js';
 
 // Re-export contracts
 export * from '@git-agent-harness/contracts';
+
+export * from './panelIdentity.js';
+export { createAuthorizedWebSocketServer } from './webSocketAuth.js';

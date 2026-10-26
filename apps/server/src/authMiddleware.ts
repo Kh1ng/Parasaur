@@ -56,6 +56,8 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     });
   }
 
+  if (res.locals.authPrincipal?.kind === 'panel') return next();
+
   // Authenticated node/client identity: check Bearer token
   const authHeader = req.headers.authorization;
   const cookie = deviceCookie(req.headers.cookie);

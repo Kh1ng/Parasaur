@@ -1,3 +1,4 @@
+import { panelIdentityMiddleware, type PanelIdentityProvider } from './panelIdentity.js';
 import { notificationChannelFailure } from './notifyDelivery.js';
 import { gitLabEventsRouter, type GitLabRouteDeps } from './integrations/gitlab/route.js';
 import { parseSkillSelections } from './skillSelections.js';
@@ -172,6 +173,7 @@ type CreateServerOptions = Partial<ConfigEffectiveDeps> & {
   claimsService?: ClaimsService;
   coordinatorPort?: number;
   deviceAccess?: DeviceAccess;
+  panelIdentityProvider?: PanelIdentityProvider;
   node?: NodeRoleStatus;
   getPendingCommits?: typeof getPendingCommits;
   startAdminUpdate?: typeof startAdminUpdate;
@@ -417,7 +419,7 @@ export function createServer(
   }));
   // All API reads and mutations share one boundary, including future routes.
   // Direct same-origin loopback access remains local; /health stays public.
-  app.use('/api', authMiddleware);
+  app.use('/api', panelIdentityMiddleware(configDeps.panelIdentityProvider), authMiddleware);
   const mutation = mutationSafety(getCoordinatorIdentity(undefined, coordinatorPort).node_id);
   app.use(workerRouteGuard(node));
   if (node.role === 'central' && (configDeps.webPushNotifications || configDeps.apnsNotifications)) {

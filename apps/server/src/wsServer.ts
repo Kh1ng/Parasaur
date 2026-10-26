@@ -1,3 +1,4 @@
+import { attributePanelMessage } from './webSocketAuth.js';
 import { runningWorkers } from './runningWorkers.js';
 /**
  * WebSocket server handler
@@ -263,6 +264,7 @@ export function createWebSocketHandler(
       if (!webSocketAccessValid(ws)) return;
       try {
         const message = JSON.parse(data.toString()) as ClientMessage;
+        await attributePanelMessage(ws, message.type, 'requestId' in message ? message.requestId : undefined, message);
         if (message.type === 'client.hello') {
           const profile = message.profile ?? pendingProfiles.get(ws) ?? 'gah';
           sessionStore.add(ws, message.clientVersion, message.capabilities, profile);

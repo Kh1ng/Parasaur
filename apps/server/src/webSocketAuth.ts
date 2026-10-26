@@ -1,8 +1,19 @@
+import { resolvePanelIdentity, recordPanelAction, type PanelIdentityProvider } from './panelIdentity.js';
 import type { IncomingHttpHeaders, IncomingMessage, Server } from 'node:http';
 import { isIP } from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
 import { coordinatorTokenMatches, isLocalAddress, isTrustedLocalRequest, sameOriginRequest } from './authMiddleware.js';
 import { deviceCookie, type DeviceAccess } from './deviceAccess.js';
+
+const panelClients = new WeakMap<WebSocket, { provider: PanelIdentityProvider; request: IncomingMessage }>();
+
+export async function attributePanelMessage(ws: WebSocket, action: string, requestId?: string, target?: unknown): Promise<void> {
+  const panel = panelClients.get(ws);
+  if (!panel) return;
+  const identity = await resolvePanelIdentity(panel.provider, panel.request);
+  if (!identity) { ws.terminate(); throw new Error('Panel session expired'); }
+  recordPanelAction(identity, action, requestId, target);
+}
 
 const compatibilityClients = new WeakSet<WebSocket>();
 const compatibilityWarnings = new WeakSet<WebSocket>();
@@ -10,7 +21,7 @@ const deviceClients = new WeakMap<WebSocket, { access: DeviceAccess; id: string 
 
 /** Approval alerts follow the same live delegation as HTTP review actions. */
 export function webSocketCanApprovePairing(ws: WebSocket): boolean {
-  if (compatibilityClients.has(ws)) return false;
+  if (compatibilityClients.has(ws) || panelClients.has(ws)) return false;
   const device = deviceClients.get(ws);
   return device ? device.access.canApprovePairing(device.id) : true;
 }
@@ -68,18 +79,22 @@ function browserToken(req: IncomingMessage): string | null {
 
 /** Reject unauthorized upgrades before a socket can receive welcome data or invoke handlers.
  * Native fleet clients retain Authorization; browsers send a non-echoed credential protocol. */
-export function createAuthorizedWebSocketServer(server: Server, role?: 'central' | 'standalone' | 'worker', access?: DeviceAccess, now = Date.now): WebSocketServer {
+export function createAuthorizedWebSocketServer(server: Server, role?: 'central' | 'standalone' | 'worker', access?: DeviceAccess, now = Date.now, panelIdentityProvider?: PanelIdentityProvider): WebSocketServer {
   const compatibilityRequests = new WeakSet<IncomingMessage>();
   const deviceRequests = new WeakMap<IncomingMessage, { id: string; expires_at: string }>();
   const wss = new WebSocketServer({
     server,
     handleProtocols: protocols => protocols.has('gah.v1') ? 'gah.v1' : false,
-    verifyClient: ({ req }, done) => {
+    verifyClient: async ({ req }, done) => {
       const protocol = requestProtocol(req);
       if (!browserOriginAllowed(req, protocol)) return done(false, 403, 'WebSocket origin or host is not allowed');
       const worker = (role ?? process.env.GAH_NODE_ROLE) === 'worker';
       const local = isTrustedLocalRequest({ socket: req.socket, headers: req.headers, protocol });
       if (!local && protocol !== 'https' && process.env.GAH_ALLOW_INSECURE_HTTP !== '1') return done(false, 403, 'Remote WebSockets require TLS');
+      if (panelIdentityProvider) {
+        try { return done((await resolvePanelIdentity(panelIdentityProvider, req)) !== null, 401, 'Panel identity required'); }
+        catch { return done(false, 503, 'Panel identity unavailable'); }
+      }
       const authorization = req.headers.authorization;
       const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : browserToken(req);
       if (token && coordinatorTokenMatches(token)) return done(true);
@@ -102,6 +117,7 @@ export function createAuthorizedWebSocketServer(server: Server, role?: 'central'
     }
   });
   wss.on('connection', (ws, req) => {
+    if (panelIdentityProvider) panelClients.set(ws, { provider: panelIdentityProvider, request: req });
     const device = deviceRequests.get(req);
     if (device && access) {
       deviceClients.set(ws, { access, id: device.id });

@@ -6,7 +6,7 @@ import type { mutationSafety } from './mutationSafety.js';
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= max && value.trim() === value && !/[\x00-\x1f\x7f]/.test(value);
 const sameRoute = (left: PaidRouteScope, right: PaidRouteScope) => left.profile === right.profile && left.work_id === right.work_id && left.backend === right.backend && left.backend_instance === right.backend_instance && left.model === right.model;
 
-/** Mutations require owner access and durable replay/audit guards at mount.
+/** Mutations require owner or verified paid-route permission and durable replay/audit guards.
  * Only exact scopes from Rust's current projection can be changed here. */
 export function paidRouteApprovalsRouter(mutation: ReturnType<typeof mutationSafety>, read = runPaidRouteApprovals, change = changePaidRouteApproval): Router {
   const router = Router();
