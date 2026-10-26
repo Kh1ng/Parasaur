@@ -1,6 +1,7 @@
 import { notificationChannelFailure } from './notifyDelivery.js';
 import { gitLabEventsRouter, type GitLabRouteDeps } from './integrations/gitlab/route.js';
 import { gitLabRunsRouter } from './integrations/gitlab/runsRoute.js';
+import { GitLabIdentity, type GitLabIdentityProvider } from './integrations/gitlab/identity.js';
 import { parseSkillSelections } from './skillSelections.js';
 import { runningWorkers } from './runningWorkers.js';
 import { documentRouter } from './integrations/gitlab/embedView.js';
@@ -202,6 +203,8 @@ type CreateServerOptions = Partial<ConfigEffectiveDeps> & {
   notificationSettings?: Omit<NotificationSettingsDeps, 'record'>;
   buildDiagnosticsBundle?: typeof buildDiagnosticsBundle;
   gitLabEvents?: GitLabRouteDeps;
+  /** Trusted server-side extension only; never selected by request headers. */
+  gitLabIdentityProvider?: GitLabIdentityProvider;
 };
 
 const activityKinds = new Set<ActivityKind>([
@@ -373,6 +376,7 @@ export function createServer(
   const centralClaims = () => claimsService ??= new ClaimsService();
   const app = express();
   if (node.role === 'central') app.locals.deviceAccess = configDeps.deviceAccess ?? new DeviceAccess();
+  if (node.role === 'central') app.locals.gitLabIdentity = new GitLabIdentity(configDeps.gitLabIdentityProvider, app.locals.deviceAccess);
   if (node.role === 'central' && (configDeps.webPushNotifications || configDeps.apnsNotifications)) {
     app.locals.deviceAccess.onRevoke((deviceId: string) => {
       configDeps.webPushNotifications?.removeForDevice(deviceId);

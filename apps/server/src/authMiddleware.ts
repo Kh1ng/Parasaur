@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { isIP } from 'node:net';
 import type { IncomingHttpHeaders } from 'node:http';
 import { deviceCookie, type DeviceAccess } from './deviceAccess.js';
+import { GITLAB_IDENTITY_HEADER, GitLabIdentity } from './integrations/gitlab/identity.js';
 
 export function isLocalAddress(ip: string): boolean {
   if (!ip) return false;
@@ -53,6 +54,17 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     return res.status(403).json({
       error: 'Forbidden',
       message: 'Remote or cross-origin access requires TLS unless GAH_ALLOW_INSECURE_HTTP=1'
+    });
+  }
+
+  // An explicit assertion never falls back to local/owner or cookie authority.
+  if (req.headers[GITLAB_IDENTITY_HEADER] !== undefined) {
+    const identity: GitLabIdentity | undefined = req.app?.locals.gitLabIdentity;
+    if (!identity || !sameOriginRequest(req)) return res.status(401).json({ error: 'Unauthorized', message: 'GitLab identity is unavailable or invalid.' });
+    return identity.authenticate(req, isTls).then(principal => {
+      if (!principal) return res.status(401).json({ error: 'Unauthorized', message: 'GitLab identity is unavailable or invalid.' });
+      res.locals.authPrincipal = principal;
+      next();
     });
   }
 

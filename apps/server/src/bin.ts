@@ -145,7 +145,7 @@ async function main() {
   const server = createHttpServer(app);
   
   // Create WebSocket server
-  const wss = createAuthorizedWebSocketServer(server, node.role, deviceAccess);
+  const wss = createAuthorizedWebSocketServer(server, node.role, deviceAccess, Date.now, app.locals.gitLabIdentity);
   
   // Check GAH CLI availability (real status/dispatch data is loaded
   // on-demand per WebSocket connection in wsServer.ts's sendWelcomeMessage,
