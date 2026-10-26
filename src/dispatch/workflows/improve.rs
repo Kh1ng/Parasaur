@@ -280,13 +280,13 @@ pub(crate) fn improve(
         cargo_target.path(),
         repair_base_sha.as_deref(),
         &mut base_task,
+        ledger,
     );
     if let Some(repair_context) = repair_context.as_ref() {
         repair_context::append_to_prompt(&mut base_task, repair_context);
     }
     conflict_session.append_prompt(&mut base_task);
     let timeout = std::time::Duration::from_secs(profile.validation_timeout_seconds());
-
     let (baseline_failure, baseline_exit_code) = if conflict_session.is_active()
         || should_skip_per_dispatch_baseline(
             profile.validation_commands.is_empty(),
@@ -439,7 +439,7 @@ pub(crate) fn improve(
         let admission_guard =
             issue_claim.admit_in(&wt, repo, profile, &route.identity, args, attempt, ledger)?;
         record_route_attempt(ledger, &route)?;
-        gitlab_fix::start_attempt(&mut gitlab_fix);
+        gitlab_fix::start_attempt(&mut gitlab_fix, ledger);
         let result = run_backend_with_reserved_route(
             &route.identity,
             profile,

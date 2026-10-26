@@ -3,6 +3,8 @@ use super::{gitlab_hostname, gitlab_project_id, provider_command, publication_bo
 use crate::models::ActionableReviewFinding;
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::process::Stdio;
 
@@ -62,7 +64,7 @@ fn mr_path(profile: &Profile, iid: &str) -> Result<String> {
     ))
 }
 
-/// Publish one summary and positioned findings. Inline failures retain the summary and fail soft.
+/// Publish one summary and positioned findings, returning incomplete publication to the caller.
 pub(crate) fn publish(
     profile: &Profile,
     branch: &str,
@@ -70,20 +72,17 @@ pub(crate) fn publish(
     summary: &str,
     findings: &[ActionableReviewFinding],
     labels: &[&str],
-) -> bool {
-    let result = (|| {
-        let iid = mr_for_branch(profile, branch)?;
-        let path = mr_path(profile, &iid)?;
-        publish_with(
-            &mut |p, m, b| bot_api(profile, p, m, b),
-            &path,
-            head,
-            summary,
-            findings,
-            labels,
-        )
-    })();
-    soft_failure(result, "review publication")
+) -> Result<()> {
+    let iid = mr_for_branch(profile, branch)?;
+    let path = mr_path(profile, &iid)?;
+    publish_with(
+        &mut |p, m, b| bot_api(profile, p, m, b),
+        &path,
+        head,
+        summary,
+        findings,
+        labels,
+    )
 }
 
 /// Resolve the unique open MR using the same bot identity as its discussions.
@@ -310,7 +309,8 @@ fn resolve_with(
         );
         let result: Result<()> = (|| {
             let current = api(&endpoint, "GET", Value::Null)?;
-            if current != *thread {
+            let snapshot = DiscussionIdentity::from_thread(thread);
+            if snapshot.is_none() || DiscussionIdentity::from_thread(&current) != snapshot {
                 return Ok(());
             }
             api(
@@ -327,6 +327,33 @@ fn resolve_with(
         bail!("GitLab thread acknowledgement incomplete");
     }
     Ok(())
+}
+
+/// Ignore GitLab's refreshed diff metadata while detecting added, edited, or resolved notes.
+#[derive(PartialEq, Eq)]
+struct DiscussionIdentity {
+    id: String,
+    notes: BTreeMap<u64, (bool, [u8; 32])>,
+}
+
+impl DiscussionIdentity {
+    fn from_thread(thread: &Value) -> Option<Self> {
+        let id = thread["id"].as_str().filter(|id| !id.is_empty())?;
+        let mut notes = BTreeMap::new();
+        for note in thread["notes"].as_array()?.iter() {
+            let identity = (
+                note["resolved"].as_bool()?,
+                Sha256::digest(note["body"].as_str()?.as_bytes()).into(),
+            );
+            if notes.insert(note["id"].as_u64()?, identity).is_some() {
+                return None;
+            }
+        }
+        Some(Self {
+            id: id.into(),
+            notes,
+        })
+    }
 }
 
 pub(crate) fn soft_failure(result: Result<()>, operation: &str) -> bool {

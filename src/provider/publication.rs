@@ -207,8 +207,9 @@ pub fn post_review_findings(
             if profile.delivery_mode == crate::config::DeliveryMode::Handoff {
                 anyhow::bail!("delivery_mode=handoff: review publication is disallowed");
             }
-            Ok(super::gitlab_review::publish(
-                profile, branch, head, body, findings, labels,
+            Ok(super::gitlab_review::soft_failure(
+                super::gitlab_review::publish(profile, branch, head, body, findings, labels),
+                "review publication",
             ))
         }
     }
@@ -327,8 +328,7 @@ fn gitlab_post_review_comment(
     body: &str,
     labels: &[&str],
 ) -> Result<()> {
-    super::gitlab_review::publish(profile, branch, "", body, &[], labels);
-    Ok(())
+    super::gitlab_review::publish(profile, branch, "", body, &[], labels)
 }
 
 fn github_post_review_comment(

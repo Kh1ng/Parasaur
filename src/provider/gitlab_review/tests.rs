@@ -220,3 +220,55 @@ fn gitlab_collections_read_past_first_page() {
     assert_eq!(pages, 2);
     assert_eq!(rows.len(), 101);
 }
+
+#[test]
+fn gitlab_resolves_after_position_refresh_but_preserves_changed_discussions() {
+    let thread = fixture("discussions.json")[0].clone();
+    let refreshed = fixture("discussion-after-push.json");
+    let new_note = fixture("discussion-with-new-note.json");
+    let mut edited = refreshed.clone();
+    edited["notes"][0]["body"] = json!("Edited human instruction");
+    let mut resolved = refreshed.clone();
+    resolved["notes"][0]["resolved"] = json!(true);
+    for (current, should_resolve) in [
+        (refreshed, true),
+        (new_note, false),
+        (edited, false),
+        (resolved, false),
+    ] {
+        let mut writes = vec![];
+        resolve_with(
+            &mut |_, method, body| {
+                if method != "GET" {
+                    writes.push((method.to_owned(), body));
+                }
+                Ok(current.clone())
+            },
+            "mr/7",
+            std::slice::from_ref(&thread),
+            &json!([{"discussion_id":"abc123","summary":"Checked return","files":["src/new.rs"]}]),
+            &["src/new.rs".into()],
+            "dddd",
+        )
+        .unwrap();
+        assert_eq!(writes.len(), if should_resolve { 2 } else { 0 });
+    }
+}
+
+#[test]
+fn gitlab_label_failure_makes_publication_incomplete() {
+    assert!(publish_with(
+        &mut |_, method, _| {
+            if method == "PUT" {
+                bail!("label denied");
+            }
+            Ok(json!({}))
+        },
+        "mr/7",
+        "",
+        "summary",
+        &[],
+        &["gah-human-review"]
+    )
+    .is_err());
+}

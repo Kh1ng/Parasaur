@@ -403,3 +403,11 @@ esac
         "the retry must observe the accepted comment instead of duplicating it"
     );
 }
+
+#[test]
+fn gitlab_publication_failure_reaches_review_comment_caller() {
+    let mut profile = gitlab_profile();
+    // Fail before launching glab, independently of ambient credentials.
+    profile.provider_api_base = None;
+    assert!(post_review_comment(&profile, "gah/test", "handoff", &["gah-human-review"]).is_err());
+}

@@ -1,0 +1,34 @@
+{
+  "id": "abc123",
+  "individual_note": false,
+  "notes": [
+    {
+      "id": 10,
+      "type": "DiffNote",
+      "body": "unchecked return",
+      "author": {
+        "id": 2,
+        "username": "maintainer"
+      },
+      "system": false,
+      "resolvable": false,
+      "resolved": false,
+      "position": {
+        "base_sha": "aaaa",
+        "start_sha": "bbbb",
+        "head_sha": "dddd",
+        "old_path": "src/old.rs",
+        "new_path": "src/new.rs",
+        "position_type": "text",
+        "new_line": 3
+      },
+      "updated_at": "2026-10-25T01:00:00Z",
+      "line_code": "new-code"
+    }
+  ],
+  "position": {
+    "head_sha": "dddd",
+    "line_code": "new-code"
+  },
+  "updated_at": "2026-10-25T01:00:00Z"
+}

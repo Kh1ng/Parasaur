@@ -23,6 +23,7 @@ impl GitLabFix {
         report_dir: &Path,
         base: Option<&str>,
         prompt: &mut String,
+        ledger: &mut LedgerEntry,
     ) -> Option<Self> {
         if args.mode != "fix"
             || profile.provider_kind().ok()? != crate::provider_kind::ProviderKind::Gitlab
@@ -54,7 +55,8 @@ impl GitLabFix {
         match result {
             Ok(context) => Some(context),
             Err(_) => {
-                gitlab_review::soft_failure(
+                record_completion(
+                    ledger,
                     Err(anyhow::anyhow!("context unavailable")),
                     "fix context",
                 );
@@ -65,7 +67,7 @@ impl GitLabFix {
     }
 
     /// A failed validation, denied publication, or failed push never acknowledges a thread.
-    pub(super) fn finish(&self, profile: &Profile, ledger: &LedgerEntry, wt: &Path) {
+    pub(super) fn finish(&self, profile: &Profile, ledger: &mut LedgerEntry, wt: &Path) {
         if !ledger.push_succeeded
             || ledger.validation_result.as_deref() != Some("passed")
             || !profile.publishing.allow_issue_comments
@@ -90,18 +92,42 @@ impl GitLabFix {
                 sha.trim(),
             )
         })();
-        gitlab_review::soft_failure(result, "thread acknowledgement");
+        record_completion(ledger, result, "thread acknowledgement");
     }
 }
 
 /// Never acknowledge a report left by an earlier failed backend attempt.
-pub(super) fn start_attempt(context: &mut Option<GitLabFix>) {
+pub(super) fn start_attempt(context: &mut Option<GitLabFix>, ledger: &mut LedgerEntry) {
     if context
         .as_ref()
         .is_some_and(|c| std::fs::write(&c.report, "[]").is_err())
     {
         *context = None;
-        gitlab_review::soft_failure(Err(anyhow::anyhow!("report unavailable")), "fix report");
+        record_completion(
+            ledger,
+            Err(anyhow::anyhow!("report unavailable")),
+            "fix report",
+        );
+    }
+}
+
+/// Preserve incomplete provider operations on the entry saved by dispatch, without leaking API text.
+fn record_completion(ledger: &mut LedgerEntry, result: Result<()>, operation: &str) {
+    if !gitlab_review::soft_failure(result, operation) {
+        ledger.human_required = true;
+        ledger.human_required_reason_code.get_or_insert_with(|| {
+            crate::controller::HumanRequiredReason::ConfigurationInfra
+                .as_str()
+                .into()
+        });
+        let message = format!("GitLab {operation} incomplete; human review required");
+        match &mut ledger.error_summary {
+            Some(summary) => {
+                summary.push_str("; ");
+                summary.push_str(&message);
+            }
+            None => ledger.error_summary = Some(message),
+        }
     }
 }
 
@@ -121,11 +147,16 @@ mod tests {
             report: report.clone(),
             base: "base".into(),
         });
-        start_attempt(&mut context);
+        let profile = crate::ledger::test_util::profile();
+        let mut ledger = LedgerEntry::new("test", &profile, "auto", "fix", "#7", None, None);
+        start_attempt(&mut context, &mut ledger);
+        assert!(!ledger.human_required);
         assert_eq!(std::fs::read_to_string(&report).unwrap(), "[]");
         std::fs::remove_file(&report).unwrap();
         std::fs::create_dir(&report).unwrap();
-        start_attempt(&mut context);
+        start_attempt(&mut context, &mut ledger);
         assert!(context.is_none());
+        assert!(ledger.human_required);
+        assert!(ledger.error_summary.unwrap().contains("fix report"));
     }
 }

@@ -82,6 +82,30 @@ esac
 
 #[test]
 fn gitlab_fix_reads_threads_pushes_same_branch_and_replies_before_resolving() {
+    run_gitlab_fix(None);
+}
+
+#[test]
+fn gitlab_fix_context_failure_persists_human_required() {
+    run_gitlab_fix(Some("context"));
+}
+
+#[test]
+fn gitlab_fix_report_failure_persists_human_required() {
+    run_gitlab_fix(Some("report"));
+}
+
+#[test]
+fn gitlab_fix_reply_failure_persists_human_required() {
+    run_gitlab_fix(Some("reply"));
+}
+
+#[test]
+fn gitlab_fix_resolution_failure_persists_human_required() {
+    run_gitlab_fix(Some("resolve"));
+}
+
+fn run_gitlab_fix(failure: Option<&str>) {
     let tmp = test_tempdir();
     let repo = tmp.path().join("repo");
     let home = tmp.path().join("home");
@@ -113,10 +137,15 @@ fn gitlab_fix_reads_threads_pushes_same_branch_and_replies_before_resolving() {
             r#"#!/bin/sh
 printf '%s\n' "$*" > '{prompt}'
 echo checked > src.txt
+if [ "{failure}" = report ]; then
+  rm -f "$CARGO_TARGET_DIR/gitlab-addressed-threads.json"
+else
 echo '[{{"discussion_id":"abc123","summary":"Checked the return value","files":["src.txt"]}}]' > "$CARGO_TARGET_DIR/gitlab-addressed-threads.json"
+fi
 echo 'Fixed the unchecked return and validated src.txt.'
 "#,
-            prompt = prompt.display()
+            prompt = prompt.display(),
+            failure = failure.unwrap_or("")
         ),
     );
     make_fake_bin_with_body(
@@ -133,12 +162,14 @@ case "$2" in
  projects/42/merge_requests/7/notes\?*) echo '[]' ;;
  projects/42/merge_requests/7/discussions\?*)
   [ "$GITLAB_TOKEN" = bot-token ] || exit 1
+  [ "$GITLAB_FIX_FAILURE" != context ] || exit 1
   printf '[%s]\n' "$(cat '{root}/thread.json')" ;;
  projects/42/merge_requests/7/discussions/abc123)
   [ "$GITLAB_TOKEN" = bot-token ] || exit 1
-  if [ "$6" = PUT ]; then cat >> '{log}'; echo '{{}}'; else cat '{root}/thread.json'; fi ;;
+  if [ "$6" = PUT ]; then [ "$GITLAB_FIX_FAILURE" != resolve ] || exit 1; cat >> '{log}'; echo '{{}}'; else cat '{root}/thread.json'; fi ;;
  projects/42/merge_requests/7/discussions/abc123/notes)
   [ "$GITLAB_TOKEN" = bot-token ] || exit 1
+  [ "$GITLAB_FIX_FAILURE" != reply ] || exit 1
   cat >> '{log}'; echo '{{"id":20}}' ;;
  *) echo '[]' ;;
 esac
@@ -147,7 +178,10 @@ esac
             log = log.display()
         ),
     );
+    let ledger_path = tmp.path().join("ledger.jsonl");
     bin()
+        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("GITLAB_FIX_FAILURE", failure.unwrap_or(""))
         .args([
             "dispatch",
             "--profile",
@@ -173,12 +207,31 @@ esac
         .assert()
         .success();
     let prompt = fs::read_to_string(prompt).unwrap();
-    assert!(prompt.contains("unchecked return"));
-    assert!(prompt.contains("gitlab-addressed-threads.json"));
+    if failure != Some("context") {
+        assert!(prompt.contains("unchecked return"));
+        assert!(prompt.contains("gitlab-addressed-threads.json"));
+    }
+    let ledger = fs::read_to_string(ledger_path).unwrap();
+    let entry: Value = serde_json::from_str(ledger.lines().last().unwrap()).unwrap();
+    assert_eq!(entry["push_succeeded"], true);
+    assert_eq!(entry["human_required"], failure.is_some());
+    if failure.is_some() {
+        assert_eq!(entry["human_required_reason_code"], "configuration_infra");
+        let operation = if failure == Some("context") {
+            "fix context"
+        } else {
+            "thread acknowledgement"
+        };
+        assert!(entry["error_summary"].as_str().unwrap().contains(operation));
+    }
     let log = fs::read_to_string(log).unwrap();
-    let reply = log.find("Addressed in").expect("reply posted after push");
-    let resolve = log.find("\"resolved\":true").expect("thread resolved");
-    assert!(reply < resolve);
+    if failure.is_none() {
+        let reply = log.find("Addressed in").expect("reply posted after push");
+        let resolve = log.find("\"resolved\":true").expect("thread resolved");
+        assert!(reply < resolve);
+    } else {
+        assert!(!log.contains("\"resolved\":true"));
+    }
     let content = ProcessCommand::new("git")
         .args([
             "--git-dir",
