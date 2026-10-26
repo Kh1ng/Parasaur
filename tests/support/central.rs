@@ -25,7 +25,7 @@ impl FakeCentral {
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let state = Arc::new(Mutex::new(json!({
-            "nodes": {}, "claims": {}, "resolutions": {}, "quotas": {}, "calls": []
+            "nodes": {}, "claims": {}, "resolutions": {}, "quotas": {}, "fleet": [], "calls": []
         })));
         let stop = Arc::new(AtomicBool::new(false));
         let server = {
@@ -128,7 +128,8 @@ fn respond(state: &mut Value, method: &str, url: &url::Url, body: Value) -> (u16
             state["nodes"][body["node_id"].as_str().unwrap()] = body.clone();
             (201, body)
         }
-        ("GET", "/api/registry/fleet") => (200, json!([])),
+        ("GET", "/api/registry/fleet") => (200, state["fleet"].clone()),
+        ("POST", "/api/activity") => (201, json!({"recorded":true, "id":body["id"]})),
         ("GET", "/api/registry/quota") => state["quotas"]
             .get(profile)
             .map(|quota| (200, quota.clone()))

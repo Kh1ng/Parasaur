@@ -3,7 +3,7 @@
 mod support;
 
 use serde_json::{json, Value};
-use std::{fs, process::Command};
+use std::{collections::BTreeMap, fs, process::Command};
 use support::scenario::{central::FakeCentral, ScenarioHarness};
 
 const TICKET: &str = "docs/tickets/TICKET-1516-central-worker.md";
@@ -43,9 +43,10 @@ fn worker(central: &FakeCentral) -> ScenarioHarness {
             + "\n",
     )
     .unwrap();
+    // A model rejection ends the loop after one attempt, without publishing a PR.
     let marker = harness.artifacts_dir.join("worker-argv");
     support::write_executable(&harness.bin_dir.join("codex"), &format!(
-        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'test 1.0'; exit 0; fi\nprintf '%s\\n' \"$@\" > '{}'\necho 'deliberate worker failure'\nexit 1\n", marker.display()
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'test 1.0'; exit 0; fi\nprintf '%s\\n' \"$@\" > '{}'\necho 'invalid model selection (--model test-model)'\nexit 1\n", marker.display()
     ));
     let config = format!(
         "validation_commands = [\"true\"]\ncodex_path = {:?}\n\
@@ -103,6 +104,40 @@ fn assert_inventory_status(status: &Value) {
     assert_eq!(inventory["observation_stale"], true);
 }
 
+// Comparing the whole map rejects duplicate calls and every unlisted route.
+fn assert_request_counts(central: &FakeCentral, expected: &[(&str, &str, usize)]) {
+    let state = central.state();
+    let mut actual = BTreeMap::new();
+    for call in state["calls"].as_array().unwrap() {
+        let method = call["method"].as_str().unwrap();
+        let target = call["target"].as_str().unwrap();
+        let path = target.split('?').next().unwrap();
+        *actual.entry((method, path)).or_insert(0) += 1;
+    }
+    let expected: BTreeMap<_, _> = expected
+        .iter()
+        .filter(|(_, _, count)| *count > 0)
+        .map(|&(method, path, count)| ((method, path), count))
+        .collect();
+    assert_eq!(actual, expected, "request log: {}", state["calls"]);
+}
+
+fn assert_worker_dispatch_counts(central: &FakeCentral, quota_requests: usize) {
+    assert_request_counts(
+        central,
+        &[
+            ("POST", "/api/registry/nodes", 1),
+            ("GET", "/api/registry/fleet", 1),
+            ("POST", "/api/claims/acquire", 1),
+            ("GET", "/api/skills/resolve", 1),
+            ("POST", "/api/claims/release", 1),
+            ("POST", "/api/activity", 1),
+            ("POST", "/api/claims/renew", 0),
+            ("GET", "/api/registry/quota", quota_requests),
+        ],
+    );
+}
+
 #[test]
 fn worker_loop_claims_resolves_and_delivers_central_skill() {
     let central = FakeCentral::new();
@@ -123,6 +158,7 @@ fn worker_loop_claims_resolves_and_delivers_central_skill() {
         "{result:?}"
     );
     let state = central.state();
+    assert_worker_dispatch_counts(&central, 0);
     let calls = state["calls"].as_array().unwrap();
     let acquire = calls
         .iter()
@@ -180,6 +216,7 @@ fn worker_loop_claims_resolves_and_delivers_central_skill() {
         central.state()["calls"].as_array().unwrap().last().unwrap()["target"],
         "/api/registry/quota?profile=test&since=7d"
     );
+    assert_worker_dispatch_counts(&central, 1);
 }
 
 #[test]
@@ -193,6 +230,7 @@ fn outage_refuses_central_claim_then_explicit_local_mode_dispatches_warmed_skill
     );
     assert_skill_argv(&harness);
     let marker = harness.artifacts_dir.join("worker-argv");
+    assert_worker_dispatch_counts(&central, 0);
     fs::remove_file(&marker).unwrap();
     central.shutdown();
 
@@ -276,4 +314,134 @@ fn outage_refuses_central_claim_then_explicit_local_mode_dispatches_warmed_skill
     let status = harness.run_status_json().unwrap();
     assert_eq!(status["node"]["role"], "standalone");
     assert_inventory_status(&status);
+    assert_worker_dispatch_counts(&central, 0);
+}
+
+#[test]
+fn failed_dispatch_releases_central_claim_exactly_once() {
+    let central = FakeCentral::new();
+    let mut harness = worker(&central);
+    let target = harness.local_repo_dir.join(TICKET);
+    let result = harness
+        .run_dispatch(&[
+            "--mode",
+            "fix",
+            "--backend",
+            "codex",
+            "--model",
+            "test-model",
+            "--skip-validation-gate",
+            "--retries",
+            "0",
+            "--target",
+            target.to_str().unwrap(),
+        ])
+        .unwrap();
+    assert_ne!(result.exit_code, Some(0), "{result:?}");
+    assert_skill_argv(&harness);
+    let entries = support::fake_ledger::TestLedger::read_from(&harness.ledger_path).unwrap();
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry["backend"] == "codex" && entry["backend_exit_code"] == 1),
+        "{entries:?}"
+    );
+    assert_request_counts(
+        &central,
+        &[
+            ("POST", "/api/claims/acquire", 1),
+            ("GET", "/api/skills/resolve", 1),
+            ("POST", "/api/claims/release", 1),
+            ("POST", "/api/activity", 1),
+            ("POST", "/api/claims/renew", 0),
+        ],
+    );
+    let state = central.state();
+    assert_eq!(state["claims"], json!({}));
+    let calls = state["calls"].as_array().unwrap();
+    assert_eq!(calls[0]["body"]["work_id"], "#1516");
+    assert_eq!(calls[3]["body"]["work_id"], "#1516");
+    assert_eq!(calls[3]["body"]["node_id"], calls[0]["body"]["node_id"]);
+    assert_eq!(calls[3]["body"]["profile"], "test");
+}
+
+#[test]
+fn fleet_observes_peer_claim_and_worker_does_not_double_claim() {
+    let central = FakeCentral::new();
+    let mut harness = worker(&central);
+    let claimed_at = chrono::Utc::now().to_rfc3339();
+    let lease = json!({
+        "node_id":"peer-worker", "profile":"test", "work_id":"#1516",
+        "claimed_at":claimed_at, "renewed_at":claimed_at, "expires_at":"2099-01-01T00:00:00Z"
+    });
+    central.update(|state| {
+        state["claims"]["test/#1516"] = lease.clone();
+        // GET /api/registry/fleet returns NodeObservationSnapshot[], as built
+        // by apps/server/src/registryService.ts, not the /fleet/snapshot envelope.
+        let claim = json!({"work_id":"#1516", "pid":1516, "scope":"test", "hostname":"peer-host", "claimed_at":claimed_at, "age_seconds":0});
+        let mut work = claim.clone();
+        work.as_object_mut().unwrap().remove("pid");
+        work["node_id"] = json!("peer-worker");
+        work["node_qualified_work_id"] = json!("peer-worker:#1516");
+        state["fleet"] = json!([{
+            "node_id":"peer-worker", "display_name":"Peer worker",
+            "advertised_url":"http://127.0.0.1:3774", "version":"0.1.2", "schema_digest":"scenario",
+            "state":"healthy", "observed_at":claimed_at, "last_seen_at":claimed_at,
+            "last_observed_state":"healthy", "last_error_kind":null, "last_error_message":null,
+            "profile":"test", "profiles":["test"], "backend_configured":{"codex":true},
+            "backend_instances":[], "availability":[], "recent_ledger":null, "running_workers":[],
+            "active_claims":[claim], "active_work":[work], "event_cursor":null,
+            "resource_pressure":{"cpu_percent":null, "rss_bytes":null, "disk_percent":null}, "error":null
+        }]);
+    });
+    let result = harness.run_one_loop().unwrap();
+    assert!(
+        result
+            .stderr
+            .contains("Peer worker (peer-worker): 1 claim(s), 1 work item(s)"),
+        "{result:?}"
+    );
+    assert!(
+        result.stderr.contains("registry_preflight_mode=warn"),
+        "{result:?}"
+    );
+    assert!(
+        !harness.artifacts_dir.join("worker-argv").exists(),
+        "{result:?}"
+    );
+    assert!(result.ledger_entries.is_empty(), "{result:?}");
+    assert!(
+        result.events.iter().any(|event| {
+            event["event_type"] == "dispatch_finished"
+                && event["details"].as_str().is_some_and(|details| {
+                    details.contains("work_id '#1516'")
+                        && details.contains("held by node 'peer-worker'")
+                })
+        }),
+        "{result:?}"
+    );
+    assert_request_counts(
+        &central,
+        &[
+            ("POST", "/api/registry/nodes", 1),
+            ("GET", "/api/registry/fleet", 1),
+            ("POST", "/api/claims/acquire", 1),
+            ("GET", "/api/skills/resolve", 0),
+            ("POST", "/api/claims/release", 0),
+            ("POST", "/api/claims/renew", 0),
+        ],
+    );
+    let state = central.state();
+    assert_eq!(state["claims"], json!({"test/#1516":lease}));
+    let calls = state["calls"].as_array().unwrap();
+    assert!(calls
+        .iter()
+        .any(|call| call["target"] == "/api/registry/fleet?profile=test"));
+    let acquire = calls
+        .iter()
+        .find(|call| call["target"] == "/api/claims/acquire")
+        .unwrap();
+    assert_eq!(acquire["body"]["work_id"], "#1516");
+    assert_eq!(acquire["body"]["profile"], "test");
+    assert_eq!(acquire["body"]["node_id"], "scenario-worker");
 }
