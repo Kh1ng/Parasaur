@@ -379,6 +379,8 @@ impl IssueLease {
         deadline: Instant,
         ttl: Duration,
     ) -> Self {
+        #[cfg(test)]
+        let probe = tests::RENEWAL_PROBE.with(|probe| probe.borrow_mut().take());
         let state = Arc::new(Mutex::new(LeaseState {
             lost: None,
             deadline,
@@ -388,19 +390,23 @@ impl IssueLease {
         let claimed = target.clone();
         let thread_state = Arc::clone(&state);
         let renewer = std::thread::spawn(move || {
+            let now = || {
+                #[cfg(test)]
+                if let Some(probe) = &probe {
+                    return *probe.now.lock().unwrap();
+                }
+                Instant::now()
+            };
             let policy = profile.publishing.issue_claim.clone();
             let mut failed = false;
             loop {
                 let deadline = lock(&thread_state).deadline;
-                let wait = next_renewal_wait(
-                    deadline.saturating_duration_since(Instant::now()),
-                    ttl,
-                    failed,
-                );
+                let wait =
+                    next_renewal_wait(deadline.saturating_duration_since(now()), ttl, failed);
                 if !matches!(stopped.recv_timeout(wait), Err(RecvTimeoutError::Timeout)) {
                     return;
                 }
-                let began = Instant::now();
+                let began = now();
                 if began >= deadline {
                     lose(
                         &thread_state,
@@ -417,8 +423,12 @@ impl IssueLease {
                 match renew(&board, &policy, &me, &claimed, OffsetDateTime::now_utc()) {
                     Ok(None) => {
                         failed = false;
-                        if !confirm_renewal(&thread_state, began + ttl, Instant::now()) {
+                        if !confirm_renewal(&thread_state, began + ttl, now()) {
                             return;
+                        }
+                        #[cfg(test)]
+                        if let Some(probe) = &probe {
+                            let _ = probe.confirmed.send(());
                         }
                     }
                     Ok(Some(reason)) => {

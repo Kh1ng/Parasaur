@@ -221,31 +221,83 @@ fn nonblocking_setup_failure_closes_capture_and_starts_no_app_server() {
 
 #[test]
 fn helper_commands_are_bounded_and_reap_descendants() {
+    use std::io::{BufRead, BufReader, Read};
+
     let _exec_guard = crate::test_support::ExecGuard::new();
-    let mut outcomes = Vec::new();
-    for (flag, survivor) in [
-        ("hang-version", "version-helper-survived.marker"),
-        ("hang-login", "login-helper-survived.marker"),
-        ("hang-schema", "schema-helper-survived.marker"),
+    for (request, context) in [
+        ("version", "Codex version command"),
+        ("login", "Codex login status command"),
+        ("schema", "Codex app-server schema command"),
     ] {
         let f = fixture();
-        make_json_rpc_codex(&f.bin_dir, &f.record_dir);
-        fs::write(f.record_dir.join(flag), "").unwrap();
-        let started = Instant::now();
-        match flag {
-            "hang-schema" => {
-                detect_stable_methods(&f.bin_dir.join("codex"), Duration::from_millis(50)).unwrap();
-            }
+        let ready = f.record_dir.join("ready");
+        let release = f.record_dir.join("release");
+        for path in [&ready, &release] {
+            let path = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+            assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+        }
+        make_fake_bin(
+            &f.bin_dir,
+            "codex",
+            &format!(
+                r#"#!/bin/sh
+case "$*" in
+  --version) request=version ;;
+  'login status') request=login ;;
+  *) request=schema ;;
+esac
+if [ "$request" = '{request}' ]; then
+  (
+    exec 3>'{ready}'
+    echo ready >&3
+    read -r release < '{release}'
+  ) &
+  wait
+fi
+case "$request" in
+  version) echo 'codex-cli 1.2.3' ;;
+  login) echo 'Logged in using ChatGPT' ;;
+  *) exit 1 ;;
+esac
+"#,
+                ready = ready.display(),
+                release = release.display()
+            ),
+        );
+        let (send, receive) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let mut reader = BufReader::new(fs::File::open(ready).unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            assert_eq!(line, "ready\n");
+            send.send(()).unwrap();
+            // EOF proves the descendant closed its live descriptor. There is
+            // no sleep or delayed marker whose absence could be a false pass.
+            let mut remaining = String::new();
+            reader.read_to_string(&mut remaining).unwrap();
+            assert!(remaining.is_empty());
+        });
+        helper::HELPER_READY.with(|ready| *ready.borrow_mut() = Some((context, receive)));
+        match request {
+            "schema" => assert!(detect_stable_methods(
+                &f.bin_dir.join("codex"),
+                Duration::from_millis(50)
+            )
+            .unwrap()
+            .is_empty()),
             _ => {
-                discover_with_timeout(f.bin_dir.join("codex"), Duration::from_millis(50)).unwrap();
+                let discovery =
+                    discover_with_timeout(f.bin_dir.join("codex"), Duration::from_millis(50))
+                        .unwrap();
+                if request == "version" {
+                    assert!(discovery.version.is_none());
+                } else {
+                    assert!(matches!(discovery.auth_state, CodexAuthState::Error(_)));
+                }
             }
         }
-        outcomes.push((flag, survivor, started.elapsed(), f.record_dir.clone()));
-    }
-    std::thread::sleep(Duration::from_millis(700));
-    for (flag, survivor, elapsed, record_dir) in outcomes {
-        assert!(elapsed < Duration::from_secs(1), "{flag} took {elapsed:?}");
-        assert!(!record_dir.join(survivor).exists(), "{flag} leaked a child");
+        assert!(helper::HELPER_READY.with(|ready| ready.borrow().is_none()));
+        reader.join().unwrap();
     }
 }
 
