@@ -65,10 +65,12 @@ export function parseWorkerChatEvent(value: unknown): WorkerChatEvent {
 type WorkerChatReply = import('./gahCli.js').SubscriptionRoute[] | import('./gahCli.js').QuotaFailure | import('@git-agent-harness/contracts').ChatSessionSummary
   | { session: import('@git-agent-harness/contracts').ChatSessionSummary }
   | Awaited<ReturnType<ManagerAdapter['listModels']>>
+  | { summary: Awaited<ReturnType<ManagerAdapter['listModels']>>; version?: string; available?: boolean }
   | Awaited<ReturnType<ManagerAdapter['listCommands']>>
   | HelperTaskResult
   | { branch: string; commit: string }
-  | { success: true };
+  | { success: true }
+  | { version: string | null };
 const timestamp = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 const optionalString = (value: unknown): value is string | undefined => value === undefined || typeof value === 'string';
 
@@ -76,6 +78,18 @@ const optionalString = (value: unknown): value is string | undefined => value ==
  * Project only the action's response fields before central stores or renders them. */
 export function parseWorkerChatReply(value: unknown, request: Record<string, unknown>): WorkerChatReply {
   const invalid = () => new Error('Worker returned an invalid chat response.');
+  if (request.action === 'models' && request.catalogVersionOnly === true && object(value) && 'version' in value) {
+    if (!nullableString(value.version) || (typeof value.version === 'string' && value.version.length > 256)) throw invalid();
+    return { version: value.version };
+  }
+  if (request.action === 'models' && request.catalogSnapshot === true && object(value) && object(value.summary)) {
+    const summary = parseWorkerChatReply(value.summary, { action: 'models' });
+    if (!object(summary) || !('models' in summary) || !Array.isArray(summary.models) || !(value.version === undefined || nullableString(value.version))
+      || !(value.available === undefined || typeof value.available === 'boolean')) throw invalid();
+    return { summary: summary as Awaited<ReturnType<ManagerAdapter['listModels']>>,
+      ...(typeof value.version === 'string' ? { version: value.version } : {}),
+      ...(value.available === undefined ? {} : { available: value.available }) };
+  }
   if (request.action === 'quota-failure') {
     if (!object(value) || !['hard', 'transient', 'other'].includes(String(value.kind)) || !measurement(value.resetAt, true) || !measurement(value.retryAfterMs, true)) throw invalid();
     return { kind: value.kind as 'hard' | 'transient' | 'other', resetAt: value.resetAt as number | null, retryAfterMs: value.retryAfterMs as number | null };
@@ -158,10 +172,12 @@ export function parseWorkerChatReply(value: unknown, request: Record<string, unk
   }
   if (request.action === 'models' && object(value) && Array.isArray(value.models) && Array.isArray(value.reasoningEfforts)
     && nullableString(value.currentModelId) && nullableString(value.currentReasoningEffortId)) {
-    const choices = (entries: unknown[]) => {
+    const choices = (entries: unknown[], includeModelEfforts = false): import('./managerChat/registry.js').ManagerModelInfo[] => {
       const result = entries.map(entry => {
         if (!object(entry) || typeof entry.id !== 'string' || !entry.id || typeof entry.name !== 'string' || !optionalString(entry.description)) throw invalid();
-        return { id: entry.id, name: entry.name, ...(entry.description === undefined ? {} : { description: entry.description }) };
+        if (includeModelEfforts && entry.reasoningEfforts !== undefined && !Array.isArray(entry.reasoningEfforts)) throw invalid();
+        return { id: entry.id, name: entry.name, ...(entry.description === undefined ? {} : { description: entry.description }),
+          ...(includeModelEfforts && Array.isArray(entry.reasoningEfforts) ? { reasoningEfforts: choices(entry.reasoningEfforts) } : {}) };
       });
       if (new Set(result.map(entry => entry.id)).size !== result.length) throw invalid();
       return result;
@@ -174,7 +190,7 @@ export function parseWorkerChatReply(value: unknown, request: Record<string, unk
     }
     // Optional since #1507; older workers omit it.
     if (value.bundledRuntime !== undefined && typeof value.bundledRuntime !== 'boolean') throw invalid();
-    return { models: choices(value.models), reasoningEfforts: choices(value.reasoningEfforts),
+    return { models: choices(value.models, true), reasoningEfforts: choices(value.reasoningEfforts),
       currentModelId: value.currentModelId, currentReasoningEffortId: value.currentReasoningEffortId,
       contextUsage, ...(value.bundledRuntime === undefined ? {} : { bundledRuntime: value.bundledRuntime }) };
   }
@@ -184,7 +200,7 @@ export function parseWorkerChatReply(value: unknown, request: Record<string, unk
       return { name: entry.name, description: entry.description, ...(entry.argsHint === undefined ? {} : { argsHint: entry.argsHint }) };
     });
   }
-  if ((request.action === 'cancel' || request.action === 'steer' || request.action === 'permission') && object(value) && value.success === true) return { success: true };
+  if ((request.action === 'set-model' || request.action === 'set-effort' || request.action === 'cancel' || request.action === 'steer' || request.action === 'permission') && object(value) && value.success === true) return { success: true };
   throw invalid();
 }
 

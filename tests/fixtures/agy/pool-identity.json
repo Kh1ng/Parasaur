@@ -1,0 +1,78 @@
+[
+  {
+    "model": "gemini-3.8-flash-low",
+    "buckets": [
+      "gemini-weekly"
+    ],
+    "pool": "google-native"
+  },
+  {
+    "model": "Gemini 9 Flash",
+    "buckets": [
+      "gemini-weekly",
+      "gemini-5h"
+    ],
+    "pool": "google-native"
+  },
+  {
+    "model": "claude-sonnet-4-6",
+    "buckets": [
+      "3p-weekly",
+      "3p-5h"
+    ],
+    "pool": "external"
+  },
+  {
+    "model": "gpt-oss-120b-medium",
+    "buckets": [
+      "3p-weekly"
+    ],
+    "pool": "external"
+  },
+  {
+    "model": "  GEMINI future",
+    "buckets": [],
+    "pool": "google-native"
+  },
+  {
+    "model": "Nova",
+    "buckets": [],
+    "pool": "external"
+  },
+  {
+    "model": "",
+    "buckets": [
+      "future-weekly",
+      "future-short"
+    ],
+    "pool": "future-short"
+  },
+  {
+    "model": "",
+    "buckets": [
+      "gemini-flash-weekly"
+    ],
+    "pool": "gemini-flash-weekly"
+  },
+  {
+    "model": "",
+    "buckets": [
+      "gemini-pro-weekly"
+    ],
+    "pool": "gemini-pro-weekly"
+  },
+  {
+    "model": "",
+    "buckets": [
+      "3p-sonnet-weekly"
+    ],
+    "pool": "3p-sonnet-weekly"
+  },
+  {
+    "model": "",
+    "buckets": [
+      "3p-opus-weekly"
+    ],
+    "pool": "3p-opus-weekly"
+  }
+]

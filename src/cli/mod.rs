@@ -12,11 +12,20 @@ use clap::Parser;
 use crate::cli::args::*;
 use crate::init;
 
+struct AgyRefreshGuard;
+
+impl Drop for AgyRefreshGuard {
+    fn drop(&mut self) {
+        crate::availability::agy::join_background_refreshes();
+    }
+}
+
 pub mod args;
 pub mod capabilities;
 pub mod commands;
 
 pub fn run() -> Result<()> {
+    let _agy_refresh_guard = AgyRefreshGuard;
     // Before any thread, runtime or child: process-group cleanup needs exited
     // children to stay unreaped until it has signalled their group.
     crate::runner::pipes::keep_exited_children_waitable()

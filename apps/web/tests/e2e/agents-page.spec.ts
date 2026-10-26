@@ -144,7 +144,9 @@ test('Antigravity separates model family from reasoning and saves the exact prov
     await route.fulfill({ json: { ...config, improve_candidates: [{ backend: 'agy', model: 'Gemini 3.8 Flash (High)', priority: 100 }] } });
   });
   await page.route('**/api/manager-chat/models**', (route) => route.fulfill({ json: {
-    models: ['High', 'Medium', 'Low'].map((effort) => ({ id: `gemini-3.8-flash-${effort.toLowerCase()}`, name: `Gemini 3.8 Flash (${effort})` })),
+    models: ['High', 'Medium', 'Low'].map((effort) => ({ id: `gemini-3.8-flash-${effort.toLowerCase()}`, name: `Gemini 3.8 Flash (${effort})`,
+      reasoningEfforts: (effort === 'Medium' ? ['medium'] : ['low', 'medium', 'high']).map(id => ({ id, name: id })),
+    })),
     reasoningEfforts: ['low', 'medium', 'high'].map((id) => ({ id, name: id })),
   } }));
   await page.reload();

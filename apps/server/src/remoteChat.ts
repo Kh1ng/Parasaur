@@ -1,6 +1,6 @@
 /** A remote agent implements the same adapter as a local agent. Only the
  * registered worker chooses paths and launches processes; central keeps history. */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { nodeHeaders, type RegistryService } from './registryService.js';
 import type { ManagerAdapter } from './managerChat/registry.js';
 import { parseWorkerChatEvent, readWorkerChatReply } from './workerChatProtocol.js';
@@ -34,6 +34,7 @@ export function workerChatConnection(registry: RegistryService, nodeId: string, 
     return response;
   };
   return {
+    selectionScope: node,
     async request<T>(body: Record<string, unknown>): Promise<T> {
       const response = await post(body, AbortSignal.timeout(30_000));
       const result = await readWorkerChatReply(response, { ...body, profile });
@@ -100,8 +101,21 @@ export function workerChatConnection(registry: RegistryService, nodeId: string, 
         },
         listCommands: () => command('commands'),
         listModels: () => command('models'),
-        setModel: async () => { throw new Error('Set the model on the conversation before the next worker turn.'); },
-        setReasoningEffort: async () => { throw new Error('Set reasoning effort on the conversation before the next worker turn.'); },
+        listModelsSnapshot: async () => {
+          const result = await command<{ summary: Awaited<ReturnType<ManagerAdapter['listModels']>>; version?: string | null; available?: boolean }
+            | Awaited<ReturnType<ManagerAdapter['listModels']>>>('models', { catalogSnapshot: true });
+          if ('summary' in result) return { summary: result.summary, version: result.version ?? undefined, available: result.available };
+          // Older workers do not return snapshots; fingerprint their full catalog summary.
+          return { summary: result, version: createHash('sha256').update(JSON.stringify([result.models, result.reasoningEfforts])).digest('hex') };
+        },
+        modelCatalogVersion: async () => {
+          const result = await command<{ version: string | null } | Awaited<ReturnType<ManagerAdapter['listModels']>>>('models', { catalogVersionOnly: true });
+          // Older workers return their full summary for this optional query.
+          return 'version' in result ? result.version ?? undefined
+            : createHash('sha256').update(JSON.stringify([result.models, result.reasoningEfforts])).digest('hex');
+        },
+        setModel: async (_conversation, model) => { await command('set-model', { model }); },
+        setReasoningEffort: async (_conversation, reasoningEffort) => { await command('set-effort', { reasoningEffort }); },
         steerTurn: async (_key, message) => {
           if (!active) throw new Error('No worker turn is active.');
           await command('steer', { requestId: active.requestId, message });

@@ -1,0 +1,3 @@
+Captured from agy 1.3.6 on 2026-10-26 using `agy models`, `agy --help`, `agy models --help`, and `agy --print /usage --output-format json`. The usage response reports zero turns and zero tokens. No account identifiers were present.
+
+`models --json` fails with `flags provided but not defined: -json`. There are no `status` or `quota` subcommands. `/usage` is a native slash command, guarded by the print-mode slash-command capability in help. Pool membership is exposed as the comma-separated family list in each group description. GAH recognizes that format and otherwise uses an account-scoped default pool. A group shares its windows; its lexicographically first bucket ID identifies the pool. Window names are used verbatim.

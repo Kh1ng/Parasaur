@@ -87,6 +87,15 @@ export interface ManagerAdapter extends ManagerBackendInfo {
      * false (older workers and backends without a bundled fallback). */
     bundledRuntime?: boolean;
   }>;
+  /** Read a catalog and its revision from one inventory snapshot when supported. */
+  listModelsSnapshot?(conversation: ManagerConversation): Promise<{
+    summary: Awaited<ReturnType<ManagerAdapter['listModels']>>;
+    version?: string;
+    available?: boolean;
+  }>;
+  modelCatalogAvailable?(): boolean | Promise<boolean>;
+  /** Cheap inventory revision; changes when background discovery replaces the catalog. */
+  modelCatalogVersion?(): string | undefined | Promise<string | undefined>;
   setModel(conversation: ManagerConversation, modelId: string): Promise<void>;
   setReasoningEffort(conversation: ManagerConversation, effortId: string): Promise<void>;
   steerTurn(gahProfile: string, message: string): Promise<{ outcome: 'injected' }>;
@@ -179,7 +188,7 @@ export async function resolveInstanceAdapter(profile: string, backendId: string,
     case 'agy':
     case 'openhands': {
       const spec = runtime.runner_kind === 'vibe' ? vibeBackendSpec({ executable: runtime.executable, instance, stateRoot: runtime.state_root })
-        : runtime.runner_kind === 'agy' ? agyBackendSpec() : openhandsBackendSpec({ instanceCredential: Boolean(runtime.credential_id) });
+        : runtime.runner_kind === 'agy' ? agyBackendSpec(runtime) : openhandsBackendSpec({ instanceCredential: Boolean(runtime.credential_id) });
       adapter = { ...createHeadlessBackend(instanceHeadlessSpec(profile, runtime, spec)), displayName: label } as ManagerAdapter;
       break;
     }

@@ -1086,11 +1086,12 @@ fn build_candidates_scopes_same_named_model_usage_by_backend() {
 
 #[test]
 fn build_candidates_creates_four_distinct_agy_scopes() {
+    let _fixture = crate::availability::agy::fixture();
     let routing = RoutingPolicy {
         pm_candidates: Some(vec![
             CandidateConfig {
                 backend: "agy".to_string(),
-                model: Some("Gemini 3.5 Flash (Medium)".to_string()),
+                model: Some("Gemini 3.8 Flash (Medium)".to_string()),
                 quota_pool: None,
                 ..Default::default()
             },
@@ -1102,13 +1103,13 @@ fn build_candidates_creates_four_distinct_agy_scopes() {
             },
             CandidateConfig {
                 backend: "agy-second".to_string(),
-                model: Some("Gemini 3.5 Flash".to_string()),
+                model: Some("Gemini 3.8 Flash (High)".to_string()),
                 quota_pool: Some("agy-second".to_string()),
                 ..Default::default()
             },
             CandidateConfig {
                 backend: "agy-second".to_string(),
-                model: Some("Claude Sonnet 4.6".to_string()),
+                model: Some("Claude Sonnet 4.6 (Thinking)".to_string()),
                 quota_pool: None,
                 ..Default::default()
             },

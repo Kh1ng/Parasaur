@@ -34,6 +34,8 @@ export interface ManagerModelInfo {
   id: string;
   name: string;
   description?: string;
+  /** Optional model-specific choices. An empty array explicitly disables effort. */
+  reasoningEfforts?: ManagerReasoningEffortInfo[];
 }
 
 export interface ManagerReasoningEffortInfo {

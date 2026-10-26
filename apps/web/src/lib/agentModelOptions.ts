@@ -25,23 +25,29 @@ export function agentModelOptions(backend: string, models: ManagerModelInfo[], a
     const details = `Provider name: ${model.name}\nModel ID: ${model.id}${resolved ? `\nLast recorded model: ${resolved}` : ''}${model.description ? `\n${model.description}` : ''}`;
     if (/^agy(?:[:_-]|$)/i.test(backend)) {
       // Only collapse the explicit effort suffix the provider advertises.
-      const variant = /^(.*?) \((Low|Medium|High|Xhigh|Max|Ultra)\)$/i.exec(model.name);
-      if (variant) {
-        const label = variant[1].replace(/^gpt(?=[ -])/i, 'GPT');
+      const effort = model.reasoningEfforts?.find(effort => model.id.endsWith(`-${effort.id}`)
+        && model.name.toLowerCase().endsWith(`(${effort.id})`));
+      if (effort) {
+        const label = model.name.slice(0, -effort.id.length - 3).replace(/^gpt(?=[ -])/i, 'GPT');
         let group = options.find((option) => option.label === label && option.variants);
         if (!group) {
           group = { value: model.name, label, details, variants: [] };
           options.push(group);
         }
-        group.variants!.push({ value: model.name, effort: variant[2].toLowerCase(), details });
+        group.variants!.push({ value: model.name, effort: effort.id, details });
         // Medium is the initial choice where available; configured variants stay intact.
-        if (variant[2].toLowerCase() === 'medium') group.value = model.name;
+        if (effort.id === 'medium') group.value = model.name;
         continue;
       }
     }
     options.push({ value: /^agy(?:[:_-]|$)/i.test(backend) ? model.name : model.id, label: agentModelLabel(backend, model, resolved), details });
   }
-  const effortOrder: readonly string[] = NATIVE_REASONING_EFFORTS;
-  for (const option of options) option.variants?.sort((a, b) => effortOrder.indexOf(a.effort) - effortOrder.indexOf(b.effort));
+  for (const option of options) {
+    const members = models.filter(model => option.variants?.some(variant => variant.value === model.name));
+    // Prefer the most complete advertised order, then append other members' levels.
+    const effortOrder = [...new Set(members.sort((a, b) => (b.reasoningEfforts?.length ?? 0) - (a.reasoningEfforts?.length ?? 0))
+      .flatMap(model => model.reasoningEfforts?.map(effort => effort.id) ?? []))];
+    option.variants?.sort((a, b) => effortOrder.indexOf(a.effort) - effortOrder.indexOf(b.effort));
+  }
   return options;
 }

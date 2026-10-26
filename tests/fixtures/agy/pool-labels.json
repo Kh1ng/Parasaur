@@ -1,0 +1,82 @@
+[
+  {
+    "label": "google-native",
+    "valid": true
+  },
+  {
+    "label": "external",
+    "valid": true
+  },
+  {
+    "label": "gemini-flash-weekly",
+    "valid": true
+  },
+  {
+    "label": "unknown-pool",
+    "valid": true
+  },
+  {
+    "label": "A_z.9-0",
+    "valid": true
+  },
+  {
+    "label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "valid": true
+  },
+  {
+    "label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "valid": false
+  },
+  {
+    "label": "",
+    "valid": false
+  },
+  {
+    "label": " ",
+    "valid": false
+  },
+  {
+    "label": " bad",
+    "valid": false
+  },
+  {
+    "label": "bad ",
+    "valid": false
+  },
+  {
+    "label": "bad pool",
+    "valid": false
+  },
+  {
+    "label": "bad\tpool",
+    "valid": false
+  },
+  {
+    "label": "good\n",
+    "valid": false
+  },
+  {
+    "label": "good\r\n",
+    "valid": false
+  },
+  {
+    "label": "bad:pool",
+    "valid": false
+  },
+  {
+    "label": "bad/pool",
+    "valid": false
+  },
+  {
+    "label": "bad\\pool",
+    "valid": false
+  },
+  {
+    "label": "bad\u0000pool",
+    "valid": false
+  },
+  {
+    "label": "g\u00e9mini",
+    "valid": false
+  }
+]

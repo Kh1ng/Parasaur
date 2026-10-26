@@ -1,0 +1,22 @@
+{
+  "identifierCharacters": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-",
+  "identifierMaxLength": 100,
+  "pools": [
+    {
+      "id": "google-native",
+      "modelPrefix": "gemini",
+      "bucketIds": [
+        "gemini-weekly",
+        "gemini-5h"
+      ]
+    },
+    {
+      "id": "external",
+      "modelPrefix": "",
+      "bucketIds": [
+        "3p-weekly",
+        "3p-5h"
+      ]
+    }
+  ]
+}

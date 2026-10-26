@@ -164,11 +164,15 @@ impl RoutingPolicy {
                 .and_then(|name| self.backend_instances.get(name))
                 .and_then(|instance| instance.quota_pool.clone())
         });
-        let quota_pool = crate::availability::resolve_candidate_quota_pool(
-            &candidate.backend,
-            candidate.model.as_deref(),
-            configured_pool.as_deref(),
-        );
+        let quota_pool = if candidate.instance.is_some() {
+            configured_pool.clone()
+        } else {
+            self.candidate_quota_pool(
+                &candidate.backend,
+                candidate.model.as_deref(),
+                configured_pool.as_deref(),
+            )
+        };
         let mut identity = crate::execution_identity::ExecutionIdentity::legacy_candidate(
             candidate.backend.clone(),
             candidate.model.clone(),
@@ -205,6 +209,22 @@ impl RoutingPolicy {
                 .clone()
                 .or_else(|| instance.quota_pool.clone())
                 .or(identity.quota_pool);
+            if identity.runner_kind == "agy"
+                && candidate.quota_pool.is_none()
+                && instance.quota_pool.is_none()
+            {
+                if let (Some(model), Some(executable)) = (
+                    candidate.model.as_deref(),
+                    identity.executable.as_ref().and_then(|path| path.to_str()),
+                ) {
+                    identity.quota_pool = Some(crate::availability::agy::pool(
+                        instance_name,
+                        model,
+                        executable,
+                        identity.state_root.as_deref(),
+                    ));
+                }
+            }
         }
         identity.quota_source = self.quota_source(&identity);
         identity

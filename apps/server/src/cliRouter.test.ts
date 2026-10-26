@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, rmSync, statSync, writeFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync, writeFileSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import express from 'express';
@@ -61,6 +61,7 @@ async function createTestServer(opts: TestServerOptions = {}) {
   app.use('/api', authMiddleware);
   const mutation = mutationSafety('cli-router-test', directory);
   app.use('/api/cli-router', cliRouterRouter(mutation, {
+    agyScopesPath: join(directory, "agy-scopes.json"),
     fetchFn: opts.mockFetch,
     readSettingsFn: readFn,
     writeSettingsFn: writeFn,
@@ -142,13 +143,13 @@ test('read-only controller snapshots automatically collect distinct AGY pools, p
 
 test('a partial router outage still observes accounts and failure checks never reuse previous balances', async () => {
   let now = Date.now();
-  let state: 'good' | 'empty' | 'failed' = 'good';
+  let state: 'good' | 'empty' | 'failed' | 'malformed' = 'good';
   const records: Record<string, unknown>[] = [];
   const rec = recordingFetch(c => {
     if (c.url.endsWith('/auth-files')) return { status: 200, body: { files: [file({ id: 'partial', provider: 'antigravity', project_id: 'p' })] } };
     if (c.url.endsWith('/models')) return { status: 503, body: {} };
     if (c.url.endsWith('/config')) return { status: 200, body: { routing: { strategy: 'round-robin' } } };
-    if (c.url.endsWith('/api-call')) return { status: 200, body: { status_code: state === 'failed' ? 401 : 200, body: { groups: state === 'empty' ? [] : [{ displayName: 'Gemini', buckets: [{ bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: .5, resetTime: '2026-10-09T05:00:00Z' }] }] } } };
+    if (c.url.endsWith('/api-call')) return { status: 200, body: { status_code: state === 'failed' ? 401 : 200, body: { groups: state === 'empty' ? [] : [{ displayName: 'Gemini', buckets: [{ bucketId: state === 'malformed' ? undefined : 'gemini-weekly', window: 'weekly', remainingFraction: .5, resetTime: '2026-10-09T05:00:00Z' }] }] } } };
   });
   const ctx = await createTestServer({
     settings: { url: 'https://partial.example.com', apiKey: 'k', managementKey: 'm', accountBackends: { partial: 'agy' } },
@@ -160,17 +161,17 @@ test('a partial router outage still observes accounts and failure checks never r
     assert.equal(first.accounts.length, 1, 'model inventory failure cannot erase credential inventory');
     for (let i = 0; i < 40 && records.length < 1; i++) await new Promise(resolve => setTimeout(resolve, 5));
     assert.equal(records[0].quota_remaining_percent, 50);
-    for (const failure of ['empty', 'failed'] as const) {
+    for (const failure of ['malformed', 'failed', 'empty'] as const) {
       state = failure; now += 15 * 60_000 + 1;
       const count = records.length;
       await get(ctx.base, '/');
-      for (let i = 0; i < 40 && records.length < count + 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
-      assert.deepEqual(records.slice(count).map(check => check.backend_instance), ['agy:google-native', 'agy:external']);
+      for (let i = 0; i < 40 && records.length < count + 1; i++) await new Promise(resolve => setTimeout(resolve, 5));
+      assert.deepEqual(records.slice(count).map(check => check.backend_instance), ['agy:google-native']);
       for (const check of records.slice(count)) {
         assert.equal(check.quota_remaining_percent, undefined);
-        assert.equal(check.quota_window, undefined);
+        assert.equal(check.quota_window, "weekly");
         assert.equal(check.observed_at, undefined);
-        assert.ok(check.backend_instance === 'agy:google-native' || check.backend_instance === 'agy:external');
+        assert.ok(check.backend_instance === 'agy:google-native');
         if (failure === 'failed') assert.equal(check.check_error, 'Failed to refresh quota from provider');
       }
       assert.ok(records.length > count);
@@ -1013,4 +1014,188 @@ test('unrecognized Claude windows preserve prior routing readings', async () => 
     await observer.refresh();
     assert.equal(records.length, 1, 'a response without account windows must not invalidate prior readings');
   }
+});
+
+test('AGY failure after observer restart invalidates the persisted provider pools and windows', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'gah-router-restart-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const stored = { url: 'https://restart.example.com', apiKey: 'k', managementKey: 'm', accountBackends: { restart: 'agy-second' } };
+  const account = { ...file({ id: 'restart', provider: 'antigravity', project_id: 'p1' }), quota: null, model_quotas: null };
+  const records: Record<string, unknown>[] = [];
+  let failed = false;
+  const rec = recordingFetch(c => {
+    if (c.url.endsWith('/api-call')) return failed ? { status: 500, body: {} } : { status: 200, body: { status_code: 200, body: { groups: [
+      { buckets: [{ bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: .5 }] },
+      { buckets: [{ bucketId: '3p-5h', window: '5h', remainingFraction: .7 }, { bucketId: '3p-weekly', window: 'weekly', remainingFraction: .8 }] }
+    ] } } };
+  });
+  const deps = { agyScopesPath: join(root, 'scopes.json'), readSettingsFn: () => stored, fetchFn: rec.fn,
+    recordQuotaFn: async (record: Record<string, unknown>) => { records.push(record); } };
+  await createCliRouterQuotaObserver(deps).observeAccount(account, stored, true);
+  assert.equal(records.length, 3);
+  // A Round 4 scope file must also invalidate canonical pools after an upgrade.
+  writeFileSync(deps.agyScopesPath, readFileSync(deps.agyScopesPath, 'utf8')
+    .replaceAll('google-native', 'gemini-weekly').replaceAll('external', '3p-5h'));
+  records.length = 0;
+  failed = true;
+  await createCliRouterQuotaObserver(deps).observeAccount(account, stored, true);
+  assert.deepEqual(records.map(record => [record.quota_pool, record.quota_window]), [
+    ['agy-second:google-native', 'weekly'], ['agy-second:external', '5h'], ['agy-second:external', 'weekly']
+  ]);
+  assert.ok(records.every(record => record.check_error && record.quota_remaining_percent === undefined));
+});
+
+test('partially malformed AGY groups retain missing scopes through restart until a well-formed absence', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'gah-router-partial-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const stored = { url: 'https://partial-groups.example.com', apiKey: 'k', managementKey: 'm', accountBackends: { partial: 'agy' } };
+  const account = { ...file({ id: 'partial', provider: 'antigravity', project_id: 'p1' }), quota: null, model_quotas: null };
+  const records: Record<string, unknown>[] = [];
+  let state: 'good' | 'malformed' | 'windowless' | 'failed' | 'absent' = 'good';
+  const rec = recordingFetch(c => {
+    if (c.url.endsWith('/api-call')) return state === 'failed' ? { status: 500, body: {} } : { status: 200, body: { status_code: 200, body: { groups: [
+      { buckets: [{ bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: .5 }] },
+      ...(state === 'absent' ? [] : [{ buckets: [{ ...(state !== 'malformed' ? { bucketId: '3p-weekly' } : {}), ...(state === 'windowless' ? {} : { window: 'weekly' }), remainingFraction: .7 }] }])
+    ] } } };
+  });
+  const deps = { agyScopesPath: join(root, 'scopes.json'), readSettingsFn: () => stored, fetchFn: rec.fn,
+    recordQuotaFn: async (record: Record<string, unknown>) => { records.push(record); } };
+  let observer = createCliRouterQuotaObserver(deps);
+  await observer.observeAccount(account, stored, true);
+  state = 'malformed'; records.length = 0;
+  await observer.observeAccount(account, stored, true);
+  assert.deepEqual(records.map(r => [r.quota_pool, r.quota_remaining_percent]), [['agy:google-native', 50], ['agy:external', undefined]]);
+  assert.equal(records[1].quota_window, 'weekly');
+  assert.ok(records[1].check_error);
+  assert.equal(records[1].observed_at, undefined);
+  state = 'windowless'; records.length = 0;
+  await observer.observeAccount(account, stored, true);
+  assert.equal(records[1].quota_window, 'weekly');
+  assert.ok(records[1].check_error);
+  assert.equal(records[1].quota_remaining_percent, undefined);
+  observer = createCliRouterQuotaObserver(deps);
+  state = 'failed'; records.length = 0;
+  await observer.observeAccount(account, stored, true);
+  assert.deepEqual(records.map(r => r.quota_pool), ['agy:google-native', 'agy:external']);
+  assert.ok(records.every(r => r.check_error && r.quota_remaining_percent === undefined));
+  state = 'absent'; records.length = 0;
+  await observer.observeAccount(account, stored, true);
+  state = 'failed'; records.length = 0;
+  await createCliRouterQuotaObserver(deps).observeAccount(account, stored, true);
+  assert.deepEqual(records.map(r => r.quota_pool), ['agy:google-native']);
+});
+
+test('CLIProxyAPI observation and restart failures match probe-free Rust routing fixture pools', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'gah-pool-parity-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const cases: { model: string; buckets: string[]; pool: string }[] = JSON.parse(readFileSync(
+    new URL('../../../tests/fixtures/agy/pool-identity.json', import.meta.url), 'utf8'));
+  for (const [index, sample] of cases.entries()) {
+    if (!sample.buckets.length || !sample.model) continue;
+    const stored = { url: `https://parity-${index}.example.com`, apiKey: 'k', managementKey: 'm', accountBackends: { parity: 'agy-second' } };
+    const account = { ...file({ id: 'parity', provider: 'antigravity', project_id: 'p' }), quota: null, model_quotas: null };
+    let failed = false;
+    const rec = recordingFetch(() => failed ? { status: 500, body: {} } : { status: 200, body: { status_code: 200, body: { groups: [{
+      buckets: sample.buckets.map(bucketId => ({ bucketId, window: 'weekly', remainingFraction: .5 }))
+    }] } } });
+    const records: Record<string, unknown>[] = [];
+    const deps = { agyScopesPath: join(root, `${index}.json`), readSettingsFn: () => stored, fetchFn: rec.fn,
+      recordQuotaFn: async (record: Record<string, unknown>) => { records.push(record); } };
+    await createCliRouterQuotaObserver(deps).observeAccount(account, stored, true);
+    assert.ok(records.length);
+    assert.ok(records.every(record => record.quota_pool === `agy-second:${sample.pool}`));
+    records.length = 0; failed = true;
+    await createCliRouterQuotaObserver(deps).observeAccount(account, stored, true);
+    assert.ok(records.length);
+    assert.ok(records.every(record => record.quota_pool === `agy-second:${sample.pool}` && record.quota_window === 'weekly' && record.check_error));
+  }
+});
+
+test('AGY failures before a first reading invalidate both probe-free pools on every attempt', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'gah-pool-empty-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const stored = { url: 'https://empty-parity.example.com', apiKey: 'k', managementKey: 'm', accountBackends: { empty: 'agy-main' } };
+  const rec = recordingFetch(() => ({ status: 500, body: {} }));
+  const records: Record<string, unknown>[] = [];
+  const observer = createCliRouterQuotaObserver({ agyScopesPath: join(root, 'scopes.json'), readSettingsFn: () => stored, fetchFn: rec.fn,
+    recordQuotaFn: async record => { records.push(record); } });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    records.length = 0;
+    await observer.observeAccount({ ...file({ id: 'empty', provider: 'antigravity', project_id: 'p' }), quota: null, model_quotas: null }, stored, true);
+    assert.deepEqual(records.map(record => record.quota_pool), ['agy:google-native', 'agy:external']);
+    assert.ok(records.every(record => record.check_error && record.quota_remaining_percent === undefined));
+  }
+});
+
+
+test('AGY observer preserves separate flash and pro weekly balances', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'gah-distinct-agy-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const records: Record<string, unknown>[] = [];
+  const rec = recordingFetch(c => {
+    if (c.url.endsWith('/auth-files')) return { status: 200, body: { files: [file({ id: 'split', provider: 'antigravity', project_id: 'p' })] } };
+    if (c.url.endsWith('/api-call')) return { status: 200, body: { status_code: 200, body: { groups: [
+      { buckets: [{ bucketId: 'gemini-flash-weekly', window: 'weekly', remainingFraction: 0 }] },
+      { buckets: [{ bucketId: 'gemini-pro-weekly', window: 'weekly', remainingFraction: .8 }] }
+    ] } } };
+  });
+  const observer = createCliRouterQuotaObserver({ agyScopesPath: join(root, 'scopes.json'),
+    readSettingsFn: () => ({ url: 'https://split.example.com', apiKey: 'k', managementKey: 'm', accountBackends: { split: 'agy' } }),
+    fetchFn: rec.fn, recordQuotaFn: async record => { records.push(record); } });
+  await observer.refresh();
+  assert.deepEqual(records.map(record => [record.quota_pool, record.quota_window, record.quota_remaining_percent]), [
+    ['agy:gemini-flash-weekly', 'weekly', 0], ['agy:gemini-pro-weekly', 'weekly', 80]
+  ]);
+});
+
+
+test('AGY observer keeps exhausted Nova Flash separate from full external quota', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'gah-nova-agy-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const records: Record<string, unknown>[] = [];
+  const rec = recordingFetch(c => {
+    if (c.url.endsWith('/auth-files')) return { status: 200, body: { files: [file({ id: 'nova', provider: 'antigravity', project_id: 'p' })] } };
+    if (c.url.endsWith('/api-call')) return { status: 200, body: { status_code: 200, body: { groups: [
+      { displayName: 'Nova Flash', buckets: [{ bucketId: 'gemini-flash-weekly', window: 'weekly', remainingFraction: 0 }] },
+      { buckets: [{ bucketId: '3p-weekly', window: 'weekly', remainingFraction: 1 }] }
+    ] } } };
+  });
+  const observer = createCliRouterQuotaObserver({ agyScopesPath: join(root, 'scopes.json'),
+    readSettingsFn: () => ({ url: 'https://nova.example.com', apiKey: 'k', managementKey: 'm', accountBackends: { nova: 'agy' } }),
+    fetchFn: rec.fn, recordQuotaFn: async record => { records.push(record); } });
+  await observer.refresh();
+  assert.deepEqual(records.map(record => [record.quota_pool, record.quota_window, record.quota_remaining_percent]), [
+    ['agy:gemini-flash-weekly', 'weekly', 0], ['agy:external', 'weekly', 100]
+  ]);
+});
+
+
+test('AGY observer keeps persisted scopes across an empty but well-formed groups reply', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'gah-empty-groups-agy-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const records: Record<string, unknown>[] = [];
+  let reply: () => { status: number; body: unknown } = () => ({ status: 200, body: { status_code: 200, body: { groups: [
+    { buckets: [{ bucketId: 'gemini-flash-weekly', window: 'weekly', remainingFraction: 0 }] }
+  ] } } });
+  const rec = recordingFetch(c => {
+    if (c.url.endsWith('/auth-files')) return { status: 200, body: { files: [file({ id: 'empty', provider: 'antigravity', project_id: 'p' })] } };
+    if (c.url.endsWith('/api-call')) return reply();
+    return { status: 404, body: {} };
+  });
+  const stored = { url: 'https://empty-groups.example.com', apiKey: 'k', managementKey: 'm', accountBackends: { empty: 'agy' } };
+  const account = { ...file({ id: 'empty', provider: 'antigravity', project_id: 'p' }), quota: null, model_quotas: null };
+  const observer = createCliRouterQuotaObserver({ agyScopesPath: join(root, 'scopes.json'),
+    readSettingsFn: () => stored, fetchFn: rec.fn, recordQuotaFn: async record => { records.push(record); } });
+  await observer.observeAccount(account, stored, true);
+  assert.deepEqual(records.map(record => [record.quota_pool, record.quota_remaining_percent]), [['agy:gemini-flash-weekly', 0]]);
+  // An empty groups array is well-formed but carries no reading: the known scope is invalidated, not forgotten.
+  reply = () => ({ status: 200, body: { status_code: 200, body: { groups: [] } } });
+  records.length = 0;
+  await observer.observeAccount(account, stored, true);
+  assert.deepEqual(records.map(record => [record.quota_pool, record.quota_remaining_percent !== undefined, Boolean(record.check_error)]), [['agy:gemini-flash-weekly', false, true]]);
+  // A later failure still invalidates that same scope instead of the generic fallback pools.
+  reply = () => ({ status: 500, body: {} });
+  records.length = 0;
+  await observer.observeAccount(account, stored, true);
+  assert.deepEqual(records.map(record => record.quota_pool), ['agy:gemini-flash-weekly']);
 });

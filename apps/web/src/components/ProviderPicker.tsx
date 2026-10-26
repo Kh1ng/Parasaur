@@ -91,7 +91,7 @@ export function ProviderPicker({
   selectedInstanceLabel,
   models,
   currentModelId,
-  reasoningEfforts,
+  reasoningEfforts: backendEfforts,
   currentReasoningEffortId,
   modelsLoaded,
   busy,
@@ -133,6 +133,7 @@ export function ProviderPicker({
   }, [open, browsing]);
 
   const selectedModel = models.find((m) => m.id === currentModelId);
+  const reasoningEfforts = selectedModel?.reasoningEfforts ?? backendEfforts;
   const selectedEffort = reasoningEfforts.find((effort) => effort.id === currentReasoningEffortId);
   const showDefaultModel = variant === 'session' && modelsLoaded && models.length > 0 && !selectedModel;
   const backendName = (id: string) => backends.find((backend) => backend.id === id)?.displayName ?? id;
@@ -195,10 +196,13 @@ export function ProviderPicker({
    * omits falls back to the target backend's own default. */
   const applyEntry = (entry: ProviderFavorite) => {
     if (!backends.find((backend) => backend.id === entry.backend)?.implemented) return;
+    const supported = models.find(model => model.id === entry.model)?.reasoningEfforts;
+    const effort = entry.backend === selectedBackendId && supported && !supported.some(item => item.id === entry.reasoningEffort)
+      ? null : entry.reasoningEffort ?? null;
     onSelect({
       backendId: entry.backend,
       modelId: entry.model ?? null,
-      reasoningEffortId: entry.reasoningEffort ?? null
+      reasoningEffortId: effort
     });
     rememberRecent(entry);
     setOpen(false);
@@ -208,7 +212,8 @@ export function ProviderPicker({
   /** A catalog pick keeps the effort when the provider is unchanged; a
    * different provider resolves its own default effort. */
   const applyBrowsed = (backendId: string, modelId: string | null) => {
-    const effort = backendId === selectedBackendId ? currentReasoningEffortId : null;
+    const nextEfforts = models.find(model => model.id === modelId)?.reasoningEfforts;
+    const effort = backendId === selectedBackendId && (!nextEfforts || nextEfforts.some(item => item.id === currentReasoningEffortId)) ? currentReasoningEffortId : null;
     onSelect({ backendId, modelId, reasoningEffortId: effort });
     rememberRecent({
       backend: backendId,
