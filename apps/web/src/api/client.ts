@@ -1,5 +1,6 @@
 import type { Session } from '@git-agent-harness/contracts';
 import { coordinatorToken } from './coordinatorToken.js';
+import { withBasePath } from '../lib/basePath.js';
 import type { ActivityEvent, ActivityNotificationPreferences, AuthHealthRow, LoginRepairView, PairedDevice, PairingOffer, PairingPreview, PairingAccessRequest } from '@git-agent-harness/contracts';
 import type { PlanningChatRequest, PlanningEpicList, PlanningMap, PlanningSettings, PlanningTarget } from '@git-agent-harness/contracts';
 import type { GitLabRunsFeedResponse } from '@git-agent-harness/contracts';
@@ -79,6 +80,12 @@ import type {
 const SERVER_URL =
   (import.meta as unknown as { env: { VITE_SERVER_URL?: string } }).env?.VITE_SERVER_URL ||
   (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
+
+/** Every endpoint is app-absolute; the deployment's base path (nginx prefix)
+ * joins here once so every call site stays prefix-agnostic. */
+function apiUrl(path: string): URL {
+  return new URL(withBasePath(path), SERVER_URL);
+}
 
 function authHeaders(): Record<string, string> {
   const token = coordinatorToken();
@@ -168,7 +175,7 @@ export const activityApi = {
 };
 
 async function getJson<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
-  const url = new URL(path, SERVER_URL);
+  const url = apiUrl(path);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined) url.searchParams.set(key, value);
