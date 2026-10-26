@@ -1,0 +1,194 @@
+[
+  {
+    "mode": "local",
+    "headers": 0,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"owner\"},\"can_approve_pairing\":true}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "local",
+    "headers": 1,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"owner\"},\"can_approve_pairing\":true}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "local",
+    "headers": 2,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"owner\"},\"can_approve_pairing\":true}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "local",
+    "headers": 3,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"owner\"},\"can_approve_pairing\":true}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "local",
+    "headers": 4,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"owner\"},\"can_approve_pairing\":true}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "local",
+    "headers": 5,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"owner\"},\"can_approve_pairing\":true}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "anonymous-proxy",
+    "headers": 0,
+    "status": 401,
+    "body": "{\"error\":\"Unauthorized\",\"message\":\"Authentication token required for remote or cross-origin access\"}",
+    "cookie": null,
+    "ws": 401
+  },
+  {
+    "mode": "anonymous-proxy",
+    "headers": 1,
+    "status": 401,
+    "body": "{\"error\":\"Unauthorized\",\"message\":\"Authentication token required for remote or cross-origin access\"}",
+    "cookie": null,
+    "ws": 401
+  },
+  {
+    "mode": "anonymous-proxy",
+    "headers": 2,
+    "status": 401,
+    "body": "{\"error\":\"Unauthorized\",\"message\":\"Authentication token required for remote or cross-origin access\"}",
+    "cookie": null,
+    "ws": 401
+  },
+  {
+    "mode": "anonymous-proxy",
+    "headers": 3,
+    "status": 401,
+    "body": "{\"error\":\"Unauthorized\",\"message\":\"Authentication token required for remote or cross-origin access\"}",
+    "cookie": null,
+    "ws": 401
+  },
+  {
+    "mode": "anonymous-proxy",
+    "headers": 4,
+    "status": 401,
+    "body": "{\"error\":\"Unauthorized\",\"message\":\"Authentication token required for remote or cross-origin access\"}",
+    "cookie": null,
+    "ws": 401
+  },
+  {
+    "mode": "anonymous-proxy",
+    "headers": 5,
+    "status": 401,
+    "body": "{\"error\":\"Unauthorized\",\"message\":\"Authentication token required for remote or cross-origin access\"}",
+    "cookie": null,
+    "ws": 401
+  },
+  {
+    "mode": "owner",
+    "headers": 0,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"owner\"},\"can_approve_pairing\":true}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "owner",
+    "headers": 1,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"owner\"},\"can_approve_pairing\":true}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "owner",
+    "headers": 2,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"owner\"},\"can_approve_pairing\":true}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "owner",
+    "headers": 3,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"owner\"},\"can_approve_pairing\":true}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "owner",
+    "headers": 4,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"owner\"},\"can_approve_pairing\":true}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "owner",
+    "headers": 5,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"owner\"},\"can_approve_pairing\":true}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "device",
+    "headers": 0,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"device\",\"id\":\"<device-id>\"},\"can_approve_pairing\":false}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "device",
+    "headers": 1,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"device\",\"id\":\"<device-id>\"},\"can_approve_pairing\":false}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "device",
+    "headers": 2,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"device\",\"id\":\"<device-id>\"},\"can_approve_pairing\":false}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "device",
+    "headers": 3,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"device\",\"id\":\"<device-id>\"},\"can_approve_pairing\":false}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "device",
+    "headers": 4,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"device\",\"id\":\"<device-id>\"},\"can_approve_pairing\":false}",
+    "cookie": null,
+    "ws": 101
+  },
+  {
+    "mode": "device",
+    "headers": 5,
+    "status": 200,
+    "body": "{\"schema_version\":1,\"principal\":{\"kind\":\"device\",\"id\":\"<device-id>\"},\"can_approve_pairing\":false}",
+    "cookie": null,
+    "ws": 101
+  }
+]

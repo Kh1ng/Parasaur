@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { isIP } from 'node:net';
 import type { IncomingHttpHeaders } from 'node:http';
 import { deviceCookie, type DeviceAccess } from './deviceAccess.js';
+import { GITLAB_IDENTITY_HEADER, GitLabIdentity } from './integrations/gitlab/identity.js';
 
 export function isLocalAddress(ip: string): boolean {
   if (!ip) return false;
@@ -69,6 +70,17 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     } catch { /* Invalid/unreadable credential storage fails closed. */ }
     return res.status(401).json({ error: 'Unauthorized', message: 'Device access is unavailable, expired, or revoked. Pair this device again.' });
   }
+  // Explicit credentials win. Unregistered identity headers are inert.
+  const identity: GitLabIdentity | undefined = req.app?.locals.gitLabIdentity;
+  if (authHeader === undefined && identity?.enabled && req.headers[GITLAB_IDENTITY_HEADER] !== undefined) {
+    if (!sameOriginRequest(req)) return res.status(401).json({ error: 'Unauthorized', message: 'GitLab identity is unavailable or invalid.' });
+    return identity.authenticate(req, isTls).then(principal => {
+      if (!principal) return res.status(401).json({ error: 'Unauthorized', message: 'GitLab identity is unavailable or invalid.' });
+      res.locals.authPrincipal = principal;
+      next();
+    });
+  }
+
   if (authHeader === undefined && local) {
     res.locals.authPrincipal = { kind: 'owner' };
     return next();

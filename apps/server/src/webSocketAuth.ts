@@ -3,13 +3,21 @@ import { isIP } from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
 import { coordinatorTokenMatches, isLocalAddress, isTrustedLocalRequest, sameOriginRequest } from './authMiddleware.js';
 import { deviceCookie, type DeviceAccess } from './deviceAccess.js';
+import { GITLAB_IDENTITY_HEADER, type GitLabIdentity, type GitLabSession } from './integrations/gitlab/identity.js';
 
 const compatibilityClients = new WeakSet<WebSocket>();
 const compatibilityWarnings = new WeakSet<WebSocket>();
-const deviceClients = new WeakMap<WebSocket, { access: DeviceAccess; id: string }>();
+const deviceClients = new WeakMap<WebSocket, { access: DeviceAccess; id: string; validUntil: () => boolean }>();
+const gitLabClients = new WeakMap<WebSocket, GitLabSession>();
+
+/** Verified attribution for enterprise chat/dispatch consumers; never headers. */
+export function webSocketGitLabPrincipal(ws: WebSocket): GitLabSession | undefined {
+  return webSocketAccessValid(ws) ? gitLabClients.get(ws) : undefined;
+}
 
 /** Approval alerts follow the same live delegation as HTTP review actions. */
 export function webSocketCanApprovePairing(ws: WebSocket): boolean {
+  if (!webSocketAccessValid(ws)) return false;
   if (compatibilityClients.has(ws)) return false;
   const device = deviceClients.get(ws);
   return device ? device.access.canApprovePairing(device.id) : true;
@@ -19,7 +27,7 @@ export function webSocketCanApprovePairing(ws: WebSocket): boolean {
  * when revocation terminated the transport. Revocation never stops accepted work. */
 export function webSocketAccessValid(ws: WebSocket): boolean {
   const device = deviceClients.get(ws);
-  if (!device || device.access.active(device.id)) return true;
+  if (!device || (device.validUntil() && device.access.active(device.id))) return true;
   ws.terminate();
   return false;
 }
@@ -68,9 +76,10 @@ function browserToken(req: IncomingMessage): string | null {
 
 /** Reject unauthorized upgrades before a socket can receive welcome data or invoke handlers.
  * Native fleet clients retain Authorization; browsers send a non-echoed credential protocol. */
-export function createAuthorizedWebSocketServer(server: Server, role?: 'central' | 'standalone' | 'worker', access?: DeviceAccess, now = Date.now): WebSocketServer {
+export function createAuthorizedWebSocketServer(server: Server, role?: 'central' | 'standalone' | 'worker', access?: DeviceAccess, now = Date.now, gitLabIdentity?: GitLabIdentity): WebSocketServer {
   const compatibilityRequests = new WeakSet<IncomingMessage>();
   const deviceRequests = new WeakMap<IncomingMessage, { id: string; expires_at: string }>();
+  const gitLabRequests = new WeakMap<IncomingMessage, GitLabSession>();
   const wss = new WebSocketServer({
     server,
     handleProtocols: protocols => protocols.has('gah.v1') ? 'gah.v1' : false,
@@ -92,6 +101,17 @@ export function createAuthorizedWebSocketServer(server: Server, role?: 'central'
         } catch { /* Corrupt credential storage must not authorize an upgrade. */ }
         return done(false, 401, 'Device access expired or revoked');
       }
+      // Explicit credentials win; assertions precede only local/compatibility fallback.
+      if (!worker && !suppliedToken && cookie === undefined && gitLabIdentity?.enabled && req.headers[GITLAB_IDENTITY_HEADER] !== undefined) {
+        if (!access || !sameOriginRequest({ headers: req.headers, protocol, method: req.method })) return done(false, 401, 'GitLab identity is unavailable or invalid');
+        void gitLabIdentity.authenticate(req, protocol === 'https').then(principal => {
+          if (!principal) return done(false, 401, 'GitLab identity is unavailable or invalid');
+          gitLabRequests.set(req, principal);
+          deviceRequests.set(req, { id: principal.id, expires_at: principal.expiresAt });
+          done(true);
+        });
+        return;
+      }
       if (!worker && local && !suppliedToken) return done(true);
       // A bad supplied credential is not silently downgraded into compatibility mode.
       if (token === null && !suppliedToken && cookie === undefined && req.headers.origin && !worker && process.env.GAH_WS_AUTH_MODE === 'trusted_lan') {
@@ -103,8 +123,10 @@ export function createAuthorizedWebSocketServer(server: Server, role?: 'central'
   });
   wss.on('connection', (ws, req) => {
     const device = deviceRequests.get(req);
+    const principal = gitLabRequests.get(req);
+    if (principal) gitLabClients.set(ws, principal);
     if (device && access) {
-      deviceClients.set(ws, { access, id: device.id });
+      deviceClients.set(ws, { access, id: device.id, validUntil: () => Date.parse(device.expires_at) > now() });
       const unsubscribe = access.onRevoke(id => { if (id === device.id) ws.terminate(); });
       let expiry: ReturnType<typeof setTimeout>;
       const expire = () => {

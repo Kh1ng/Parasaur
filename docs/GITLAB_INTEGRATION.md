@@ -300,3 +300,93 @@ location /parasaur/ {
   (framing + postMessage), and `GAH_WEB_ROOT` to the built web app.
 - `GAH_GITLAB_PANEL_URL` (from #1592) should name the same public base
   URL, `https://gitlab.example/parasaur/`, for run links.
+
+## Panel identity hook for enterprise sign-in
+
+Public core exposes `GitLabIdentityProvider` in `apps/server/src/integrations/gitlab/identity.ts`.
+This extension point does not implement GitLab or Supabase sign-in.
+The default `anonymousGitLabIdentityProvider` always returns `null`.
+Without a registered provider, all identity and assertion headers are inert.
+HTTP responses and WebSocket upgrades retain their existing authentication behavior.
+Explicit owner or paired-device credentials take precedence, even when an assertion is present.
+Invalid explicit credentials still fail through the existing credential checks.
+Only requests without explicit credentials consult a registered provider, before local or trusted-LAN fallback.
+An assertion on that path must validate or the request is denied; without an assertion, existing authentication applies.
+
+The companion contract currently defines only the nginx gate and cookie stripping.
+The gate admits signed-in GitLab users to `/parasaur/` and removes the entire `Cookie` header upstream.
+It does not currently issue a signed identity assertion.
+`X-Parasaur-Identity-Assertion` is the public-core extension contract for the future enterprise module.
+Neither the gate, `GAH_GITLAB_ORIGIN`, nor a forwarded username grants identity by itself.
+
+Register the enterprise provider through `createServer({ deviceAccess, gitLabIdentityProvider })` before the server starts.
+Registration is local to that central server, never a request parameter or environment-selected module.
+For a custom startup, pass `app.locals.gitLabIdentity` as the fifth argument to `createAuthorizedWebSocketServer`.
+Use the same `DeviceAccess` instance for both servers.
+The standard `bin.ts` already passes this instance.
+Workers do not accept this hook.
+
+The provider implements this interface:
+
+```ts
+interface GitLabIdentityProvider {
+  authenticate(request: GitLabIdentityRequest):
+    GitLabPrincipal | null | Promise<GitLabPrincipal | null>;
+}
+
+interface GitLabPrincipal {
+  id: string;
+  displayName: string;
+  role: 'controller';
+  expiresAt: string;
+}
+```
+
+`GitLabIdentityRequest` contains only these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `assertion` | Opaque `X-Parasaur-Identity-Assertion` value, 1–8192 ASCII letters, digits, underscores, dots, or hyphens. Duplicate or malformed values fail closed. |
+| `method`, `path` | HTTP method and upstream request URL, including its query. nginx removes `/parasaur` before proxying. WebSocket upgrades use the same contract. |
+| `host`, `origin` | Raw `Host` and `Origin` headers, if present. These values are request evidence, not verified identity. |
+| `forwardedPrefix` | Raw `X-Forwarded-Prefix`, normally `/parasaur`. This value grants no trust. |
+| `remoteAddress`, `secure` | Immediate socket address and transport status. HTTP uses Express's existing loopback proxy policy. WebSockets use their existing transport policy. |
+
+The hook never receives cookies, bearer credentials, arbitrary headers, or a mutable Express request.
+The enterprise provider must verify the assertion signature, issuer, audience, expiry, request binding, and replay policy.
+It must resolve the verified GitLab or Supabase subject to a known Parasaur principal.
+It must return `null` for an unknown, unauthorized, or disabled user.
+Public core does not parse assertions or trust identity headers without a registered provider.
+Provider errors on the assertion path produce a generic `401`, without provider details or fallback to local or trusted-LAN access.
+
+For this hook, `id` must name an existing active paired controller in `DeviceAccess`.
+It is not a raw GitLab username or an automatically provisioned Supabase ID.
+The provider owns that mapping and returns a nonempty display name of at most 80 characters, without control characters.
+`expiresAt` is an absolute ISO-8601 timestamp.
+Public core rejects unknown IDs, revoked controllers, expired claims, malformed results, and unsupported roles.
+It caps the session expiry at the local controller expiry.
+
+Successful authentication sets `res.locals.authPrincipal` to `{ kind: 'device', id, displayName, role, expiresAt }`.
+`GET /api/pairing/session` exposes this principal through the existing session response.
+`webSocketGitLabPrincipal(ws)` exposes the verified attribution to enterprise chat and dispatch consumers.
+Existing mutation audits retain `device:<id>` as the actor.
+The session retains controller permissions to read dashboard data, use chat, and dispatch work.
+Owner-only settings, credential management, and paid-route approval mutations remain forbidden.
+Existing owner-delegated pairing approval grants still apply to the mapped controller.
+This hook adds no new paid-route approval roles or per-project permissions.
+
+The hook mints no cookie or bearer token and creates no device record.
+Each API request and WebSocket upgrade authenticated through the hook requires a fresh provider check.
+WebSocket sessions terminate at the earlier claim or controller expiry, or upon local controller revocation.
+Buffered messages also check that expiry and revocation state.
+Enterprise revocation must revoke the mapped local controller or wait for its assertion expiry to end an existing socket.
+
+For deployment, strip client-supplied assertion headers before the trusted enterprise gate creates its own assertion.
+Keep the GitLab session cookie inside GitLab.
+Preserve the public `Host` and HTTPS scheme so existing origin and transport checks succeed.
+The current companion snippet uses the upstream host and needs that deployment adjustment for enterprise sign-in.
+Forward the assertion on API calls and WebSocket upgrades under the panel prefix.
+The `/embed` document router, framing policy, sign-in handoff, and runs-feed routes need no duplicate implementation.
+
+Enterprise must still choose the issuer, signing keys, audience, claim lifetime, replay controls, and principal enrollment policy.
+It must also implement GitLab/Supabase sign-in and the trusted gate changes before this hook can authenticate panel users.
