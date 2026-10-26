@@ -32,3 +32,7 @@ present in the shipped regex rather than an external fixture; treat that regex a
 against a real capture until one exists.
 
 `agy_individual_quota_reached.txt`: central node `~/.local/state/gah/chat` handoff records (Aug 29–30), inspected Oct 2, 2026 while investigating GAH #1294. The subscription error and cooldown are provider output, not a synthetic HTTP 429.
+
+`vibe_budget_exhausted.txt`: exact message reported in GAH #1624, owner comment
+on 2026-10-24. The central `mistral-glm-5-3` route returned HTTP 402 and was
+selected again on later ticks.

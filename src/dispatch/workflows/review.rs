@@ -598,6 +598,7 @@ pub(in crate::dispatch) fn review(
             // parsing/rerouting so another worker can use the reviewer as soon as
             // capacity is genuinely free.
             drop((worker_observation, review_slot));
+            super::super::attempts::record_review_outcome(cfg, profile, &route.identity, &attempt)?;
             if !matches!(
                 &attempt.outcome,
                 runner::ReviewProcessOutcome::ExecutableUnavailable
@@ -841,6 +842,11 @@ pub(in crate::dispatch) fn review(
                 );
                 match parsed {
                     Ok(verdict) => {
+                        crate::availability::clear_quota_failure(
+                            &crate::availability::resolve_state_path(),
+                            &route.identity,
+                            time::OffsetDateTime::now_utc(),
+                        )?;
                         let repair = (format_only_repair_count < REVIEW_FORMAT_REPAIR_ATTEMPTS)
                             .then(|| review_gate_context.repair_instructions(&verdict))
                             .flatten();

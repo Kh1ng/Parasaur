@@ -722,8 +722,8 @@ fn temporary_subscribed_capacity_precedes_paid_route_approval() {
             })
     ));
 
-    // Without a defensible reset time, there is nothing deterministic to
-    // wait for, so the configured paid fallback still asks the operator.
+    // Missing provider reset times now get a bounded availability cooldown.
+    // Wait for that probe before asking to use the paid fallback.
     record_unavailable(
         &path(&tmp),
         "claude",
@@ -747,9 +747,8 @@ fn temporary_subscribed_capacity_precedes_paid_route_approval() {
     .unwrap_err();
     assert!(matches!(
         err.downcast_ref::<RouteError>(),
-        Some(RouteError::ApprovalRequired { backend, model, .. })
-            if backend == "opencode"
-                && model.as_deref() == Some("nous-portal/z-ai/glm-5.2")
+        Some(route @ RouteError::NoEligibleBackend { earliest_reset: Some(_), .. })
+            if route.is_capacity_deferral()
     ));
 }
 

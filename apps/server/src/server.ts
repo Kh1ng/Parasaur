@@ -1,3 +1,4 @@
+import { notificationChannelFailure } from './notifyDelivery.js';
 import { parseSkillSelections } from './skillSelections.js';
 import { runningWorkers } from './runningWorkers.js';
 import express from 'express';
@@ -1957,7 +1958,8 @@ export function createServer(
   app.get('/api/config', async (_req, res) => {
     try {
       const config = await runConfigShow();
-      res.json(config);
+      const failure = notificationChannelFailure();
+      res.json({ ...config, notifications: config.notifications && { ...config.notifications, last_error: failure?.reason ?? null } });
     } catch (error) {
       res.status(502).json({
         error: 'Failed to read global config',

@@ -101,7 +101,7 @@ fn insufficient_balance_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r"(?i)(account balance (?:is )?insufficient|insufficient (?:account )?balance|credit balance.{0,24}(?:insufficient|exhausted)|payment required)",
+            r"(?i)(account balance (?:is )?insufficient|insufficient (?:account )?balance|credit balance.{0,24}(?:insufficient|exhausted)|budget exhausted|payment required)",
         )
         .unwrap()
     })

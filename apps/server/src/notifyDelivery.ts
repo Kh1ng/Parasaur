@@ -56,6 +56,11 @@ function run(label: string, command: string, args: string[], stdin?: string): Pr
 }
 
 const CHANNEL_NAMES: Record<string, string> = { telegram: 'Telegram', discord: 'Discord' };
+let channelFailure: DeliveryReceipt | null = null;
+
+/** A rejected Telegram configuration stays quiet until Settings saves or tests it. */
+export function notificationChannelFailure(): DeliveryReceipt | null { return channelFailure; }
+export function resetNotificationChannelFailure(): void { channelFailure = null; }
 
 /** `gah notify-send` prints one JSON line naming the channel it used (`none`
  * while the module is off) and, on failure, a redacted `reason`. An older
@@ -74,23 +79,32 @@ function channelReceipt(stdout: string, failure?: unknown): DeliveryReceipt[] {
  * off (the CLI then exits 0 and prints channel "none", so nothing is logged). */
 async function sendThroughChannel(gahBinary: string, args: string[], label: string): Promise<DeliveryReceipt[]> {
   try {
-    return channelReceipt(await run('gah notify-send', gahBinary, ['notify-send', ...args]));
+    const receipts = channelReceipt(await run('gah notify-send', gahBinary, ['notify-send', ...args]));
+    channelFailure = null;
+    return receipts;
   } catch (error) {
+    const receipts = channelReceipt(error instanceof ExitError ? error.stdout : '', error);
+    const failure = receipts.find(receipt => receipt.target === 'Telegram' && receipt.reason === 'HTTP 400');
+    if (failure) channelFailure = failure;
     console.error(`[activity] channel delivery failed for ${label}: ${error instanceof Error ? error.message : String(error)}`);
-    return channelReceipt(error instanceof ExitError ? error.stdout : '', error);
+    return receipts;
   }
 }
 
 /** Telegram/Discord through `gah notify-send`, reusing the Rust channel code.
  * The CLI no-ops when the module is off or no channel is configured. */
 export function channelDelivery(baseUrl: string, gahBinary: () => string = findGahBinary): ActivityDelivery {
-  return async (event) => {
+  let pending = Promise.resolve();
+  return (event) => {
     if (!notifiableActivity(event) || fromControllerLog(event)) return [];
-    return sendThroughChannel(gahBinary(), [
+    // Serialize admission so concurrent events cannot all pass the first HTTP 400.
+    const delivery = pending.then(() => channelFailure ? [] : sendThroughChannel(gahBinary(), [
       '--title', event.title,
       '--message', event.message,
       '--url', new URL(activityPath(event), baseUrl).href
-    ], event.id);
+    ], event.id));
+    pending = delivery.then(() => undefined, () => undefined);
+    return delivery;
   };
 }
 

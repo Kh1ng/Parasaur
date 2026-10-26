@@ -1379,7 +1379,7 @@ fn backend_failure_reset_time_resolves_in_local_offset_not_utc() {
     // time, not 9:01 PM UTC.
     let tmp = tempfile::tempdir().unwrap();
     let state = tmp.path().join("availability.json");
-    mark_backend_unavailable_from_output_at(
+    let parsed = mark_backend_unavailable_from_output_at(
         &state,
         "codex",
         Some("local/test"),
@@ -1390,8 +1390,9 @@ fn backend_failure_reset_time_resolves_in_local_offset_not_utc() {
     .unwrap()
     .unwrap();
 
-    let state = load_state(&state).unwrap();
-    let unavailable_until = state.records[0].unavailable_until.as_deref().unwrap();
+    // The fixture's old reset is past; availability now applies a retry cooldown.
+    // Check the parsed provider time independently from that cooldown.
+    let unavailable_until = parsed.reset_at.as_deref().unwrap();
     let resolved = OffsetDateTime::parse(
         unavailable_until,
         &time::format_description::well_known::Rfc3339,

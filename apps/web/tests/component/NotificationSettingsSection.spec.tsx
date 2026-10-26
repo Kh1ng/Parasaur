@@ -70,3 +70,18 @@ test('an enabled module sends a test message and shows a failed receipt; off sav
   await expect(component.getByRole('status')).toContainText('Notifications are off');
   expect(saved).toEqual([{ enabled: false }]);
 });
+
+
+test('a rejected Telegram channel appears once in Settings with a recovery action', async ({ mount }) => {
+  const component = await mount(
+    <NotificationChannelSection
+      config={configWith({ enabled: true, channel: 'telegram', telegram_chat_id: '42', credential_env: 'TELEGRAM_BOT_TOKEN', credential_source: 'file', last_error: 'Telegram notification rejected with HTTP 400' })}
+      setConfig={noop}
+      clearConfigErrors={() => {}}
+    />
+  );
+  await expect(component.getByRole('alert')).toHaveCount(1);
+  await expect(component.getByRole('alert')).toContainText('Telegram delivery paused');
+  await expect(component.getByRole('alert')).toContainText('HTTP 400');
+  await expect(component.getByRole('button', { name: 'Send test message' })).toBeEnabled();
+});

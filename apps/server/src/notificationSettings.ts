@@ -2,7 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import type { ActivityEvent, DeliveryReceipt, NotificationSettingsUpdate } from '@git-agent-harness/contracts';
 import { runConfigSet, type ConfigSetOptions } from './gahCli.js';
-import { sendTestNotification } from './notifyDelivery.js';
+import { resetNotificationChannelFailure, sendTestNotification } from './notifyDelivery.js';
 
 /** Issue #1454: the notification module's Settings routes. Mount behind
  * `requireOwner`; both routes write state or reach the network, so both are
@@ -60,6 +60,7 @@ export function notificationSettingsRouter(deps: NotificationSettingsDeps = {}):
     if (typeof options === 'string') return res.status(400).json({ error: 'invalid_notification_settings', message: options });
     try {
       await save(options);
+      resetNotificationChannelFailure();
       return res.json({ saved: true });
     } catch (error) {
       return res.status(400).json({ error: 'notification_settings_rejected', message: cliMessage(error) });

@@ -254,3 +254,19 @@ test('delivery receipts are stored on the event, announced, and survive a restar
     rmSync(directory, { recursive: true });
   }
 });
+
+test('controller quota cooldown retries stay in history without another delivery', async () => {
+  const delivered: string[] = [];
+  const feed = new ActivityFeed(null, event => { delivered.push(event.id); });
+  for (let turn = 0; turn < 20; turn++) {
+    const event = activityFromController({ ...controller('dispatch_finished', `retry ${turn}`), skipped: [{ backend: 'vibe', model: 'glm', reason: 'model-specific quota_exhausted' }] });
+    assert.ok(event);
+    assert.equal(event.notificationMuted, true);
+    feed.record(event);
+  }
+  await new Promise(done => setImmediate(done));
+  assert.equal(feed.replay('gah').length, 20);
+  assert.equal(delivered.length, 0);
+  const unrelated = activityFromController({ ...controller('dispatch_finished', 'failed'), skipped: [{ backend: 'vibe', reason: 'backend-wide authentication_error' }] });
+  assert.equal(unrelated?.notificationMuted, undefined);
+});
