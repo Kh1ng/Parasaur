@@ -40,6 +40,7 @@ pub(crate) use bounded_validation::bounded_validation_failure;
 mod conflict_resolution;
 #[path = "improve/finish.rs"]
 mod finish;
+mod gitlab_fix;
 mod handoff;
 mod job_contract;
 pub(in crate::dispatch) use job_contract::preflight as preflight_job_contract;
@@ -61,13 +62,11 @@ pub(crate) fn improve(
     session_dir: &Path,
     ledger: &mut LedgerEntry,
 ) -> Result<()> {
-    // Resolve the Claude executable path so the optional live `/usage` PTY
-    // probe (issue #153) can drive a real session when explicitly enabled.
+    // Path used by the optional live /usage probe.
     let claude_path = profile
         .claude_path
         .clone()
         .unwrap_or_else(|| "claude".to_string());
-    // Enforce policy before any mutations
     let push_action = if args.prod {
         "git-push-prod"
     } else {
@@ -233,11 +232,7 @@ pub(crate) fn improve(
         )?;
         (branch, wt)
     };
-    // Issue #537: the repair branch's remote tip at worktree creation, used
-    // by the retry-reset loop below to detect whether the remote source
-    // advanced concurrently instead of blindly resetting to it (or, worse,
-    // to `main`). `wt`'s HEAD is exactly `origin/<branch>` at this point --
-    // `worktree::create_existing` just checked it out.
+    // The initial remote tip fences repair retries against concurrent pushes.
     let repair_base_sha: Option<String> = if manual_fix.existing_branch.is_some() {
         Some(worktree::git(&["rev-parse", "HEAD"], &wt)?)
     } else {
@@ -276,15 +271,22 @@ pub(crate) fn improve(
     )?;
     let cargo_target = crate::build_cache::ScopedCargoTarget::acquire(&profile.artifact_root)?;
     let validation_environment = cargo_target.environment();
-
     let mut base_task = build_redispatch_task(profile, &wt, args, &target, issue_details.as_ref());
     job_contract::append_prompt(job_contract.as_ref(), &mut base_task);
+    let mut gitlab_fix = gitlab_fix::GitLabFix::prepare(
+        profile,
+        args,
+        &branch,
+        cargo_target.path(),
+        repair_base_sha.as_deref(),
+        &mut base_task,
+        ledger,
+    );
     if let Some(repair_context) = repair_context.as_ref() {
         repair_context::append_to_prompt(&mut base_task, repair_context);
     }
     conflict_session.append_prompt(&mut base_task);
     let timeout = std::time::Duration::from_secs(profile.validation_timeout_seconds());
-
     let (baseline_failure, baseline_exit_code) = if conflict_session.is_active()
         || should_skip_per_dispatch_baseline(
             profile.validation_commands.is_empty(),
@@ -307,10 +309,7 @@ pub(crate) fn improve(
             Err((text, code)) => (Some(text), code),
         }
     };
-    // TICKET-110/111: classify why the baseline failed, then apply policy.
-    // clean/expected_red proceed (existing warning-in-prompt behavior);
-    // harness_error/environment_error always stop; unknown_red stops unless
-    // explicitly overridden. Never let this improvise -- see baseline.rs.
+    // Classify baseline failures before applying the deterministic dispatch policy.
     let baseline_disposition = crate::baseline::classify_baseline(
         baseline_failure.as_deref().unwrap_or(""),
         baseline_exit_code,
@@ -395,7 +394,6 @@ pub(crate) fn improve(
         )?;
         ledger.attempts_started = Some(ledger.attempts_started.unwrap_or(0) + 1);
         let attempt_start = std::time::Instant::now();
-
         let env_path = if !resolved_env.is_empty() {
             Some(resolved_env)
         } else {
@@ -441,6 +439,7 @@ pub(crate) fn improve(
         let admission_guard =
             issue_claim.admit_in(&wt, repo, profile, &route.identity, args, attempt, ledger)?;
         record_route_attempt(ledger, &route)?;
+        gitlab_fix::start_attempt(&mut gitlab_fix, ledger);
         let result = run_backend_with_reserved_route(
             &route.identity,
             profile,
@@ -1493,6 +1492,7 @@ pub(crate) fn improve(
         job_contract.as_ref(),
         &validation_environment,
         timeout,
+        gitlab_fix.as_ref(),
     )
 }
 

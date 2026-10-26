@@ -320,6 +320,11 @@ fn parse_github_author(response: &serde_json::Value) -> Option<IssueAuthorIdenti
     })
 }
 
+pub(super) fn gitlab_note_author_is_trusted(profile: &Profile, note: &serde_json::Value) -> bool {
+    parse_gitlab_author(profile, note)
+        .is_some_and(|author| issue_author_is_trusted(profile, &author))
+}
+
 fn parse_gitlab_author(
     profile: &Profile,
     response: &serde_json::Value,

@@ -35,6 +35,8 @@ pub enum HumanRequiredReason {
     /// Review evidence gate: a reviewer's verdict explicitly marked the work as
     /// requiring human judgment (READY_FOR_HUMAN with human_required=true in ledger).
     ReviewEvidenceGate,
+    /// Review publication failed, so the remote review is incomplete.
+    PublicationFailed,
     /// Every configured reviewer returned output that could not satisfy the
     /// machine-verifiable actionable-finding contract.
     ReviewOutputInvalidExhausted,
@@ -88,6 +90,7 @@ impl HumanRequiredReason {
             Self::PolicyApproval => "policy_approval",
             Self::RetryBudgetExhausted => "retry_budget_exhausted",
             Self::ReviewEvidenceGate => "review_evidence_gate",
+            Self::PublicationFailed => "publication_failed",
             Self::ReviewOutputInvalidExhausted => "review_output_invalid_exhausted",
             Self::ReviewCeilingExhausted => "review_ceiling_exhausted",
             Self::MergePolicy => "merge_policy",
@@ -111,6 +114,7 @@ impl HumanRequiredReason {
             "policy_approval" => Self::PolicyApproval,
             "retry_budget_exhausted" => Self::RetryBudgetExhausted,
             "review_evidence_gate" => Self::ReviewEvidenceGate,
+            "publication_failed" => Self::PublicationFailed,
             "review_output_invalid_exhausted" => Self::ReviewOutputInvalidExhausted,
             "review_ceiling_exhausted" => Self::ReviewCeilingExhausted,
             "merge_policy" => Self::MergePolicy,
@@ -133,6 +137,7 @@ impl HumanRequiredReason {
             Self::PolicyApproval,
             Self::RetryBudgetExhausted,
             Self::ReviewEvidenceGate,
+            Self::PublicationFailed,
             Self::ReviewOutputInvalidExhausted,
             Self::ReviewCeilingExhausted,
             Self::MergePolicy,

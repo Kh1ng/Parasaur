@@ -1139,67 +1139,84 @@ fn review_shutdown_records_cancelled_shutdown_and_dispatch_finished_event() {
 }
 
 #[test]
-fn review_gitlab_uses_host_scoped_glab_session_without_pat() {
-    let tmp = test_tempdir();
-    let repo = tmp.path().join("repo");
-    fs::create_dir_all(&repo).unwrap();
-    init_git_repo(&repo);
-    add_origin_and_feature_commit(&repo);
-    checkout_branch(&repo, "main");
+fn review_gitlab_without_bot_pat_keeps_local_verdict_and_does_not_publish() {
+    for human_required in [false, true] {
+        let tmp = test_tempdir();
+        let repo = tmp.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        init_git_repo(&repo);
+        add_origin_and_feature_commit(&repo);
+        checkout_branch(&repo, "main");
 
-    let cfg = write_real_repo_config_with_extra(
-        &tmp,
-        &repo,
-        "gitlab",
-        "[profiles.real.routing]\nreview_backend = \"claude\"\n",
-        "",
-    );
+        let cfg = write_real_repo_config_with_extra(
+            &tmp,
+            &repo,
+            "gitlab",
+            "[profiles.real.routing]\nreview_backend = \"claude\"\n",
+            "",
+        );
 
-    let fake_bin = tmp.path().join("bin");
-    let glab_log = tmp.path().join("glab.log");
-    fs::create_dir_all(&fake_bin).unwrap();
-    make_fake_bin_with_body(
-        &fake_bin,
-        "claude",
-        "#!/bin/sh\ncat <<'EOF'\nReview notes\n{\"verdict\":\"APPROVE\",\"confidence\":\"high\",\"human_required\":false,\"blocking_findings\":[],\"non_blocking_findings\":[],\"risk_notes\":[],\"evidence\":[\"file:src.txt\"]}\nEOF\n",
-    );
-    make_fake_bin_with_body(
-        &fake_bin,
-        "glab",
-        &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\ncase \"$1 $2\" in\n  \"api projects/42/merge_requests\")\n    printf '%s\\n' '[{{\"web_url\":\"https://gitlab.example.com/owner/real/-/merge_requests/7\",\"iid\":7,\"source_branch\":\"feature/review\",\"target_branch\":\"main\"}}]'\n    ;;\n  \"api projects/42/merge_requests/7/notes?per_page=100&page=1\") printf '%s\\n' '[]' ;;\n  \"api projects/42/merge_requests/7/notes\") printf '%s\\n' '{{\"id\":1}}' ;;\n  \"api projects/42/merge_requests/7\") printf '%s\\n' '{{\"iid\":7}}' ;;\n  *) echo \"unexpected glab invocation: $*\" >&2; exit 1 ;;\n esac\n",
-            glab_log.display()
-        ),
-    );
+        let fake_bin = tmp.path().join("bin");
+        let glab_log = tmp.path().join("glab.log");
+        fs::create_dir_all(&fake_bin).unwrap();
+        make_fake_bin_with_body(
+            &fake_bin,
+            "claude",
+            &"#!/bin/sh\ncat <<'EOF'\nReview notes\n{\"verdict\":\"APPROVE\",\"confidence\":\"high\",\"human_required\":false,\"blocking_findings\":[],\"non_blocking_findings\":[],\"risk_notes\":[],\"evidence\":[\"file:src.txt\"]}\nEOF\n".replace("\"human_required\":false", &format!("\"human_required\":{human_required}")),
+        );
+        make_fake_bin_with_body(
+            &fake_bin,
+            "glab",
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\ncase \"$1 $2\" in\n  \"api projects/42/merge_requests\")\n    printf '%s\\n' '[{{\"web_url\":\"https://gitlab.example.com/owner/real/-/merge_requests/7\",\"iid\":7,\"source_branch\":\"feature/review\",\"target_branch\":\"main\"}}]'\n    ;;\n  \"api projects/42/merge_requests/7/notes?per_page=100&page=1\") printf '%s\\n' '[]' ;;\n  \"api projects/42/merge_requests/7/notes\") printf '%s\\n' '{{\"id\":1}}' ;;\n  \"api projects/42/merge_requests/7\") printf '%s\\n' '{{\"iid\":7}}' ;;\n  *) echo \"unexpected glab invocation: $*\" >&2; exit 1 ;;\n esac\n",
+                glab_log.display()
+            ),
+        );
 
-    bin()
-        .args([
-            "dispatch",
-            "--profile",
-            "real",
-            "--mode",
-            "review",
-            "--branch",
-            "feature/review",
-            "--config-path",
-            cfg.to_str().unwrap(),
-        ])
-        .env_remove("GITLAB_PAT")
-        .env_remove("GITLAB_PAT2")
-        .env("PATH", prepend_path(&fake_bin))
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(
-            "Resolved MR: https://gitlab.example.com/owner/real/-/merge_requests/7",
-        ));
+        bin()
+            .args([
+                "dispatch",
+                "--profile",
+                "real",
+                "--mode",
+                "review",
+                "--branch",
+                "feature/review",
+                "--config-path",
+                cfg.to_str().unwrap(),
+            ])
+            .env_remove("GITLAB_PAT")
+            .env_remove("GITLAB_PAT2")
+            .env("PATH", prepend_path(&fake_bin))
+            .assert()
+            .success()
+            .stderr(
+                predicate::str::contains(
+                    "warning: GitLab review publication incomplete; human review required\n",
+                )
+                .count(1),
+            );
 
-    let glab_log = fs::read_to_string(glab_log).unwrap();
-    assert!(glab_log.contains("--hostname gitlab.example.com"));
-    assert!(!glab_log.contains("PRIVATE-TOKEN"));
+        let glab_log = fs::read_to_string(glab_log).unwrap();
+        assert!(glab_log.contains("--hostname gitlab.example.com"));
+        assert!(!glab_log.contains("PRIVATE-TOKEN"));
+        assert!(!glab_log.contains("--method POST"));
 
-    let session_dir = latest_child_dir(&tmp.path().join("artifacts/real/sessions"));
-    let verdict = fs::read_to_string(session_dir.join("review-verdict.json")).unwrap();
-    assert!(verdict.contains("\"verdict\": \"APPROVE\""));
+        let session_dir = latest_child_dir(&tmp.path().join("artifacts/real/sessions"));
+        let verdict = fs::read_to_string(session_dir.join("review-verdict.json")).unwrap();
+        assert!(verdict.contains("\"verdict\": \"APPROVE\""));
+        let ledger = fs::read_to_string(tmp.path().join("artifacts/ledger.jsonl")).unwrap();
+        let entry: Value = serde_json::from_str(ledger.lines().last().unwrap()).unwrap();
+        assert_eq!(entry["human_required"], true);
+        assert_eq!(
+            entry["human_required_reason_code"],
+            if human_required {
+                "review_evidence_gate"
+            } else {
+                "publication_failed"
+            }
+        );
+    }
 }
 
 #[test]

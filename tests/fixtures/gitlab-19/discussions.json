@@ -1,0 +1,6 @@
+[
+ {"id":"abc123","individual_note":false,"notes":[{"id":10,"type":"DiffNote","body":"unchecked return","author":{"id":2,"username":"maintainer"},"system":false,"resolvable":true,"resolved":false,"position":{"base_sha":"aaaa","start_sha":"bbbb","head_sha":"cccc","old_path":"src/old.rs","new_path":"src/new.rs","position_type":"text","new_line":2}}]},
+ {"id":"resolved","individual_note":false,"notes":[{"id":11,"body":"Already resolved","author":{"username":"maintainer"},"system":false,"resolvable":true,"resolved":true}]},
+ {"id":"untrusted","individual_note":false,"notes":[{"id":12,"body":"Untrusted author","author":{"username":"stranger"},"system":false,"resolvable":true,"resolved":false}]},
+ {"id":"summary","individual_note":true,"notes":[{"id":13,"body":"Summary note","author":{"username":"maintainer"},"system":false,"resolvable":false,"resolved":false}]}
+]

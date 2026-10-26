@@ -28,8 +28,20 @@ fn review_gitlab_posts_comment_and_keeps_ci_separate_from_mergeability() {
         &fake_bin,
         "glab",
         &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\ncase \"$1 $2\" in\n  \"api projects/42/merge_requests\")\n    printf '%s\\n' '[{{\"web_url\":\"https://gitlab.example.com/owner/real/-/merge_requests/7\",\"iid\":7,\"source_branch\":\"feature/review\",\"target_branch\":\"main\",\"draft\":true,\"sha\":\"review-source-sha\",\"detailed_merge_status\":\"draft\",\"head_pipeline\":{{\"sha\":\"review-source-sha\",\"status\":\"success\"}}}}]'\n    ;;\n  \"api projects/42/merge_requests/7/notes?per_page=100&page=1\")\n    printf '%s\\n' '[]'\n    ;;\n  \"api projects/42/merge_requests/7/notes\")\n    printf '%s\\n' '{{\"id\":1}}'\n    ;;\n  \"api projects/42/merge_requests/7\")\n    printf '%s\\n' '{{\"iid\":7,\"source_branch\":\"feature/review\",\"target_branch\":\"main\"}}'\n    ;;\n  *) echo \"unexpected glab invocation: $*\" >&2; exit 1 ;;\n esac\n",
-            glab_log.display()
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> '{log}'
+case "$2" in
+  projects/42/merge_requests|projects/42/merge_requests\?*)
+    printf '%s\n' '[{{"web_url":"https://gitlab.example.com/owner/real/-/merge_requests/7","iid":7,"source_branch":"feature/review","target_branch":"main","draft":true,"sha":"review-source-sha","detailed_merge_status":"draft","head_pipeline":{{"sha":"review-source-sha","status":"success"}}}}]' ;;
+  projects/42/merge_requests/7/notes\?*) echo '[]' ;;
+  projects/42/merge_requests/7/notes|projects/42/merge_requests/7)
+    [ "$GITLAB_TOKEN" = bot-token ] && [ "$GLAB_TOKEN" = bot-token ] || exit 1
+    cat >> '{log}'
+    echo '{{"id":1}}' ;;
+  *) exit 1 ;;
+esac
+"#,
+            log = glab_log.display()
         ),
     );
 
@@ -46,18 +58,18 @@ fn review_gitlab_posts_comment_and_keeps_ci_separate_from_mergeability() {
             cfg.to_str().unwrap(),
         ])
         .env("PATH", prepend_path(&fake_bin))
-        .env_remove("GITLAB_PAT")
+        .env("GITLAB_PAT", "bot-token")
+        .env("GITLAB_TOKEN", "requester-token")
+        .env("GLAB_TOKEN", "requester-token")
         .env_remove("GITLAB_PAT2")
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "Resolved MR: https://gitlab.example.com/owner/real/-/merge_requests/7",
-        ));
+        .stderr(predicate::str::is_empty());
 
     let glab_log = fs::read_to_string(glab_log).unwrap();
     assert!(glab_log.contains("source_branch=feature/review"));
     assert!(glab_log.contains("projects/42/merge_requests/7/notes"));
-    assert!(glab_log.contains("add_labels=gah-ready-for-human"));
+    assert!(glab_log.contains("\"add_labels\":\"gah-ready-for-human\""));
     assert!(!glab_log.contains("PRIVATE-TOKEN"));
 
     let session_dir = latest_child_dir(&tmp.path().join("artifacts/real/sessions"));
@@ -66,4 +78,168 @@ fn review_gitlab_posts_comment_and_keeps_ci_separate_from_mergeability() {
     assert!(mr_description.contains("Draft: true"));
     assert!(mr_description.contains("CI: passed"));
     assert!(mr_description.contains("Mergeability: draft"));
+}
+
+#[test]
+fn gitlab_fix_reads_threads_pushes_same_branch_and_replies_before_resolving() {
+    run_gitlab_fix(None);
+}
+
+#[test]
+fn gitlab_fix_context_failure_persists_human_required() {
+    run_gitlab_fix(Some("context"));
+}
+
+#[test]
+fn gitlab_fix_report_failure_persists_human_required() {
+    run_gitlab_fix(Some("report"));
+}
+
+#[test]
+fn gitlab_fix_reply_failure_persists_human_required() {
+    run_gitlab_fix(Some("reply"));
+}
+
+#[test]
+fn gitlab_fix_resolution_failure_persists_human_required() {
+    run_gitlab_fix(Some("resolve"));
+}
+
+fn run_gitlab_fix(failure: Option<&str>) {
+    let tmp = test_tempdir();
+    let repo = tmp.path().join("repo");
+    let home = tmp.path().join("home");
+    fs::create_dir_all(&repo).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    init_git_repo(&repo);
+    add_origin_and_feature_commit(&repo);
+    checkout_branch(&repo, "main");
+    configure_git_url_instead_of(
+        &home,
+        "https://oauth2@gitlab.example.com/owner/real.git",
+        &format!("file://{}", tmp.path().join("origin.git").display()),
+    );
+    let cfg = write_real_repo_config_with_extra(&tmp,&repo,"gitlab",
+        "validation_commands = [\"test -s src.txt\"]\n[profiles.real.routing]\nimprove_backend = \"claude\"\n[profiles.real.publishing]\ntrusted_issue_human_authors = [\"maintainer\"]\n", "");
+    let fake_bin = tmp.path().join("bin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    let prompt = tmp.path().join("prompt.txt");
+    let log = tmp.path().join("glab.log");
+    let mut thread: Value =
+        serde_json::from_str(include_str!("../fixtures/gitlab-19/discussions.json")).unwrap();
+    thread[0]["notes"][0]["position"]["new_path"] = "src.txt".into();
+    let thread = serde_json::to_string(&thread[0]).unwrap();
+    fs::write(tmp.path().join("thread.json"), &thread).unwrap();
+    make_fake_bin_with_body(
+        &fake_bin,
+        "claude",
+        &format!(
+            r#"#!/bin/sh
+printf '%s\n' "$*" > '{prompt}'
+echo checked > src.txt
+if [ "{failure}" = report ]; then
+  rm -f "$CARGO_TARGET_DIR/gitlab-addressed-threads.json"
+else
+echo '[{{"discussion_id":"abc123","summary":"Checked the return value","files":["src.txt"]}}]' > "$CARGO_TARGET_DIR/gitlab-addressed-threads.json"
+fi
+echo 'Fixed the unchecked return and validated src.txt.'
+"#,
+            prompt = prompt.display(),
+            failure = failure.unwrap_or("")
+        ),
+    );
+    make_fake_bin_with_body(
+        &fake_bin,
+        "glab",
+        &format!(
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> '{log}'
+sha=$(git --git-dir='{root}/origin.git' rev-parse refs/heads/feature/review)
+mr='{{"iid":7,"web_url":"https://gitlab.example.com/owner/real/-/merge_requests/7","source_branch":"feature/review","target_branch":"main","state":"opened","title":"Review this","description":"","sha":"'"$sha"'","head_pipeline":{{"sha":"'"$sha"'","status":"success"}}}}'
+case "$2" in
+ projects/42/merge_requests|projects/42/merge_requests\?*) echo "[$mr]" ;;
+ projects/42/merge_requests/7) echo "$mr" ;;
+ projects/42/merge_requests/7/notes\?*) echo '[]' ;;
+ projects/42/merge_requests/7/discussions\?*)
+  [ "$GITLAB_TOKEN" = bot-token ] || exit 1
+  [ "$GITLAB_FIX_FAILURE" != context ] || exit 1
+  printf '[%s]\n' "$(cat '{root}/thread.json')" ;;
+ projects/42/merge_requests/7/discussions/abc123)
+  [ "$GITLAB_TOKEN" = bot-token ] || exit 1
+  if [ "$6" = PUT ]; then [ "$GITLAB_FIX_FAILURE" != resolve ] || exit 1; cat >> '{log}'; echo '{{}}'; else cat '{root}/thread.json'; fi ;;
+ projects/42/merge_requests/7/discussions/abc123/notes)
+  [ "$GITLAB_TOKEN" = bot-token ] || exit 1
+  [ "$GITLAB_FIX_FAILURE" != reply ] || exit 1
+  cat >> '{log}'; echo '{{"id":20}}' ;;
+ *) echo '[]' ;;
+esac
+"#,
+            root = tmp.path().display(),
+            log = log.display()
+        ),
+    );
+    let ledger_path = tmp.path().join("ledger.jsonl");
+    bin()
+        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("GITLAB_FIX_FAILURE", failure.unwrap_or(""))
+        .args([
+            "dispatch",
+            "--profile",
+            "real",
+            "--mode",
+            "fix",
+            "--mr",
+            "7",
+            "--target",
+            "fix review comments",
+            "--skip-validation-gate",
+            "--backend",
+            "claude",
+            "--config-path",
+            cfg.to_str().unwrap(),
+        ])
+        .env("PATH", prepend_path(&fake_bin))
+        .env("HOME", &home)
+        .env("GITLAB_PAT", "bot-token")
+        .env("GITLAB_TOKEN", "requester-token")
+        .env("GLAB_TOKEN", "requester-token")
+        .env_remove("GITLAB_PAT2")
+        .assert()
+        .success();
+    let prompt = fs::read_to_string(prompt).unwrap();
+    if failure != Some("context") {
+        assert!(prompt.contains("unchecked return"));
+        assert!(prompt.contains("gitlab-addressed-threads.json"));
+    }
+    let ledger = fs::read_to_string(ledger_path).unwrap();
+    let entry: Value = serde_json::from_str(ledger.lines().last().unwrap()).unwrap();
+    assert_eq!(entry["push_succeeded"], true);
+    assert_eq!(entry["human_required"], failure.is_some());
+    if failure.is_some() {
+        assert_eq!(entry["human_required_reason_code"], "configuration_infra");
+        let operation = if failure == Some("context") {
+            "fix context"
+        } else {
+            "thread acknowledgement"
+        };
+        assert!(entry["error_summary"].as_str().unwrap().contains(operation));
+    }
+    let log = fs::read_to_string(log).unwrap();
+    if failure.is_none() {
+        let reply = log.find("Addressed in").expect("reply posted after push");
+        let resolve = log.find("\"resolved\":true").expect("thread resolved");
+        assert!(reply < resolve);
+    } else {
+        assert!(!log.contains("\"resolved\":true"));
+    }
+    let content = ProcessCommand::new("git")
+        .args([
+            "--git-dir",
+            tmp.path().join("origin.git").to_str().unwrap(),
+            "show",
+            "feature/review:src.txt",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&content.stdout).trim(), "checked");
 }

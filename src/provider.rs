@@ -8,11 +8,14 @@ use std::time::Duration;
 use url::Url;
 
 mod comments;
+pub(crate) mod gitlab_review;
 mod publication;
 mod relations;
 pub use comments::{delete_comment, update_comment, CommentThread};
 use publication::publication_body;
-pub use publication::{create_draft_mr, post_issue_comment, post_review_comment};
+pub use publication::{
+    create_draft_mr, post_issue_comment, post_review_comment, post_review_findings,
+};
 pub(crate) use relations::{link_provider_child, link_provider_dependency};
 
 const GAH_REVIEW_STATE_LABELS: [&str; 5] = [

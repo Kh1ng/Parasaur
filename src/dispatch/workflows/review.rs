@@ -343,6 +343,9 @@ pub(in crate::dispatch) fn review(
             REVIEW_PRIOR_STATE_MAX_BYTES,
         ),
     );
+    if profile.provider_kind()? == crate::provider_kind::ProviderKind::Gitlab {
+        prompt_suffix.push_str("\nFor GitLab inline findings, line is a single new-side line number or old:<number> for a removed line. When you can propose an exact replacement of that new-side line, include a fenced ```suggestion block in summary containing only replacement code. Never put suggestions on old-side lines.\n");
+    }
     if !project_brief_section.is_empty() {
         if !prompt_suffix.ends_with('\n') {
             prompt_suffix.push('\n');
@@ -1018,14 +1021,6 @@ pub(in crate::dispatch) fn review(
             let mut mr_body = render_review_comment(&verdict, session_dir);
             crate::review_head::stamp(&mut mr_body, ledger)?;
             let labels = review_labels(&verdict);
-            if profile.provider == "gitlab" {
-                match provider::gitlab_find_mr_by_branch(profile, &target.source_branch) {
-                    Ok(mr) => println!("Resolved MR: {}", mr.url),
-                    Err(err) => {
-                        eprintln!("warning: failed to resolve GitLab MR for branch: {:#}", err)
-                    }
-                }
-            }
             // TICKET-128: a restricted profile forbids agent-authored issue/MR
             // comments. The reviewer still ran and produced a deterministic
             // verdict (APPROVE/REJECT) retained locally; we simply do not
@@ -1038,8 +1033,21 @@ pub(in crate::dispatch) fn review(
                 );
             } else {
                 pr_claim.ensure_held()?;
-                provider::post_review_comment(profile, &target.source_branch, &mr_body, &labels)
-                    .context("publishing review comment and labels")?;
+                if !provider::post_review_findings(
+                    profile,
+                    &target.source_branch,
+                    target.source_sha.as_deref().unwrap_or(""),
+                    &mr_body,
+                    &verdict.actionable_findings,
+                    &labels,
+                )
+                .context("publishing review comment and labels")?
+                {
+                    ledger.human_required = true;
+                    ledger.human_required_reason_code.get_or_insert_with(|| {
+                        HumanRequiredReason::PublicationFailed.as_str().to_string()
+                    });
+                }
             }
             if verdict.human_required {
                 println!("Review requires human attention.");
