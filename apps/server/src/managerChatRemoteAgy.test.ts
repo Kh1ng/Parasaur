@@ -17,7 +17,7 @@ import { createHeadlessBackend, agyBackendSpec } from './managerChat/headlessAda
 import { resolveAdapter } from './managerChat/registry.js';
 import { createAgyModelOptions, parseAgyModels } from './managerChat/agyModels.js';
 
-for (const remote of [true, false]) test(`${remote ? 'coordinator/worker' : 'local'} AGY restores persisted selections after a cold probe failure and catalog race`, async t => {
+for (const remote of [true, false]) test(`${remote ? 'coordinator/worker' : 'local'} AGY restores persisted selections after unavailable metadata and a catalog race`, async t => {
   const root = mkdtempSync(join(tmpdir(), 'gah-remote-agy-'));
   const saved = { ...process.env };
   Object.assign(process.env, {
@@ -35,11 +35,25 @@ for (const remote of [true, false]) test(`${remote ? 'coordinator/worker' : 'loc
   let inventory = parseAgyModels(readFileSync(new URL('../../../tests/fixtures/agy/models.tsv', import.meta.url), 'utf8'), readFileSync(new URL('../../../tests/fixtures/agy/help.txt', import.meta.url), 'utf8'));
   const helpText = readFileSync(new URL('../../../tests/fixtures/agy/help.txt', import.meta.url), 'utf8');
   let failInitialProbe = true;
+  let malformed: string | undefined;
+  const modelsFile = join(root, 'models');
+  const helpFile = join(root, 'help');
   let now = 0;
   const argv = join(root, 'argv.json');
   const executable = join(root, 'agy');
   writeFileSync(executable, `#!/usr/bin/env node
-require('fs').writeFileSync(${JSON.stringify(argv)}, JSON.stringify(process.argv.slice(2)));
+const fs = require('fs');
+if (process.argv[2] === 'models') {
+  const models = fs.readFileSync(${JSON.stringify(modelsFile)}, 'utf8');
+  if (models === 'FAIL') process.exit(1);
+  console.log(models);
+  process.exit(0);
+}
+if (process.argv[2] === '--help') {
+  console.log(fs.readFileSync(${JSON.stringify(helpFile)}, 'utf8'));
+  process.exit(0);
+}
+fs.writeFileSync(${JSON.stringify(argv)}, JSON.stringify(process.argv.slice(2)));
 console.log(JSON.stringify({event:'result', result:{status:'SUCCESS', response:'ok'}}));
 `);
   chmodSync(executable, 0o755);
@@ -47,10 +61,13 @@ console.log(JSON.stringify({event:'result', result:{status:'SUCCESS', response:'
   let modelWrites = 0;
   let effortWrites = 0;
   const makeAdapter = () => {
-    const modelOptions = createAgyModelOptions(undefined, { now: () => now, run: async args => {
-      if (failInitialProbe && args[0] === 'models') throw Object.assign(new Error('probe failed'), { code: 1 });
-      return { stdout: args[0] === 'models' ? inventory.models.map(model => `${model.id}\t${model.name}`).join('\n') : '', stderr: args[0] === '--help' ? helpText : '' };
-    } });
+    const options = createAgyModelOptions({ executable, state_root: null }, { now: () => now });
+    const modelOptions = Object.assign(async () => {
+      writeFileSync(modelsFile, failInitialProbe ? 'FAIL' : malformed === 'hello' ? 'hello'
+        : inventory.models.map(model => `${model.id}\t${model.name}`).join('\n'));
+      writeFileSync(helpFile, malformed === 'unknown help' ? 'unknown help' : helpText);
+      return options();
+    }, { version: options.version, dispose: options.dispose });
     const backend = createHeadlessBackend({ ...agyBackendSpec({ executable, state_root: null }), modelOptions, modelCatalogVersion: modelOptions.version, dispose: modelOptions.dispose });
     return { ...backend,
       modelCatalogVersion: modelOptions.version,
@@ -127,6 +144,28 @@ console.log(JSON.stringify({event:'result', result:{status:'SUCCESS', response:'
   const selected = await listModelsForProfile(chatProfile, nodeId);
   assert.equal(selected.currentModelId, 'gemini-3.8-flash-high');
   assert.equal(selected.currentReasoningEffortId, 'high');
+  await t.test('exit-zero unrecognized metadata preserves and uses saved Gemini/high', async () => {
+    const version = adapter.modelCatalogVersion();
+    for (const output of ['hello', 'unknown help']) {
+      malformed = output;
+      now += 60_000;
+      const snapshot = await adapter.listModelsSnapshot!({ key: profile.name, profile: profile.name });
+      assert.equal(snapshot.available, false);
+      assert.equal(adapter.modelCatalogVersion(), version);
+      await sendManagerChatMessage(chatProfile, '/status', undefined, undefined, undefined, nodeId);
+      assert.equal(modelOverrideForProfile(chatProfile, 'agy'), 'gemini-3.8-flash-high');
+      assert.equal(reasoningEffortOverrideForProfile(chatProfile, 'agy'), 'high');
+      const args: string[] = JSON.parse(readFileSync(argv, 'utf8'));
+      assert.equal(args[args.indexOf('--model') + 1], 'gemini-3.8-flash-high');
+      assert.equal(args[args.indexOf('--effort') + 1], 'high');
+      assert.equal(warnings.filter(w => w.includes('persisted')).length, 0);
+    }
+    assert.equal(warnings.filter(w => w.includes('metadata unavailable')).length, 2,
+      'one cold-failure warning and one warning for consecutive parse failures');
+    malformed = undefined;
+    now += 10_000;
+    assert.equal((await adapter.listModelsSnapshot!({ key: profile.name, profile: profile.name })).available, true);
+  });
   setModelOverrideForProfile(chatProfile, 'agy', 'retired-saved-model');
   const beforeEffortChange = [modelReads, modelWrites];
   await setReasoningEffortForProfile(chatProfile, 'low', nodeId);

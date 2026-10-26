@@ -9,21 +9,6 @@ use time::OffsetDateTime;
 
 pub const USAGE_SOURCE: &str = "agy_cli_usage";
 
-/// Execute metadata commands with closed stdin and a bounded lifetime.
-pub(crate) fn run(
-    executable: &str,
-    home: Option<&Path>,
-    args: &[&str],
-    seconds: u64,
-) -> Result<Vec<u8>> {
-    run_until(
-        executable,
-        home,
-        args,
-        Instant::now() + Duration::from_secs(seconds),
-    )
-}
-
 /// Execute a metadata command within a shared probe deadline.
 pub(crate) fn run_until(
     executable: &str,
@@ -67,15 +52,30 @@ pub(crate) fn run_until(
 
 /// Probe only builds that explicitly support native slash commands in print mode.
 pub(crate) fn read_usage(executable: &str, home: Option<&Path>) -> Result<Vec<u8>> {
-    let help = run(executable, home, &["--help"], 10)?;
+    read_usage_until(executable, home, None)
+}
+
+/// Apply the native-command gate within a caller's deadline, or the quota
+/// reader's separate 10-second help and 30-second usage timeouts.
+pub(crate) fn read_usage_until(
+    executable: &str,
+    home: Option<&Path>,
+    deadline: Option<Instant>,
+) -> Result<Vec<u8>> {
+    let help = run_until(
+        executable,
+        home,
+        &["--help"],
+        deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(10)),
+    )?;
     if !String::from_utf8_lossy(&help).contains("--disable-slash-commands") {
         bail!("this Antigravity build does not run slash commands in print mode; usage is not sampled");
     }
-    run(
+    run_until(
         executable,
         home,
         &["--print", "/usage", "--output-format", "json"],
-        30,
+        deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(30)),
     )
 }
 
@@ -201,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn distinct_agy_provider_groups_route_to_their_own_weekly_balance() {
+    fn agy_unknown_provider_groups_do_not_become_routing_identities() {
         let output = br#"{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[
             {"description":"Models within this group: Gemini Flash","buckets":[{"id":"gemini-flash-weekly","window":"weekly","remaining_fraction":0}]},
             {"description":"Models within this group: Gemini Pro","buckets":[{"id":"gemini-pro-weekly","window":"weekly","remaining_fraction":0.8}]},
@@ -211,8 +211,9 @@ mod tests {
         let catalog = crate::availability::AgyCatalog::parse(
             "flash\tGemini Flash\npro\tGemini Pro\nsonnet\tClaude Sonnet\nopus\tClaude Opus\n",
             output,
-        )
-        .unwrap();
+        );
+        assert!(catalog.is_err());
+        let catalog = catalog.unwrap_or_default();
         let records = parse(output, "agy", OffsetDateTime::UNIX_EPOCH).unwrap();
         for (model, pool, balance) in [
             ("flash", "gemini-flash-weekly", 0.0),
@@ -221,7 +222,7 @@ mod tests {
             ("opus", "3p-opus-weekly", 60.0),
         ] {
             let pool = format!("agy:{pool}");
-            assert_eq!(catalog.pool("agy", model), pool);
+            assert_eq!(catalog.pool("agy", model), "agy:external");
             let identity = crate::execution_identity::ExecutionIdentity::legacy_candidate(
                 "agy",
                 Some(model),

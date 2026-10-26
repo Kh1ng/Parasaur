@@ -43,17 +43,13 @@ fn agy_fixture_maps_native_models_and_accounts_to_reported_buckets() {
 }
 
 #[test]
-fn agy_new_family_and_pool_are_provider_metadata() {
+fn agy_new_family_uses_a_policy_pool_from_provider_metadata() {
     let usage = String::from_utf8(USAGE.to_vec())
         .unwrap()
-        .replace("Gemini Flash, Gemini Pro", "Nova Flash")
-        .replace("gemini-weekly", "new-provider-pool");
+        .replace("Gemini Flash, Gemini Pro", "Nova Flash");
     let catalog =
         Catalog::parse("nova-4-flash-low\tNova 4 Flash (Low)\n", usage.as_bytes()).unwrap();
-    assert_eq!(
-        catalog.pool("agy", "nova-4-flash-low"),
-        "agy:new-provider-pool"
-    );
+    assert_eq!(catalog.pool("agy", "nova-4-flash-low"), "agy:google-native");
 }
 
 #[test]
@@ -117,7 +113,8 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     std::fs::write(home.join("usage"), USAGE).unwrap();
     std::fs::write(&script, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/calls\"\ncase \"$*\" in\nmodels) cat \"$HOME/models\";;\n--help) echo --disable-slash-commands;;\n'--print /usage --output-format json') cat \"$HOME/usage\";;\n*) exit 99;;\nesac\n").unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let executable = script.to_str().unwrap();
+    let resolved = script.canonicalize().unwrap();
+    let executable = resolved.to_str().unwrap();
     assert_eq!(
         settled_pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
         "agy-one:google-native"
@@ -184,12 +181,12 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
     let recovered = String::from_utf8(USAGE.to_vec())
         .unwrap()
-        .replace("gemini-weekly", "recovered-pool");
+        .replace("gemini-weekly", "3p-5h");
     std::fs::write(home.join("usage"), recovered).unwrap();
     retry();
     assert_eq!(
         settled_pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
-        "agy-one:recovered-pool"
+        "agy-one:external"
     );
     assert!(CACHE
         .get()
@@ -204,7 +201,7 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     std::fs::write(home.join("models"), "").unwrap();
     assert_eq!(
         settled_pool("agy-two", "gemini-3.8-flash-high", executable, Some(&home)),
-        "agy-two:recovered-pool"
+        "agy-two:external"
     );
     assert_eq!(
         std::fs::read_to_string(home.join("calls"))
@@ -301,7 +298,7 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
 #[cfg(unix)]
 fn settled_pool(account: &str, model: &str, executable: &str, home: Option<&Path>) -> String {
     let _ = pool(account, model, executable, home);
-    let key = (executable.to_string(), home.map(Path::to_path_buf));
+    let key = (resolved_executable(executable), home.map(Path::to_path_buf));
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let cache = CACHE.get().unwrap().lock().unwrap();
@@ -343,7 +340,8 @@ fn agy_slow_probe_never_blocks_routing_or_another_installation() {
     )
     .unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let executable = script.to_str().unwrap();
+    let resolved = script.canonicalize().unwrap();
+    let executable = resolved.to_str().unwrap();
     let start = Instant::now();
     assert_eq!(
         pool("agy", "Gemini future", executable, Some(dir.path())),
@@ -383,8 +381,7 @@ fn agy_fresh_process_uses_persisted_catalog_membership() {
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
     let usage = String::from_utf8(USAGE.to_vec())
         .unwrap()
-        .replace("Gemini Flash, Gemini Pro", "Nova Flash")
-        .replace("gemini-weekly", "new-provider-pool");
+        .replace("Gemini Flash, Gemini Pro", "Nova Flash");
     let catalog =
         Catalog::parse("nova-4-flash-low\tNova 4 Flash (Low)\n", usage.as_bytes()).unwrap();
     store_catalog(executable.to_str().unwrap(), Some(&home), &catalog);
@@ -396,7 +393,7 @@ fn agy_fresh_process_uses_persisted_catalog_membership() {
             executable.to_str().unwrap(),
             Some(&home)
         ),
-        "agy:new-provider-pool"
+        "agy:google-native"
     );
     join_background_refreshes();
     assert!(home.join("started").exists());
@@ -441,4 +438,156 @@ fn agy_cold_start_does_not_warn_about_unrecognized_metadata() {
     let before = WARNED.load(Ordering::Relaxed);
     let _ = catalog("/missing-cold-start-agy", None);
     assert_eq!(WARNED.load(Ordering::Relaxed), before);
+}
+
+#[cfg(unix)]
+fn metadata_binary(path: &Path, usage: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(path, format!(
+        "#!/bin/sh\ncase \"$1\" in\nmodels) printf 'nova-4-flash-low\\tNova 4 Flash (Low)\\n';;\n--help) echo --disable-slash-commands;;\n--print) printf '%s' '{usage}';;\n*) exit 99;;\nesac\n"
+    )).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn agy_path_installations_have_separate_canonical_cache_files() {
+    let _exec = crate::test_support::ExecGuard::new();
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let mut paths = Vec::new();
+    for (installation, bucket, expected) in [
+        ("one", "gemini-weekly", "agy:google-native"),
+        ("two", "3p-5h", "agy:external"),
+    ] {
+        let bin = dir.path().join(installation);
+        std::fs::create_dir(&bin).unwrap();
+        let script = bin.join("agy");
+        let usage = String::from_utf8(USAGE.to_vec())
+            .unwrap()
+            .replace("Gemini Flash, Gemini Pro", "Nova Flash")
+            .replace("gemini-weekly", bucket);
+        metadata_binary(&script, &usage);
+        let _path = crate::test_support::PathGuard::set(&bin);
+        assert_eq!(
+            pool("agy", "nova-4-flash-low", "agy", Some(&home)),
+            expected
+        );
+        let path = cache_path("agy", Some(&home)).unwrap();
+        assert!(path.is_file());
+        assert_eq!(
+            path,
+            cache_path(script.to_str().unwrap(), Some(&home)).unwrap()
+        );
+        let alias = bin.join("alias");
+        std::os::unix::fs::symlink(&script, &alias).unwrap();
+        assert_eq!(
+            path,
+            cache_path(alias.to_str().unwrap(), Some(&home)).unwrap()
+        );
+        paths.push(path);
+    }
+    assert_ne!(paths[0], paths[1]);
+    for path in paths {
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn agy_corrupt_cache_falls_back_and_successful_probe_rewrites_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let _exec = crate::test_support::ExecGuard::new();
+    let dir = tempfile::tempdir().unwrap();
+    let usage = String::from_utf8(USAGE.to_vec())
+        .unwrap()
+        .replace("Gemini Flash, Gemini Pro", "Nova Flash");
+    for (index, invalid) in ["", "unknown-pool", "google-native:bad"].iter().enumerate() {
+        let script = dir.path().join(format!("agy-{index}"));
+        std::fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let executable = resolved_executable(script.to_str().unwrap());
+        let home = dir.path();
+        let path = cache_path(&executable, Some(home)).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "pools": {"nova-4-flash-low": invalid}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            pool("agy", "nova-4-flash-low", &executable, Some(home)),
+            "agy:external"
+        );
+        assert!(
+            !path.exists(),
+            "invalid persisted catalog must be discarded"
+        );
+        metadata_binary(&script, &usage);
+        let key = (executable.clone(), Some(home.to_path_buf()));
+        CACHE
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_mut(&key)
+            .unwrap()
+            .retry_at = None;
+        assert_eq!(
+            settled_pool("agy", "nova-4-flash-low", &executable, Some(home)),
+            "agy:google-native"
+        );
+        assert_eq!(
+            read_persisted(&executable, Some(home))
+                .unwrap()
+                .pool("agy", "nova-4-flash-low"),
+            "agy:google-native"
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn agy_parsed_catalog_rejects_unknown_pool_identities() {
+    let usage = String::from_utf8(USAGE.to_vec())
+        .unwrap()
+        .replace("gemini-weekly", "unknown-pool");
+    let catalog = Catalog::parse(MODELS, usage.as_bytes());
+    assert!(catalog.is_err());
+    assert_eq!(
+        catalog
+            .unwrap_or_default()
+            .pool("agy", "gemini-3.8-flash-high"),
+        "agy:google-native"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn agy_routing_uses_the_usage_capability_gate_and_shared_deadline() {
+    use std::os::unix::fs::PermissionsExt;
+    let _exec = crate::test_support::ExecGuard::new();
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("agy");
+    for help in [
+        "echo unsupported",
+        "sleep 10; echo --disable-slash-commands",
+    ] {
+        std::fs::write(&script, format!(
+            "#!/bin/sh\ncase \"$1\" in\nmodels) echo;;\n--help) {help};;\n*) touch \"$HOME/inference\";;\nesac\n"
+        )).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let start = Instant::now();
+        assert!(load(
+            script.to_str().unwrap(),
+            Some(dir.path()),
+            Duration::from_millis(100)
+        )
+        .is_err());
+        assert!(start.elapsed() < Duration::from_secs(2));
+        assert!(!dir.path().join("inference").exists());
+    }
 }

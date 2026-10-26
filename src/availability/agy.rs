@@ -58,13 +58,17 @@ struct PoolPolicy {
     pools: Vec<PoolRule>,
 }
 
-/// Interpret the same identity policy as the server observer, with no probe dependency.
-fn pool_identity<'a>(model: &str, ids: &[&'a str]) -> &'a str {
+fn pool_policy() -> &'static PoolPolicy {
     static POLICY: OnceLock<PoolPolicy> = OnceLock::new();
-    let policy = POLICY.get_or_init(|| {
+    POLICY.get_or_init(|| {
         serde_json::from_str(include_str!("../../apps/server/src/agyPoolIdentity.json"))
             .expect("valid shared AGY pool policy")
-    });
+    })
+}
+
+/// Interpret the same identity policy as the server observer, with no probe dependency.
+fn pool_identity<'a>(model: &str, ids: &[&'a str]) -> &'a str {
+    let policy = pool_policy();
     let bucket = ids.iter().copied().min();
     let model = model.trim().to_ascii_lowercase();
     policy
@@ -171,7 +175,21 @@ impl Catalog {
                 pools.insert(name.to_string(), (*pool).to_string());
             }
         }
-        Ok(Self { pools })
+        let catalog = Self { pools };
+        catalog.validate()?;
+        Ok(catalog)
+    }
+
+    // Disk and provider catalogs must use identities owned by the shared policy.
+    fn validate(&self) -> Result<()> {
+        if self.pools.iter().any(|(model, pool)| {
+            model.trim().is_empty()
+                || model.chars().any(char::is_control)
+                || !pool_policy().pools.iter().any(|rule| rule.id == *pool)
+        }) {
+            bail!("invalid Antigravity catalog identity");
+        }
+        Ok(())
     }
 
     pub fn pool(&self, account: &str, model: &str) -> String {
@@ -259,7 +277,12 @@ pub(crate) fn catalog(executable: &str, home: Option<&Path>) -> Catalog {
         return catalog;
     }
     reap_finished_refreshes();
-    let key = (executable.to_string(), home.map(Path::to_path_buf));
+    let executable = resolved_executable(executable);
+    let key = (
+        executable,
+        home.map(Path::to_path_buf)
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from)),
+    );
     let mut cache = CACHE
         .get_or_init(Default::default)
         .lock()
@@ -356,16 +379,7 @@ pub(crate) fn pool(account: &str, model: &str, executable: &str, home: Option<&P
 fn load(executable: &str, home: Option<&Path>, timeout: Duration) -> Result<Catalog> {
     let deadline = Instant::now() + timeout;
     let models = crate::usage::agy::run_until(executable, home, &["models"], deadline)?;
-    let help = crate::usage::agy::run_until(executable, home, &["--help"], deadline)?;
-    if !String::from_utf8_lossy(&help).contains("--disable-slash-commands") {
-        bail!("this Antigravity build does not run slash commands in print mode; usage is not sampled");
-    }
-    let usage = crate::usage::agy::run_until(
-        executable,
-        home,
-        &["--print", "/usage", "--output-format", "json"],
-        deadline,
-    )?;
+    let usage = crate::usage::agy::read_usage_until(executable, home, Some(deadline))?;
     let parsed = std::str::from_utf8(&models)
         .map_err(anyhow::Error::from)
         .and_then(|models| Catalog::parse(models, &usage));
@@ -375,6 +389,20 @@ fn load(executable: &str, home: Option<&Path>, timeout: Duration) -> Result<Cata
     parsed
 }
 
+// Resolve before both keying and spawning so PATH changes cannot mix installations.
+fn resolved_executable(executable: &str) -> String {
+    let path = if Path::new(executable).components().count() == 1 {
+        crate::runner::resolve::resolve_executable_on_path(executable)
+            .unwrap_or_else(|| PathBuf::from(executable))
+    } else {
+        PathBuf::from(executable)
+    };
+    path.canonicalize()
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn cache_path(executable: &str, home: Option<&Path>) -> Option<PathBuf> {
     let home = home
         .map(Path::to_path_buf)
@@ -382,7 +410,7 @@ fn cache_path(executable: &str, home: Option<&Path>) -> Option<PathBuf> {
     let root = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".cache"));
-    let key = format!("{}\0{}", executable, home.display());
+    let key = format!("{}\0{}", resolved_executable(executable), home.display());
     let hash = Sha256::digest(key.as_bytes());
     Some(
         root.join("gah")
@@ -393,7 +421,12 @@ fn cache_path(executable: &str, home: Option<&Path>) -> Option<PathBuf> {
 
 fn read_persisted(executable: &str, home: Option<&Path>) -> Option<Catalog> {
     let path = cache_path(executable, home)?;
-    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    let catalog: Catalog = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;
+    if catalog.validate().is_err() {
+        let _ = std::fs::remove_file(path);
+        return None;
+    }
+    Some(catalog)
 }
 
 fn store_catalog(executable: &str, home: Option<&Path>, catalog: &Catalog) {

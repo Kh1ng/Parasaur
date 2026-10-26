@@ -55,7 +55,7 @@ export function createAgyModelOptions(runtime?: { executable: string; state_root
     result.child.stdin?.end();
     return result;
   });
-  let checkedAt = -Infinity;
+  let nextCheckAt = -Infinity;
   let cached: Options = { models: [], reasoningEfforts: [], modelReasoningEfforts: {} };
   let version = randomUUID();
   let metadataAvailable = false;
@@ -69,33 +69,27 @@ export function createAgyModelOptions(runtime?: { executable: string; state_root
       (deps.warn ?? console.warn)(message);
     }
   }
-  function refresh(force = false): Promise<Options> {
+  function refresh(): Promise<Options> {
     if (stopped) return Promise.resolve(cached);
     if (pending) return pending;
-    if (!force && now() - checkedAt < 60_000) return Promise.resolve(cached);
+    if (now() < nextCheckAt) return Promise.resolve(cached);
     pending = (async () => {
       const previous = { models: cached.models, reasoningEfforts: cached.reasoningEfforts,
         modelReasoningEfforts: cached.modelReasoningEfforts };
       try {
         const models = await run(['models']);
         const help = await run(['--help']);
-        try {
-          cached = parseAgyModels(models.stdout, help.stdout + help.stderr);
-          metadataAvailable = true;
-          warning = undefined;
-        } catch {
-          // Only successful commands can replace inventory or retire selections.
-          try { cached = { models: modelRows(models.stdout).map(model => ({ ...model, reasoningEfforts: [] })), reasoningEfforts: [], modelReasoningEfforts: {} }; }
-          catch { cached = { models: [], reasoningEfforts: [], modelReasoningEfforts: {} }; }
-          metadataAvailable = true;
-          warn('[managerChat] Unrecognized AGY metadata; using no effort options and an account-scoped default quota pool.');
-        }
+        cached = parseAgyModels(models.stdout, help.stdout + help.stderr);
+        metadataAvailable = true;
+        warning = undefined;
       } catch {
-        warn('[managerChat] AGY metadata invocation failed; retaining the cached models and effort options.');
+        // Only parsed metadata can retire a saved selection.
+        metadataAvailable = false;
+        warn('[managerChat] AGY metadata unavailable; retaining the cached models and effort options.');
       }
       if (JSON.stringify(previous) !== JSON.stringify({ models: cached.models, reasoningEfforts: cached.reasoningEfforts,
         modelReasoningEfforts: cached.modelReasoningEfforts })) version = randomUUID();
-      checkedAt = now();
+      nextCheckAt = now() + (metadataAvailable ? 60_000 : 10_000);
       cached.catalogVersion = version;
       cached.metadataAvailable = metadataAvailable;
       return cached;
@@ -106,7 +100,7 @@ export function createAgyModelOptions(runtime?: { executable: string; state_root
     // Start with the backend's first inventory request, then keep its cache
     // fresh in the background like the CLIProxyAPI inventory refresher.
     if (!stopped && !timer) {
-      timer = setInterval(() => { void refresh(true); }, 60_000);
+      timer = setInterval(() => { void refresh(); }, 10_000);
       timer.unref?.();
     }
     return refresh();

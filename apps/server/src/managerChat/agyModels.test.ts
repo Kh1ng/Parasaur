@@ -57,7 +57,8 @@ test('agy TTL refresh removes retired models and efforts, deduplicates probes, a
   inventory = '{"unknown":"shape"}';
   for (now = 120_000; now < 300_000; now += 60_000) {
     assert.deepEqual((await options()).reasoningEfforts, []);
-    assert.deepEqual((await options()).models, []);
+    assert.deepEqual((await options()).models, next.models);
+    assert.equal(options.available(), false);
   }
   assert.equal(warnings.length, 1);
   options.dispose();
@@ -68,12 +69,13 @@ test('agy TTL refresh removes retired models and efforts, deduplicates probes, a
   assert.equal(calls, count);
 });
 
-test('unknown agy help keeps readable models with no efforts; empty inventory replaces the old one', async t => {
+test('unknown agy help leaves metadata unavailable; parsed empty inventory can retire selections', async t => {
   assert.throws(() => parseAgyModels(models, 'changed help'));
   assert.deepEqual(parseAgyModels('', help).models, []);
   const options = createAgyModelOptions(undefined, { warn: () => {}, run: async args => ({ stdout: args[0] === 'models' ? models : 'changed help', stderr: '' }) });
   t.after(() => options.dispose());
-  assert.equal((await options()).models.length, 6);
+  assert.equal((await options()).models.length, 0);
+  assert.equal(options.available(), false);
   assert.deepEqual((await options()).modelReasoningEfforts, {});
 });
 
@@ -141,5 +143,40 @@ for (const failure of ['models exit', 'models spawn', 'help exit']) {
     now += 60_000;
     await options();
     assert.equal(warnings.length, 2);
+  });
+}
+
+for (const failure of ['hello', 'unknown help']) {
+  test(`agy ${failure} retains the last parsed catalog and retries after ten seconds`, async t => {
+    let now = 0;
+    let failing = false;
+    let calls = 0;
+    const warnings: string[] = [];
+    const options = createAgyModelOptions(undefined, { now: () => now, warn: m => warnings.push(m), run: async args => {
+      calls++;
+      return { stdout: args[0] === 'models' ? (failing && failure === 'hello' ? 'hello' : models)
+        : (failing && failure === 'unknown help' ? 'unknown help' : help), stderr: '' };
+    } });
+    t.after(() => options.dispose());
+    const good = await options();
+    const version = options.version();
+    failing = true;
+    now = 60_000;
+    assert.equal(await options(), good);
+    assert.equal(options.available(), false);
+    assert.equal(options.version(), version);
+    const count = calls;
+    now += 9_999;
+    await options();
+    assert.equal(calls, count);
+    now++;
+    await options();
+    assert.equal(calls, count + 2);
+    assert.equal(warnings.length, 1);
+    failing = false;
+    now += 10_000;
+    await options();
+    assert.equal(options.available(), true);
+    assert.equal(options.version(), version);
   });
 }
