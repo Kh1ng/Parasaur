@@ -32,7 +32,8 @@ fn worker(central: &FakeCentral) -> ScenarioHarness {
     )
     .unwrap();
     // This timestamp is an inventory observation, not the resolution-cache timestamp.
-    let observed = chrono::Utc::now() - chrono::Duration::minutes(20);
+    // Keep whole-second age truncation from turning the 20-minute assertion into 1199.
+    let observed = chrono::Utc::now() - chrono::Duration::minutes(21);
     fs::write(
         root.join("xdg-state/gah/skill_inventory.jsonl"),
         json!({
