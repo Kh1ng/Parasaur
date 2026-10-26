@@ -27,6 +27,7 @@ type EventState = {
   receipts: Array<[string, number]>;
   pending: QueueEntry[];
   deadLetters: QueueEntry[];
+  acknowledged: string[];
 };
 
 /** Atomically accept work with its receipt. Pending and dead-letter work never expires or gets evicted. */
@@ -38,7 +39,7 @@ export class GitLabEventStore {
 
   enqueue(delivery: GitLabDelivery): 'new' | 'duplicate' | 'full' | 'queue_full' {
     const state = this.load();
-    const retained = new Set([...state.pending, ...state.deadLetters].map(entry => entry.key));
+    const retained = new Set([...state.pending, ...state.deadLetters].map(entry => entry.key).concat(state.acknowledged));
     const receipts = state.receipts.filter(([key, expires]) => expires > this.now() || retained.has(key));
     if (receipts.some(([key]) => key === delivery.key)) return 'duplicate';
     if (state.pending.length >= this.queueCapacity) return 'queue_full';
@@ -52,6 +53,17 @@ export class GitLabEventStore {
 
   ready(): QueueEntry[] {
     return this.load().pending.filter(entry => entry.retryAt <= this.now());
+  }
+
+  /** Completed or discarded keys whose fleet receipts still need release. */
+  acknowledged(): string[] {
+    return [...this.load().acknowledged];
+  }
+
+  /** Forget release work only after the fleet receipt is durably unpinned. */
+  receiptReleased(key: string): void {
+    const state = this.load();
+    this.save({ ...state, acknowledged: state.acknowledged.filter(id => id !== key) });
   }
 
   /** Reserve identity and consume one attempt before dispatch; false means the budget is exhausted. */
@@ -76,7 +88,7 @@ export class GitLabEventStore {
     const summarize = (entry: QueueEntry) => ({ id: entry.key, attempts: entry.attempts,
       retryAt: entry.retryAt, started: entry.started });
     const state = this.load();
-    return { pending: state.pending.map(summarize), deadLetters: state.deadLetters.map(summarize),
+    return { pending: state.pending.map(summarize), deadLetters: state.deadLetters.map(summarize), acknowledged: this.acknowledged(),
       capacity: this.queueCapacity, deadLetterCapacity: this.deadLetterCapacity };
   }
 
@@ -88,14 +100,17 @@ export class GitLabEventStore {
     if (action === 'retry' && state.pending.length >= this.queueCapacity) return 'queue_full';
     this.save({ ...state, deadLetters: state.deadLetters.filter(entry => entry.key !== key),
       pending: action === 'retry' ? [...state.pending, { ...entry, attempts: 0, retryAt: 0 }] : state.pending,
+      acknowledged: action === 'discard' ? [...state.acknowledged, key] : state.acknowledged,
       receipts: state.receipts.map(([id, expires]) => [id, id === key ? this.now() + this.ttlMs : expires]) });
     return 'ok';
   }
 
-  /** Called only after the dispatcher has recorded the start or rejected it under current policy. */
+  /** Atomically replace completed work with a durable obligation to release its fleet receipt. */
   complete(key: string): void {
     const state = this.load();
+    if (!state.pending.some(entry => entry.key === key)) return;
     this.save({ ...state, pending: state.pending.filter(entry => entry.key !== key),
+      acknowledged: [...state.acknowledged, key],
       receipts: state.receipts.map(([id, expires]) => [id, id === key ? this.now() + this.ttlMs : expires]) });
   }
 
@@ -120,21 +135,23 @@ export class GitLabEventStore {
 
   private load(): EventState {
     if (this.state) return this.state;
-    if (!this.path || !existsSync(this.path)) return this.state = { version: 1, receipts: [], pending: [], deadLetters: [] };
+    if (!this.path || !existsSync(this.path)) return this.state = { version: 1, receipts: [], pending: [], deadLetters: [], acknowledged: [] };
     const payload: unknown = JSON.parse(readFileSync(this.path, 'utf8'));
     // Upgrade the original receipt-only array on the next successful write.
-    const state = Array.isArray(payload) ? { version: 1, receipts: payload, pending: [], deadLetters: [] } : record(payload);
-    const { receipts, pending, deadLetters } = state;
+    const state = Array.isArray(payload) ? { version: 1, receipts: payload, pending: [], deadLetters: [], acknowledged: [] } : record(payload);
+    if (state.acknowledged === undefined) state.acknowledged = [];
+    const { receipts, pending, deadLetters, acknowledged } = state;
     // A lower pending capacity must not invalidate previously accepted deliveries.
     if (state.version !== 1 || !Array.isArray(receipts) || receipts.length > this.capacity
       || receipts.some(row => !Array.isArray(row) || row.length !== 2 || typeof row[0] !== 'string'
         || !/^[a-f0-9]{64}$/.test(row[0]) || !Number.isFinite(row[1]))
       || new Set(receipts.map(row => row[0])).size !== receipts.length
       || !Array.isArray(pending) || !Array.isArray(deadLetters) || deadLetters.length > this.deadLetterCapacity
+      || !Array.isArray(acknowledged) || acknowledged.some(key => typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key))
       || pending.some(entry => !this.validEntry(entry, false)) || deadLetters.some(entry => !this.validEntry(entry, true))) {
       throw new Error('Invalid GitLab event store');
     }
-    const keys = [...pending, ...deadLetters].map(entry => entry.key);
+    const keys = [...pending, ...deadLetters].map(entry => entry.key).concat(acknowledged);
     if (new Set(keys).size !== keys.length || keys.some(key => !receipts.some(row => row[0] === key))) {
       throw new Error('Invalid GitLab event store');
     }

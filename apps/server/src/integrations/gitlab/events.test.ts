@@ -134,6 +134,8 @@ test('receipts survive restarts, expire, stay bounded, and reject corrupt state'
     assert.equal(store.enqueue(delivery('note')), 'full');
     store.complete(key);
     now = 11;
+    assert.equal(store.enqueue(delivery('note')), 'full', 'acknowledgement pins its receipt until release');
+    store.receiptReleased(key);
     assert.equal(store.enqueue(delivery('note')), 'new');
     writeFileSync(path, '{');
     assert.throws(() => new GitLabEventStore(1, 10, () => now, path).enqueue(delivery('issue')));

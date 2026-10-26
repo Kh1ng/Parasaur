@@ -157,6 +157,11 @@ test('invalid queue state fails closed and keeps the original file', () => {
     const valid = { version: 1, receipts: [[accepted.key, 100]], pending: [entry], deadLetters: [] };
     for (const corrupt of [
       { ...valid, version: 2 },
+      { ...valid, acknowledged: null },
+      { ...valid, acknowledged: [accepted.key] },
+      { ...valid, pending: [], acknowledged: [accepted.key, accepted.key] },
+      { ...valid, acknowledged: ['b'.repeat(64)] },
+      { ...valid, acknowledged: [123] },
       { ...valid, receipts: [] },
       { ...valid, pending: [entry, entry] },
       { ...valid, pending: [{ ...entry, key: 'b'.repeat(64) }] },
@@ -282,3 +287,63 @@ for (const status of ['stopped', 'error'] as const) {
     assert.deepEqual(released, [`gitlab-${accepted.key}`]);
   });
 }
+
+
+test('unreleased acknowledgements stay deduplicated and bounded after TTL across restart', async t => {
+  t.mock.method(console, 'error', () => {});
+  const dir = mkdtempSync(join(tmpdir(), 'gitlab-ack-bound-'));
+  let now = 0;
+  const fresh = () => new GitLabEventStore(2, 10, () => now, join(dir, 'events.json'));
+  const first = delivery();
+  const second = delivery('note');
+  try {
+    for (const entry of [first, second]) {
+      const store = fresh();
+      store.enqueue(entry);
+      await new GitLabEventQueue(store, async () => {}, async () => undefined,
+        () => { throw new Error('receipt store unavailable'); }).drain();
+      now += 100;
+    }
+    const store = fresh();
+    assert.deepEqual(store.acknowledged(), [first.key, second.key]);
+    assert.equal(store.enqueue(first), 'duplicate');
+    assert.equal(store.enqueue(second), 'duplicate');
+    assert.equal(store.enqueue(delivery('merge_request')), 'full', 'release backlog cannot grow beyond receipt capacity');
+    await new GitLabEventQueue(store, async () => assert.fail('must not dispatch')).drain();
+    assert.deepEqual(fresh().acknowledged(), []);
+    assert.equal(store.enqueue(delivery('merge_request')), 'new', 'successful release restores capacity');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('discard durably records receipt release and retries it on replay', async t => {
+  const log = t.mock.method(console, 'error', () => {});
+  const dir = mkdtempSync(join(tmpdir(), 'gitlab-discard-release-'));
+  const fresh = () => new GitLabEventStore(10, 100, Date.now, join(dir, 'events.json'));
+  const accepted = delivery();
+  try {
+    const store = fresh();
+    store.enqueue(accepted);
+    for (let i = 0; i < MAX_DISPATCH_ATTEMPTS; i++) { store.begin(accepted.key); store.failed(accepted.key); }
+    let releases = 0;
+    const queue = new GitLabEventQueue(store, async () => assert.fail('discard must not dispatch'),
+      async () => undefined, () => {
+        assert.deepEqual(fresh().acknowledged(), [accepted.key]);
+        releases++;
+        throw new Error('release failed');
+      });
+    assert.equal(queue.recover(accepted.key, 'discard'), 'ok');
+    assert.equal(releases, 1);
+    assert.deepEqual(fresh().summary().deadLetters, []);
+    assert.deepEqual(fresh().acknowledged(), [accepted.key]);
+    await queue.drain();
+    assert.equal(releases, 2);
+    assert.equal(log.mock.callCount(), 1, 'persistent release failures log once');
+    await new GitLabEventQueue(fresh(), async () => assert.fail('discard must not replay'),
+      async () => undefined, requestId => {
+        assert.equal(requestId, `gitlab-${accepted.key}`);
+        releases++;
+      }).drain();
+    assert.equal(releases, 3);
+    assert.deepEqual(fresh().acknowledged(), []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

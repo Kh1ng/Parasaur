@@ -494,7 +494,8 @@ dead letters together. The default remains
 `~/.local/state/gah/gitlab-events.json` when `XDG_STATE_HOME` is unset.
 There is no separate queue file. The server
 reads the old receipt-array format and upgrades it on the next write to
-`{ version: 1, receipts, pending, deadLetters }`.
+`{ version: 1, receipts, pending, deadLetters, acknowledged }`.
+Older version-1 files without `acknowledged` remain readable.
 Existing receipts remain deduplicated. Previously acknowledged events
 without saved payloads cannot be recovered by this upgrade.
 
@@ -527,9 +528,11 @@ it no longer posts queued-run notes. The panel runs feed supplies run links.
 Before dispatch, the queue atomically reserves the `gitlab-<receipt hash>`
 request ID in `started`, consumes one attempt, and sets a one-hour retry lease.
 The fleet coordinator owns the session outcome. Its receipt stays pinned until
-the queue durably removes the payload, even after terminal receipt retention
-expires or another event starts work on the same target. The queue then releases
-the pin and refreshes the event's deduplication receipt for 24 hours.
+the queue atomically replaces the payload with an `acknowledged` key, even after
+terminal receipt retention expires or another event starts work on the same target.
+The queue then releases the pin and removes the acknowledged key. Completion
+refreshes the event's deduplication receipt for 24 hours. Discard uses the same
+acknowledgement and release sequence.
 
 Replay trusts a confirmed running or terminal fleet receipt. An expired or
 missing session retries with the same request ID while budget remains. An
@@ -537,10 +540,12 @@ uncertain fleet lookup waits for another attempt without starting work.
 Unknown outcomes with exhausted budgets become dead letters, never success.
 Old queue markers containing session IDs remain readable, but those IDs alone
 do not prove completion. There is no post-start callback or second session
-receipt in the queue. A crash after dequeue but before releasing the fleet pin
-can leave an extra retained receipt; it cannot cause another dispatch.
-Pending and dead-letter receipts remain pinned even after
-24 hours. HTTP redelivery of either returns `204` without a
+receipt in the queue. Replay retries acknowledged keys after a crash or release
+failure without dispatching them again. These keys keep their deduplication
+receipts pinned and count toward the 10,000-receipt limit, so persistent release
+failures eventually refuse new work rather than grow the store without bound.
+Pending, acknowledged, and dead-letter receipts remain pinned even after
+24 hours. HTTP redelivery of any retained event returns `204` without a
 second drain. The worker serializes drains, and each ready entry gets one attempt
 before failed entries become eligible for retry. Shutdown stops scheduling
 new attempts and leaves unfinished entries on disk. For a custom startup
@@ -583,6 +588,7 @@ Workers do not expose these routes. Mutation guards require an
 - `GET /api/integrations/gitlab/queue` returns `pending` and `deadLetters`
   arrays, `capacity`, and `deadLetterCapacity`. Each entry contains `id`,
   `attempts`, `retryAt`, and an optional `started` marker with the request ID.
+  The `acknowledged` array lists keys awaiting fleet receipt release.
   The response excludes accepted payloads and provider errors.
 - `POST /api/integrations/gitlab/queue/dead-letters/:id/retry` moves one entry
   to pending and resets its attempt count and retry time. It preserves the

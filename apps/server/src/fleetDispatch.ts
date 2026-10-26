@@ -338,6 +338,7 @@ class LeaseStore {
   }
 
   upsert(record: LeaseRecord): void {
+    const previous = new Map(this.leases);
     for (const existing of this.leases.values()) {
       if (existing.requestId === record.requestId) continue;
       if (existing.session.id === record.session.id) {
@@ -350,7 +351,12 @@ class LeaseStore {
       }
     }
     this.leases.set(record.requestId, record);
-    this.save();
+    try { this.save(); }
+    catch (error) {
+      // A failed release must remain pinned in memory so its next retry writes again.
+      this.leases = previous;
+      throw error;
+    }
   }
 
   cleanup(): void {

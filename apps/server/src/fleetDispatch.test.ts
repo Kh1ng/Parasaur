@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
@@ -1334,3 +1334,72 @@ test('retained request receipts survive concurrent coalescing, later work, and c
     assert.equal(transportMap.get('worker-1')?.startCalls, 2, 'old receipt updates must not hide newer active work');
   } finally { await node.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+
+for (const crash of ['after-acknowledgement', 'release-write-failure', 'after-release'] as const) {
+  test(`GitLab ${crash} replay reclaims receipts across ten crashes`, async t => {
+    t.mock.method(console, 'error', () => {});
+    const dir = mkdtempSync(resolve(tmpdir(), 'gah-gitlab-release-'));
+    const leaseStorePath = resolve(dir, 'leases.json');
+    const eventPath = resolve(dir, 'events.json');
+    const registryService = {
+      getNode: () => undefined,
+      getNodeObservations: async () => [makeSnapshot('coordinator-1', 'http://127.0.0.1:9999', 0, 0, 0)],
+    } as unknown as RegistryService;
+    const transportMap = new Map<string, FakeTransport>();
+    const freshFleet = () => createCoordinatorHarness({ leaseStorePath, registryService,
+      coordinatorNodeId: 'coordinator-1', coordinatorUrl: 'http://127.0.0.1:9999', transportMap, published: [] });
+    const freshStore = () => new GitLabEventStore(100, 86_400_000, Date.now, eventPath);
+    const body: unknown = JSON.parse(readFileSync(new URL('../tests/fixtures/gitlab-19/issue.json', import.meta.url), 'utf8'));
+    let fleet = freshFleet();
+    try {
+      for (let i = 0; i < 10; i++) {
+        const eventUuid = `release-crash-${i}`;
+        const event = classifyEvent(body, 'parasaur', true, eventUuid);
+        assert.ok(event);
+        const store = freshStore();
+        store.enqueue({ key: event.key, body, eventUuid, bot: 'parasaur', panelUrl: 'https://panel.example/', pipelineEnabled: true });
+        if (crash === 'after-acknowledgement') {
+          const complete = store.complete.bind(store);
+          store.complete = key => { complete(key); throw new Error('crash before release'); };
+        } else if (crash === 'after-release') {
+          store.receiptReleased = () => { throw new Error('crash before removing acknowledgement'); };
+        }
+        await new GitLabEventQueue(store, async (_event, options) => {
+          const session = await fleet.startSession({ requestId: options.requestId, retainReceipt: true, profile: 'gah',
+            providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve' });
+          await fleet.stopSession(session.id);
+        }, async () => undefined, requestId => {
+          if (crash !== 'release-write-failure') return fleet.releaseReceipt(requestId);
+          const backup = resolve(dir, 'leases-backup.json');
+          renameSync(leaseStorePath, backup);
+          mkdirSync(leaseStorePath);
+          try { fleet.releaseReceipt(requestId); }
+          finally {
+            rmSync(leaseStorePath, { recursive: true });
+            renameSync(backup, leaseStorePath);
+          }
+        }).drain();
+        assert.deepEqual(freshStore().summary().pending, []);
+        assert.deepEqual(freshStore().acknowledged(), [event.key], 'release obligation survives the crash');
+        const before = JSON.parse(readFileSync(leaseStorePath, 'utf8'));
+        assert.equal(before.leases.length, 1, 'previous crashes left no orphan receipts');
+        assert.equal(before.leases[0].retainReceipt, crash !== 'after-release');
+        // Retry a failed write in the same coordinator too: its in-memory pin must survive failure.
+        if (crash !== 'release-write-failure' || i % 2 === 0) fleet = freshFleet();
+        await new GitLabEventQueue(freshStore(), async () => assert.fail('acknowledged work must not dispatch'),
+          async () => assert.fail('acknowledged work must not reconcile'),
+          requestId => fleet.releaseReceipt(requestId)).drain();
+        assert.deepEqual(freshStore().acknowledged(), []);
+        const released = JSON.parse(readFileSync(leaseStorePath, 'utf8'));
+        assert.equal(released.leases[0].retainReceipt, false, 'release is durable before forgetting acknowledgement');
+        released.leases[0].session.endedAt = new Date(Date.now() - DISPATCH_LEASE_MS - 1).toISOString();
+        writeFileSync(leaseStorePath, JSON.stringify(released));
+        fleet = freshFleet();
+        await fleet.reconcileLeases('gah');
+        assert.equal(JSON.parse(readFileSync(leaseStorePath, 'utf8')).leases.length, 0, 'cleanup reclaims every released receipt');
+        assert.equal(transportMap.get('coordinator-1')?.startCalls, i + 1);
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+}

@@ -13,6 +13,7 @@ export class GitLabEventQueue {
   private timer?: NodeJS.Timeout;
   private stopped = false;
   private storeFailed = false;
+  private releaseFailed = false;
 
   constructor(private readonly store: GitLabEventStore, private readonly dispatch: GitLabDispatch,
     private readonly findDispatch: FindGitLabDispatch = async () => undefined,
@@ -64,16 +65,26 @@ export class GitLabEventQueue {
 
   private release(key: string): void {
     try { this.releaseReceipt(`gitlab-${key}`); }
-    catch { console.error(`[gitlab-events] Event ${key} acknowledged; fleet receipt remains pinned.`); }
+    catch {
+      if (!this.releaseFailed) console.error('[gitlab-events] Fleet receipt release unavailable; acknowledgements retained for replay.');
+      this.releaseFailed = true;
+      return;
+    }
+    this.releaseFailed = false;
+    this.store.receiptReleased(key);
   }
 
   private complete(key: string): void {
     this.store.complete(key);
-    // Release only after durable acknowledgement, so a crash cannot erase dedupe.
+    // Replay retains the release obligation across either store's write failures.
     this.release(key);
   }
 
   private async replay(): Promise<void> {
+    for (const key of this.store.acknowledged()) {
+      if (this.stopped) return;
+      this.release(key);
+    }
     while (!this.stopped) {
       const ready = this.store.ready();
       if (!ready.length) break;
