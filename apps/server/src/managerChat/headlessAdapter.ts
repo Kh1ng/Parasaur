@@ -32,6 +32,7 @@ import { promisify } from 'node:util';
 import type { ChatTranscriptTurn, ChatUsage } from '@git-agent-harness/contracts';
 import { runConfigShowProfile, runVibeModelSummary, runVibeSetModel } from '../gahCli.js';
 import { boundedUpstreamFetch } from '../cliRouter.js';
+import { profileFromChatKey } from './chatSessions.js';
 import type { ManagerAdapter, ManagerCommandInfo, ManagerModelInfo, ManagerReasoningEffortInfo } from './registry.js';
 import { isInsideWorkingDirectory } from './permissionPolicy.js';
 import { agentChildEnv } from './childEnv.js';
@@ -90,7 +91,8 @@ export interface HeadlessBackendSpec {
   /** Selectable options for headless backends that expose them. Receives
    * the GAH profile so a backend whose options come from a profile-scoped
    * source (vibe's own config per instance, OpenHands' profile file) can
-   * resolve it. */
+   * resolve it. The adapter resolves conversation keys first
+   * (profileFromChatKey), so this always sees the bare profile. */
   modelOptions?: (gahProfile: string) => Promise<{
     models: ManagerModelInfo[];
     reasoningEfforts: ManagerReasoningEffortInfo[];
@@ -102,7 +104,8 @@ export interface HeadlessBackendSpec {
   }>;
   /** Persist a model selection for backends with no CLI flag to carry it
    * (vibe writes `active_model` into its own config). Called by setModel
-   * after validation, and before a turn whose session pinned a model. */
+   * after validation, and before a turn whose session pinned a model.
+   * The adapter resolves conversation keys first (profileFromChatKey). */
   applyModel?: (gahProfile: string, modelId: string) => Promise<void>;
   /** Identifies the installation-global resource `applyModel` persists to
    * (vibe's config home — the one config file every conversation using
@@ -217,7 +220,7 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
         // explicit pin writes; the in-memory fallback was already persisted
         // by setModel.
         if (input.model && spec.applyModel) {
-          await spec.applyModel(input.profile ?? gahProfile, input.model);
+          await spec.applyModel(input.profile ?? profileFromChatKey(gahProfile), input.model);
         }
 
         // One non-interactive invocation: fixed argv, prompt over stdin.
@@ -232,7 +235,7 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
           });
           const child = spawn(args[0], args.slice(1), {
             cwd,
-            env: agentChildEnv(await spec.spawnEnv?.(input.profile ?? gahProfile, { model: pinnedModel })),
+            env: agentChildEnv(await spec.spawnEnv?.(input.profile ?? profileFromChatKey(gahProfile), { model: pinnedModel })),
             stdio: ['pipe', 'pipe', 'pipe']
           });
           state.child = child;
@@ -373,7 +376,13 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     },
 
     async listModels(gahProfile) {
-      const options = await spec.modelOptions?.(gahProfile);
+      // Profile-scoped options see the real GAH profile: worker chat lists
+      // with the composite conversation key chatKey builds (`profile#session`,
+      // chatSessions.ts), and a profile-scoped source (OpenHands' profile
+      // file, vibe's own config) can only answer for the bare profile —
+      // the session half must never reach runConfigShowProfile's exact-key
+      // lookup. Conversation state below stays keyed by the full key.
+      const options = await spec.modelOptions?.(profileFromChatKey(gahProfile));
       const state = stateFor(gahProfile);
       return {
         models: options?.models ?? [],
@@ -385,14 +394,15 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     },
 
     async setModel(gahProfile, modelId): Promise<void> {
-      const options = await spec.modelOptions?.(gahProfile);
+      const profile = profileFromChatKey(gahProfile);
+      const options = await spec.modelOptions?.(profile);
       if (!options) throw new Error(`${spec.displayName} doesn't support model selection in headless mode.`);
       if (!options.models.some((model) => model.id === modelId)) throw new Error(`Unknown model "${modelId}" for ${spec.displayName}`);
       // The write takes the same per-installation mutex as a pinned turn:
       // landing between another turn's applyModel and its child's config
       // read (or a tool continuation's spawn) would make that turn run
       // this write's model instead of its own pin.
-      const write = async () => { await spec.applyModel?.(gahProfile, modelId); };
+      const write = async () => { await spec.applyModel?.(profile, modelId); };
       const scope = spec.applyModel ? spec.modelSelectionScope?.() : undefined;
       if (scope) {
         await withModelSelectionLock(scope, write);
@@ -403,7 +413,7 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     },
 
     async setReasoningEffort(gahProfile, effortId): Promise<void> {
-      const options = await spec.modelOptions?.(gahProfile);
+      const options = await spec.modelOptions?.(profileFromChatKey(gahProfile));
       if (!options) throw new Error(`${spec.displayName} doesn't support reasoning-effort selection in headless mode.`);
       if (!options.reasoningEfforts.some((effort) => effort.id === effortId)) throw new Error(`Unknown reasoning effort "${effortId}" for ${spec.displayName}`);
       stateFor(gahProfile).currentReasoningEffortId = effortId;
@@ -675,11 +685,13 @@ export function openhandsBackendSpec(
     encodeStdin: (prompt) => prompt,
     spawnEnv: overrides.resolveEnv ?? ((profile, opts) => resolveOpenhandsEnv(profile, !overrides.instanceCredential, opts?.model)),
     modelOptions: async (gahProfile) => {
-      // The listing is best-effort end to end: a key that resolves to no
-      // OpenHands profile — including the composite conversation keys worker
-      // chat lists with (`profile#session`) — lists no models instead of
-      // failing the picker. A turn still validates the profile strictly
-      // (resolveOpenhandsEnv throws on the same files).
+      // The listing is best-effort end to end: a GAH profile that binds no
+      // OpenHands profile lists no models instead of failing the picker.
+      // The adapter resolves conversation keys (profile#session) to their
+      // real profile before calling here, so the session half never
+      // reaches runConfigShowProfile's exact-key lookup. A turn still
+      // validates the profile strictly (resolveOpenhandsEnv throws on the
+      // same files).
       let config: OpenhandsProfile | null;
       try {
         config = await readOpenhandsProfile(gahProfile);

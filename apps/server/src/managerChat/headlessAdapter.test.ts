@@ -1021,6 +1021,64 @@ test('every OpenHands listing failure logs one sanitized diagnostic, once per fa
   }
 });
 
+test('a named worker session lists its profile\'s models: the conversation key resolves to the real profile (#1512 round 3)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-chat-key-'));
+  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY,
+    LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
+  try {
+    process.env.HOME = dir;
+    // A recording `gah`: the argv it was invoked with lands in argv.txt, so
+    // the test can prove what reached runConfigShowProfile. It answers for
+    // the bare profile `work` only — the real CLI resolves profiles by
+    // exact key, so a `work#session` argument would resolve no profile.
+    const argv = join(dir, 'argv.txt');
+    const cli = join(dir, 'gah');
+    writeFileSync(cli, `#!/bin/sh\nprintf '%s\\n' "$@" > "${argv}"\ncat >/dev/null\necho '{"profiles":{"work":{"oh_profile":"work"}}}'\n`, { mode: 0o755 });
+    process.env.GAH_BINARY = cli;
+    delete process.env.LLM_MODEL;
+    delete process.env.LLM_BASE_URL;
+    delete process.env.LLM_API_KEY;
+    writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', base_url: 'https://provider.example/v1', api_key: 'profile-key' });
+    const { fetchFn, requested } = recordingFetch([{ status: 200, body: { data: [{ id: 'openai/o3' }] } }]);
+    const backend = createHeadlessBackend(openhandsBackendSpec({ fetchFn }));
+
+    // Worker chat lists with chatKey(profile, sessionId) — `profile#session`.
+    const summary = await backend.listModels('work#conv-42');
+    assert.deepEqual(summary.models, [
+      { id: 'openai/gpt-4o', name: 'openai/gpt-4o' },
+      { id: 'openai/o3', name: 'openai/o3' }
+    ], 'the session resolves the profile catalog instead of listing nothing');
+    assert.equal(summary.currentModelId, 'openai/gpt-4o');
+    assert.deepEqual(requested, [{ url: 'https://provider.example/v1/models', authorization: 'Bearer profile-key' }],
+      'the listing ran against the real profile\'s provider');
+    assert.deepEqual(
+      readFileSync(argv, 'utf8').trim().split('\n'),
+      ['config', 'show', '--json', '--full', '--profile', 'work'],
+      'the session half never reaches runConfigShowProfile'
+    );
+
+    // A bare key (the default session) behaves exactly the same.
+    assert.deepEqual((await backend.listModels('work')).models, summary.models);
+    assert.deepEqual(
+      readFileSync(argv, 'utf8').trim().split('\n'),
+      ['config', 'show', '--json', '--full', '--profile', 'work'],
+      'the bare profile key is unchanged'
+    );
+
+    // setModel validates against the profile's catalog but pins per
+    // conversation, so one session's choice never leaks into another's.
+    await backend.setModel('work#conv-42', 'openai/o3');
+    assert.equal((await backend.listModels('work#conv-42')).currentModelId, 'openai/o3');
+    assert.equal((await backend.listModels('work')).currentModelId, 'openai/gpt-4o',
+      'another conversation of the same profile keeps its own selection');
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 
 test('a named Vibe instance derives its Python bridge from the selected launcher', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-vibe-selected-launcher-'));
@@ -1085,6 +1143,33 @@ test('Vibe lists its configured models with the active one marked, read from its
     assert.ok(!requested.includes('--instance'), 'the ambient installation is the default scope');
 
     await assert.rejects(backend.setModel('vibe-profile', 'not-configured'), /Unknown model/);
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a named worker session lists Vibe models through the real profile, not the conversation key (#1510/#1512 round 3)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-models-chat-key-'));
+  const saved = { GAH_BINARY: process.env.GAH_BINARY };
+  try {
+    const { argv } = fakeVibeGah(dir);
+    process.env.GAH_BINARY = join(dir, 'gah');
+    const backend = createHeadlessBackend(vibeBackendSpec());
+
+    // The Vibe picker had the same defect as the OpenHands one: a worker
+    // session's `profile#session` key went to the CLI as --profile, where
+    // the real CLI resolves profiles by exact key.
+    const summary = await backend.listModels('vibe-profile#conv-7');
+    assert.equal(summary.models.length, 2, 'the worker session sees the profile catalog');
+    assert.equal(summary.currentModelId, 'mistral-medium-3.5');
+    assert.deepEqual(
+      readFileSync(argv, 'utf8').trim().split('\n'),
+      ['config', 'show-vibe-models', '--profile', 'vibe-profile'],
+      'the session half never reaches the gah CLI; the bare profile is unchanged'
+    );
   } finally {
     for (const [name, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[name]; else process.env[name] = value;
