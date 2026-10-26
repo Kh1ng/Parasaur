@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execPath } from 'node:process';
@@ -1334,6 +1334,199 @@ test('concurrent pinned turns on one installation serialize, so each turn runs w
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+/** A real child holds model-A's turn open until released or killed. */
+function cancellableSelectionBackend(dir: string) {
+  const selection = join(dir, 'selection');
+  const spawned = join(dir, 'spawned');
+  const gate = join(dir, 'gate');
+  const applied: string[] = [];
+  writeFileSync(spawned, '');
+  const backend = createHeadlessBackend({
+    id: 'vibe-like',
+    displayName: 'Vibe-like',
+    modelSelectionScope: () => dir,
+    applyModel: async (_profile, model) => {
+      applied.push(model);
+      writeFileSync(selection, model);
+    },
+    turnArgs: () => [execPath, '--input-type=commonjs', '-e', `
+      const fs = require('node:fs');
+      process.stdin.resume();
+      process.stdin.on('end', () => {
+        const model = fs.readFileSync(${JSON.stringify(selection)}, 'utf8');
+        fs.appendFileSync(${JSON.stringify(spawned)}, model + '\\n');
+        const timer = setInterval(() => {
+          if (model !== 'model-A' || fs.existsSync(${JSON.stringify(gate)})) {
+            clearInterval(timer);
+            console.log('ran-with: ' + model);
+          }
+        }, 10);
+      });
+    `],
+    encodeStdin: prompt => prompt
+  });
+  const turn = (model: string) => backend.runTurn(`p#${model}`, {
+    prompt: 'go', history: [], model, onChunk: () => {}, onToolResult: () => {}
+  });
+  return { backend, turn, applied, gate, spawned };
+}
+
+for (const cancelled of ['queued', 'running'] as const) {
+  test(`cancelling a ${cancelled} pinned turn preserves the other session on the same home (#1637)`, async (t) => {
+    const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-cancel-'));
+    const { backend, turn, applied, gate, spawned } = cancellableSelectionBackend(dir);
+    const turnA = turn('model-A');
+    const outcomeA = turnA.catch(error => error);
+    let turnB: ReturnType<typeof turn> | undefined;
+    t.after(async () => {
+      writeFileSync(gate, 'release');
+      await backend.cancelTurn('p#model-A');
+      await backend.cancelTurn('p#model-B');
+      await Promise.allSettled([turnA, turnB]);
+      rmSync(dir, { recursive: true, force: true });
+    });
+    // Wait for A's actual child to start before queuing B.
+    const deadline = Date.now() + 5000;
+    while (!readFileSync(spawned, 'utf8')) {
+      assert.ok(Date.now() < deadline, 'model-A child started');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    turnB = turn('model-B');
+    const outcomeB = turnB.catch(error => error);
+    assert.deepEqual(applied, ['model-A']);
+    const cancelledOutcome = cancelled === 'queued' ? outcomeB : outcomeA;
+    await backend.cancelTurn(cancelled === 'queued' ? 'p#model-B' : 'p#model-A');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        cancelledOutcome,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('cancelled turn did not settle promptly')), 1000);
+        })
+      ]);
+      assert.ok(result instanceof Error);
+      assert.match(result.message, /cancelled/i);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (cancelled === 'queued') {
+      assert.equal(existsSync(gate), false, 'B settles while A still holds the mutex');
+      writeFileSync(gate, 'release');
+      assert.match((await turnA).reply, /model-A/);
+      // Drain the lock queue, proving the cancelled waiter neither writes nor spawns.
+      assert.match((await turn('model-C')).reply, /model-C/);
+      assert.deepEqual(applied, ['model-A', 'model-C']);
+      assert.equal(readFileSync(spawned, 'utf8'), 'model-A\nmodel-C\n');
+    } else {
+      assert.match((await turnB).reply, /model-B/);
+      assert.deepEqual(applied, ['model-A', 'model-B']);
+      assert.equal(readFileSync(spawned, 'utf8'), 'model-A\nmodel-B\n');
+    }
+  });
+}
+
+test('cancelTurn with no pending turn is a no-op and does not cancel the next pinned turn (#1637)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-cancel-idle-'));
+  try {
+    const { backend, turn } = cancellableSelectionBackend(dir);
+    await backend.cancelTurn('p#model-B');
+    assert.match((await turn('model-B')).reply, /model-B/);
+    await backend.cancelTurn('p#model-B');
+    assert.match((await turn('model-B')).reply, /model-B/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+for (const backendId of ['vibe-like', 'openhands'] as const) {
+  test(`cancellation during ${backendId} environment lookup prevents spawning and releases the model lock (#1637)`, async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const ready = new Promise<void>(resolve => { entered = resolve; });
+    const spawned: string[] = [];
+    const backend = createHeadlessBackend({
+      id: backendId, displayName: backendId,
+      modelSelectionScope: () => `cancel-during-env-1637-${backendId}`,
+      applyModel: async () => {},
+      spawnEnv: async (profile, opts) => {
+        assert.equal(profile, 'p');
+        if (opts?.model === 'p#A') { entered(); await gate; }
+        if (backendId === 'openhands') {
+          const env = await openhandsBackendSpec({
+            resolveEnv: async (resolvedProfile, resolvedOpts) => {
+              assert.equal(resolvedProfile, 'p');
+              assert.equal(resolvedOpts?.model, 'p#B');
+              return { LLM_MODEL: resolvedOpts.model };
+            }
+          }).spawnEnv!(profile, opts);
+          assert.equal(env?.LLM_MODEL, opts?.model);
+          return env;
+        }
+        return {};
+      },
+      turnArgs: () => [execPath, '-e', 'process.stdin.resume(); process.stdin.on("end", () => console.log("done"))'],
+      encodeStdin: prompt => { spawned.push(prompt); return prompt; }
+    });
+    const turn = (key: string) => backend.runTurn(key, {
+      prompt: key, history: [], model: key, onChunk: () => {}, onToolResult: () => {}
+    });
+    const turnA = turn('p#A');
+    const cancelled = assert.rejects(turnA, /cancelled/i);
+    try {
+      await ready;
+      const turnB = turn('p#B');
+      await backend.cancelTurn('p#A');
+      release();
+      await cancelled;
+      assert.equal((await turnB).reply, 'done');
+      assert.deepEqual(spawned, ['p#B']);
+    } finally {
+      release();
+      await Promise.allSettled([turnA, cancelled]);
+    }
+  });
+}
+
+test('cancelling a permission wait releases the model lock without a tool continuation (#1637)', { timeout: 5000 }, async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-cancel-permission-'));
+  let release!: () => void;
+  let entered!: () => void;
+  const permission = new Promise<string>(resolve => { release = () => resolve('allow-once'); });
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  const spawned: string[] = [];
+  const interpreter = fakeVibeInterpreter(dir, 'TARGET-CONTENT');
+  writeFileSync(join(dir, 'target.md'), 'TARGET-CONTENT');
+  const backend = createHeadlessBackend({
+    ...vibeBackendSpec({ resolveInterpreter: () => interpreter }),
+    modelSelectionScope: () => dir,
+    applyModel: async () => {},
+    encodeStdin: prompt => { spawned.push(prompt); return prompt; }
+  });
+  const turnA = backend.runTurn('p#A', {
+    prompt: 'read target.md', history: [], model: 'model-A', cwd: dir,
+    onChunk: () => {}, onToolResult: () => assert.fail('cancelled tool must not run'),
+    requestPermission: async () => { entered(); return permission; }
+  });
+  const cancelled = assert.rejects(turnA, /cancelled/i);
+  let turnB: ReturnType<typeof backend.runTurn> | undefined;
+  t.after(async () => {
+    release();
+    await Promise.allSettled([turnA, turnB, cancelled]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+  await ready;
+  turnB = backend.runTurn('p#B', {
+    prompt: 'TARGET-CONTENT', history: [], model: 'model-B', cwd: dir,
+    onChunk: () => {}, onToolResult: () => {}
+  });
+  await backend.cancelTurn('p#A');
+  await cancelled;
+  assert.match((await turnB).reply, /Review complete/);
+  release();
+  assert.deepEqual(spawned, ['read target.md', 'TARGET-CONTENT']);
 });
 
 test('a setModel write waits for an in-flight pinned turn, so the turn never runs another session\'s selection (#1510 round 2)', async () => {

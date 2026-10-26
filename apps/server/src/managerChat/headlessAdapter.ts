@@ -122,8 +122,8 @@ export interface HeadlessBackendSpec {
 
 interface ConversationState {
   knownHistory: ChatTranscriptTurn[];
-  /** Process handle for the in-flight turn (cancel support). */
-  child: ReturnType<typeof spawn> | null;
+  /** Cancellation belongs to a turn, including its wait for a model lock. */
+  activeTurn: { controller: AbortController; child: ReturnType<typeof spawn> | null } | null;
   currentModelId: string | null;
   currentReasoningEffortId: string | null;
 }
@@ -188,7 +188,7 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
   function stateFor(key: string): ConversationState {
     let state = states.get(key);
     if (!state) {
-      state = { knownHistory: [], child: null, currentModelId: null, currentReasoningEffortId: null };
+      state = { knownHistory: [], activeTurn: null, currentModelId: null, currentReasoningEffortId: null };
       states.set(key, state);
     }
     return state;
@@ -207,6 +207,12 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     async runTurn(gahProfile, input) {
       const state = stateFor(gahProfile);
       const cwd = input.cwd ?? process.cwd();
+      const activeTurn: NonNullable<ConversationState['activeTurn']> = { controller: new AbortController(), child: null };
+      state.activeTurn = activeTurn;
+      const { signal } = activeTurn.controller;
+      const cancelled = new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
 
       // The turn itself. When the session pinned a model and the backend
       // persists pins installation-globally (vibe), the whole turn runs
@@ -214,6 +220,7 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
       // selection between this pin's applyModel and the child's config
       // read — including the extra invocations tool continuations spawn.
       const turn = async (): Promise<{ reply: string; model: string | null; usage: ChatUsage | null }> => {
+        signal.throwIfAborted();
         // A backend with no CLI flag for the pin (vibe) persists the
         // selection through its own config before the turn, so the process
         // it is about to spawn picks the pinned model up (#1510). Only an
@@ -225,6 +232,7 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
 
         // One non-interactive invocation: fixed argv, prompt over stdin.
         const invoke = async (prompt: string): Promise<string> => {
+          signal.throwIfAborted();
           // The same resolved pin feeds argv (agy's --model) and the child
           // env (OpenHands' LLM_MODEL) so every backend honors it the one
           // way it supports (#1512).
@@ -233,12 +241,14 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
             model: pinnedModel,
             reasoningEffort: input.reasoningEffort === undefined ? state.currentReasoningEffortId : input.reasoningEffort
           });
+          const env = agentChildEnv(await spec.spawnEnv?.(input.profile ?? profileFromChatKey(gahProfile), { model: pinnedModel }));
+          signal.throwIfAborted();
           const child = spawn(args[0], args.slice(1), {
             cwd,
-            env: agentChildEnv(await spec.spawnEnv?.(input.profile ?? profileFromChatKey(gahProfile), { model: pinnedModel })),
+            env,
             stdio: ['pipe', 'pipe', 'pipe']
           });
-          state.child = child;
+          activeTurn.child = child;
 
           let stdout = '';
           let stderr = '';
@@ -261,6 +271,7 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
               child.on('error', reject);
               child.on('close', (exitCode) => resolve(exitCode));
             });
+            signal.throwIfAborted();
             const reply = parseReply({ stdout, stderr, exitCode: code });
             if (reply.trim().length === 0) {
               throw new Error(`${spec.displayName} turn produced no output.`);
@@ -268,7 +279,7 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
             return reply;
           } finally {
             clearTimeout(killTimer);
-            state.child = null;
+            activeTurn.child = null;
           }
         };
 
@@ -309,7 +320,7 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
             emitToolCall('pending', null);
             let decision: string;
             if (input.requestPermission) {
-              decision = await input.requestPermission({
+              decision = await Promise.race([input.requestPermission({
                 title: plan.title,
                 options: [
                   { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
@@ -318,11 +329,12 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
                 locations: plan.locations,
                 kind: plan.kind,
                 rawInput: request.args
-              });
+              }), cancelled]);
             } else {
               console.warn(`[managerChat] ${spec.displayName} requested permission for "${plan.title}" -- declining (no permission UI attached)`);
               decision = 'cancelled';
             }
+            signal.throwIfAborted();
             if (decision !== 'allow-once') {
               const outcome = decision === 'cancelled' ? 'cancelled' : `declined (${decision})`;
               const message = `${spec.displayName} requested "${plan.title}" but the permission request was ${outcome}; the turn cannot continue without it.`;
@@ -348,6 +360,7 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
           }
         }
 
+        signal.throwIfAborted();
         state.knownHistory = [
           ...input.history,
           { role: 'user', text: input.prompt, timestamp: Date.now() },
@@ -368,7 +381,13 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
       // waits behind it too. This lock is the direct consequence of
       // Vibe's config-driven, per-installation model selection.
       const scope = input.model && spec.applyModel ? spec.modelSelectionScope?.() : undefined;
-      return scope ? withModelSelectionLock(scope, turn) : turn();
+      try {
+        // Settle the caller immediately, but keep the lock until the action
+        // unwinds so an in-progress config write cannot race the next turn.
+        return await Promise.race([scope ? withModelSelectionLock(scope, turn) : turn(), cancelled]);
+      } finally {
+        if (state.activeTurn === activeTurn) state.activeTurn = null;
+      }
     },
 
     async listCommands(): Promise<ManagerCommandInfo[]> {
@@ -424,10 +443,13 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
     },
 
     async cancelTurn(gahProfile): Promise<void> {
-      const state = states.get(gahProfile);
-      if (state?.child) {
-        state.child.kill('SIGTERM');
-        setTimeout(() => state.child?.kill('SIGKILL'), 3000).unref?.();
+      const activeTurn = states.get(gahProfile)?.activeTurn;
+      if (!activeTurn) return;
+      activeTurn.controller.abort(new Error('Turn cancelled'));
+      const child = activeTurn.child;
+      if (child) {
+        child.kill('SIGTERM');
+        setTimeout(() => child.kill('SIGKILL'), 3000).unref?.();
       }
     }
   };
