@@ -275,3 +275,6 @@ fn worker_call_does_not_increment_provider_counter() {
     assert_eq!(worker.call_count(), 1);
     assert!(gh.call_count() == 1 && worker.call_count() == 1);
 }
+
+#[path = "support/forge/tests.rs"]
+mod forge_tests;

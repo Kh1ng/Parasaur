@@ -67,122 +67,49 @@ fn needs_fix_review(pull: &Pull) -> serde_json::Value {
     entry
 }
 
-/// A stateful `gh` for `pulls`. Every call is appended to `state/gh.log`.
-/// The assignees and claim comment this loop posts persist in `state/`, so
-/// the claim protocol's re-read sees them.
-fn install_gh(harness: &ScenarioHarness, state: &std::path::Path, pulls: &[Pull]) {
-    // Recent, so no pull request is classified stale.
-    let updated_at = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap();
-    let mut heads = String::new();
-    let mut rest = Vec::new();
+/// Seed the shared forge with the original claim fixtures. A scripted actor
+/// joins on the third assignee read, after the stake and settle reads.
+fn install_gh(harness: &mut ScenarioHarness, pulls: &[Pull]) -> std::path::PathBuf {
+    let forge = harness.stateful_forge();
     for pull in pulls {
-        rest.push(serde_json::json!({
-            "number": pull.number,
-            "title": pull.title(),
-            "body": null,
-            "html_url": format!("https://github.com/owner/repo/pull/{}", pull.number),
-            "state": "open",
-            "draft": true,
-            "head": {"ref": pull.branch, "sha": pull.sha},
-            "labels": pull.labels.iter().map(|name| serde_json::json!({"name": name})).collect::<Vec<_>>(),
-            "updated_at": updated_at,
-        }));
-        std::fs::write(
-            state.join(format!("pr-{}.json", pull.number)),
-            serde_json::json!({
-                "number": pull.number,
-                "url": format!("https://github.com/owner/repo/pull/{}", pull.number),
-                "title": pull.title(),
-                "body": null,
-                "isDraft": true,
-                "headRefName": pull.branch,
-                "baseRefName": "main",
-                "state": "OPEN",
-                "headRefOid": pull.sha,
-                "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}]
-            })
-            .to_string(),
-        )
-        .unwrap();
-        let assignees = if pull.held_by_person {
-            "a-person\n"
-        } else {
-            ""
-        };
-        std::fs::write(state.join(format!("assignees-{}", pull.number)), assignees).unwrap();
-        let age = if pull.taken_over_while_working {
-            std::fs::write(state.join(format!("joins-{}", pull.number)), "").unwrap();
-            time::Duration::minutes(30)
-        } else {
-            time::Duration::ZERO
-        };
-        let posted_at = (time::OffsetDateTime::now_utc() - age)
-            .replace_nanosecond(0)
-            .unwrap()
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap();
-        std::fs::write(
-            state.join(format!("claim-{}", pull.number)),
-            format!(
-                "{}\n",
-                serde_json::json!({"id": pull.number * 10 + 1, "login": "gah-bot", "created_at": posted_at})
-            ),
-        )
-        .unwrap();
-        heads.push_str(&format!(
-            "        *head=owner:{}) echo '[{{\"number\":{}}}]' ;;\n",
-            pull.branch, pull.number
-        ));
+        forge.pull(pull.number, pull.branch, &pull.sha, &pull.title());
+        forge.update(|state| {
+            let item = &mut state["pulls"][pull.number.to_string()];
+            item["labels"] = serde_json::json!(pull.labels);
+            if pull.held_by_person {
+                item["assignees"] = serde_json::json!(["a-person"]);
+            }
+            state["checks"][&pull.sha] = serde_json::json!([
+                {"status": "completed", "conclusion": "success"}
+            ]);
+            if pull.taken_over_while_working {
+                let posted_at = (time::OffsetDateTime::now_utc()
+                    - time::Duration::minutes(30))
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap();
+                // Age the recorded comment before settle reads it. This also
+                // works when #1515 supplies GAH_TEST_NOW to the fake process.
+                state["effects"].as_array_mut().unwrap().push(serde_json::json!({
+                    "endpoint": format!("repos/owner/repo/issues/{}/comments", pull.number),
+                    "method": "GET", "at": 2, "argv_contains": ["--paginate"],
+                    "patches": [
+                        {"path": ["pulls", pull.number.to_string(), "comments", 0, "created_at"], "value": posted_at},
+                        {"path": ["pulls", pull.number.to_string(), "comments", 0, "updated_at"], "value": posted_at}
+                    ]
+                }));
+                state["effects"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(serde_json::json!({
+                        "endpoint": format!("repos/owner/repo/issues/{}", pull.number),
+                        "method": "GET", "at": 3,
+                        "patches": [{"path": ["pulls", pull.number.to_string(), "assignees"],
+                                     "value": ["gah-bot", "a-person"]}]
+                    }));
+            }
+        });
     }
-    std::fs::write(
-        state.join("pulls.json"),
-        serde_json::Value::Array(rest).to_string(),
-    )
-    .unwrap();
-    let script = format!(
-        r#"#!/bin/sh
-S='{state}'
-printf '%s\n' "$*" >> "$S/gh.log"
-if [ "$1" = api ] && [ "$2" = user ]; then echo gah-bot; exit 0; fi
-if [ "$1" = pr ] && [ "$2" = view ]; then cat "$S/pr-$3.json"; exit 0; fi
-if [ "$1" = api ] && [ "$2" = --method ]; then
-  method="$3"; endpoint="$4"; [ "$endpoint" = --paginate ] && endpoint="$5"
-  number=$(printf '%s' "$endpoint" | sed -n 's|^repos/owner/repo/issues/\([0-9][0-9]*\).*|\1|p')
-  case "$endpoint" in
-    repos/owner/repo/issues/*/assignees)
-      case "$method" in
-        POST) echo gah-bot >> "$S/assignees-$number" ;;
-        DELETE) : > "$S/assignees-$number" ;;
-      esac
-      cat "$S/assignees-$number"; exit 0 ;;
-    repos/owner/repo/issues/*/comments*)
-      if [ "$method" = POST ]; then
-        cat "$S/claim-$number" >> "$S/claims-$number"
-        echo '{{}}'; exit 0
-      fi
-      if [ "$4" = --paginate ]; then cat "$S/claims-$number" 2>/dev/null; else echo '[]'; fi
-      exit 0 ;;
-    repos/owner/repo/issues/[0-9]*)
-      echo x >> "$S/reads-$number"
-      cat "$S/assignees-$number"
-      # After the claim's stake and settle reads, the person arrives.
-      if [ -f "$S/joins-$number" ] && [ "$(wc -l < "$S/reads-$number" | tr -d ' ')" -gt 2 ]; then echo a-person; fi
-      exit 0 ;;
-    repos/owner/repo/pulls*)
-      case "$*" in
-{heads}        *) cat "$S/pulls.json" ;;
-      esac
-      exit 0 ;;
-    */check-runs*) echo '{{"total_count":1,"check_runs":[{{"status":"completed","conclusion":"success"}}]}}'; exit 0 ;;
-  esac
-fi
-echo '[]'
-"#,
-        state = state.display(),
-    );
-    support::write_executable(&harness.bin_dir.join("gh"), &script);
+    forge.log_path.clone()
 }
 
 /// Every worker records that it ran, in the same log as `gh`, then runs
@@ -192,7 +119,7 @@ fn install_workers(harness: &ScenarioHarness, state: &std::path::Path, body: &st
         support::write_executable(
             &harness.bin_dir.join(worker),
             &format!(
-                "#!/bin/sh\necho 'WORKER {worker}' >> '{}/gh.log'\n{body}\n",
+                "#!/bin/sh\necho 'WORKER {worker}' >> '{}'\n{body}\n",
                 state.display()
             ),
         );
@@ -256,14 +183,12 @@ fn run_cycle_with_workers(
         }
     }
     let mut harness = harness.with_ledger(ledger);
-    let state = harness.artifacts_dir.join("gh-state");
-    std::fs::create_dir_all(&state).unwrap();
-    install_gh(&harness, &state, pulls);
+    let state = install_gh(&mut harness, pulls);
     install_workers(&harness, &state, worker);
 
     let result = harness.run_one_loop().unwrap();
 
-    let log = std::fs::read_to_string(state.join("gh.log")).unwrap();
+    let log = std::fs::read_to_string(state).unwrap();
     eprintln!("{log}\n{result:?}");
     (log.lines().map(str::to_string).collect(), result.events)
 }
