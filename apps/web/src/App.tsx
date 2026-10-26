@@ -56,6 +56,7 @@ export function App() {
   const [pageBehindChat, setPageBehindChat] = useState<MainPage>('overview');
   useEffect(() => updateNavigation({ page: currentPage, side: sideView, dock: chatDocked && currentPage !== 'chat' ? 'chat' : null }), [currentPage, sideView, chatDocked]);
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
+  const [linkedSessionId, setLinkedSessionId] = useState(() => new URLSearchParams(window.location.search).get('session'));
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
   // The Git issues sidebar grows while it shows an issue's detail; Overview opens its work there.
   const [sideDetailOpen, setSideDetailOpen] = useState(false);
@@ -75,6 +76,16 @@ export function App() {
   const requestAction = useUiStore((state) => state.requestAction);
   const notificationPopups = useUiStore((state) => state.notificationPopups);
   const { isConnected, isConnecting, sessions, liveActivity, activityUnreadCount, profile, sendMessage, activityRevision, reconnectSeq, controllerActivity } = useWebSocket();
+  useEffect(() => {
+    if (!linkedSessionId) return;
+    const session = sessions.find(candidate => candidate.id === linkedSessionId);
+    if (!session) return;
+    setSelectedSession(session);
+    setLinkedSessionId(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('session');
+    window.history.replaceState(window.history.state, '', url);
+  }, [sessions, linkedSessionId]);
   // The quota snapshot feeds the navbar's subscription rings on every page.
   const quota = useGahStore((state) => state.quota);
   const fetchQuota = useGahStore((state) => state.fetchQuota);

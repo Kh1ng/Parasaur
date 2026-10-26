@@ -1,4 +1,5 @@
 import { notificationChannelFailure } from './notifyDelivery.js';
+import { gitLabEventsRouter, type GitLabRouteDeps } from './integrations/gitlab/route.js';
 import { parseSkillSelections } from './skillSelections.js';
 import { runningWorkers } from './runningWorkers.js';
 import express from 'express';
@@ -197,6 +198,7 @@ type CreateServerOptions = Partial<ConfigEffectiveDeps> & {
   /** Issue #1454: test seams for the notification module routes. */
   notificationSettings?: Omit<NotificationSettingsDeps, 'record'>;
   buildDiagnosticsBundle?: typeof buildDiagnosticsBundle;
+  gitLabEvents?: GitLabRouteDeps;
 };
 
 const activityKinds = new Set<ActivityKind>([
@@ -383,6 +385,7 @@ export function createServer(
   // Middleware
   app.use(cors());
   app.use(express.json());
+  if (node.role === 'central') app.use('/api/integrations/gitlab', gitLabEventsRouter(configDeps.gitLabEvents));
   if (node.role === 'central') {
     app.post('/api/manager-chat/bridge/telegram', async (req, res) => {
       if (!req.secure && !isLocalAddress(req.socket.remoteAddress ?? '')) {

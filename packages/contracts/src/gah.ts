@@ -1224,10 +1224,19 @@ export interface NotificationSummary {
   env_file_prod: string | null;
 }
 
+/** Nonsecret provider event intake and comment policy. */
+export interface EventPolicySummary {
+  trusted_issue_human_authors: string[] | null;
+  trusted_issue_bot_authors: string[] | null;
+  allow_issue_comments: boolean;
+}
+
 /** Effective read-only profile configuration for Settings’ "effective config"
  * view. Values reflect inheritance through defaults + canonical + repo config
  * for the requested profile. */
 export interface ConfigProfileSummary {
+  /** Absent on older CLIs; provider event ingestion must fail closed. */
+  event_policy?: EventPolicySummary;
   profile: string;
   /** Named OpenHands credential profile; credential values are never returned. */
   oh_profile?: string | null;

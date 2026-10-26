@@ -1,0 +1,36 @@
+{
+  "object_kind": "note",
+  "event_type": "note",
+  "user": {
+    "id": 7,
+    "name": "Example maintainer",
+    "username": "maintainer",
+    "avatar_url": "https://gitlab.example.com/avatar.png"
+  },
+  "project": {
+    "id": 101,
+    "name": "Example project",
+    "web_url": "https://gitlab.example.com/team/project",
+    "path_with_namespace": "team/project",
+    "default_branch": "main"
+  },
+  "object_attributes": {
+    "id": 201,
+    "action": "create",
+    "created_at": "2026-05-22T12:00:00.000Z",
+    "updated_at": "2026-05-22T12:01:00.000Z",
+    "author_id": 7,
+    "project_id": 101,
+    "note": "@parasaur add a regression test for the reported failure",
+    "noteable_type": "Issue",
+    "noteable_id": 301,
+    "system": false
+  },
+  "issue": {
+    "id": 301,
+    "iid": 42,
+    "title": "Example task",
+    "state": "opened",
+    "description": "Example context"
+  }
+}

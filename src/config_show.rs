@@ -211,12 +211,21 @@ pub struct PmOrchestrationSummary {
     pub execution_labels: BTreeMap<String, String>,
 }
 
+/// Nonsecret intake and comment policy used by provider event adapters.
+#[derive(serde::Serialize)]
+pub struct EventPolicySummary {
+    pub trusted_issue_human_authors: Option<Vec<String>>,
+    pub trusted_issue_bot_authors: Option<Vec<String>>,
+    pub allow_issue_comments: bool,
+}
+
 #[derive(serde::Serialize)]
 pub struct ConfigProfileSummary {
     pub profile: String,
     /// Named OpenHands credential profile. The profile name is safe to expose;
     /// its API key remains in ~/.openhands/profiles and is never serialized.
     pub oh_profile: Option<String>,
+    pub event_policy: EventPolicySummary,
     pub delivery_mode: String,
     pub merge_policy: String,
     pub max_fix_attempts_per_mr: u32,
@@ -432,6 +441,11 @@ fn build_profile_summary(
     Ok(ConfigProfileSummary {
         profile: profile_name.to_string(),
         oh_profile: profile.oh_profile.clone(),
+        event_policy: EventPolicySummary {
+            trusted_issue_human_authors: profile.publishing.trusted_issue_human_authors.clone(),
+            trusted_issue_bot_authors: profile.publishing.trusted_issue_bot_authors.clone(),
+            allow_issue_comments: profile.publishing.allow_issue_comments,
+        },
         delivery_mode: profile.delivery_mode.as_str().to_string(),
         merge_policy: routing
             .merge_policy
@@ -936,6 +950,26 @@ mod tests {
         );
         assert!(!raw.contains("abcdefghijklmnopqrstuvwxyz"));
         assert!(!raw.contains("Authorization"));
+    }
+
+    #[test]
+    fn event_policy_projects_existing_author_lists_and_comment_permission() {
+        let mut cfg = sample_config();
+        let publishing = &mut cfg.profiles.get_mut("repo").unwrap().publishing;
+        publishing.trusted_issue_human_authors = Some(vec!["maintainer".into()]);
+        publishing.trusted_issue_bot_authors = Some(vec!["parasaur".into()]);
+        publishing.allow_issue_comments = false;
+        let summary = config_show_full(&cfg, Path::new("/tmp/config.toml"), None).unwrap();
+        let value = serde_json::to_value(&summary.profiles["repo"].event_policy).unwrap();
+        assert_eq!(
+            value["trusted_issue_human_authors"],
+            serde_json::json!(["maintainer"])
+        );
+        assert_eq!(
+            value["trusted_issue_bot_authors"],
+            serde_json::json!(["parasaur"])
+        );
+        assert_eq!(value["allow_issue_comments"], false);
     }
 
     #[test]
