@@ -159,6 +159,9 @@ gah update --pull --repo /path/to/git-agent-harness --restart-server
 printed installation plan and confirm, or pass `--yes` for unattended updates.
 Omit `--pull` to reinstall the current checkout without changing its revision.
 
+For provider CLI versions, owner updates, and scheduled updates, see
+[Agent CLI updates](docs/AGENT_CLI_UPDATES.md).
+
 `cargo build --release` is a development build only. It updates
 `target/release/gah`; it does not replace the Cargo-installed `gah` executable
 or rebuild/restart the control-plane server.

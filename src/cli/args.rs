@@ -200,6 +200,8 @@ pub enum Commands {
     },
     /// Update the installed CLI and control-plane server deterministically.
     Update(UpdateArgs),
+    /// Inspect and update installed agent CLIs on this node.
+    Agents(crate::agents::AgentsArgs),
     /// Create or print a starter Parasaur config/profile
     Init {
         #[arg(long)]

@@ -31,6 +31,8 @@ import { channelDelivery, commandDelivery, deliverToAll } from './notifyDelivery
 import { AuthHealthMonitor, AuthHealthProber, configureChatAuthHealth } from './authHealth.js';
 import { LoginRepairBroker, LoginRepairs, loadProviderKeys } from './loginRepair.js';
 import { WorkerUpdateBroker } from './workerUpdateBroker.js';
+import { AgentCliVersions } from './agentCliVersions.js';
+import { AgentCliFleet } from './agentCliRoutes.js';
 import { WorkerUpdateService } from './workerUpdate.js';
 import { createCliRouterModelRefresher, createCliRouterQuotaObserver } from './cliRouter.js';
 import { startQuotaRefreshScheduler } from './quotaRefreshScheduler.js';
@@ -115,6 +117,8 @@ async function main() {
   const workerUpdateBroker = node.role === 'central'
     ? new WorkerUpdateBroker({ localNodeId: coordinatorIdentity.node_id, registry: registryService })
     : undefined;
+  const agentCliVersions = new AgentCliVersions(coordinatorIdentity);
+  const agentCliFleet = node.role === 'central' ? new AgentCliFleet(agentCliVersions, registryService) : undefined;
   let stopWorkerAutoUpdate: (() => void) | undefined;
 
   // A central or standalone node serves the dashboard itself unless the
@@ -138,6 +142,8 @@ async function main() {
     loginRepairBroker,
     workerUpdates,
     workerUpdateBroker,
+    agentCliVersions,
+    agentCliFleet,
     cliRouterQuotaObserver
   });
   
@@ -203,6 +209,7 @@ async function main() {
   // them behind; the sweep is quiet when nothing is eligible.
   if (workerUpdateBroker) {
     const timer = setInterval(() => {
+      void agentCliFleet?.scheduledUpdate();
       workerUpdateBroker!.autoUpdateSweep().catch((error) => {
         console.error(`Worker auto-update sweep failed: ${error instanceof Error ? error.message : String(error)}`);
       });
