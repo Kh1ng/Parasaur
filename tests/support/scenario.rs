@@ -60,6 +60,7 @@ pub struct ScenarioHarness {
     /// Defaults to an idle node; tests that exercise admission replace it.
     /// `None` makes children sample the real host.
     pub node_pressure_fixture: Option<PathBuf>,
+    forge: Option<super::forge::FakeForge>,
     fake_gh: Option<FakeBackend>,
     fake_glab: Option<FakeBackend>,
     fake_workers: HashMap<String, FakeBackend>,
@@ -156,6 +157,7 @@ impl ScenarioHarness {
             worktree_base_override: None,
             temp_dir_override: None,
             node_pressure_fixture: Some(node_pressure),
+            forge: None,
             fake_gh: None,
             fake_glab: None,
             fake_workers: HashMap::new(),
@@ -167,6 +169,7 @@ impl ScenarioHarness {
     }
 
     pub fn github_scenario(mut self, name: &str) -> Self {
+        assert!(self.forge.is_none());
         let fb = FakeBackend::new(self._temp.path(), "gh");
         let fixture = load_github_fixture(name);
         fb.install_github_api(fixture.default, fixture.open_pulls, fixture.check_runs);
@@ -175,6 +178,7 @@ impl ScenarioHarness {
     }
 
     pub fn gitlab_scenario(mut self, name: &str) -> Self {
+        assert!(self.forge.is_none());
         let fb = FakeBackend::new(self._temp.path(), "glab");
         if let Some(mr) = manual_fix_gitlab_fixture(name) {
             fb.install_gitlab_merge_requests_api(mr.list, mr.single, mr.pipelines);
@@ -193,6 +197,15 @@ impl ScenarioHarness {
             self.fake_workers.insert(worker_name.to_string(), fb);
         }
         self
+    }
+
+    /// Install a persistent forge; named canned provider fixtures are exclusive
+    /// with it. Facts are editable through the returned forge between loops.
+    pub fn stateful_forge(&mut self) -> &super::forge::FakeForge {
+        assert!(self.fake_gh.is_none() && self.fake_glab.is_none());
+        self.forge.get_or_insert_with(|| {
+            super::forge::FakeForge::new(&self.artifacts_dir.join("forge"), &self.bin_dir)
+        })
     }
 
     pub fn with_ledger(mut self, ledger: TestLedger) -> Self {
@@ -228,6 +241,7 @@ impl ScenarioHarness {
     /// loader).  Used by tests that need sequence-based behavior (e.g.
     /// fail → fail → succeed).
     pub fn install_custom_gh(&mut self, fb: &FakeBackend) {
+        assert!(self.forge.is_none());
         // Create a new FakeBackend in the harness's own temp dir, then
         // copy the script from `fb` into the harness bin_dir so the
         // subprocess resolves it from PATH.
@@ -250,6 +264,7 @@ impl ScenarioHarness {
     }
 
     pub fn install_custom_glab(&mut self, fb: &FakeBackend) {
+        assert!(self.forge.is_none());
         let new_fb = FakeBackend::new(self._temp.path(), "glab");
         let src = fb.bin_dir().join("glab");
         if src.exists() {
@@ -411,6 +426,11 @@ impl ScenarioHarness {
         let (action_kind, action_details) = parse_action_from_stdout(&stdout);
 
         let mut call_counts = HashMap::new();
+        if let Some(forge) = &self.forge {
+            for call in forge.calls() {
+                *call_counts.entry(call[0].clone()).or_insert(0) += 1;
+            }
+        }
         if let Some(ref fb) = self.fake_gh {
             call_counts.insert("gh".into(), fb.call_count());
         }

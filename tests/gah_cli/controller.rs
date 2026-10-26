@@ -73,6 +73,7 @@ fn loop_reports_nonzero_review_backend_as_failure_not_success() {
 
 #[test]
 fn sync_classifies_open_gah_prs() {
+    let _exec_guard = support::ExecGuard::new();
     let tmp = test_tempdir();
     let repo = tmp.path().join("repo");
     fs::create_dir_all(&repo).unwrap();
@@ -81,11 +82,14 @@ fn sync_classifies_open_gah_prs() {
 
     let fake_bin = tmp.path().join("bin");
     fs::create_dir_all(&fake_bin).unwrap();
-    make_fake_bin_with_body(
-        &fake_bin,
-        "gh",
-        "#!/bin/sh\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"list\" ]; then echo '[{\"title\":\"[GAH] fix\",\"headRefName\":\"gah/test-1\",\"url\":\"https://example/pr/1\",\"labels\":[{\"name\":\"gah-ready-for-human\"}],\"mergedAt\":null,\"updatedAt\":\"2099-01-01T00:00:00Z\",\"statusCheckRollup\":[]}]'; exit 0; fi\nexit 0\n",
-    );
+    let forge = support::forge::FakeForge::new(&tmp.path().join("forge"), &fake_bin);
+    forge.pull(1, "gah/test-1", "head-sha", "[GAH] fix");
+    forge.update(|state| {
+        state["repo"] = serde_json::json!("owner/real");
+        state["pulls"]["1"]["labels"] = serde_json::json!(["gah-ready-for-human"]);
+        state["pulls"]["1"]["state"] = serde_json::json!("open");
+        state["pulls"]["1"]["draft"] = serde_json::json!(false);
+    });
 
     bin()
         .args([
@@ -106,6 +110,7 @@ fn sync_classifies_open_gah_prs() {
 
 #[test]
 fn sync_classifies_closed_unmerged_github_prs() {
+    let _exec_guard = support::ExecGuard::new();
     let tmp = test_tempdir();
     let repo = tmp.path().join("repo");
     fs::create_dir_all(&repo).unwrap();
@@ -114,11 +119,17 @@ fn sync_classifies_closed_unmerged_github_prs() {
 
     let fake_bin = tmp.path().join("bin");
     fs::create_dir_all(&fake_bin).unwrap();
-    make_fake_bin_with_body(
-        &fake_bin,
-        "gh",
-        "#!/bin/sh\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"list\" ]; then echo '[{\"title\":\"[GAH] fix\",\"headRefName\":\"gah/test-closed\",\"url\":\"https://example/pr/closed\",\"labels\":[{\"name\":\"gah-ready-for-human\"}],\"state\":\"CLOSED\",\"isDraft\":true,\"mergeStateStatus\":\"DIRTY\",\"mergedAt\":null,\"updatedAt\":\"2099-01-01T00:00:00Z\",\"statusCheckRollup\":[{\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\"}]}]'; exit 0; fi\nexit 0\n",
-    );
+    let forge = support::forge::FakeForge::new(&tmp.path().join("forge"), &fake_bin);
+    forge.pull(1, "gah/test-closed", "head-sha", "[GAH] fix");
+    forge.update(|state| {
+        state["repo"] = serde_json::json!("owner/real");
+        state["pulls"]["1"]["labels"] = serde_json::json!(["gah-ready-for-human"]);
+        state["pulls"]["1"]["state"] = serde_json::json!("closed");
+        state["pulls"]["1"]["merge_status"] = serde_json::json!("DIRTY");
+        state["checks"]["head-sha"] = serde_json::json!([
+            {"status":"completed", "conclusion":"failure"}
+        ]);
+    });
 
     bin()
         .args([
