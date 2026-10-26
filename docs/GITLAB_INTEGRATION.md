@@ -306,7 +306,12 @@ location /parasaur/ {
 Public core exposes `GitLabIdentityProvider` in `apps/server/src/integrations/gitlab/identity.ts`.
 This extension point does not implement GitLab or Supabase sign-in.
 The default `anonymousGitLabIdentityProvider` always returns `null`.
-Without an assertion, normal token authentication, paired sessions, and the sign-in prompt keep their current behavior.
+Without a registered provider, all identity and assertion headers are inert.
+HTTP responses and WebSocket upgrades retain their existing authentication behavior.
+Explicit owner or paired-device credentials take precedence, even when an assertion is present.
+Invalid explicit credentials still fail through the existing credential checks.
+Only requests without explicit credentials consult a registered provider, before local or trusted-LAN fallback.
+An assertion on that path must validate or the request is denied; without an assertion, existing authentication applies.
 
 The companion contract currently defines only the nginx gate and cookie stripping.
 The gate admits signed-in GitLab users to `/parasaur/` and removes the entire `Cookie` header upstream.
@@ -352,7 +357,7 @@ The enterprise provider must verify the assertion signature, issuer, audience, e
 It must resolve the verified GitLab or Supabase subject to a known Parasaur principal.
 It must return `null` for an unknown, unauthorized, or disabled user.
 Public core does not parse assertions or trust identity headers without a registered provider.
-Provider errors produce a generic `401`, without provider details or fallback to owner, cookie, or local access.
+Provider errors on the assertion path produce a generic `401`, without provider details or fallback to local or trusted-LAN access.
 
 For this hook, `id` must name an existing active paired controller in `DeviceAccess`.
 It is not a raw GitLab username or an automatically provisioned Supabase ID.
@@ -371,7 +376,7 @@ Existing owner-delegated pairing approval grants still apply to the mapped contr
 This hook adds no new paid-route approval roles or per-project permissions.
 
 The hook mints no cookie or bearer token and creates no device record.
-Each API request and WebSocket upgrade requires a fresh provider check.
+Each API request and WebSocket upgrade authenticated through the hook requires a fresh provider check.
 WebSocket sessions terminate at the earlier claim or controller expiry, or upon local controller revocation.
 Buffered messages also check that expiry and revocation state.
 Enterprise revocation must revoke the mapped local controller or wait for its assertion expiry to end an existing socket.

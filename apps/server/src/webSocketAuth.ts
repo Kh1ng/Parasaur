@@ -89,16 +89,6 @@ export function createAuthorizedWebSocketServer(server: Server, role?: 'central'
       const worker = (role ?? process.env.GAH_NODE_ROLE) === 'worker';
       const local = isTrustedLocalRequest({ socket: req.socket, headers: req.headers, protocol });
       if (!local && protocol !== 'https' && process.env.GAH_ALLOW_INSECURE_HTTP !== '1') return done(false, 403, 'Remote WebSockets require TLS');
-      if (req.headers[GITLAB_IDENTITY_HEADER] !== undefined) {
-        if (worker || !access || !gitLabIdentity || !sameOriginRequest({ headers: req.headers, protocol, method: req.method })) return done(false, 401, 'GitLab identity is unavailable or invalid');
-        void gitLabIdentity.authenticate(req, protocol === 'https').then(principal => {
-          if (!principal) return done(false, 401, 'GitLab identity is unavailable or invalid');
-          gitLabRequests.set(req, principal);
-          deviceRequests.set(req, { id: principal.id, expires_at: principal.expiresAt });
-          done(true);
-        });
-        return;
-      }
       const authorization = req.headers.authorization;
       const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : browserToken(req);
       if (token && coordinatorTokenMatches(token)) return done(true);
@@ -110,6 +100,17 @@ export function createAuthorizedWebSocketServer(server: Server, role?: 'central'
           if (device) { deviceRequests.set(req, device); return done(true); }
         } catch { /* Corrupt credential storage must not authorize an upgrade. */ }
         return done(false, 401, 'Device access expired or revoked');
+      }
+      // Explicit credentials win; assertions precede only local/compatibility fallback.
+      if (!worker && !suppliedToken && cookie === undefined && gitLabIdentity?.enabled && req.headers[GITLAB_IDENTITY_HEADER] !== undefined) {
+        if (!access || !sameOriginRequest({ headers: req.headers, protocol, method: req.method })) return done(false, 401, 'GitLab identity is unavailable or invalid');
+        void gitLabIdentity.authenticate(req, protocol === 'https').then(principal => {
+          if (!principal) return done(false, 401, 'GitLab identity is unavailable or invalid');
+          gitLabRequests.set(req, principal);
+          deviceRequests.set(req, { id: principal.id, expires_at: principal.expiresAt });
+          done(true);
+        });
+        return;
       }
       if (!worker && local && !suppliedToken) return done(true);
       // A bad supplied credential is not silently downgraded into compatibility mode.

@@ -56,6 +56,9 @@ export class GitLabIdentity {
     private now = Date.now,
   ) {}
 
+  /** Without a registered provider, identity headers must not affect authentication. */
+  get enabled(): boolean { return this.provider !== anonymousGitLabIdentityProvider; }
+
   async authenticate(req: IdentityRequest, secure: boolean): Promise<GitLabSession | null> {
     try {
       const assertion = req.headers[GITLAB_IDENTITY_HEADER];
