@@ -177,7 +177,7 @@ pub fn apply(cfg: &mut GahConfig, profile_name: &str) -> Option<WorkerLimits> {
     let limits = current_worker_limits(
         &cfg.defaults,
         cfg.profiles.get(profile_name)?,
-        OffsetDateTime::now_utc(),
+        crate::clock::now_utc(),
     );
     let profile = cfg.profiles.get_mut(profile_name)?;
     profile.max_parallel_workers = Some(limits.workers);

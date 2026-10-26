@@ -82,7 +82,7 @@ fn is_review_hold_stale(entry: &LedgerEntry) -> bool {
     } else {
         return true;
     };
-    let now = OffsetDateTime::now_utc();
+    let now = crate::clock::now_utc();
     now - entry_time > time::Duration::hours(REVIEW_HOLD_STALE_AFTER_HOURS)
 }
 
@@ -1304,6 +1304,18 @@ mod tests {
 
         let held = active_review_hold_work_ids(&cfg, "test");
         assert!(held.contains("TICKET-600"));
+    }
+
+    #[test]
+    fn review_hold_staleness_uses_the_injected_clock() {
+        let clock = crate::clock::set_for_test(OffsetDateTime::UNIX_EPOCH);
+        let (_tmp, cfg) = ledger_tests::test_config();
+        let prof = ledger_tests::profile();
+        let hold = super::super::LedgerEntry::new_review_hold("test", &prof, "TICKET-600", None);
+        append(&cfg, &hold).unwrap();
+        assert!(active_review_hold_work_ids(&cfg, "test").contains("TICKET-600"));
+        clock.advance(time::Duration::hours(3));
+        assert!(!active_review_hold_work_ids(&cfg, "test").contains("TICKET-600"));
     }
 
     #[test]

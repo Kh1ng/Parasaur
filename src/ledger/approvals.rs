@@ -121,7 +121,7 @@ fn approval_state(
         active = false;
     } else if tally.expired
         || approval.state.as_deref() == Some("expired")
-        || expired_now.is_some_and(|expires_at| expires_at <= OffsetDateTime::now_utc())
+        || expired_now.is_some_and(|expires_at| expires_at <= crate::clock::now_utc())
     {
         state = "expired".to_string();
         active = false;
@@ -458,7 +458,7 @@ pub(super) fn prepare_external_approval(
         .transpose()
         .context("--expires-at must be a valid RFC3339 timestamp")?;
     ensure!(
-        expiry.is_none_or(|expiry| expiry > OffsetDateTime::now_utc()),
+        expiry.is_none_or(|expiry| expiry > crate::clock::now_utc()),
         "--expires-at must be in the future"
     );
     match entry.mode.as_str() {
@@ -838,6 +838,51 @@ mod tests {
             "test",
             &profile.repo_id,
             work_id,
+            "odds",
+            "external_api",
+        )
+        .unwrap();
+        assert_eq!(snapshot.state, "expired");
+        assert!(!snapshot.active);
+    }
+
+    #[test]
+    fn external_approval_expires_after_simulated_clock_advance() {
+        let _clock = crate::clock::set_for_test(
+            OffsetDateTime::parse("2030-01-01T00:00:00Z", &Rfc3339).unwrap(),
+        );
+        let expiry = (crate::clock::now_utc() + time::Duration::minutes(5))
+            .format(&Rfc3339)
+            .unwrap();
+        let profile = crate::ledger::test_util::profile();
+        let grant = LedgerEntry::new_external_approval(
+            "test",
+            &profile,
+            "ISSUE-CLOCK-EXPIRY",
+            "external_approval_grant",
+            approval_record("odds", "external_api", "approved", Some(3), Some(expiry)),
+        );
+        let entries = [grant];
+        assert!(
+            external_approval_snapshot_from_entries(
+                &entries,
+                "test",
+                &profile.repo_id,
+                "ISSUE-CLOCK-EXPIRY",
+                "odds",
+                "external_api",
+            )
+            .unwrap()
+            .active
+        );
+        crate::clock::test_clock_handle()
+            .unwrap()
+            .advance(time::Duration::minutes(6));
+        let snapshot = external_approval_snapshot_from_entries(
+            &entries,
+            "test",
+            &profile.repo_id,
+            "ISSUE-CLOCK-EXPIRY",
             "odds",
             "external_api",
         )

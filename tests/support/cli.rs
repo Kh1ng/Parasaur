@@ -186,6 +186,7 @@ pub fn isolate_gah_command<C: TestCommandEnvironment>(command: C) -> IsolatedCom
         let node_pressure = root.join("node-pressure.json");
         write_idle_node_pressure(&node_pressure);
         command.env_path("GAH_TEST_NODE_PRESSURE_FILE", &node_pressure);
+        command.env_unset("GAH_TEST_NOW");
         for key in BACKTRACE_ENV_VARS {
             command.env_unset(key);
         }

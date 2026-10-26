@@ -6,7 +6,6 @@ use crate::controller::{
 use crate::ledger::{self, LedgerEntry, RoutingDiagnostics};
 use crate::sync;
 use anyhow::Result;
-use chrono::Utc;
 use serde::Serialize;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
@@ -782,7 +781,7 @@ fn build_snapshot_inner(
     let mut active_claims = Vec::new();
     match crate::work_claim::claim_details_for_profile(&claim_scope) {
         Ok(claims) => {
-            let now = Utc::now();
+            let now = crate::clock::now_chrono();
             for claim in claims {
                 if claim.is_stale {
                     continue;
@@ -1245,7 +1244,7 @@ fn blocked_work_item_lines(blocked: &[Blocker]) -> Vec<String> {
 }
 
 pub fn run(cfg: &GahConfig, profile_name: &str, json: bool, light: bool) -> Result<()> {
-    let now = OffsetDateTime::now_utc();
+    let now = crate::clock::now_utc();
     let snapshot = build_snapshot_with(cfg, profile_name, now, !light)?;
 
     let node = crate::node_role::NodeRoleStatus::resolve(&cfg.defaults)?;

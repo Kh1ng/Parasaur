@@ -26,7 +26,7 @@ pub fn run(
 ) -> Result<()> {
     let cfg = crate::config::load(config_path)?;
     let profile = crate::config::get_profile(&cfg, profile_name)?;
-    let now = OffsetDateTime::now_utc();
+    let now = crate::clock::now_utc();
     let Some(backend) = backend else {
         println!(
             "{}",

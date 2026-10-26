@@ -12,6 +12,7 @@ pub mod capability;
 pub mod central_claims;
 pub mod claude_monitor;
 pub mod cli;
+pub mod clock;
 pub mod config;
 pub mod config_show;
 pub mod context;

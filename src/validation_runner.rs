@@ -104,7 +104,8 @@ fn run_shell_command_with_shutdown(
         // stop the entire validation tree indefinitely.
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .env_remove("GAH_TEST_NOW");
     for (key, value) in env_vars {
         command.env(key, value);
     }
@@ -192,6 +193,53 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn validation_clock_override_requires_explicit_opt_in() {
+        const CHILD: &str = "GAH_VALIDATION_CLOCK_PROBE";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "validation_runner::tests::validation_clock_override_requires_explicit_opt_in",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("GAH_TEST_NOW", "2026-01-01T00:00:00Z")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        for explicit in [false, true] {
+            let env = if explicit {
+                vec![("GAH_TEST_NOW".into(), "2030-01-01T00:00:00Z".into())]
+            } else {
+                vec![]
+            };
+            let output = run_shell_command_with_shutdown(
+                r#"printf '%s' "${GAH_TEST_NOW-unset}""#,
+                tmp.path(),
+                &env,
+                Duration::from_secs(5),
+                || false,
+            )
+            .unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                if explicit {
+                    "2030-01-01T00:00:00Z"
+                } else {
+                    "unset"
+                }
+            );
+        }
+    }
 
     #[test]
     fn supports_shell_syntax() {

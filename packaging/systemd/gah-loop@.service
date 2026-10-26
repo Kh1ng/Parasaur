@@ -44,6 +44,8 @@ Environment=XDG_STATE_HOME=%h/.local/state
 # filesystem that unattended workers will actually consume.
 Environment=TMPDIR=%h/.cache/gah/tmp
 Environment="PATH=@PATH@"
+# Never put GAH_TEST_NOW in this service file: it overrides wall-clock expiry
+# and can keep cooldowns, claims, workers, and the controller on frozen time.
 EnvironmentFile=-%h/.config/gah/gah-loop.env
 ExecStartPre=/usr/bin/mkdir -p %h/.cache/gah/tmp
 ExecStart="@GAH@" loop --profile %i

@@ -15,7 +15,7 @@ pub(super) fn suppress_recent_capacity_deferrals(
     profile_name: &str,
     repo_id: &str,
 ) -> std::collections::HashSet<String> {
-    let now = time::OffsetDateTime::now_utc();
+    let now = crate::clock::now_utc();
     let route_state = route_state_fingerprint(cfg, profile_name, now).ok();
     let deferred = super::recently_capacity_deferred_work_ids(
         events,

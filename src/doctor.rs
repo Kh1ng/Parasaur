@@ -51,6 +51,13 @@ pub fn run(
     if json {
         CHECK_CAPTURE.with(|capture| *capture.borrow_mut() = Some(CheckCapture::default()));
     }
+    if std::env::var_os("GAH_TEST_NOW").is_some() {
+        print_check(
+            CheckStatus::Warn,
+            "GAH_TEST_NOW",
+            "test clock override is active; remove it from production and service environment files",
+        );
+    }
     let resolved = config::resolve_config_path(config_path);
     let cfg = match config::load(config_path) {
         Ok(cfg) => cfg,

@@ -71,7 +71,7 @@ fn is_claim_stale(entry: &LedgerEntry) -> bool {
     } else {
         return true;
     };
-    let now = OffsetDateTime::now_utc();
+    let now = crate::clock::now_utc();
     now - entry_time > time::Duration::hours(CLAIM_STALE_AFTER_HOURS)
 }
 

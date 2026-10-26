@@ -415,7 +415,7 @@ pub(crate) fn refresh_vibe_admin_record(
     api_key: &str,
     model: Option<&str>,
 ) -> Result<Option<QuotaObservationRecord>> {
-    let end_time = time::OffsetDateTime::now_utc().unix_timestamp();
+    let end_time = crate::clock::now_utc().unix_timestamp();
     let thirty_days_secs = 30 * 24 * 60 * 60;
     let refresh = crate::usage::refresh_admin_data(
         api_key,
@@ -434,10 +434,10 @@ pub(crate) fn refresh_vibe_admin_record(
                 quota_window: None,
                 quota_remaining_percent: None,
                 quota_reset_at: None,
-                observed_at: time::OffsetDateTime::now_utc()
+                observed_at: crate::clock::now_utc()
                     .format(&time::format_description::well_known::Rfc3339)
                     .ok(),
-                checked_at: OffsetDateTime::now_utc().format(&Rfc3339).ok(),
+                checked_at: crate::clock::now_utc().format(&Rfc3339).ok(),
                 check_error: refresh.spend_limit_error,
                 usage_source: Some("mistral_admin_refresh".to_string()),
                 account_usage: None,
@@ -451,7 +451,7 @@ pub(crate) fn refresh_vibe_admin_record(
         return Ok(None);
     };
     let rec = QuotaObservationRecord {
-        checked_at: OffsetDateTime::now_utc().format(&Rfc3339).ok(),
+        checked_at: crate::clock::now_utc().format(&Rfc3339).ok(),
         ..obs
     };
     Ok(Some(rec))
@@ -516,7 +516,7 @@ pub fn refresh_stale_quota_observations(
                         Ok(record) => record,
                         Err(error) => {
                             let mut record =
-                                crate::usage::nous::parse(b"{}", OffsetDateTime::now_utc())?;
+                                crate::usage::nous::parse(b"{}", crate::clock::now_utc())?;
                             record.check_error = Some(crate::redact::redact(&error.to_string()));
                             record.observed_at = None;
                             record

@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use time::format_description::well_known::Rfc3339;
-use time::OffsetDateTime;
 
 /// Plain lowercase string on the wire (not a serde-tagged enum), same
 /// reasoning as `FailureClass`/`FailureStage`: the wire format must survive
@@ -236,9 +235,7 @@ pub fn record_with_reason_code_and_plan(
     append(
         cfg,
         &ControllerEvent {
-            timestamp: OffsetDateTime::now_utc()
-                .format(&Rfc3339)
-                .unwrap_or_default(),
+            timestamp: crate::clock::now_utc().format(&Rfc3339).unwrap_or_default(),
             event_type: event_type.as_str().to_string(),
             profile: profile.map(str::to_string),
             work_id: work_id.map(str::to_string),
@@ -264,9 +261,7 @@ pub fn record_with_run_id_and_reason_code(
     append(
         cfg,
         &ControllerEvent {
-            timestamp: OffsetDateTime::now_utc()
-                .format(&Rfc3339)
-                .unwrap_or_default(),
+            timestamp: crate::clock::now_utc().format(&Rfc3339).unwrap_or_default(),
             event_type: event_type.as_str().to_string(),
             profile: profile.map(str::to_string),
             work_id: work_id.map(str::to_string),
@@ -296,9 +291,7 @@ pub(crate) fn record_dispatch_error(
     append(
         cfg,
         &ControllerEvent {
-            timestamp: OffsetDateTime::now_utc()
-                .format(&Rfc3339)
-                .unwrap_or_default(),
+            timestamp: crate::clock::now_utc().format(&Rfc3339).unwrap_or_default(),
             event_type: event_type.as_str().to_string(),
             profile: profile.map(str::to_string),
             work_id: work_id.map(str::to_string),

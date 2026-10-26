@@ -6,7 +6,6 @@ use anyhow::{Context, Result};
 use std::fmt;
 use std::path::Path;
 use std::process::Command;
-use time::OffsetDateTime;
 
 /// Marks an error as a failed validation-gate self-check rather than a
 /// ticket, backend, or transient controller failure. The controller uses this
@@ -187,7 +186,7 @@ pub fn self_check_validation_gate(profile: &Profile, cfg: &GahConfig, skip: bool
     // unique per run — the previous code truncated to 8 alphanumeric chars
     // from RFC3339, which collapsed to just the date (`20260709`) and
     // caused every same-day gate run after the first to fail.
-    let ts = vc::now_rfc3339(OffsetDateTime::now_utc());
+    let ts = vc::now_rfc3339(crate::clock::now_utc());
     let ts_compact: String = ts.chars().filter(|c| c.is_alphanumeric()).collect();
     let suffix = &ts_compact[..ts_compact.len().min(20)];
     let branch = format!(
@@ -205,7 +204,7 @@ pub fn self_check_validation_gate(profile: &Profile, cfg: &GahConfig, skip: bool
     let timeout = std::time::Duration::from_secs(profile.validation_timeout_seconds());
     let cargo_target = crate::build_cache::ScopedCargoTarget::acquire(&profile.artifact_root)?;
     let gate_environment = cargo_target.environment();
-    let verified_at = vc::now_rfc3339(OffsetDateTime::now_utc());
+    let verified_at = vc::now_rfc3339(crate::clock::now_utc());
     let result = validate(
         &profile.validation_commands,
         &wt,

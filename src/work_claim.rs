@@ -30,7 +30,7 @@ pub struct WorkClaim {
 
 impl WorkClaim {
     fn is_stale(&self, max_age_secs: u64) -> bool {
-        let age = Utc::now()
+        let age = crate::clock::now_chrono()
             .signed_duration_since(self.claimed_at)
             .num_seconds();
         let too_old = age > max_age_secs.min(i64::MAX as u64) as i64;
@@ -159,7 +159,7 @@ impl WorkClaimState {
                             work_id,
                             pid: 0, // Unknown PID for migrated v1 claims
                             hostname: "unknown".to_string(),
-                            claimed_at: Utc::now(),
+                            claimed_at: crate::clock::now_chrono(),
                             manual_worker: false,
                             route: None,
                         })
@@ -191,7 +191,7 @@ impl WorkClaimState {
             work_id: work_id.to_string(),
             pid: std::process::id(),
             hostname: get().unwrap_or_default().to_string_lossy().into_owned(),
-            claimed_at: Utc::now(),
+            claimed_at: crate::clock::now_chrono(),
             manual_worker,
             route: None,
         };
@@ -340,7 +340,7 @@ impl WorkClaimStateEntry {
                 work_id: normalize_work_identity(id),
                 pid: 0,
                 hostname: "unknown".to_string(),
-                claimed_at: Utc::now(),
+                claimed_at: crate::clock::now_chrono(),
                 is_stale: true,
                 route: None,
             },
