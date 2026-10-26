@@ -10,7 +10,6 @@
 //! - `src/auth_health.rs:580`
 //! - `src/cli/commands/diag.rs:51`
 //! - `src/cli/commands/manager_log.rs:13`
-//! - `src/cli/commands/profile.rs:512`
 //! - `src/cli/commands/skills.rs:87`
 //! - `src/cli/commands/skills.rs:119`
 //! - `src/credentials/quota.rs:74`
@@ -22,8 +21,6 @@
 //! - `src/dispatch/workflows/pm/plans.rs:306`
 //! - `src/dispatch/workflows/pm.rs:300`
 //! - `src/doctor.rs:143`
-//! - `src/ledger/approvals.rs:124`
-//! - `src/ledger/approvals.rs:461`
 //! - `src/ledger/jsonl.rs:346`
 //! - `src/ledger/paid_route_notify.rs:37`
 //! - `src/ledger/reconcile.rs:372`
@@ -33,7 +30,6 @@
 //! - `src/notifications.rs:518`
 //! - `src/notifications.rs:618`
 //! - `src/notifications.rs:774`
-//! - `src/quota_store/agy.rs:89`
 //! - `src/quota_store/retention.rs:193`
 //! - `src/server.rs:91`
 //! - `src/sync.rs:393`
@@ -47,8 +43,6 @@
 //! - `src/telemetry/mod.rs:230`
 //! - `src/telemetry/mod.rs:267`
 //! - `src/telemetry/records.rs:550`
-//! - `src/tui.rs:74`
-//! - `src/usage/agy.rs:59`
 //! - `src/usage/claude.rs:95`
 //! - `src/usage/claude.rs:100`
 //! - `src/usage/claude.rs:134`
@@ -205,6 +199,7 @@ impl Deadline {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn monotonic(self) -> Instant {
         self.monotonic
     }

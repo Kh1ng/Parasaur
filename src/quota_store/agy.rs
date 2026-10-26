@@ -84,10 +84,7 @@ pub fn refresh_and_store(
 ) -> Result<Option<QuotaObservationRecord>> {
     let records = crate::usage::agy::refresh(executable, account, home)?;
     let first = append_scoped(state_path, records, None)?;
-    append(
-        state_path,
-        &probe_marker(account, OffsetDateTime::now_utc()),
-    )?;
+    append(state_path, &probe_marker(account, crate::clock::now_utc()))?;
     Ok(first)
 }
 
@@ -113,6 +110,45 @@ fn probe_marker(account: &str, now: OffsetDateTime) -> QuotaObservationRecord {
 mod tests {
     use super::*;
     use crate::execution_identity::ExecutionIdentity;
+
+    #[test]
+    fn agy_probe_marker_uses_the_injected_clock() {
+        let now = OffsetDateTime::parse("2030-01-01T00:00:00Z", &Rfc3339).unwrap();
+        let _clock = crate::clock::set_for_test(now);
+        let marker = probe_marker("agy", crate::clock::now_utc());
+        assert_eq!(marker.checked_at.as_deref(), Some("2030-01-01T00:00:00Z"));
+    }
+
+    #[test]
+    fn agy_probe_is_not_overdue_until_the_refresh_interval_passes() {
+        let now = OffsetDateTime::parse("2030-01-01T00:00:00Z", &Rfc3339).unwrap();
+        let _clock = crate::clock::set_for_test(now);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quota.jsonl");
+        append(
+            &path,
+            &probe_marker("agy-clock-test", crate::clock::now_utc()),
+        )
+        .unwrap();
+        assert!(super::super::maybe_refresh_backend_instance(
+            &path,
+            "agy-clock-test",
+            Some(&probe_instance("agy-clock-test")),
+            now + time::Duration::minutes(14),
+            || panic!("probe must not be overdue at the interval boundary"),
+        )
+        .is_none());
+        super::super::maybe_refresh_backend_instance(
+            &path,
+            "agy-clock-test",
+            Some(&probe_instance("agy-clock-test")),
+            now + time::Duration::minutes(14) + time::Duration::seconds(1),
+            || Ok(None),
+        )
+        .expect("probe becomes due after the interval")
+        .join()
+        .unwrap();
+    }
 
     fn reading(backend: &str, source: &str, now: OffsetDateTime) -> QuotaObservationRecord {
         serde_json::from_value(serde_json::json!({

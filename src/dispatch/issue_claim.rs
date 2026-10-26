@@ -424,7 +424,7 @@ impl IssueLease {
                 // claim it renews expires; past that, it proves nothing.
                 let board = GithubBoard {
                     profile: &profile,
-                    deadline: Some(deadline.monotonic()),
+                    deadline: Some(deadline),
                 };
                 let extended = Deadline::after_at(ttl, began);
                 match renew(&board, &policy, &me, &claimed, crate::clock::now_utc()) {
@@ -837,15 +837,14 @@ fn gh(operation: &str, args: &[&str]) -> Result<String> {
 
 /// Run `gh`, killed at `deadline` when one is given, so a hung call cannot
 /// outlast the authority it is meant to extend.
-fn gh_until(operation: &str, args: &[&str], deadline: Option<Instant>) -> Result<String> {
+fn gh_until(operation: &str, args: &[&str], deadline: Option<Deadline>) -> Result<String> {
     let mut command = provider_command("gh");
     command.args(args);
     let launching = || format!("launching gh to {operation}");
     let out = match deadline {
         None => command.output().with_context(launching)?,
         Some(deadline) => {
-            let budget = deadline.saturating_duration_since(Instant::now());
-            if budget.is_zero() {
+            if deadline.reached() {
                 anyhow::bail!("could not {operation}: the claim's lease has no time left");
             }
             let child = command
@@ -854,7 +853,7 @@ fn gh_until(operation: &str, args: &[&str], deadline: Option<Instant>) -> Result
                 .stderr(std::process::Stdio::piped())
                 .spawn()
                 .with_context(launching)?;
-            crate::worktree::wait_with_timeout_for(child, &format!("gh to {operation}"), budget)?
+            crate::worktree::wait_with_deadline_for(child, &format!("gh to {operation}"), deadline)?
         }
     };
     if !out.status.success() {
@@ -869,7 +868,7 @@ fn gh_until(operation: &str, args: &[&str], deadline: Option<Instant>) -> Result
 struct GithubBoard<'a> {
     profile: &'a Profile,
     /// When set, every `gh` call is killed at this instant.
-    deadline: Option<Instant>,
+    deadline: Option<Deadline>,
 }
 
 impl<'a> GithubBoard<'a> {

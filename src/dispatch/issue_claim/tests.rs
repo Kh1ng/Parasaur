@@ -228,6 +228,52 @@ fn provider_claim_renewal_inherits_clock_and_advances_schedule() {
 }
 
 #[test]
+fn provider_claim_renewal_stops_when_simulated_lease_expires_mid_call() {
+    let _exec = ExecGuard::new();
+    let clock = crate::clock::set_for_test(at(0));
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let marker = install_renewal_gh(
+        &bin,
+        &format!(
+            r#"case "$*" in
+        *'PATCH'*) echo patch >> "$marker"; exec sleep 30 ;;
+        *'comments?'*) echo '{{"id":21,"login":"{COLTON}","created_at":"{}"}}' ;;
+        *) echo '{COLTON}' ;;
+    esac"#,
+            at(0).format(&Rfc3339).unwrap()
+        ),
+    );
+    let _path = PathGuard::set(&bin);
+    let mut prof = profile(tmp.path());
+    prof.publishing.issue_claim = policy(&[]);
+    prof.publishing.issue_claim.ttl_minutes = 5;
+    let lease = IssueLease::start(
+        &prof,
+        &issue_7(),
+        COLTON.into(),
+        Deadline::at(at(5)),
+        Duration::from_secs(300),
+    );
+    std::thread::sleep(Duration::from_millis(100));
+    clock.advance(time::Duration::seconds(101));
+    assert!(wait_for(
+        || std::fs::read_to_string(&marker)
+            .unwrap_or_default()
+            .contains("patch"),
+        Duration::from_secs(5)
+    ));
+    clock.advance(time::Duration::seconds(200));
+    assert!(wait_for(
+        || lease.ensure_held().is_err(),
+        Duration::from_secs(5)
+    ));
+    let calls = std::fs::read_to_string(marker).unwrap();
+    drop(lease);
+    assert_eq!(calls.lines().count(), 1, "renewal continued after expiry");
+}
+
+#[test]
 fn the_earliest_claim_comment_wins_a_contested_claim() {
     let contested = view(
         &[MICHAEL, COLTON],
