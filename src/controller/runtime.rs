@@ -120,6 +120,7 @@ pub fn run_loop(
 ) -> Result<()> {
     super::ownership::arm_parent_death_signal()?;
     let _lock = acquire_profile_lock(profile_name, config_path)?;
+    let mut cloud_heartbeat = crate::node_register::CloudHeartbeat::default();
 
     // Dashboard Settings can change config at runtime; reload every iteration
     // so changes apply without a restart. Falls back to the last-good config
@@ -159,6 +160,7 @@ pub fn run_loop(
             eprintln!("gah loop: factory module disabled; stopping before another iteration");
             return shutdown_gracefully();
         }
+        cloud_heartbeat.refresh(cfg);
 
         // The explicit `--parallel` flag (parallel_arg > 0) wins; otherwise
         // derive the worker pool size from the freshly-reloaded profile.
@@ -172,7 +174,7 @@ pub fn run_loop(
         // failure means the safety check itself is unhealthy, so that one
         // pauses immediately for an explicit operator restart instead.
         #[rustfmt::skip]
-        let iteration = run_once(cfg, profile_name, json, parallel, skip_validation_gate, true);
+        let iteration = run_pass(cfg, profile_name, json, parallel, skip_validation_gate, true);
         match iteration {
             Ok(()) if !wait_for_loop_interval(pass_interval(cfg, profile_name)) => {
                 return shutdown_gracefully();
@@ -302,7 +304,26 @@ pub fn run_once(
     skip_validation_gate: bool,
     run_periodic_probes: bool,
 ) -> Result<()> {
-    crate::node_register::cloud_advisory(cfg, None);
+    let mut cloud_heartbeat = crate::node_register::CloudHeartbeat::default();
+    cloud_heartbeat.refresh(cfg);
+    run_pass(
+        cfg,
+        profile_name,
+        json,
+        parallel,
+        skip_validation_gate,
+        run_periodic_probes,
+    )
+}
+
+fn run_pass(
+    cfg: &crate::config::GahConfig,
+    profile_name: &str,
+    json: bool,
+    parallel: usize,
+    skip_validation_gate: bool,
+    run_periodic_probes: bool,
+) -> Result<()> {
     log_node_capacity_settings(cfg.defaults.node_capacity);
     let mut ledger_entries = crate::ledger::read_entries(cfg)?;
     reconcile_abandoned_dispatches(cfg, profile_name, &mut ledger_entries)?;

@@ -22,17 +22,20 @@ selected by `GAH_COORDINATOR_IDENTITY_PATH`. For a new identity, set
 service-role key to workers. The CLI does not read it.
 
 `gah node register` first completes central registration, then mirrors the
-identity to the cloud. `gah loop`, including `--once`, syncs at the start of its
-first controller pass even without `registry_central_url`. Subsequent passes use
-the existing `pacing.loop_interval_seconds` cadence. The sink uses the existing controller thread.
+identity to the cloud. `gah loop`, including `--once`, starts a background thread
+that syncs immediately, even without `registry_central_url`. It renews every 30
+seconds, independently of controller work, pacing, and error backoff. Local mode
+starts no thread and makes no cloud requests.
 
 The sink calls `POST {GAH_SUPABASE_URL}/rest/v1/rpc/register_cloud_node` with the
 user token in `Authorization: Bearer` and the public key in `apikey`. This RPC
 upserts identity and profiles. It excludes the local coordinator token and
 `secret_ref`. Identity, profiles, endpoint, or credential changes cause another
-upsert. Failed upserts retry next pass.
+upsert. Failed upserts retry on the next timer interval. Config reloads update
+the existing thread without delaying its next heartbeat. Switching to local mode
+stops the thread.
 
-After registration, each pass calls
+After registration, each timer interval calls
 `POST {GAH_SUPABASE_URL}/rest/v1/rpc/cloud_node_heartbeat` with the public key in
 both headers and `{"p_device_token":"<device credential>"}` in the body. The
 server resolves the device identity and renews its 90-second lease. Registration
@@ -46,8 +49,10 @@ HTTP status. It logs recovery once and warns again on a later outage. Logs omit
 URLs, credentials, response bodies, and curl error details. Cloud HTTPS requests always
 verify TLS, regardless of coordinator TLS overrides.
 
+While waiting, the thread checks the controller shutdown flag at most 250 milliseconds apart.
+When the controller exits, it cancels the timer wait and joins the thread. An
+in-flight sync can take up to two three-second HTTP timeouts to finish.
+
 PR #1608 contains the schema migrations that define these RPCs. Before you enable
-cloud mode, deploy those migrations. If you require continuous online status,
-keep controller passes shorter than the 90-second lease window. A long dispatch or backoff can
-let the lease expire until the next pass. User access-token refresh and device
+cloud mode, deploy those migrations. User access-token refresh and device
 enrollment are outside this registration sink.
