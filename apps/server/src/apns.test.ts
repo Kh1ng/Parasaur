@@ -194,3 +194,20 @@ test('APNs drops a silently dead session after a request timeout', async () => {
     rmSync(setup.directory, { recursive: true, force: true });
   }
 });
+
+test('automatic wake retries never send another alerting Live Activity start', async () => {
+  const setup = fixture();
+  try {
+    setup.service.register({ token: token('a'), pushToStartToken: token('b') });
+    const base = { profile: 'gah', sessionId: 's1', turn: 1, occurredAt: '2026-09-25T12:00:00Z' };
+    await setup.service.deliverChatLifecycle({ ...base, phase: 'start' });
+    assert.equal(setup.requests.length, 1);
+    for (let turn = 2; turn <= 21; turn++) {
+      await setup.service.deliverChatLifecycle({ ...base, turn, phase: 'start', wakeRetry: true });
+      await setup.service.deliverChatLifecycle({ ...base, turn, phase: 'end', outcome: 'error', wakeRetry: true });
+    }
+    assert.equal(setup.requests.length, 1);
+  } finally {
+    rmSync(setup.directory, { recursive: true, force: true });
+  }
+});

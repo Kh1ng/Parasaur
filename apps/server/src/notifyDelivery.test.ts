@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ActivityEvent } from '@git-agent-harness/contracts';
 import { ActivityFeed } from './activityFeed.js';
-import { channelDelivery, commandDelivery, deliverToAll, sendTestNotification } from './notifyDelivery.js';
+import { channelDelivery, commandDelivery, deliverToAll, notificationChannelFailure, resetNotificationChannelFailure, sendTestNotification } from './notifyDelivery.js';
 
 const BASE = 'https://central.example';
 
@@ -131,4 +131,35 @@ test('a channel failure lands in notification history with its CLI reason (#1273
   assert.deepEqual(notification.deliveries?.map(({ at: _at, ...receipt }) => receipt), [
     { method: 'channel', target: 'Telegram', ok: false, reason: 'TELEGRAM_BOT_TOKEN is not set (Settings → Notifications)' }
   ]);
+}));
+
+
+test('concurrent Telegram HTTP 400 events attempt delivery once until Settings tests or saves', () => withDirectory(async (directory) => {
+  const gah = join(directory, 'gah');
+  const log = join(directory, 'calls');
+  const rejected = `#!/bin/sh\necho call >> ${log}\necho '{"channel":"telegram","ok":false,"reason":"Telegram notification rejected with HTTP 400"}'\nexit 1\n`;
+  writeFileSync(gah, rejected);
+  chmodSync(gah, 0o755);
+  resetNotificationChannelFailure();
+  try {
+    const deliver = channelDelivery(BASE, () => gah);
+    const lines = await errorsDuring(async () => {
+      const receipts = await Promise.all(Array.from({ length: 20 }, (_, index) => deliver(event({ id: `failure-${index}` }))));
+      assert.equal(receipts.flat().length, 1);
+    });
+    assert.equal(lines.length, 1);
+    assert.equal(readFileSync(log, 'utf8').trim().split('\n').length, 1);
+    assert.match(notificationChannelFailure()?.reason ?? '', /HTTP 400/);
+    writeFileSync(gah, `#!/bin/sh\necho '{"channel":"telegram","ok":true}'\n`);
+    assert.equal((await sendTestNotification(() => gah))?.ok, true);
+    assert.equal(notificationChannelFailure(), null, 'successful Settings test recovers delivery');
+    assert.equal(((await deliver(event())) ?? []).length, 1);
+    writeFileSync(gah, rejected);
+    await errorsDuring(async () => { await deliver(event()); });
+    resetNotificationChannelFailure();
+    await errorsDuring(async () => { await deliver(event()); });
+    assert.equal(readFileSync(log, 'utf8').trim().split('\n').length, 3, 'saving permits a fresh attempt');
+  } finally {
+    resetNotificationChannelFailure();
+  }
 }));

@@ -156,6 +156,7 @@ export class ApnsNotifications {
   }
 
   async deliverChatLifecycle(event: ChatLifecycleEvent): Promise<void> {
+    if (event.wakeRetry) return;
     const key = activityKey(event.profile, event.sessionId);
     const state = event.phase === 'start' ? 'thinking'
       : event.phase === 'tool' ? `running ${chatToolName(event.tool) ?? 'tool'}`

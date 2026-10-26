@@ -593,13 +593,24 @@ fn activity_body(profile: &Profile, event: &NotifyEvent<'_>) -> (String, String)
     let message = crate::redact::redact(&format_message(event));
     let message = crate::dispatch::utf8_safe_prefix(&message, 1_000).to_string();
     let (kind, severity, title) = activity_shape(event);
-    let id_seed = json!({
+    let mut id_seed = json!({
         "event": event_name(event),
         "profile": profile_name,
         "work_id": event_work_id(event),
         "run_id": event_run_id(event),
         "message": message,
     });
+    // Availability already claimed this transition. Recovery can produce the
+    // same message again, and the central feed must accept that new notice.
+    if matches!(
+        event,
+        NotifyEvent::HumanRequired {
+            reason_code: Some("quota_exhausted"),
+            ..
+        }
+    ) {
+        id_seed["quota_transition"] = uuid::Uuid::new_v4().to_string().into();
+    }
     let digest = format!("{:x}", Sha256::digest(id_seed.to_string().as_bytes()));
     let occurred_at = match event {
         NotifyEvent::DispatchFailed { timestamp, .. }

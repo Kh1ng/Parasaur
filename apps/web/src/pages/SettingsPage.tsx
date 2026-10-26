@@ -517,6 +517,7 @@ export function NotificationChannelSection({ config, reloadConfig, notificationA
 
   const handleTest = () => run('test', async () => {
     const { receipt } = await notificationApi.sendTestNotification();
+    await reloadConfig?.();
     setResult(receipt.ok
       ? { ok: true, text: `Sent a test message to ${receipt.target}. Check that it arrived.` }
       : { ok: false, text: `The test message to ${receipt.target} failed: ${receipt.reason ?? 'unknown error'}. It is recorded in notification history.` });
@@ -596,6 +597,7 @@ export function NotificationChannelSection({ config, reloadConfig, notificationA
         </>
       )}
 
+      {notifications?.last_error && <p role="alert" className="mt-3 text-xs text-critical">Telegram delivery paused: {notifications.last_error}. Check the chat ID and bot token, then save or send a test message to retry.</p>}
       {error && <p role="alert" className="mt-3 text-xs text-critical">Error: {error}</p>}
       {result && <p role="status" className={`mt-3 text-xs ${result.ok ? 'text-good' : 'text-critical'}`}>{result.text}</p>}
 

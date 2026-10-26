@@ -44,6 +44,9 @@ const LEGACY_VERSION: u32 = 1;
 /// far short of the multi-day spans that were actually wrong.
 pub(crate) const UNAVAILABLE_UNTIL_CEILING_SECONDS: i64 = 2 * 60 * 60;
 
+mod quota_failures;
+pub(crate) use quota_failures::{clear_quota_failure, notify_quota_exhausted};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
@@ -404,7 +407,8 @@ pub fn record_unavailable(
         status: Status::Unavailable,
         reason,
         observed_at: now_rfc3339(now),
-        unavailable_until: unavailable_until.map(now_rfc3339),
+        unavailable_until: quota_failures::cooldown(reason, source, unavailable_until, now)
+            .map(now_rfc3339),
         source,
         last_error_summary,
     };
@@ -439,7 +443,8 @@ pub fn record_available(
     update_state(state_path, |state| state.records.push(record)).map(|_| ())
 }
 
-/// Append unavailability for the exact selected execution identity.
+/// Append unavailability for the selected identity. Returns true on a cause transition,
+/// including a failure after an explicit recovery; expiry alone is not recovery.
 #[allow(clippy::too_many_arguments)]
 pub fn record_unavailable_for_identity(
     state_path: &Path,
@@ -449,7 +454,7 @@ pub fn record_unavailable_for_identity(
     unavailable_until: Option<OffsetDateTime>,
     last_error_summary: Option<String>,
     now: OffsetDateTime,
-) -> Result<()> {
+) -> Result<bool> {
     let backend_instance = crate::execution_identity::validate_operator_label(
         "backend instance",
         &identity.backend_instance,
@@ -467,11 +472,26 @@ pub fn record_unavailable_for_identity(
         status: Status::Unavailable,
         reason,
         observed_at: now_rfc3339(now),
-        unavailable_until: unavailable_until.map(now_rfc3339),
+        unavailable_until: quota_failures::cooldown(reason, source, unavailable_until, now)
+            .map(now_rfc3339),
         source,
         last_error_summary,
     };
-    update_state(state_path, |state| state.records.push(record)).map(|_| ())
+    let mut transition = false;
+    update_state(state_path, |state| {
+        transition = state
+            .records
+            .iter()
+            .rev()
+            .find(|prior| {
+                quota_failures::same_scope(prior, &record) && prior.source != Source::Reprobe
+            })
+            .is_none_or(|prior| {
+                prior.status != Status::Unavailable || !quota_failures::same_cause(prior, &record)
+            });
+        state.records.push(record);
+    })?;
+    Ok(transition)
 }
 
 /// Append an exact-instance availability override.

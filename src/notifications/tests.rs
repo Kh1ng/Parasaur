@@ -1006,3 +1006,21 @@ fn paid_route_notice_without_reset_does_not_invent_eta_or_wake_an_approver() {
     assert!(!message.contains("reset"));
     assert!(format_wake_instruction(&event, WakeAutonomy::Full).is_none());
 }
+
+#[test]
+fn quota_notif_transitions_with_identical_text_get_distinct_central_activity_ids() {
+    let profile = crate::config::tests::test_profile_for_notifications();
+    let event = || NotifyEvent::HumanRequired {
+        reason: "vibe/glm quota exhausted",
+        reference: None,
+        reason_code: Some("quota_exhausted"),
+        failure_class: "backend_error",
+        failure_stage: None,
+        error_summary: None,
+        attempt_count: None,
+        mr_url: None,
+    };
+    let (first, _) = activity_body(&profile, &event());
+    let (recovered_then_failed, _) = activity_body(&profile, &event());
+    assert_ne!(first, recovered_then_failed);
+}

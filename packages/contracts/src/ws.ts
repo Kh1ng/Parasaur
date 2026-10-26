@@ -86,6 +86,10 @@ export interface ActivityEvent {
   readAt?: string | null;
   /** One entry per delivery attempt (device, channel, or hook). */
   deliveries?: DeliveryReceipt[];
+  /** Additional attempts in this failure streak; updates never trigger delivery. */
+  retryCount?: number;
+  /** Secret-safe identity of the full chat failure, independent of its short preview. */
+  failureCause?: string;
   /** The login an auth_expired/auth_restored event is about, on `nodeId`. */
   login?: { backend: string; provider: string | null; backend_instance?: string | null };
 }

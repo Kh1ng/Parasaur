@@ -12,6 +12,7 @@
  */
 
 import { recall, capture, flushSession } from './memoryGatewayClient.js';
+import { ManagerWakeQueue } from './managerWake.js';
 import {
   resolveAdapter,
   resolveInstanceAdapter,
@@ -70,6 +71,7 @@ import { chatTitleInput, helperFallback, recordHelperUsage, runHelperTask, type 
 // conversation, so turns must run one at a time.
 const turnQueueByProfile = new Map<string, Promise<unknown>>();
 const activeProfiles = new Set<string>();
+const managerWakes = new ManagerWakeQueue();
 
 export function isChatSessionActive(profile: string, sessionId: string): boolean {
   return activeProfiles.has(chatKey(profile, sessionId));
@@ -124,6 +126,7 @@ let permissionPublisher: PermissionPublish | undefined;
 
 export interface ManagerChatTurnHooks {
   onPermission?: PermissionPublish;
+  wakeRetry?: boolean;
 }
 
 /** Durable live state changed; clients refetch the authoritative fold. */
@@ -1034,14 +1037,11 @@ export async function respondManagerChatPermission(
 }
 
 export function enqueueManagerWake(profile: string, backend: string, message: string): void {
-  // Validate before acknowledging the HTTP request. The durable project
-  // queue below owns ordering; each adapter owns its stable provider session
-  // for this profile, so a second wake cannot start a competing process.
   resolveAdapter(backend);
   const requestId = `wake-${randomUUID()}`;
-  void sendManagerChatMessage(profile, message, requestId, undefined, backend)
-    .catch((error) => console.error('[managerChat] wake failed:', profile, backend, error))
-    .finally(() => updatedPublisher?.({ type: 'manager.chat.updated', requestId, profile }));
+  void managerWakes.enqueue(JSON.stringify([profile, backend]), retryCount =>
+    sendManagerChatMessage(profile, message, requestId, undefined, backend, undefined, { wakeRetry: retryCount > 0 })
+      .finally(() => updatedPublisher?.({ type: 'manager.chat.updated', requestId, profile })));
 }
 
 export function sendManagerChatMessage(
@@ -1192,6 +1192,7 @@ export function sendManagerChatMessage(
         occurredAt: new Date(occurredAt).toISOString(),
         backend: active.backend,
         model: sessionContext.model,
+        ...(hooks.wakeRetry ? { wakeRetry: true } : {}),
         ...event
       });
     };

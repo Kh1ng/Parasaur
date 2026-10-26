@@ -1097,6 +1097,8 @@ export const NODE_CAPACITY_CPU_LIMITS = { cores: [1, 64], ceiling_percent: [10, 
 
 /** Issue #653: notification channel settings projection. */
 export interface NotificationSettingsSummary {
+  /** Delivery paused after Telegram rejected a message; save or test to retry. */
+  last_error?: string | null;
   /** Issue #1454: the module switch. Absent from older hosts; treat it as
    * `channel !== 'none'`, which is how those hosts behave. */
   enabled?: boolean;

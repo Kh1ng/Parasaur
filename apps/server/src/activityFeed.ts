@@ -31,6 +31,8 @@ export type ChatLifecycleEvent = {
   outcome?: 'complete' | 'error' | 'cancelled';
   reply?: string;
   error?: string;
+  /** Automatic wake retries must not start another alerting APNs Live Activity. */
+  wakeRetry?: boolean;
 };
 
 function stableId(prefix: string, value: unknown): string {
@@ -91,6 +93,8 @@ export function activityFromChat(event: ChatLifecycleEvent): ActivityEvent | nul
     kind: 'chat_turn_failed',
     severity: 'error',
     title: `${event.profile}: chat failed`,
+    failureCause: stableId('chat_cause', redactTextSecrets(event.error ?? 'The chat turn failed.')),
+    retryCount: 0,
     message: collapsedPreview(event.error ?? 'The chat turn failed.', 200)
   };
 }
@@ -123,9 +127,15 @@ export function activityFromController(event: ControllerEvent): ActivityEvent | 
   if (succeeded && /^review_mr\s*:/i.test(event.details)) {
     return { ...shared, kind: 'review_ready', severity: 'success', title: 'Review ready' };
   }
+  // The availability writer already announced these quota transitions. A
+  // controller retry that finds every route cooling down is routine history.
+  const quotaBlocked = event.skipped?.length && event.skipped.every(route => [
+    'backend-wide quota_exhausted', 'model-specific quota_exhausted',
+    'quota-pool quota_exhausted', 'availability quota_exhausted'
+  ].includes(route.reason));
   return succeeded
     ? { ...shared, kind: 'dispatch_completed', severity: 'success', title: 'Work finished' }
-    : { ...shared, kind: 'dispatch_failed', severity: 'error', title: 'Work failed' };
+    : { ...shared, kind: 'dispatch_failed', severity: 'error', title: 'Work failed', ...(quotaBlocked ? { notificationMuted: true } : {}) };
 }
 
 export function activityFromNode(transition: {
@@ -232,6 +242,7 @@ export function validateNotificationPreferences(value: unknown): ActivityNotific
 export class ActivityFeed {
   private events: ActivityEvent[] = [];
   private ids = new Set<string>();
+  private chatFailures = new Map<string, ActivityEvent>();
   private listeners = new Set<(change: ActivityFeedChange) => void>();
   private preferences = { ...DEFAULT_ACTIVITY_NOTIFICATION_PREFERENCES };
 
@@ -259,6 +270,7 @@ export class ActivityFeed {
           }
           this.events.push(event);
           this.ids.add(event.id);
+          this.trackChatFailure(event);
         }
       }
       this.trim();
@@ -277,6 +289,13 @@ export class ActivityFeed {
    * reached anyone, so it starts read. */
   record(event: ActivityEvent, deliver = true): boolean {
     if (this.ids.has(event.id)) return false;
+    const prior = this.trackChatFailure(event);
+    if (prior) {
+      prior.retryCount = (prior.retryCount ?? 0) + 1;
+      this.persist();
+      this.emit({ kind: 'updated', event: prior });
+      return false;
+    }
     const optionalEnabled = this.optionalNotificationEnabled(event);
     if (optionalEnabled !== undefined) event.notificationMuted = !optionalEnabled;
     if (event.notificationMuted) event.readAt = new Date(this.now()).toISOString();
@@ -298,6 +317,16 @@ export class ActivityFeed {
         });
     }
     return true;
+  }
+
+  /** Like event-refresh errors, remember the last cause per conversation until success. */
+  private trackChatFailure(event: ActivityEvent): ActivityEvent | undefined {
+    const key = JSON.stringify([event.profile, event.sessionId ?? 'default']);
+    if (event.kind === 'chat_turn_completed') this.chatFailures.delete(key);
+    if (event.kind !== 'chat_turn_failed') return;
+    const prior = this.chatFailures.get(key);
+    if (prior && (prior.failureCause ?? prior.message) === (event.failureCause ?? event.message)) return prior;
+    this.chatFailures.set(key, event);
   }
 
   replay(profile: string, cursor?: string): ActivityEvent[] {

@@ -72,15 +72,20 @@ pub fn run(
         .and_then(|failure| failure.reset_at.as_deref())
         .and_then(|value| OffsetDateTime::parse(value, &Rfc3339).ok());
     if kind == "hard" {
-        crate::availability::record_unavailable_for_identity(
+        let transition = crate::availability::record_unavailable_for_identity(
             &crate::availability::resolve_state_path(),
             &identity,
             crate::availability::Reason::QuotaExhausted,
             crate::availability::Source::BackendError,
             reset,
-            Some("Chat subscription quota exhausted".into()),
+            parsed
+                .as_ref()
+                .map(|failure| failure.matched_evidence.clone()),
             now,
         )?;
+        if transition {
+            crate::availability::notify_quota_exhausted(&cfg, profile, &identity);
+        }
     }
     println!(
         "{}",
