@@ -13,6 +13,7 @@
  * connection lifecycle, parameterized only by which process to spawn.
  */
 
+import type { ManagerConversation } from './registry.js';
 import { spawn, type ChildProcessByStdio } from 'child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -591,7 +592,7 @@ export function createAcpBackend(
   }
 
   async function runTurn(
-    gahProfile: string,
+    { key: gahProfile }: ManagerConversation,
     input: {
       prompt: string;
       history: ChatTranscriptTurn[];
@@ -735,7 +736,7 @@ export function createAcpBackend(
     return state.client.availableCommands;
   }
 
-  async function listModels(gahProfile: string, cwd?: string) {
+  async function listModels({ key: gahProfile }: ManagerConversation, cwd?: string) {
     const state = await connect(gahProfile, cwd);
     return {
       models: state.models,
@@ -747,7 +748,7 @@ export function createAcpBackend(
     };
   }
 
-  async function setModel(gahProfile: string, modelId: string): Promise<void> {
+  async function setModel({ key: gahProfile }: ManagerConversation, modelId: string): Promise<void> {
     const state = await connect(gahProfile);
     if (!state.models.some((m) => m.id === modelId)) {
       throw new Error(`Unknown model "${modelId}" for ${label}`);
@@ -755,7 +756,7 @@ export function createAcpBackend(
     await selectModel(state, modelId);
   }
 
-  async function setReasoningEffort(gahProfile: string, effortId: string): Promise<void> {
+  async function setReasoningEffort({ key: gahProfile }: ManagerConversation, effortId: string): Promise<void> {
     const state = await connect(gahProfile);
     if (!state.reasoningEfforts.some((effort) => effort.id === effortId)) {
       throw new Error(`Unknown reasoning effort "${effortId}" for ${label}`);

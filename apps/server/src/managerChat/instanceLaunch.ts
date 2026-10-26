@@ -1,7 +1,7 @@
 import { findGahBinary, type BackendInstanceRuntime } from '../gahCli.js';
 import type { SpawnSpec } from './acpAdapter.js';
 import type { HeadlessBackendSpec } from './headlessAdapter.js';
-import type { ManagerAdapter } from './registry.js';
+import type { ManagerAdapter, ManagerConversation } from './registry.js';
 
 /** Launch named instances through the local CLI. The CLI resolves the secret
  * before changing HOME, then applies the runner's isolated child environment.
@@ -41,7 +41,7 @@ export function instanceHeadlessSpec(profile: string, runtime: BackendInstanceRu
       if (runtime.runner_kind === 'vibe') args.push('--adapter-program', original[0]);
       return [findGahBinary(), ...args, '--', ...original.slice(1)];
     },
-    ...(spec.spawnEnv ? { spawnEnv: async (gahProfile: string, opts?: { model?: string | null }) => ownerEnvironment(await spec.spawnEnv!(gahProfile, opts)) ?? {} } : {})
+    ...(spec.spawnEnv ? { spawnEnv: async (conversation: ManagerConversation, opts?: { model?: string | null }) => ownerEnvironment(await spec.spawnEnv!(conversation, opts)) ?? {} } : {})
   };
 }
 
@@ -60,22 +60,22 @@ export function bindOpenCodeModels(adapter: ManagerAdapter, runtime: BackendInst
   };
   return {
     ...adapter,
-    async listModels(profile, cwd) {
-      const result = await adapter.listModels(profile, cwd);
+    async listModels(conversation, cwd) {
+      const result = await adapter.listModels(conversation, cwd);
       return { ...result, models: result.models.filter(model => allowed(model.id)),
         currentModelId: result.currentModelId && allowed(result.currentModelId) ? result.currentModelId : null };
     },
-    async setModel(profile, model) {
+    async setModel(conversation, model) {
       requireModel(model);
-      const result = await adapter.listModels(profile);
+      const result = await adapter.listModels(conversation);
       if (!result.models.some(candidate => candidate.id === model && allowed(candidate.id))) {
         throw new Error('That model is no longer available for this instance’s selected credential.');
       }
-      await adapter.setModel(profile, model);
+      await adapter.setModel(conversation, model);
     },
-    async runTurn(profile, input) {
+    async runTurn(conversation, input) {
       requireModel(input.model);
-      const result = await adapter.listModels(profile, input.cwd);
+      const result = await adapter.listModels(conversation, input.cwd);
       let model = input.model;
       if (model && !result.models.some(candidate => candidate.id === model && allowed(candidate.id))) {
         throw new Error('That model is no longer available for this instance’s selected credential.');
@@ -84,9 +84,9 @@ export function bindOpenCodeModels(adapter: ManagerAdapter, runtime: BackendInst
         model = result.currentModelId && allowed(result.currentModelId)
           ? result.currentModelId : result.models.find(candidate => allowed(candidate.id))?.id;
         if (!model) throw new Error('This instance has no model for its selected credential provider.');
-        await adapter.setModel(profile, model);
+        await adapter.setModel(conversation, model);
       }
-      return adapter.runTurn(profile, { ...input, model });
+      return adapter.runTurn(conversation, { ...input, model });
     }
   };
 }

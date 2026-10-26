@@ -555,15 +555,15 @@ export async function listModelsForProfile(
   const route = await chatRoute(profile, nodeId, backendId, false);
   if (route.remote) return listModelsForBackend(profile, backendId, nodeId);
   const adapter = resolveAdapter(backendId);
-  let summary = await adapter.listModels(profile);
+  let summary = await adapter.listModels({ key: profile, profile });
   const modelOverride = modelOverrideForProfile(profile, backendId);
   if (
     modelOverride
     && modelOverride !== summary.currentModelId
     && summary.models.some((model) => model.id === modelOverride)
   ) {
-    await adapter.setModel(profile, modelOverride);
-    summary = await adapter.listModels(profile);
+    await adapter.setModel({ key: profile, profile }, modelOverride);
+    summary = await adapter.listModels({ key: profile, profile });
   }
   const effortOverride = reasoningEffortOverrideForProfile(profile, backendId);
   if (
@@ -571,8 +571,8 @@ export async function listModelsForProfile(
     && effortOverride !== summary.currentReasoningEffortId
     && summary.reasoningEfforts.some((effort) => effort.id === effortOverride)
   ) {
-    await adapter.setReasoningEffort(profile, effortOverride);
-    summary = await adapter.listModels(profile);
+    await adapter.setReasoningEffort({ key: profile, profile }, effortOverride);
+    summary = await adapter.listModels({ key: profile, profile });
   }
   return summary;
 }
@@ -581,9 +581,9 @@ export async function setModelForProfile(profile: string, modelId: string, nodeI
   const backendId = backendForProfile(profile);
   const route = await chatRoute(profile, nodeId, backendId, false);
   if (route.remote) {
-    const models = await route.remote.adapter(backendId).listModels(profile);
+    const models = await route.remote.adapter(backendId).listModels({ key: profile, profile });
     if (!models.models.some(model => model.id === modelId)) throw new Error('The worker backend does not advertise that model.');
-  } else await resolveAdapter(backendId).setModel(profile, modelId);
+  } else await resolveAdapter(backendId).setModel({ key: profile, profile }, modelId);
   setModelOverrideForProfile(profile, backendId, modelId);
 }
 
@@ -591,9 +591,9 @@ export async function setReasoningEffortForProfile(profile: string, effortId: st
   const backendId = backendForProfile(profile);
   const route = await chatRoute(profile, nodeId, backendId, false);
   if (route.remote) {
-    const models = await route.remote.adapter(backendId).listModels(profile);
+    const models = await route.remote.adapter(backendId).listModels({ key: profile, profile });
     if (!models.reasoningEfforts.some(effort => effort.id === effortId)) throw new Error('The worker backend does not advertise that reasoning effort.');
-  } else await resolveAdapter(backendId).setReasoningEffort(profile, effortId);
+  } else await resolveAdapter(backendId).setReasoningEffort({ key: profile, profile }, effortId);
   setReasoningEffortOverrideForProfile(profile, backendId, effortId);
 }
 
@@ -608,7 +608,7 @@ export async function listModelsForBackend(
   const route = await chatRoute(profile, nodeId, backendId, false);
   const adapter = route.remote?.adapter(backendId, undefined, backendInstance)
     ?? await resolveInstanceAdapter(profile, backendId, backendInstance);
-  const summary = await adapter.listModels(profile);
+  const summary = await adapter.listModels({ key: profile, profile });
   const override = modelOverrideForProfile(profile, backendId);
   const effort = reasoningEffortOverrideForProfile(profile, backendId);
   return { ...summary,
@@ -784,7 +784,7 @@ export async function runTurn(
         const ownBackend = key === start;
         let model = ownBackend ? context.model : undefined;
         if (!ownBackend && context.model) {
-          const options = await adapter.listModels(profile).catch(() => null);
+          const options = await adapter.listModels({ key: profile, profile }).catch(() => null);
           const family = (value: string) => value.toLowerCase().match(/opus|sonnet|haiku|gemini|gpt|mistral/)?.[0];
           model = options?.models.find(item => item.id === context.model || (family(context.model!) && family(item.name) === family(context.model!)))?.id ?? null;
           modelNote = model ? `Continuing the selected model family on ${model}.` : `The target does not offer the selected model family (${context.model}); using its default model.`;
@@ -815,10 +815,9 @@ export async function runTurn(
             });
           }
         }
-        const r = await adapter.runTurn(context.key, {
+        const r = await adapter.runTurn({ key: context.key, profile }, {
           prompt: attemptPrompt,
           history,
-          profile,
           onChunk,
           onToolResult,
           cwd: context.cwd,

@@ -28,7 +28,8 @@ test('remote agent runs only in the worker profile and streams permission, steer
   const running = new Promise<void>(resolve => { entered = resolve; });
   const adapter: ManagerAdapter = {
     id: 'claude', displayName: 'Claude', implemented: true,
-    async runTurn(key, input) {
+    async runTurn({ key, profile: gahProfile }, input) {
+      assert.equal(gahProfile, 'demo');
       if (key.startsWith('helper:')) {
         assert.equal(input.model, 'helper-model');
         assert.match(input.prompt, /Fix worker auth/);
@@ -85,7 +86,7 @@ test('remote agent runs only in the worker profile and streams permission, steer
     assert.equal(bad.status, 400);
     assert.equal(getSession('demo', 'bad-turn', { stateDir: join(root, 'worker-state') }), null, 'invalid input must not create a workspace');
     const chunks: string[] = [];
-    const result = await remote.runTurn('central-conversation-key', {
+    const result = await remote.runTurn({ key: 'central-conversation-key', profile: 'demo' }, {
       prompt: 'read', history: [], cwd: '/forbidden-central-path',
       onChunk: chunk => chunks.push(chunk), onToolResult: (name, text) => chunks.push(`${name}:${text}`),
       requestPermission: async request => { assert.equal(request.title, 'Read worker file?'); return 'allow-once'; }
@@ -93,7 +94,7 @@ test('remote agent runs only in the worker profile and streams permission, steer
     assert.deepEqual(result, { reply: 'worker reply', model: null, usage: null });
     assert.deepEqual(chunks, ['streamed ', 'read:worker file']);
     assert.equal(calls, 1);
-    const pending = remote.runTurn('central-conversation-key', { prompt: 'wait', history: [], onChunk() {}, onToolResult() {} });
+    const pending = remote.runTurn({ key: 'central-conversation-key', profile: 'demo' }, { prompt: 'wait', history: [], onChunk() {}, onToolResult() {} });
     const stopped = assert.rejects(pending);
     await running;
     await remote.steerTurn('central-conversation-key', 'use the other file');
@@ -144,4 +145,51 @@ test('a worker opens a worktree-less PR chat in its checkout (#1276)', async (t)
   const blank = await create({ sessionId: 'blank-session' });
   assert.equal(blank.status, 201);
   assert.ok((await blank.json() as { worktreePath: string | null }).worktreePath?.startsWith(profile.worktree_base));
+});
+
+test('worker picker and turn entry points preserve the explicit profile and full key', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'gah-worker-explicit-profile-'));
+  const fixture: ProfileSummary = JSON.parse(readFileSync(new URL('../tests/fixtures/gah/responses/profile-list.json', import.meta.url), 'utf8'))[0];
+  const profiles = ['team#prod', 'work'].map(name => ({ ...fixture, name, local_path: root }));
+  const seen: Array<{ key: string; profile: string }> = [];
+  const adapter: ManagerAdapter = {
+    id: 'openhands', displayName: 'OpenHands', implemented: true,
+    async listModels(conversation) {
+      seen.push(conversation);
+      return { models: [], currentModelId: null, reasoningEfforts: [], currentReasoningEffortId: null, contextUsage: null };
+    },
+    async runTurn(conversation) { seen.push(conversation); return { reply: 'ok', model: null, usage: null }; },
+    async listCommands() { return []; },
+    async setModel() {}, async setReasoningEffort() {}, async cancelTurn() {},
+    async steerTurn() { return { outcome: 'injected' }; }
+  };
+  const app = express();
+  app.use(express.json());
+  app.use('/api/worker-chat', createWorkerChatRouter({ node: { role: 'worker', central_url: 'https://central.test' }, nodeId: 'worker', profiles: async () => profiles, adapter: () => adapter, sessions: { stateDir: join(root, 'state') } }));
+  const server = createServer(app);
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    rmSync(root, { recursive: true, force: true });
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  for (const body of [
+    { action: 'models', profile: 'team#prod' },
+    { action: 'models', profile: 'work', sessionId: 's1' },
+    { action: 'run', profile: 'team#prod', requestId: 'turn-1', prompt: 'go', history: [] }
+  ]) {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/worker-chat`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nodeId: 'worker', backend: 'openhands', repo: fixture.repo, provider: fixture.provider, origin: new URL(fixture.web_url!).origin, ...body })
+    });
+    assert.equal(response.status, 200);
+    await response.text();
+  }
+  assert.deepEqual(seen, [
+    { key: 'team#prod', profile: 'team#prod' },
+    { key: 'work#s1', profile: 'work' },
+    { key: 'team#prod', profile: 'team#prod' }
+  ]);
 });

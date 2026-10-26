@@ -50,7 +50,7 @@ test('a headless turn runs in the conversation cwd and replays history into the 
       { role: 'user' as const, text: 'earlier question', timestamp: 1 },
       { role: 'assistant' as const, text: 'earlier answer', timestamp: 2 }
     ];
-    const result = await backend.runTurn('p#s1', {
+    const result = await backend.runTurn({ key: 'p#s1', profile: 'p' }, {
       prompt: 'new question',
       history,
       onChunk: () => {},
@@ -86,7 +86,7 @@ echo "coordinator=\${COORDINATOR_TOKEN-unset} gateway=\${TDAI_GATEWAY_API_KEY-un
       encodeStdin: (prompt) => prompt,
       spawnEnv: async () => ({ ADAPTER_KEY: 'adapter-key' })
     });
-    const result = await backend.runTurn('p#env', { prompt: 'hi', history: [], onChunk: () => {}, onToolResult: () => {} });
+    const result = await backend.runTurn({ key: 'p#env', profile: 'p' }, { prompt: 'hi', history: [], onChunk: () => {}, onToolResult: () => {} });
     assert.equal(result.reply, `coordinator=unset gateway=unset adapter=adapter-key home=${process.env.HOME} path=set`);
   } finally {
     for (const [name, value] of Object.entries(saved)) {
@@ -108,7 +108,7 @@ test('a headless backend surfaces CLI failure text and rejects cleanly', async (
       encodeStdin: (prompt) => prompt
     });
     await assert.rejects(
-      backend.runTurn('p#s2', {
+      backend.runTurn({ key: 'p#s2', profile: 'p' }, {
         prompt: 'hi',
         history: [],
         onChunk: () => {},
@@ -133,7 +133,7 @@ test('a successful exit with empty trimmed stdout surfaces as an explicit error,
       encodeStdin: (prompt) => prompt
     });
     await assert.rejects(
-      backend.runTurn('p#s3', {
+      backend.runTurn({ key: 'p#s3', profile: 'p' }, {
         prompt: 'hi',
         history: [],
         onChunk: () => {},
@@ -161,7 +161,7 @@ test('cancelTurn kills the in-flight process and the turn rejects, leaving the s
       encodeStdin: (prompt) => prompt
     });
 
-    const turnPromise = backend.runTurn('p#cancel', {
+    const turnPromise = backend.runTurn({ key: 'p#cancel', profile: 'p' }, {
       prompt: 'hi',
       history: [],
       onChunk: () => {},
@@ -175,7 +175,7 @@ test('cancelTurn kills the in-flight process and the turn rejects, leaving the s
     // run a second turn on the same profile key, proving cancelTurn cleared
     // state.child rather than leaving the session wedged.
     cli = [fakeCli(dir)];
-    const result = await backend.runTurn('p#cancel', { prompt: 'again', history: [], onChunk: () => {}, onToolResult: () => {} });
+    const result = await backend.runTurn({ key: 'p#cancel', profile: 'p' }, { prompt: 'again', history: [], onChunk: () => {}, onToolResult: () => {} });
     assert.match(result.reply, /again/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -190,11 +190,11 @@ test('headless backends advertise no config options and refuse config changes', 
     encodeStdin: (prompt) => prompt
   });
   assert.deepEqual(await backend.listCommands('p'), []);
-  const models = await backend.listModels('p');
+  const models = await backend.listModels({ key: 'p', profile: 'p' });
   assert.equal(models.models.length, 0);
   assert.equal(models.reasoningEfforts.length, 0);
-  await assert.rejects(backend.setModel('p', 'x'), /headless mode/);
-  await assert.rejects(backend.setReasoningEffort('p', 'high'), /headless mode/);
+  await assert.rejects(backend.setModel({ key: 'p', profile: 'p' }, 'x'), /headless mode/);
+  await assert.rejects(backend.setReasoningEffort({ key: 'p', profile: 'p' }, 'high'), /headless mode/);
 });
 
 test('AGY advertises its live model catalog and native reasoning efforts', async () => {
@@ -208,7 +208,7 @@ printf 'Fetching available models...\\ngemini-3.7-flash-high\\tGemini 3.7 Flash 
     process.env.PATH = `${dir}:${originalPath}`;
 
     const backend = createHeadlessBackend(agyBackendSpec());
-    const summary = await backend.listModels('p');
+    const summary = await backend.listModels({ key: 'p', profile: 'p' });
     assert.deepEqual(summary.models, [
       { id: 'gemini-3.7-flash-high', name: 'Gemini 3.7 Flash (High)' },
       { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Thinking)' }
@@ -218,13 +218,13 @@ printf 'Fetching available models...\\ngemini-3.7-flash-high\\tGemini 3.7 Flash 
       { id: 'medium', name: 'Medium' },
       { id: 'high', name: 'High' }
     ]);
-    await backend.setModel('p', 'claude-sonnet-4-6');
-    await backend.setReasoningEffort('p', 'high');
-    const selected = await backend.listModels('p');
+    await backend.setModel({ key: 'p', profile: 'p' }, 'claude-sonnet-4-6');
+    await backend.setReasoningEffort({ key: 'p', profile: 'p' }, 'high');
+    const selected = await backend.listModels({ key: 'p', profile: 'p' });
     assert.equal(selected.currentModelId, 'claude-sonnet-4-6');
     assert.equal(selected.currentReasoningEffortId, 'high');
-    await assert.rejects(backend.setModel('p', 'missing'), /Unknown model/);
-    await assert.rejects(backend.setReasoningEffort('p', 'ultra'), /Unknown reasoning effort/);
+    await assert.rejects(backend.setModel({ key: 'p', profile: 'p' }, 'missing'), /Unknown model/);
+    await assert.rejects(backend.setReasoningEffort({ key: 'p', profile: 'p' }, 'ultra'), /Unknown reasoning effort/);
   } finally {
     process.env.PATH = originalPath;
     rmSync(dir, { recursive: true, force: true });
@@ -270,7 +270,7 @@ echo '{"source":"agent","kind":"MessageEvent","llm_message":{"content":[{"type":
     const backend = createHeadlessBackend(openhandsBackendSpec({
       resolveEnv: async () => ({ LLM_MODEL: 'profile-model', LLM_API_KEY: 'profile-key', LLM_BASE_URL: 'http://profile' })
     }));
-    const result = await backend.runTurn('repo#openhands', {
+    const result = await backend.runTurn({ key: 'repo#openhands', profile: 'repo' }, {
       prompt: 'new question',
       history: [{ role: 'user', text: 'old question', timestamp: 1 }],
       onChunk: () => {},
@@ -324,7 +324,7 @@ echo '{"event":"result","result":{"status":"SUCCESS","response":"agy-fake-reply"
     process.env.PATH = `${dir}:${originalPath}`;
 
     const backend = createHeadlessBackend(agyBackendSpec());
-    const result = await backend.runTurn('p#agy-pinned', {
+    const result = await backend.runTurn({ key: 'p#agy-pinned', profile: 'p' }, {
       prompt: 'question',
       history: [],
       onChunk: () => {},
@@ -367,7 +367,7 @@ echo '{"event":"result","result":{"status":"SUCCESS","response":"agy-fake-reply"
     process.env.PATH = `${dir}:${originalPath}`;
 
     const backend = createHeadlessBackend(agyBackendSpec());
-    await backend.runTurn('p#agy-unpinned', {
+    await backend.runTurn({ key: 'p#agy-unpinned', profile: 'p' }, {
       prompt: 'question',
       history: [],
       onChunk: () => {},
@@ -399,7 +399,7 @@ echo '{"event":"result","result":{"status":"SUCCESS","response":"agy-fake-reply"
     process.env.PATH = `${dir}:${originalPath}`;
 
     const backend = createHeadlessBackend(agyBackendSpec());
-    const result = await backend.runTurn('p#agy-oversized', {
+    const result = await backend.runTurn({ key: 'p#agy-oversized', profile: 'p' }, {
       prompt: 'final question',
       history: oversizedHistory(canary),
       onChunk: () => {},
@@ -433,7 +433,7 @@ echo 'vibe-fake-reply'
 
     const spec = vibeBackendSpec({ resolveInterpreter: () => fakeInterpreter });
     const backend = createHeadlessBackend(spec);
-    const result = await backend.runTurn('p#vibe-oversized', {
+    const result = await backend.runTurn({ key: 'p#vibe-oversized', profile: 'p' }, {
       prompt: 'final question',
       history: oversizedHistory(canary),
       onChunk: () => {},
@@ -505,7 +505,7 @@ test('a leaked Vibe tool request is decoded, permission-gated, executed, and the
 
     const toolCalls: { toolCallId: string; name: string | null; status: string; locations: string[]; summary: string | null }[] = [];
     const toolResults: { name: string; text: string }[] = [];
-    const result = await backend.runTurn('p#vibe-tool', {
+    const result = await backend.runTurn({ key: 'p#vibe-tool', profile: 'p' }, {
       prompt: 'review target.md',
       history: [],
       onChunk: () => {},
@@ -553,7 +553,7 @@ test('a declined vibe tool request fails the turn with an actionable error and n
 
     const toolCalls: { status: string; summary: string | null }[] = [];
     await assert.rejects(
-      backend.runTurn('p#vibe-decline', {
+      backend.runTurn({ key: 'p#vibe-decline', profile: 'p' }, {
         prompt: 'review target.md',
         history: [],
         onChunk: () => {},
@@ -581,7 +581,7 @@ test('a decoded tool request with no permission UI attached fails closed instead
     const interpreter = fakeVibeInterpreter(dir, 'VIBE-TARGET-CONTENT-1041');
     const backend = createHeadlessBackend(vibeBackendSpec({ resolveInterpreter: () => interpreter }));
     await assert.rejects(
-      backend.runTurn('p#vibe-noperm', {
+      backend.runTurn({ key: 'p#vibe-noperm', profile: 'p' }, {
         prompt: 'review target.md',
         history: [],
         onChunk: () => {},
@@ -606,7 +606,7 @@ test('undecodable or unservable vibe tool requests end the turn with an actionab
 cat >/dev/null
 printf '${reply}'
 `, { mode: 0o755 });
-      return createHeadlessBackend(vibeBackendSpec({ resolveInterpreter: () => interpreter })).runTurn('p#vibe-badtool', {
+      return createHeadlessBackend(vibeBackendSpec({ resolveInterpreter: () => interpreter })).runTurn({ key: 'p#vibe-badtool', profile: 'p' }, {
         prompt: 'go',
         history: [],
         onChunk: () => {},
@@ -653,7 +653,7 @@ printf 'read_file죰{"file_path": "target.md"}'
 `, { mode: 0o755 });
     const backend = createHeadlessBackend(vibeBackendSpec({ resolveInterpreter: () => interpreter }));
     await assert.rejects(
-      backend.runTurn('p#vibe-loop', {
+      backend.runTurn({ key: 'p#vibe-loop', profile: 'p' }, {
         prompt: 'review target.md',
         history: [],
         onChunk: () => {},
@@ -685,9 +685,9 @@ test('bound OpenHands profile supplies model metadata without requiring or retur
     const profile = join(dir, '.openhands', 'profiles', 'work.json');
     writeFileSync(profile, JSON.stringify({ model: 'openai/gpt', base_url: 'https://source.example/v1' }));
     const spec = openhandsBackendSpec({ instanceCredential: true });
-    assert.deepEqual(await spec.spawnEnv?.('bound'), { LLM_MODEL: 'openai/gpt', LLM_BASE_URL: 'https://source.example/v1', OPENHANDS_SUPPRESS_BANNER: '1' });
+    assert.deepEqual(await spec.spawnEnv?.({ key: 'bound', profile: 'bound' }), { LLM_MODEL: 'openai/gpt', LLM_BASE_URL: 'https://source.example/v1', OPENHANDS_SUPPRESS_BANNER: '1' });
     writeFileSync(profile, JSON.stringify({ model: 'openai/gpt', base_url: 'https://source.example/v1', api_key: 'old-profile-key' }));
-    assert.equal((await spec.spawnEnv?.('bound'))?.LLM_API_KEY, undefined);
+    assert.equal((await spec.spawnEnv?.({ key: 'bound', profile: 'bound' }))?.LLM_API_KEY, undefined);
   } finally {
     for (const [name, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[name]; else process.env[name] = value;
@@ -746,7 +746,7 @@ test('OpenHands lists the provider\'s models with the configured one marked, rea
     ]);
     const backend = createHeadlessBackend(openhandsBackendSpec({ fetchFn }));
 
-    const summary = await backend.listModels('work');
+    const summary = await backend.listModels({ key: 'work', profile: 'work' });
     assert.deepEqual(summary.models, [
       { id: 'openai/gpt-4o', name: 'openai/gpt-4o' },
       { id: 'openai/o3', name: 'openai/o3' },
@@ -758,9 +758,9 @@ test('OpenHands lists the provider\'s models with the configured one marked, rea
       'a LiteLLM-style base_url already ending in /v1 lists at /models');
 
     // Choosing a model marks it in-memory without a config write.
-    await backend.setModel('work', 'anthropic/claude-sonnet-4.6');
-    assert.equal((await backend.listModels('work')).currentModelId, 'anthropic/claude-sonnet-4.6');
-    await assert.rejects(backend.setModel('work', 'not-offered'), /Unknown model/);
+    await backend.setModel({ key: 'work', profile: 'work' }, 'anthropic/claude-sonnet-4.6');
+    assert.equal((await backend.listModels({ key: 'work', profile: 'work' })).currentModelId, 'anthropic/claude-sonnet-4.6');
+    await assert.rejects(backend.setModel({ key: 'work', profile: 'work' }, 'not-offered'), /Unknown model/);
   } finally {
     for (const [name, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[name]; else process.env[name] = value;
@@ -783,7 +783,7 @@ test('the OpenHands listing is optional: a provider failure or a missing key fal
     const { fetchFn, requested } = recordingFetch([{ status: 503, body: { error: 'unavailable' } }]);
     const failing = createHeadlessBackend(openhandsBackendSpec({ fetchFn }));
 
-    const summary = await failing.listModels('work');
+    const summary = await failing.listModels({ key: 'work', profile: 'work' });
     assert.deepEqual(summary.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }],
       'a failing listing leaves exactly the configured model selectable');
     assert.equal(summary.currentModelId, 'openai/gpt-4o');
@@ -793,13 +793,13 @@ test('the OpenHands listing is optional: a provider failure or a missing key fal
     // A profile without an api_key never makes a network call.
     writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', base_url: 'https://provider.example/v1' });
     const { fetchFn: unused, requested: none } = recordingFetch([{ status: 200, body: { data: [] } }]);
-    const keyless = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: unused })).listModels('work');
+    const keyless = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: unused })).listModels({ key: 'work', profile: 'work' });
     assert.deepEqual(none, []);
     assert.deepEqual(keyless.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }]);
 
     // The ambient LLM_MODEL a turn would actually run is the one marked.
     process.env.LLM_MODEL = 'openai/env-model';
-    const envMarked = await failing.listModels('work');
+    const envMarked = await failing.listModels({ key: 'work', profile: 'work' });
     assert.equal(envMarked.currentModelId, 'openai/env-model');
     assert.ok(envMarked.models.some((model) => model.id === 'openai/env-model'));
     delete process.env.LLM_MODEL;
@@ -819,7 +819,7 @@ test('a GAH profile with no bound OpenHands profile lists no models (#1512)', as
     process.env.HOME = dir;
     process.env.GAH_BINARY = cli;
     writeFileSync(cli, '#!/bin/sh\ncat >/dev/null\necho \'{"profiles":{"work":{}}}\'\n', { mode: 0o755 });
-    const summary = await createHeadlessBackend(openhandsBackendSpec()).listModels('work');
+    const summary = await createHeadlessBackend(openhandsBackendSpec()).listModels({ key: 'work', profile: 'work' });
     assert.deepEqual(summary.models, []);
     assert.equal(summary.currentModelId, null);
   } finally {
@@ -842,7 +842,7 @@ test('a credential-bound OpenHands instance lists only its configured model, nev
     delete process.env.LLM_API_KEY;
     writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', base_url: 'https://source.example/v1', api_key: 'old-profile-key' });
     const { fetchFn, requested } = recordingFetch([{ status: 200, body: { data: [{ id: 'openai/o3' }] } }]);
-    const summary = await createHeadlessBackend(openhandsBackendSpec({ instanceCredential: true, fetchFn })).listModels('work');
+    const summary = await createHeadlessBackend(openhandsBackendSpec({ instanceCredential: true, fetchFn })).listModels({ key: 'work', profile: 'work' });
     assert.deepEqual(requested, [], 'the instance\'s credential owns its provider endpoint and key; there is nothing here to list against');
     assert.deepEqual(summary.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }]);
     assert.equal(summary.currentModelId, 'openai/gpt-4o');
@@ -875,12 +875,12 @@ echo '{"source":"agent","kind":"MessageEvent","llm_message":{"content":[{"type":
     ]);
     const backend = createHeadlessBackend(openhandsBackendSpec({ fetchFn }));
     const record = () => JSON.parse(readFileSync(join(dir, 'record.json'), 'utf8')) as { model: string };
-    const turn = (model?: string | null) => backend.runTurn('work', {
+    const turn = (model?: string | null) => backend.runTurn({ key: 'work', profile: 'work' }, {
       prompt: 'go', history: [], onChunk: () => {}, onToolResult: () => {}, ...(model !== undefined ? { model } : {})
     });
 
     // setModel pins the conversation; the next turn carries it as LLM_MODEL.
-    await backend.setModel('work', 'anthropic/claude-sonnet-4.6');
+    await backend.setModel({ key: 'work', profile: 'work' }, 'anthropic/claude-sonnet-4.6');
     await turn();
     assert.equal(record().model, 'anthropic/claude-sonnet-4.6', 'the choice reached the OpenHands child ahead of the profile model');
 
@@ -915,7 +915,7 @@ test('the OpenHands listing reads base URL and key as one profile-only pair; amb
     // profile key would otherwise leave for an unrelated endpoint.
     process.env.LLM_BASE_URL = 'https://ambient-endpoint.example/v1';
     const { fetchFn: urlFetch, requested: urlRequested } = recordingFetch([{ status: 200, body: { data: [{ id: 'openai/o3' }] } }]);
-    const mixedUrl = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: urlFetch })).listModels('work');
+    const mixedUrl = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: urlFetch })).listModels({ key: 'work', profile: 'work' });
     assert.deepEqual(urlRequested, [{ url: 'https://profile-provider.example/v1/models', authorization: 'Bearer profile-key' }],
       'the listing is made only against the profile base_url, with the profile key');
     assert.ok(mixedUrl.models.some((model) => model.id === 'openai/o3'));
@@ -925,7 +925,7 @@ test('the OpenHands listing reads base URL and key as one profile-only pair; amb
     delete process.env.LLM_BASE_URL;
     process.env.LLM_API_KEY = 'ambient-key';
     const { fetchFn: keyFetch, requested: keyRequested } = recordingFetch([{ status: 200, body: { data: [{ id: 'openai/o3' }] } }]);
-    const mixedKey = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: keyFetch })).listModels('work');
+    const mixedKey = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: keyFetch })).listModels({ key: 'work', profile: 'work' });
     assert.deepEqual(keyRequested, [{ url: 'https://profile-provider.example/v1/models', authorization: 'Bearer profile-key' }],
       'the profile endpoint is asked only with the profile key, never the ambient one');
     assert.ok(mixedKey.models.some((model) => model.id === 'openai/o3'));
@@ -936,13 +936,13 @@ test('the OpenHands listing reads base URL and key as one profile-only pair; amb
     process.env.LLM_API_KEY = 'ambient-key';
     writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', api_key: 'profile-key' });
     const { fetchFn: urllessFetch, requested: urllessRequested } = recordingFetch([{ status: 200, body: { data: [] } }]);
-    const urlless = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: urllessFetch })).listModels('work');
+    const urlless = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: urllessFetch })).listModels({ key: 'work', profile: 'work' });
     assert.deepEqual(urllessRequested, [], 'a profile without base_url never lists, ambient LLM_BASE_URL notwithstanding');
     assert.deepEqual(urlless.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }]);
 
     writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', base_url: 'https://profile-provider.example/v1' });
     const { fetchFn: keylessFetch, requested: keylessRequested } = recordingFetch([{ status: 200, body: { data: [] } }]);
-    const keyless = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: keylessFetch })).listModels('work');
+    const keyless = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: keylessFetch })).listModels({ key: 'work', profile: 'work' });
     assert.deepEqual(keylessRequested, [], 'a profile without api_key never lists, ambient LLM_API_KEY notwithstanding');
     assert.deepEqual(keyless.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }]);
   } finally {
@@ -970,19 +970,19 @@ test('every OpenHands listing failure logs one sanitized diagnostic, once per fa
 
     // A non-200 logs the status only — not the response body.
     const { fetchFn: unauthorizedFetch } = recordingFetch([{ status: 401, body: { error: 'bad profile-key at provider' } }]);
-    const unauthorized = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: unauthorizedFetch })).listModels('work');
+    const unauthorized = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: unauthorizedFetch })).listModels({ key: 'work', profile: 'work' });
     assert.deepEqual(unauthorized.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }]);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /openhands model listing unavailable for work: http 401$/);
     assert.ok(!warnings[0].includes('profile-key') && !warnings[0].includes('provider'), 'no key or body text reaches the log');
 
     // The same failure repeating (the picker polls) stays quiet.
-    await createHeadlessBackend(openhandsBackendSpec({ fetchFn: unauthorizedFetch })).listModels('work');
+    await createHeadlessBackend(openhandsBackendSpec({ fetchFn: unauthorizedFetch })).listModels({ key: 'work', profile: 'work' });
     assert.equal(warnings.length, 1, 'one line per failing transition, not per poll');
 
     // A malformed 200 logs the failure class, not the payload.
     const { fetchFn: malformedFetch } = recordingFetch([{ status: 200, body: 'not the models payload' }]);
-    const malformed = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: malformedFetch })).listModels('work');
+    const malformed = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: malformedFetch })).listModels({ key: 'work', profile: 'work' });
     assert.deepEqual(malformed.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }]);
     assert.equal(warnings.length, 2);
     assert.match(warnings[1], /openhands model listing unavailable for work: malformed response$/);
@@ -993,7 +993,7 @@ test('every OpenHands listing failure logs one sanitized diagnostic, once per fa
     const throwing = createHeadlessBackend(openhandsBackendSpec({
       fetchFn: async () => { throw thrownError; }
     }));
-    const thrown = await throwing.listModels('work');
+    const thrown = await throwing.listModels({ key: 'work', profile: 'work' });
     assert.deepEqual(thrown.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }]);
     assert.equal(warnings.length, 3);
     assert.match(warnings[2], /openhands model listing unavailable for work: TypeError$/);
@@ -1006,10 +1006,10 @@ test('every OpenHands listing failure logs one sanitized diagnostic, once per fa
       { status: 401, body: {} }
     ]);
     const recovering = createHeadlessBackend(openhandsBackendSpec({ fetchFn: recoveringFetch }));
-    const recovered = await recovering.listModels('work');
+    const recovered = await recovering.listModels({ key: 'work', profile: 'work' });
     assert.equal(warnings.length, 3, 'a recovered listing logs nothing');
     assert.ok(recovered.models.some((model) => model.id === 'openai/o3'));
-    await recovering.listModels('work');
+    await recovering.listModels({ key: 'work', profile: 'work' });
     assert.equal(warnings.length, 4, 'a failure after recovery logs again');
     assert.match(warnings[3], /openhands model listing unavailable for work: http 401$/);
   } finally {
@@ -1021,64 +1021,61 @@ test('every OpenHands listing failure logs one sanitized diagnostic, once per fa
   }
 });
 
-test('a named worker session lists its profile\'s models: the conversation key resolves to the real profile (#1512 round 3)', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-chat-key-'));
-  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY,
-    LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
-  try {
-    process.env.HOME = dir;
-    // A recording `gah`: the argv it was invoked with lands in argv.txt, so
-    // the test can prove what reached runConfigShowProfile. It answers for
-    // the bare profile `work` only — the real CLI resolves profiles by
-    // exact key, so a `work#session` argument would resolve no profile.
-    const argv = join(dir, 'argv.txt');
-    const cli = join(dir, 'gah');
-    writeFileSync(cli, `#!/bin/sh\nprintf '%s\\n' "$@" > "${argv}"\ncat >/dev/null\necho '{"profiles":{"work":{"oh_profile":"work"}}}'\n`, { mode: 0o755 });
-    process.env.GAH_BINARY = cli;
-    delete process.env.LLM_MODEL;
-    delete process.env.LLM_BASE_URL;
-    delete process.env.LLM_API_KEY;
-    writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', base_url: 'https://provider.example/v1', api_key: 'profile-key' });
-    const { fetchFn, requested } = recordingFetch([{ status: 200, body: { data: [{ id: 'openai/o3' }] } }]);
-    const backend = createHeadlessBackend(openhandsBackendSpec({ fetchFn }));
+for (const conversation of [
+  { key: 'team#prod', profile: 'team#prod' },
+  { key: 'work#s1', profile: 'work' }
+]) {
+  test(`OpenHands uses explicit profile for ${conversation.key} (#1512)`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-chat-key-'));
+    const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY,
+      LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
+    try {
+      process.env.HOME = dir;
+      // The CLI answers only for the exact profile, never a parsed key.
+      const argv = join(dir, 'argv.txt');
+      const cli = join(dir, 'gah');
+      const config = JSON.stringify({ profiles: { [conversation.profile]: { oh_profile: 'work' } } });
+      writeFileSync(cli, `#!/bin/sh\nprintf '%s\\n' "$@" > "${argv}"\ncat >/dev/null\necho '${config}'\n`, { mode: 0o755 });
+      process.env.GAH_BINARY = cli;
+      delete process.env.LLM_MODEL;
+      delete process.env.LLM_BASE_URL;
+      delete process.env.LLM_API_KEY;
+      writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', base_url: 'https://provider.example/v1', api_key: 'profile-key' });
+      const { fetchFn, requested } = recordingFetch([{ status: 200, body: { data: [{ id: 'openai/o3' }] } }]);
+      const spec = openhandsBackendSpec({ fetchFn });
+      const backend = createHeadlessBackend(spec);
 
-    // Worker chat lists with chatKey(profile, sessionId) — `profile#session`.
-    const summary = await backend.listModels('work#conv-42');
-    assert.deepEqual(summary.models, [
-      { id: 'openai/gpt-4o', name: 'openai/gpt-4o' },
-      { id: 'openai/o3', name: 'openai/o3' }
-    ], 'the session resolves the profile catalog instead of listing nothing');
-    assert.equal(summary.currentModelId, 'openai/gpt-4o');
-    assert.deepEqual(requested, [{ url: 'https://provider.example/v1/models', authorization: 'Bearer profile-key' }],
-      'the listing ran against the real profile\'s provider');
-    assert.deepEqual(
-      readFileSync(argv, 'utf8').trim().split('\n'),
-      ['config', 'show', '--json', '--full', '--profile', 'work'],
-      'the session half never reaches runConfigShowProfile'
-    );
+      const summary = await backend.listModels(conversation);
+      assert.deepEqual(summary.models, [
+        { id: 'openai/gpt-4o', name: 'openai/gpt-4o' },
+        { id: 'openai/o3', name: 'openai/o3' }
+      ], 'the session resolves the profile catalog instead of listing nothing');
+      assert.equal(summary.currentModelId, 'openai/gpt-4o');
+      assert.deepEqual(requested, [{ url: 'https://provider.example/v1/models', authorization: 'Bearer profile-key' }],
+        'the listing ran against the real profile\'s provider');
+      assert.deepEqual(
+        readFileSync(argv, 'utf8').trim().split('\n'),
+        ['config', 'show', '--json', '--full', '--profile', conversation.profile],
+        'the session half never reaches runConfigShowProfile'
+      );
 
-    // A bare key (the default session) behaves exactly the same.
-    assert.deepEqual((await backend.listModels('work')).models, summary.models);
-    assert.deepEqual(
-      readFileSync(argv, 'utf8').trim().split('\n'),
-      ['config', 'show', '--json', '--full', '--profile', 'work'],
-      'the bare profile key is unchanged'
-    );
-
-    // setModel validates against the profile's catalog but pins per
-    // conversation, so one session's choice never leaks into another's.
-    await backend.setModel('work#conv-42', 'openai/o3');
-    assert.equal((await backend.listModels('work#conv-42')).currentModelId, 'openai/o3');
-    assert.equal((await backend.listModels('work')).currentModelId, 'openai/gpt-4o',
-      'another conversation of the same profile keeps its own selection');
-  } finally {
-    for (const [name, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+      // setModel validates against the profile's catalog but pins per
+      // conversation, so one session's choice never leaks into another's.
+      await backend.setModel(conversation, 'openai/o3');
+      assert.equal((await backend.listModels(conversation)).currentModelId, 'openai/o3');
+      assert.equal((await backend.listModels({ key: `${conversation.profile}#other`, profile: conversation.profile })).currentModelId, 'openai/gpt-4o',
+        'another conversation of the same profile keeps its own selection');
+      assert.equal((await spec.spawnEnv?.(conversation, { model: 'openai/o3' }))?.LLM_MODEL, 'openai/o3');
+      assert.equal(readFileSync(argv, 'utf8').trim().split('\n').at(-1), conversation.profile,
+        'turn environment lookup uses the real profile');
+    } finally {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name]; else process.env[name] = value;
+      }
+      rmSync(dir, { recursive: true, force: true });
     }
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
+  });
+}
 
 test('a named Vibe instance derives its Python bridge from the selected launcher', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-vibe-selected-launcher-'));
@@ -1131,7 +1128,7 @@ test('Vibe lists its configured models with the active one marked, read from its
     process.env.GAH_BINARY = join(dir, 'gah');
     const backend = createHeadlessBackend(vibeBackendSpec());
 
-    const summary = await backend.listModels('vibe-profile');
+    const summary = await backend.listModels({ key: 'vibe-profile', profile: 'vibe-profile' });
     assert.deepEqual(summary.models, [
       { id: 'glm-5.3', name: 'GLM 5.3' },
       { id: 'mistral-medium-3.5', name: 'Mistral Medium 3.5' }
@@ -1142,7 +1139,7 @@ test('Vibe lists its configured models with the active one marked, read from its
     assert.ok(requested.includes('--profile') && requested.includes('vibe-profile'));
     assert.ok(!requested.includes('--instance'), 'the ambient installation is the default scope');
 
-    await assert.rejects(backend.setModel('vibe-profile', 'not-configured'), /Unknown model/);
+    await assert.rejects(backend.setModel({ key: 'vibe-profile', profile: 'vibe-profile' }, 'not-configured'), /Unknown model/);
   } finally {
     for (const [name, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[name]; else process.env[name] = value;
@@ -1151,32 +1148,44 @@ test('Vibe lists its configured models with the active one marked, read from its
   }
 });
 
-test('a named worker session lists Vibe models through the real profile, not the conversation key (#1510/#1512 round 3)', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-models-chat-key-'));
-  const saved = { GAH_BINARY: process.env.GAH_BINARY };
-  try {
-    const { argv } = fakeVibeGah(dir);
-    process.env.GAH_BINARY = join(dir, 'gah');
-    const backend = createHeadlessBackend(vibeBackendSpec());
-
-    // The Vibe picker had the same defect as the OpenHands one: a worker
-    // session's `profile#session` key went to the CLI as --profile, where
-    // the real CLI resolves profiles by exact key.
-    const summary = await backend.listModels('vibe-profile#conv-7');
-    assert.equal(summary.models.length, 2, 'the worker session sees the profile catalog');
-    assert.equal(summary.currentModelId, 'mistral-medium-3.5');
-    assert.deepEqual(
-      readFileSync(argv, 'utf8').trim().split('\n'),
-      ['config', 'show-vibe-models', '--profile', 'vibe-profile'],
-      'the session half never reaches the gah CLI; the bare profile is unchanged'
-    );
-  } finally {
-    for (const [name, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+for (const conversation of [
+  { key: 'team#prod', profile: 'team#prod' },
+  { key: 'work#s1', profile: 'work' }
+]) {
+  test(`Vibe uses explicit profile for ${conversation.key} (#1510/#1512)`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-models-chat-key-'));
+    const saved = { GAH_BINARY: process.env.GAH_BINARY };
+    try {
+      const { argv } = fakeVibeGah(dir);
+      process.env.GAH_BINARY = join(dir, 'gah');
+      const interpreter = join(dir, 'fake-python3');
+      writeFileSync(interpreter, '#!/bin/sh\ncat >/dev/null\necho vibe-reply\n', { mode: 0o755 });
+      const backend = createHeadlessBackend(vibeBackendSpec({ resolveInterpreter: () => interpreter }));
+      const summary = await backend.listModels(conversation);
+      assert.equal(summary.models.length, 2, 'the worker session sees the profile catalog');
+      assert.equal(summary.currentModelId, 'mistral-medium-3.5');
+      assert.deepEqual(
+        readFileSync(argv, 'utf8').trim().split('\n'),
+        ['config', 'show-vibe-models', '--profile', conversation.profile],
+        'listing uses the exact profile'
+      );
+      await backend.setModel(conversation, 'glm-5.3');
+      assert.deepEqual(readFileSync(argv, 'utf8').trim().split('\n'),
+        ['config', 'set-vibe-model', '--profile', conversation.profile, '--model', 'glm-5.3']);
+      await backend.runTurn(conversation, {
+        prompt: 'go', history: [], model: 'mistral-medium-3.5', onChunk() {}, onToolResult() {}
+      });
+      assert.deepEqual(readFileSync(argv, 'utf8').trim().split('\n'),
+        ['config', 'set-vibe-model', '--profile', conversation.profile, '--model', 'mistral-medium-3.5'],
+        'turn pin writes use the exact profile');
+    } finally {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name]; else process.env[name] = value;
+      }
+      rmSync(dir, { recursive: true, force: true });
     }
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+  });
+}
 
 test('choosing a Vibe model persists active_model through the gah CLI and the mark survives a fresh adapter (#1510)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-setmodel-'));
@@ -1186,7 +1195,7 @@ test('choosing a Vibe model persists active_model through the gah CLI and the ma
     process.env.GAH_BINARY = join(dir, 'gah');
     const backend = createHeadlessBackend(vibeBackendSpec());
 
-    await backend.setModel('vibe-profile', 'glm-5.3');
+    await backend.setModel({ key: 'vibe-profile', profile: 'vibe-profile' }, 'glm-5.3');
     assert.equal(readFileSync(state, 'utf8'), 'glm-5.3', 'the choice reached the config writer');
     const requested = readFileSync(argv, 'utf8').trim().split('\n');
     assert.deepEqual(
@@ -1197,7 +1206,7 @@ test('choosing a Vibe model persists active_model through the gah CLI and the ma
 
     // A fresh adapter has no in-memory selection: the active mark must
     // come back from the persisted config.
-    const reloaded = await createHeadlessBackend(vibeBackendSpec()).listModels('vibe-profile');
+    const reloaded = await createHeadlessBackend(vibeBackendSpec()).listModels({ key: 'vibe-profile', profile: 'vibe-profile' });
     assert.equal(reloaded.currentModelId, 'glm-5.3', 'the persisted active model is the one marked');
     assert.ok(reloaded.models.some((model) => model.id === 'glm-5.3'));
   } finally {
@@ -1216,12 +1225,12 @@ test('a named Vibe instance scopes its model reads and writes to the instance (#
     process.env.GAH_BINARY = join(dir, 'gah');
     const backend = createHeadlessBackend(vibeBackendSpec({ instance: 'mistral-tak-vibe' }));
 
-    const summary = await backend.listModels('vibe-profile');
+    const summary = await backend.listModels({ key: 'vibe-profile', profile: 'vibe-profile' });
     assert.equal(summary.models.length, 2);
     let requested = readFileSync(argv, 'utf8').trim().split('\n');
     assert.ok(requested.includes('--instance') && requested.includes('mistral-tak-vibe'));
 
-    await backend.setModel('vibe-profile', 'glm-5.3');
+    await backend.setModel({ key: 'vibe-profile', profile: 'vibe-profile' }, 'glm-5.3');
     assert.equal(readFileSync(state, 'utf8'), 'glm-5.3');
     requested = readFileSync(argv, 'utf8').trim().split('\n');
     assert.ok(requested.includes('--instance') && requested.includes('mistral-tak-vibe'), 'the write is scoped too');
@@ -1243,10 +1252,9 @@ test('a pinned Vibe turn persists the pinned model before spawning, so the CLI p
     writeFileSync(interpreter, '#!/bin/sh\ncat >/dev/null\necho vibe-reply\n', { mode: 0o755 });
 
     const backend = createHeadlessBackend(vibeBackendSpec({ resolveInterpreter: () => interpreter }));
-    const result = await backend.runTurn('vibe-profile', {
+    const result = await backend.runTurn({ key: 'vibe-profile', profile: 'vibe-profile' }, {
       prompt: 'go',
       history: [],
-      profile: 'vibe-profile',
       onChunk: () => {},
       onToolResult: () => {},
       model: 'glm-5.3'
@@ -1257,10 +1265,9 @@ test('a pinned Vibe turn persists the pinned model before spawning, so the CLI p
 
     // An unpinned turn never rewrites the config.
     writeFileSync(state, 'mistral-medium-3.5');
-    await backend.runTurn('vibe-profile', {
+    await backend.runTurn({ key: 'vibe-profile', profile: 'vibe-profile' }, {
       prompt: 'go again',
       history: [],
-      profile: 'vibe-profile',
       onChunk: () => {},
       onToolResult: () => {},
       model: null
@@ -1320,7 +1327,7 @@ test('concurrent pinned turns on one installation serialize, so each turn runs w
   try {
     const { backend } = sharedSelectionBackend(dir);
     const turn = (model: string, prompt: string) =>
-      backend.runTurn(`p#conv-${model}`, {
+      backend.runTurn({ key: `p#conv-${model}`, profile: 'p' }, {
         prompt,
         history: [],
         onChunk: () => {},
@@ -1367,7 +1374,7 @@ function cancellableSelectionBackend(dir: string) {
     `],
     encodeStdin: prompt => prompt
   });
-  const turn = (model: string) => backend.runTurn(`p#${model}`, {
+  const turn = (model: string) => backend.runTurn({ key: `p#${model}`, profile: 'p' }, {
     prompt: 'go', history: [], model, onChunk: () => {}, onToolResult: () => {}
   });
   return { backend, turn, applied, gate, spawned };
@@ -1451,17 +1458,17 @@ for (const backendId of ['vibe-like', 'openhands'] as const) {
       id: backendId, displayName: backendId,
       modelSelectionScope: () => `cancel-during-env-1637-${backendId}`,
       applyModel: async () => {},
-      spawnEnv: async (profile, opts) => {
-        assert.equal(profile, 'p');
+      spawnEnv: async (conversation, opts) => {
+        assert.equal(conversation.profile, 'p');
         if (opts?.model === 'p#A') { entered(); await gate; }
         if (backendId === 'openhands') {
           const env = await openhandsBackendSpec({
-            resolveEnv: async (resolvedProfile, resolvedOpts) => {
-              assert.equal(resolvedProfile, 'p');
+            resolveEnv: async (resolvedConversation, resolvedOpts) => {
+              assert.deepEqual(resolvedConversation, { key: 'p#B', profile: 'p' });
               assert.equal(resolvedOpts?.model, 'p#B');
               return { LLM_MODEL: resolvedOpts.model };
             }
-          }).spawnEnv!(profile, opts);
+          }).spawnEnv!(conversation, opts);
           assert.equal(env?.LLM_MODEL, opts?.model);
           return env;
         }
@@ -1470,7 +1477,7 @@ for (const backendId of ['vibe-like', 'openhands'] as const) {
       turnArgs: () => [execPath, '-e', 'process.stdin.resume(); process.stdin.on("end", () => console.log("done"))'],
       encodeStdin: prompt => { spawned.push(prompt); return prompt; }
     });
-    const turn = (key: string) => backend.runTurn(key, {
+    const turn = (key: string) => backend.runTurn({ key, profile: 'p' }, {
       prompt: key, history: [], model: key, onChunk: () => {}, onToolResult: () => {}
     });
     const turnA = turn('p#A');
@@ -1505,7 +1512,7 @@ test('cancelling a permission wait releases the model lock without a tool contin
     applyModel: async () => {},
     encodeStdin: prompt => { spawned.push(prompt); return prompt; }
   });
-  const turnA = backend.runTurn('p#A', {
+  const turnA = backend.runTurn({ key: 'p#A', profile: 'p' }, {
     prompt: 'read target.md', history: [], model: 'model-A', cwd: dir,
     onChunk: () => {}, onToolResult: () => assert.fail('cancelled tool must not run'),
     requestPermission: async () => { entered(); return permission; }
@@ -1518,7 +1525,7 @@ test('cancelling a permission wait releases the model lock without a tool contin
     rmSync(dir, { recursive: true, force: true });
   });
   await ready;
-  turnB = backend.runTurn('p#B', {
+  turnB = backend.runTurn({ key: 'p#B', profile: 'p' }, {
     prompt: 'TARGET-CONTENT', history: [], model: 'model-B', cwd: dir,
     onChunk: () => {}, onToolResult: () => {}
   });
@@ -1533,14 +1540,14 @@ test('a setModel write waits for an in-flight pinned turn, so the turn never run
   const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-setmodel-race-'));
   try {
     const { backend, selection, gate } = sharedSelectionBackend(dir, { gate: true });
-    const turnPromise = backend.runTurn('p#conv-a', {
+    const turnPromise = backend.runTurn({ key: 'p#conv-a', profile: 'p' }, {
       prompt: 'a',
       history: [],
       onChunk: () => {},
       onToolResult: () => {},
       model: 'model-A'
     });
-    const setPromise = backend.setModel('p#conv-b', 'model-B');
+    const setPromise = backend.setModel({ key: 'p#conv-b', profile: 'p' }, 'model-B');
     // Let both contenders run: the pinned turn holds the installation's
     // mutex, so the write queues behind it instead of landing mid-turn.
     await new Promise(resolve => setImmediate(resolve));

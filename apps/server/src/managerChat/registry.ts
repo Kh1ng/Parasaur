@@ -35,14 +35,19 @@ export interface ManagerBackendInfo {
   implemented: boolean;
 }
 
+/** Conversation identity and its real GAH profile. Keys are opaque and must
+ * never be parsed to resolve profile-scoped configuration. */
+export interface ManagerConversation {
+  key: string;
+  profile: string;
+}
+
 export interface ManagerAdapter extends ManagerBackendInfo {
   runTurn(
-    gahProfile: string,
+    conversation: ManagerConversation,
     input: {
       prompt: string;
       history: ChatTranscriptTurn[];
-      /** GAH config profile, separate from the adapter's composite conversation key. */
-      profile?: string;
       onChunk: (text: string) => void;
       onToolResult: (name: string, text: string) => void;
       /** Session working directory (WP2); omitted = the server's cwd. */
@@ -67,7 +72,7 @@ export interface ManagerAdapter extends ManagerBackendInfo {
     }
   ): Promise<{ reply: string; model: string | null; usage: ChatUsage | null }>;
   listCommands(gahProfile: string): Promise<ManagerCommandInfo[]>;
-  listModels(gahProfile: string, cwd?: string): Promise<{
+  listModels(conversation: ManagerConversation, cwd?: string): Promise<{
     models: ManagerModelInfo[];
     currentModelId: string | null;
     reasoningEfforts: ManagerReasoningEffortInfo[];
@@ -80,8 +85,8 @@ export interface ManagerAdapter extends ManagerBackendInfo {
      * false (older workers and backends without a bundled fallback). */
     bundledRuntime?: boolean;
   }>;
-  setModel(gahProfile: string, modelId: string): Promise<void>;
-  setReasoningEffort(gahProfile: string, effortId: string): Promise<void>;
+  setModel(conversation: ManagerConversation, modelId: string): Promise<void>;
+  setReasoningEffort(conversation: ManagerConversation, effortId: string): Promise<void>;
   steerTurn(gahProfile: string, message: string): Promise<{ outcome: 'injected' }>;
   cancelTurn(gahProfile: string): Promise<void>;
   /** Release processes when a selected credential or instance changes. */
