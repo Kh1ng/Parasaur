@@ -580,14 +580,36 @@ async function resolveOpenhandsEnv(
  * optional, so it must never hold the picker hostage. */
 const OPENHANDS_MODELS_TIMEOUT_MS = 5_000;
 
+/** Last listing diagnostic logged per OpenHands profile, the same
+ * once-per-transition shape wsServer uses for its events refresh
+ * (#1598/#1616): the picker can poll listModels repeatedly, so the
+ * SAME failure repeating stays quiet, a different failure logs and
+ * replaces it, and a success clears the entry so a failure after
+ * recovery logs again. */
+const openhandsListingFailures = new Map<string, string>();
+
+/** One sanitized diagnostic per listing failure (#1512): the OpenHands
+ * profile and a status or error class only — never the URL, the API
+ * key, the response body, or exception text or stack. */
+function warnOpenhandsListingUnavailable(profile: string, detail: string): void {
+  if (openhandsListingFailures.get(profile) === detail) return;
+  openhandsListingFailures.set(profile, detail);
+  console.warn(`[managerChat] openhands model listing unavailable for ${profile}: ${detail}`);
+}
+
 /** Ask the profile's LLM provider for its OpenAI-compatible /v1/models
  * inventory (#1512) — the same listing source the gah-router refresher
  * uses (cliRouter's bounded fetch: no redirects, size cap, short
  * deadline). OpenHands itself offers no inventory: its CLI has no models
  * command and its profile names one model. Best-effort by design: any
- * failure returns an empty list and the picker falls back to the
- * configured model. */
-async function listOpenhandsModels(baseUrl: string, apiKey: string, fetchFn?: typeof globalThis.fetch): Promise<string[]> {
+ * failure logs the single sanitized diagnostic above and returns an
+ * empty list, and the picker falls back to the configured model. */
+async function listOpenhandsModels(
+  profile: string,
+  baseUrl: string,
+  apiKey: string,
+  fetchFn?: typeof globalThis.fetch
+): Promise<string[]> {
   const trimmed = baseUrl.replace(/\/+$/, '');
   // LiteLLM base URLs normally end in /v1 (the API root); profiles with a
   // bare origin get the conventional /v1 prefix appended.
@@ -599,16 +621,27 @@ async function listOpenhandsModels(baseUrl: string, apiKey: string, fetchFn?: ty
       timeoutMs: OPENHANDS_MODELS_TIMEOUT_MS,
       fetchFn
     });
-    if (result.status !== 200) return [];
+    if (result.status !== 200) {
+      warnOpenhandsListingUnavailable(profile, `http ${result.status}`);
+      return [];
+    }
     const body = result.body as { data?: Array<{ id?: unknown }> };
-    if (!body?.data || !Array.isArray(body.data)) return [];
+    if (!body?.data || !Array.isArray(body.data)) {
+      warnOpenhandsListingUnavailable(profile, 'malformed response');
+      return [];
+    }
     const ids: string[] = [];
     for (const entry of body.data) {
       const id = entry?.id;
       if (typeof id === 'string' && id.length > 0 && id.length <= 200 && !/[\x00-\x1F\x7F]/.test(id)) ids.push(id);
     }
+    openhandsListingFailures.delete(profile);
     return ids;
-  } catch {
+  } catch (error) {
+    // The error CLASS only: an exception's message or stack can carry the
+    // URL or upstream text, none of which may reach the log.
+    const name = (error instanceof Error ? error.name : 'error').replace(/[\x00-\x1F\x7F]/g, '').slice(0, 60);
+    warnOpenhandsListingUnavailable(profile, name || 'error');
     return [];
   }
 }
@@ -657,10 +690,16 @@ export function openhandsBackendSpec(
       const current = process.env.LLM_MODEL ?? config.model;
       // An instance's credential (not this profile) owns its provider
       // endpoint and key, so there is nothing here to list against; the
-      // picker shows the configured model only.
-      const apiKey = overrides.instanceCredential ? null : process.env.LLM_API_KEY ?? config.apiKey;
-      const baseUrl = process.env.LLM_BASE_URL ?? config.baseUrl;
-      const ids = baseUrl && apiKey ? await listOpenhandsModels(baseUrl, apiKey, overrides.fetchFn) : [];
+      // picker shows the configured model only. Otherwise the listing
+      // credentials are a profile-only PAIR: the ambient LLM_API_KEY and
+      // LLM_BASE_URL never substitute for either half, so the profile key
+      // cannot be sent to an unrelated ambient endpoint and an ambient key
+      // cannot be sent to the profile endpoint. A profile missing either
+      // half has nothing to list against either — the picker falls back
+      // to the configured model.
+      const apiKey = overrides.instanceCredential ? null : config.apiKey;
+      const baseUrl = config.baseUrl;
+      const ids = baseUrl && apiKey ? await listOpenhandsModels(config.name, baseUrl, apiKey, overrides.fetchFn) : [];
       const models: ManagerModelInfo[] = [];
       for (const id of current ? [current, ...ids] : ids) {
         if (!models.some((model) => model.id === id)) models.push({ id, name: id });

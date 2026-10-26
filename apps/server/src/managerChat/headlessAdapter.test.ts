@@ -899,6 +899,128 @@ echo '{"source":"agent","kind":"MessageEvent","llm_message":{"content":[{"type":
   }
 });
 
+test('the OpenHands listing reads base URL and key as one profile-only pair; ambient LLM_* never substitutes (#1512)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-profile-pair-'));
+  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY,
+    LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
+  try {
+    process.env.HOME = dir;
+    process.env.GAH_BINARY = fakeOpenhandsGah(dir);
+    delete process.env.LLM_MODEL;
+    delete process.env.LLM_BASE_URL;
+    delete process.env.LLM_API_KEY;
+    writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', base_url: 'https://profile-provider.example/v1', api_key: 'profile-key' });
+
+    // An ambient LLM_BASE_URL must not become the listing target: the
+    // profile key would otherwise leave for an unrelated endpoint.
+    process.env.LLM_BASE_URL = 'https://ambient-endpoint.example/v1';
+    const { fetchFn: urlFetch, requested: urlRequested } = recordingFetch([{ status: 200, body: { data: [{ id: 'openai/o3' }] } }]);
+    const mixedUrl = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: urlFetch })).listModels('work');
+    assert.deepEqual(urlRequested, [{ url: 'https://profile-provider.example/v1/models', authorization: 'Bearer profile-key' }],
+      'the listing is made only against the profile base_url, with the profile key');
+    assert.ok(mixedUrl.models.some((model) => model.id === 'openai/o3'));
+
+    // An ambient LLM_API_KEY must not become the listing credential: it
+    // would otherwise be sent to the profile's endpoint.
+    delete process.env.LLM_BASE_URL;
+    process.env.LLM_API_KEY = 'ambient-key';
+    const { fetchFn: keyFetch, requested: keyRequested } = recordingFetch([{ status: 200, body: { data: [{ id: 'openai/o3' }] } }]);
+    const mixedKey = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: keyFetch })).listModels('work');
+    assert.deepEqual(keyRequested, [{ url: 'https://profile-provider.example/v1/models', authorization: 'Bearer profile-key' }],
+      'the profile endpoint is asked only with the profile key, never the ambient one');
+    assert.ok(mixedKey.models.some((model) => model.id === 'openai/o3'));
+
+    // A profile missing either half does not list at all, even when the
+    // ambient env could have supplied the missing half.
+    process.env.LLM_BASE_URL = 'https://ambient-endpoint.example/v1';
+    process.env.LLM_API_KEY = 'ambient-key';
+    writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', api_key: 'profile-key' });
+    const { fetchFn: urllessFetch, requested: urllessRequested } = recordingFetch([{ status: 200, body: { data: [] } }]);
+    const urlless = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: urllessFetch })).listModels('work');
+    assert.deepEqual(urllessRequested, [], 'a profile without base_url never lists, ambient LLM_BASE_URL notwithstanding');
+    assert.deepEqual(urlless.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }]);
+
+    writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', base_url: 'https://profile-provider.example/v1' });
+    const { fetchFn: keylessFetch, requested: keylessRequested } = recordingFetch([{ status: 200, body: { data: [] } }]);
+    const keyless = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: keylessFetch })).listModels('work');
+    assert.deepEqual(keylessRequested, [], 'a profile without api_key never lists, ambient LLM_API_KEY notwithstanding');
+    assert.deepEqual(keyless.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }]);
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('every OpenHands listing failure logs one sanitized diagnostic, once per failing transition (#1512)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-diagnostics-'));
+  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY,
+    LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (message: string) => { warnings.push(message); };
+  try {
+    process.env.HOME = dir;
+    process.env.GAH_BINARY = fakeOpenhandsGah(dir);
+    delete process.env.LLM_MODEL;
+    delete process.env.LLM_BASE_URL;
+    delete process.env.LLM_API_KEY;
+    writeOpenhandsProfile(dir, { model: 'openai/gpt-4o', base_url: 'https://profile-provider.example/v1', api_key: 'profile-key' });
+
+    // A non-200 logs the status only — not the response body.
+    const { fetchFn: unauthorizedFetch } = recordingFetch([{ status: 401, body: { error: 'bad profile-key at provider' } }]);
+    const unauthorized = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: unauthorizedFetch })).listModels('work');
+    assert.deepEqual(unauthorized.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }]);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /openhands model listing unavailable for work: http 401$/);
+    assert.ok(!warnings[0].includes('profile-key') && !warnings[0].includes('provider'), 'no key or body text reaches the log');
+
+    // The same failure repeating (the picker polls) stays quiet.
+    await createHeadlessBackend(openhandsBackendSpec({ fetchFn: unauthorizedFetch })).listModels('work');
+    assert.equal(warnings.length, 1, 'one line per failing transition, not per poll');
+
+    // A malformed 200 logs the failure class, not the payload.
+    const { fetchFn: malformedFetch } = recordingFetch([{ status: 200, body: 'not the models payload' }]);
+    const malformed = await createHeadlessBackend(openhandsBackendSpec({ fetchFn: malformedFetch })).listModels('work');
+    assert.deepEqual(malformed.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }]);
+    assert.equal(warnings.length, 2);
+    assert.match(warnings[1], /openhands model listing unavailable for work: malformed response$/);
+    assert.ok(!warnings[1].includes('not the models payload'), 'the response body never reaches the log');
+
+    // A thrown fetch logs the error class, not the message or stack.
+    const thrownError = new TypeError('fetch failed against https://profile-provider.example/v1/models?token=profile-key');
+    const throwing = createHeadlessBackend(openhandsBackendSpec({
+      fetchFn: async () => { throw thrownError; }
+    }));
+    const thrown = await throwing.listModels('work');
+    assert.deepEqual(thrown.models, [{ id: 'openai/gpt-4o', name: 'openai/gpt-4o' }]);
+    assert.equal(warnings.length, 3);
+    assert.match(warnings[2], /openhands model listing unavailable for work: TypeError$/);
+    assert.ok(!warnings[2].includes('profile-key') && !warnings[2].includes('https://'), 'no URL or key text reaches the log');
+
+    // A success clears the entry, so the same failure logs again on its
+    // next failing transition (the wsServer once-per-transition shape).
+    const { fetchFn: recoveringFetch } = recordingFetch([
+      { status: 200, body: { data: [{ id: 'openai/o3' }] } },
+      { status: 401, body: {} }
+    ]);
+    const recovering = createHeadlessBackend(openhandsBackendSpec({ fetchFn: recoveringFetch }));
+    const recovered = await recovering.listModels('work');
+    assert.equal(warnings.length, 3, 'a recovered listing logs nothing');
+    assert.ok(recovered.models.some((model) => model.id === 'openai/o3'));
+    await recovering.listModels('work');
+    assert.equal(warnings.length, 4, 'a failure after recovery logs again');
+    assert.match(warnings[3], /openhands model listing unavailable for work: http 401$/);
+  } finally {
+    console.warn = originalWarn;
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 
 test('a named Vibe instance derives its Python bridge from the selected launcher', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-vibe-selected-launcher-'));
