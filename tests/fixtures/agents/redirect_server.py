@@ -29,6 +29,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 http = http.server.HTTPServer(("127.0.0.1", 0), Handler)
 https = type(http)(("127.0.0.1", 0), Handler)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.minimum_version = ssl.TLSVersion.TLSv1_2
 context.load_cert_chain(root / "cert.pem", root / "key.pem")
 https.socket = context.wrap_socket(https.socket, server_side=True)
 threading.Thread(target=http.serve_forever, daemon=True).start()
