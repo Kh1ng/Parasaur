@@ -117,9 +117,10 @@ export function modelOverrideForProfile(profile: string, backendId: string): str
   return readSettings().modelOverrides[modelOverrideKey(profile, backendId)];
 }
 
-export function setModelOverrideForProfile(profile: string, backendId: string, modelId: string): void {
+export function setModelOverrideForProfile(profile: string, backendId: string, modelId: string | null): void {
   const settings = readSettings();
-  settings.modelOverrides[modelOverrideKey(profile, backendId)] = modelId;
+  if (modelId === null) delete settings.modelOverrides[modelOverrideKey(profile, backendId)];
+  else settings.modelOverrides[modelOverrideKey(profile, backendId)] = modelId;
   delete settings.quotaRoutes?.[profile];
   writeSettings(settings);
 }
@@ -128,9 +129,10 @@ export function reasoningEffortOverrideForProfile(profile: string, backendId: st
   return readSettings().reasoningEffortOverrides[modelOverrideKey(profile, backendId)];
 }
 
-export function setReasoningEffortOverrideForProfile(profile: string, backendId: string, effortId: string): void {
+export function setReasoningEffortOverrideForProfile(profile: string, backendId: string, effortId: string | null): void {
   const settings = readSettings();
-  settings.reasoningEffortOverrides[modelOverrideKey(profile, backendId)] = effortId;
+  if (effortId === null) delete settings.reasoningEffortOverrides[modelOverrideKey(profile, backendId)];
+  else settings.reasoningEffortOverrides[modelOverrideKey(profile, backendId)] = effortId;
   delete settings.quotaRoutes?.[profile];
   writeSettings(settings);
 }

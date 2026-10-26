@@ -105,6 +105,7 @@ export function writeSettings(settings: CliRouterStoredSettings): void {
 // ---------------------------------------------------------------------------
 
 interface QuotaCache {
+  agyComplete?: boolean;
   quotas: CliRouterQuota[];
   quotaError?: string;
   observedAt: string;
@@ -374,7 +375,7 @@ async function proxyCall(account: UpstreamAuthFile, call: ProviderCall, deps: Qu
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
-async function refreshAntigravityQuota(account: UpstreamAuthFile, deps: QuotaRefreshDeps): Promise<CliRouterQuota[]> {
+async function refreshAntigravityQuota(account: UpstreamAuthFile, deps: QuotaRefreshDeps): Promise<Pick<QuotaCache, 'quotas' | 'agyComplete'>> {
   const project = boundedString(account.project_id, 200);
   if (!project) throw new QuotaFailure('Account has no project id');
   const body = await proxyCall(account, {
@@ -387,9 +388,11 @@ async function refreshAntigravityQuota(account: UpstreamAuthFile, deps: QuotaRef
   if (!Array.isArray(groups)) throw new Error('shape');
   const observedAt = new Date().toISOString();
   const quotas: CliRouterQuota[] = [];
+  let agyComplete = true;
   for (const g of groups) {
-    if (!isObj(g) || !Array.isArray(g.buckets)) continue;
+    if (!isObj(g) || !Array.isArray(g.buckets)) { agyComplete = false; continue; }
     const pool = agyGroupPool(g.buckets.map(b => isObj(b) ? b.bucketId : undefined));
+    if (!pool) agyComplete = false;
     for (const b of g.buckets) {
       if (!isObj(b)) continue;
       const name = boundedString(b.displayName, 80) ?? 'Unknown';
@@ -404,7 +407,7 @@ async function refreshAntigravityQuota(account: UpstreamAuthFile, deps: QuotaRef
       });
     }
   }
-  return quotas;
+  return { quotas, agyComplete };
 }
 
 // Native window names (src/usage/claude.rs). Per-model and extra-usage buckets
@@ -462,7 +465,6 @@ async function refreshCodexQuota(account: UpstreamAuthFile, deps: QuotaRefreshDe
 }
 
 const QUOTA_PROVIDERS: Record<string, (a: UpstreamAuthFile, d: QuotaRefreshDeps) => Promise<CliRouterQuota[]>> = {
-  antigravity: refreshAntigravityQuota,
   claude: refreshClaudeQuota,
   codex: refreshCodexQuota,
 };
@@ -472,10 +474,9 @@ async function refreshAccountQuota(account: UpstreamAuthFile, deps: QuotaRefresh
   const name = providerOf(account).toLowerCase();
   const refresh = Object.hasOwn(QUOTA_PROVIDERS, name) ? QUOTA_PROVIDERS[name] : undefined;
   // Failures never imply zero remaining, and never echo upstream text (it can embed tokens).
-  if (!refresh) {
-    return { quotas: [], quotaError: 'Quota refresh is not supported for this provider', observedAt };
-  }
   try {
+    if (name === 'antigravity') return { ...await refreshAntigravityQuota(account, deps), observedAt };
+    if (!refresh) return { quotas: [], quotaError: 'Quota refresh is not supported for this provider', observedAt };
     return { quotas: await refresh(account, deps), observedAt };
   } catch (err) {
     return { quotas: [], quotaError: err instanceof QuotaFailure ? err.message : 'Failed to refresh quota from provider', observedAt };
@@ -546,13 +547,19 @@ export function createCliRouterQuotaObserver(deps: CliRouterDeps = {}) {
     // Preserve prior windows until their normal freshness limit expires.
     if (provider === 'claude' && !result.quotaError && routable.length === 0) return result;
     const hasReading = routable.length > 0 && !result.quotaError;
-    if (provider === 'antigravity' && hasReading) {
-      agyScopes.set(key, routable.map(quota => ({ quotaPool: quota.quotaPool, window: quota.window })));
+    const previousScopes = provider === 'antigravity' ? agyScopes.get(key) : undefined;
+    const missing = (previousScopes ?? []).filter(scope => !hasReading || !routable.some(quota => quota.quotaPool === scope.quotaPool && quota.window === scope.window));
+    if (provider === 'antigravity' && !result.quotaError) {
+      // Only a complete inventory can retire scopes; malformed groups retain their last identities.
+      agyScopes.set(key, [...routable, ...(result.agyComplete ? [] : missing)].map(scope => ({ quotaPool: scope.quotaPool, window: scope.window })));
     }
-    const observations: (Partial<CliRouterQuota> | undefined)[] = hasReading ? routable
-      : provider === 'antigravity' ? (agyScopes.get(key) ?? [{ quotaPool: 'default' }]) : [undefined];
+    const observations: (Partial<CliRouterQuota> | undefined)[] = provider === 'antigravity'
+      ? [...(hasReading ? routable : []), ...missing, ...(!hasReading && previousScopes === undefined ? [{ quotaPool: 'default' }] : [])]
+      : hasReading ? routable : [undefined];
     try {
       for (const quota of observations) {
+        const reading = hasReading && quota !== undefined && routable.some(item => item === quota);
+        const checkError = result.quotaError ?? (provider === 'antigravity' && !reading ? 'AGY quota scope missing from provider response' : undefined);
         const family = quota?.quotaPool;
         const nativeAccount = backend === 'agy-main' ? 'agy' : backend;
         const pool = family ? `${nativeAccount}:${family}` : undefined;
@@ -561,13 +568,13 @@ export function createCliRouterQuotaObserver(deps: CliRouterDeps = {}) {
           backend, backend_instance: instance,
           ...(pool ? { quota_pool: pool } : {}),
           ...(quota?.window ? { quota_window: quota.window } : {}),
-          ...(hasReading && quota ? {
+          ...(reading && quota ? {
             ...(typeof quota.remainingPercent === 'number' ? { quota_remaining_percent: quota.remainingPercent } : {}),
             ...(quota.resetAt ? { quota_reset_at: quota.resetAt } : {}),
             observed_at: quota.observedAt ?? result.observedAt,
           } : {}),
           checked_at: result.observedAt,
-          ...(result.quotaError ? { check_error: result.quotaError } : {}),
+          ...(checkError ? { check_error: checkError } : {}),
           usage_source: 'cli_router',
         });
       }

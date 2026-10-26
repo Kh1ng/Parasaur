@@ -671,7 +671,7 @@ fn review_routes_to_agy_candidate_and_writes_verdict() {
         &fake_bin,
         "agy",
         &format!(
-            "#!/bin/sh\nprintf '%s\n' \"$@\" > \"{}\"\ncat <<'EOF'\nReview notes\n{{\"verdict\":\"APPROVE\",\"confidence\":\"high\",\"human_required\":false,\"blocking_findings\":[],\"non_blocking_findings\":[\"Looks fine\"],\"risk_notes\":[\"low risk\"],\"evidence\":[\"file:src.txt\"]}}\nEOF\n",
+            "#!/bin/sh\n# Metadata refreshes must not overwrite the review invocation.\ncase \"$1\" in models|/usage|--help) exit 0 ;; esac\nprintf '%s\n' \"$@\" > \"{}\"\ncat <<'EOF'\nReview notes\n{{\"verdict\":\"APPROVE\",\"confidence\":\"high\",\"human_required\":false,\"blocking_findings\":[],\"non_blocking_findings\":[\"Looks fine\"],\"risk_notes\":[\"low risk\"],\"evidence\":[\"file:src.txt\"]}}\nEOF\n",
             prompt_log.display()
         ),
     );
