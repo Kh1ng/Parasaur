@@ -1394,15 +1394,15 @@ fn policy_candidates_attaches_derived_quota_pool_for_agy() {
     assert_eq!(candidates.len(), 3);
     assert_eq!(
         candidates[0].identity.quota_pool.as_deref(),
-        Some("agy:gemini-weekly")
+        Some("agy:google-native")
     );
     assert_eq!(
         candidates[1].identity.quota_pool.as_deref(),
-        Some("agy:3p-weekly")
+        Some("agy:external")
     );
     assert_eq!(
         candidates[2].identity.quota_pool.as_deref(),
-        Some("agy-second:gemini-weekly")
+        Some("agy-second:google-native")
     );
 }
 
@@ -1420,7 +1420,7 @@ fn live_agy_gemini_pool_block_routes_to_same_accounts_external_pool() {
         &path(&tmp),
         "agy",
         Some("Gemini 3.8 Flash (Medium)"),
-        Some("agy:gemini-weekly"),
+        Some("agy:google-native"),
         Reason::QuotaExhausted,
         Source::BackendError,
         Some(now + time::Duration::hours(1)),
@@ -1456,7 +1456,7 @@ fn live_agy_gemini_pool_block_routes_to_same_accounts_external_pool() {
     );
     assert_eq!(
         decision.effective_quota_pool.as_deref(),
-        Some("agy:3p-weekly")
+        Some("agy:external")
     );
     assert!(decision.fallback_used);
 }

@@ -29,15 +29,53 @@ pub(crate) struct Group {
 }
 
 impl Group {
-    /// All windows in a reported group share capacity. Use a provider bucket
-    /// ID rather than a GAH model-family table, independent of response order.
+    /// All windows share capacity. Canonicalize known provider buckets so
+    /// probe-free routing and quota observers use the same identity.
     pub fn pool(&self) -> &str {
-        self.buckets
-            .iter()
-            .map(|bucket| bucket.id.as_str())
-            .min()
-            .unwrap_or("default")
+        pool_identity(
+            "",
+            &self
+                .buckets
+                .iter()
+                .map(|bucket| bucket.id.as_str())
+                .collect::<Vec<_>>(),
+        )
     }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PoolRule {
+    id: String,
+    model_prefix: String,
+    bucket_prefix: String,
+}
+#[derive(Deserialize)]
+struct PoolPolicy {
+    pools: Vec<PoolRule>,
+}
+
+/// Interpret the same identity policy as the server observer, with no probe dependency.
+fn pool_identity<'a>(model: &str, ids: &[&'a str]) -> &'a str {
+    static POLICY: OnceLock<PoolPolicy> = OnceLock::new();
+    let policy = POLICY.get_or_init(|| {
+        serde_json::from_str(include_str!("../../apps/server/src/agyPoolIdentity.json"))
+            .expect("valid shared AGY pool policy")
+    });
+    let bucket = ids.iter().copied().min();
+    let model = model.trim().to_ascii_lowercase();
+    policy
+        .pools
+        .iter()
+        .find(|rule| {
+            bucket.map_or_else(
+                || model.starts_with(&rule.model_prefix),
+                |bucket| bucket.starts_with(&rule.bucket_prefix),
+            )
+        })
+        .map(|rule| rule.id.as_str())
+        .or(bucket)
+        .expect("fallback pool rule")
 }
 
 /// Accept only a native usage result, never text returned by a model turn.
@@ -138,13 +176,7 @@ impl Catalog {
             .pools
             .get(model)
             .map(String::as_str)
-            .unwrap_or_else(|| {
-                if model.trim().to_ascii_lowercase().starts_with("gemini") {
-                    "google-native"
-                } else {
-                    "external"
-                }
-            });
+            .unwrap_or_else(|| pool_identity(model, &[]));
         format!("{account}:{pool}")
     }
 }
@@ -189,9 +221,6 @@ pub(crate) fn catalog(executable: &str, home: Option<&Path>) -> Catalog {
         .unwrap_or_else(|e| e.into_inner());
     let cached = cache.entry(key.clone()).or_default();
     let catalog = cached.catalog.clone();
-    if catalog.pools.is_empty() {
-        warn();
-    }
     if !cached.refreshing
         && cached.refreshed_at.is_none_or(|at| at.elapsed() >= TTL)
         && cached.retry_at.is_none_or(|at| Instant::now() >= at)
@@ -208,6 +237,7 @@ pub(crate) fn catalog(executable: &str, home: Option<&Path>) -> Catalog {
                     if cached.retry_at.take().is_some() {
                         eprintln!("AGY metadata refresh recovered; using the updated quota catalog");
                     }
+                    WARNED.store(false, Ordering::Relaxed);
                     cached.catalog = catalog;
                     cached.refreshed_at = Some(Instant::now());
                 }
@@ -235,7 +265,13 @@ pub(crate) fn pool(account: &str, model: &str, executable: &str, home: Option<&P
 fn load(executable: &str, home: Option<&Path>) -> Result<Catalog> {
     let models = crate::usage::agy::run(executable, home, &["models"], 10)?;
     let usage = crate::usage::agy::read_usage(executable, home)?;
-    Catalog::parse(std::str::from_utf8(&models)?, &usage)
+    let parsed = std::str::from_utf8(&models)
+        .map_err(anyhow::Error::from)
+        .and_then(|models| Catalog::parse(models, &usage));
+    if parsed.is_err() {
+        warn();
+    }
+    parsed
 }
 
 #[cfg(test)]

@@ -1,0 +1,14 @@
+{
+  "pools": [
+    {
+      "id": "google-native",
+      "modelPrefix": "gemini",
+      "bucketPrefix": "gemini-"
+    },
+    {
+      "id": "external",
+      "modelPrefix": "",
+      "bucketPrefix": "3p-"
+    }
+  ]
+}

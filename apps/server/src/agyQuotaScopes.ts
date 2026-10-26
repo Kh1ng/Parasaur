@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
+import { agyPool } from './agyQuota.js';
 import { dirname } from 'node:path';
 
 type Scope = { quotaPool: string; window?: string };
@@ -20,7 +21,7 @@ export class AgyQuotaScopes {
         const [key, scopes] = entry;
         if (typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key) || !Array.isArray(scopes) || scopes.length > 128) continue;
         if (scopes.every(scope => scope && label(scope.quotaPool) && (scope.window === undefined || label(scope.window)))) {
-          this.scopes.set(key, scopes.map(scope => ({ quotaPool: scope.quotaPool, ...(scope.window ? { window: scope.window } : {}) })));
+          this.scopes.set(key, scopes.map(scope => ({ quotaPool: agyPool('', [scope.quotaPool]), ...(scope.window ? { window: scope.window } : {}) })));
         }
       }
     } catch { /* Missing or malformed state is rebuilt by successful refreshes. */ }

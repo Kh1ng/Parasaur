@@ -34,6 +34,7 @@ export function workerChatConnection(registry: RegistryService, nodeId: string, 
     return response;
   };
   return {
+    selectionScope: node,
     async request<T>(body: Record<string, unknown>): Promise<T> {
       const response = await post(body, AbortSignal.timeout(30_000));
       const result = await readWorkerChatReply(response, { ...body, profile });

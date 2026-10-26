@@ -681,11 +681,11 @@ fn cli_clear_without_model_marks_backend_wide_available() {
 fn derive_quota_pool_separates_pools_per_account_and_ignores_non_agy() {
     let _fixture = super::agy::fixture();
     let d = |b, m| super::derive_quota_pool(b, Some(m), Some(&_fixture.catalog)).unwrap();
-    assert_eq!(d("agy", "Gemini 3.8 Flash (Medium)"), "agy:gemini-weekly");
-    assert_eq!(d("agy-main", "gemini-3.8-flash-high"), "agy:gemini-weekly");
+    assert_eq!(d("agy", "Gemini 3.8 Flash (Medium)"), "agy:google-native");
+    assert_eq!(d("agy-main", "gemini-3.8-flash-high"), "agy:google-native");
     assert_eq!(
         d("agy-second", "Claude Sonnet 4.6 (Thinking)"),
-        "agy-second:3p-weekly"
+        "agy-second:external"
     );
     assert_eq!(d("agy-third", "unknown"), "agy-third:external");
     assert_eq!(d("agy", "Gemini retired model"), "agy:google-native");
@@ -705,11 +705,11 @@ fn derive_quota_pool_separates_pools_per_account_and_ignores_non_agy() {
         |b, m, p| super::resolve_candidate_quota_pool(b, m, p, Some(&_fixture.catalog)).unwrap();
     assert_eq!(
         r("agy", Some("gemini-3.8-flash-high"), Some("agy")),
-        "agy:gemini-weekly"
+        "agy:google-native"
     );
     assert_eq!(
         r("agy-main", Some("gemini-3.8-flash-high"), Some("agy-main")),
-        "agy:gemini-weekly"
+        "agy:google-native"
     );
     // Explicit operator pools remain authoritative.
     assert_eq!(

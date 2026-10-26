@@ -27,18 +27,18 @@ fn agy_fixture_maps_native_models_and_accounts_to_reported_buckets() {
     let catalog = Catalog::parse(MODELS, USAGE).unwrap();
     assert_eq!(
         catalog.pool("agy", "gemini-3.8-flash-low"),
-        "agy:gemini-weekly"
+        "agy:google-native"
     );
     assert_eq!(
         catalog.pool("agy", "Gemini 3.8 Flash (High)"),
-        "agy:gemini-weekly"
+        "agy:google-native"
     );
     assert_eq!(
         catalog.pool("agy-second", "gemini-3.8-flash-low"),
-        "agy-second:gemini-weekly"
+        "agy-second:google-native"
     );
-    assert_eq!(catalog.pool("agy", "claude-sonnet-4-6"), "agy:3p-weekly");
-    assert_eq!(catalog.pool("agy", "gpt-oss-120b-medium"), "agy:3p-weekly");
+    assert_eq!(catalog.pool("agy", "claude-sonnet-4-6"), "agy:external");
+    assert_eq!(catalog.pool("agy", "gpt-oss-120b-medium"), "agy:external");
     assert_eq!(catalog.pool("agy", "not-listed"), "agy:external");
 }
 
@@ -70,7 +70,7 @@ fn agy_retired_model_disappears_when_inventory_is_replaced() {
     );
     assert_eq!(
         catalog.pool("agy", "gemini-3.8-flash-high"),
-        "agy:gemini-weekly"
+        "agy:google-native"
     );
 }
 
@@ -120,7 +120,7 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     let executable = script.to_str().unwrap();
     assert_eq!(
         settled_pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
-        "agy-one:gemini-weekly"
+        "agy-one:google-native"
     );
     // Keep an exhausted reading attached to the same pool through failures.
     let readings = crate::usage::agy::refresh(executable, "agy-one", Some(&home)).unwrap();
@@ -147,7 +147,7 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     )
     .unwrap();
     let retained = settled_pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home));
-    assert_eq!(retained, "agy-one:gemini-weekly");
+    assert_eq!(retained, "agy-one:google-native");
     let identity = crate::execution_identity::ExecutionIdentity::legacy_candidate(
         "agy-one",
         Some("gemini-3.8-flash-high"),
@@ -159,13 +159,13 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     let calls = std::fs::read_to_string(home.join("calls")).unwrap();
     assert_eq!(
         settled_pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
-        "agy-one:gemini-weekly"
+        "agy-one:google-native"
     );
     assert_eq!(std::fs::read_to_string(home.join("calls")).unwrap(), calls);
     retry();
     assert_eq!(
         settled_pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
-        "agy-one:gemini-weekly"
+        "agy-one:google-native"
     );
     assert_eq!(
         std::fs::read_to_string(home.join("calls"))
@@ -178,7 +178,7 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     std::fs::remove_file(&script).unwrap();
     assert_eq!(
         settled_pool("agy-one", "gemini-3.8-flash-high", executable, Some(&home)),
-        "agy-one:gemini-weekly"
+        "agy-one:google-native"
     );
     std::fs::write(&script, original).unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -250,11 +250,11 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     );
     assert_eq!(
         identity("agy-primary").quota_pool.as_deref(),
-        Some("agy-primary:gemini-weekly")
+        Some("agy-primary:google-native")
     );
     assert_eq!(
         identity("agy-secondary").quota_pool.as_deref(),
-        Some("agy-secondary:gemini-weekly")
+        Some("agy-secondary:google-native")
     );
     let mut profile = crate::config::tests::test_profile_for_notifications();
     profile.agy_path = Some(executable.into());
@@ -270,7 +270,7 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
             .execution_identity_for_candidate(&candidate)
             .quota_pool
             .as_deref(),
-        Some("agy-second:gemini-weekly")
+        Some("agy-second:google-native")
     );
     routing.agy_path = Some("/missing-legacy-agy".into());
     routing.backend_instances.insert(
@@ -286,7 +286,7 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
         routing
             .find_quota_pool("improve", "agy-second", Some("gemini-3.8-flash-high"))
             .as_deref(),
-        Some("agy-second:gemini-weekly")
+        Some("agy-second:google-native")
     );
     let other = dir.path().join("other");
     std::fs::create_dir(&other).unwrap();
@@ -294,7 +294,7 @@ fn agy_routing_cache_refreshes_per_installation_and_home_without_model_calls() {
     std::fs::write(other.join("usage"), USAGE).unwrap();
     assert_eq!(
         settled_pool("agy-two", "gemini-3.8-flash-high", executable, Some(&other)),
-        "agy-two:gemini-weekly"
+        "agy-two:google-native"
     );
 }
 
@@ -363,4 +363,38 @@ fn agy_slow_probe_never_blocks_routing_or_another_installation() {
     assert!(start.elapsed() < Duration::from_millis(200));
     std::fs::write(dir.path().join("release"), "").unwrap();
     settled_pool("agy", "Gemini future", executable, Some(dir.path()));
+}
+
+#[test]
+fn agy_pool_identity_matches_shared_server_fixture_with_and_without_local_probe() {
+    #[derive(Deserialize)]
+    struct Case {
+        model: String,
+        buckets: Vec<String>,
+        pool: String,
+    }
+    let cases: Vec<Case> =
+        serde_json::from_str(include_str!("../../tests/fixtures/agy/pool-identity.json")).unwrap();
+    for case in cases {
+        let ids = case.buckets.iter().map(String::as_str).collect::<Vec<_>>();
+        assert_eq!(pool_identity(&case.model, &ids), case.pool);
+        if !case.model.is_empty() {
+            for catalog in [Catalog::default(), Catalog::parse(MODELS, USAGE).unwrap()] {
+                assert_eq!(
+                    catalog.pool("agy-second", &case.model),
+                    format!("agy-second:{}", case.pool)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn agy_cold_start_does_not_warn_about_unrecognized_metadata() {
+    let _exec = crate::test_support::ExecGuard::new();
+    // No successful metadata response has arrived; an empty cache is normal.
+    // Failed process startup is handled by the separate refresh-failure warning.
+    let before = WARNED.load(Ordering::Relaxed);
+    let _ = catalog("/missing-cold-start-agy", None);
+    assert_eq!(WARNED.load(Ordering::Relaxed), before);
 }

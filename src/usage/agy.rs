@@ -127,13 +127,13 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(
             records[0].backend_instance.as_deref(),
-            Some("agy-second:gemini-weekly")
+            Some("agy-second:google-native")
         );
         assert_eq!(records[0].quota_window.as_deref(), Some("weekly"));
         assert_eq!(records[0].quota_remaining_percent, Some(0.0));
         assert_eq!(
             records[1].quota_pool.as_deref(),
-            Some("agy-second:3p-weekly")
+            Some("agy-second:external")
         );
         assert_eq!(records[1].quota_remaining_percent, Some(100.0));
         assert!(records.iter().all(|record| record.check_error.is_none()));

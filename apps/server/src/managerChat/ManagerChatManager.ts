@@ -59,6 +59,7 @@ import type { ChatSessionEvent, ChatTranscriptTurn, ChatUsage, Skill } from '@gi
 import type { ProfileSummary } from '@git-agent-harness/contracts';
 import { resolveSkillBindings } from '../skillBank.js';
 import { chatRoute, localChatNodeId, rememberWorkspace, type ChatRoute } from '../chatRouting.js';
+import { restoreProfileSelections } from './profileSelections.js';
 import { reportChatTurn } from '../authHealth.js';
 import { resolveChatProject } from '../projectCatalog.js';
 import { createWorkspace, getSession, sessionBranchName, storeSession } from './chatSessions.js';
@@ -554,47 +555,19 @@ export async function listModelsForProfile(
   return listModelsForBackend(profile, backendForProfile(profile), nodeId);
 }
 
-/** Restore saved choices only while the current catalog supports them. */
-async function restoreProfileSelections(profile: string, backendId: string, adapter: ManagerAdapter) {
-  const conversation = { key: profile, profile };
-  let summary = await adapter.listModels(conversation);
-  const model = modelOverrideForProfile(profile, backendId);
-  const effort = reasoningEffortOverrideForProfile(profile, backendId);
-  if (model && !summary.models.some(item => item.id === model)) {
-    setModelOverrideForProfile(profile, backendId, null);
-    setReasoningEffortOverrideForProfile(profile, backendId, null);
-    console.warn(`[managerChat] Cleared unsupported persisted model and effort for ${profile}/${backendId}; using the backend default.`);
-    return summary;
-  }
-  if (model && model !== summary.currentModelId) {
-    await adapter.setModel(conversation, model);
-    summary = await adapter.listModels(conversation);
-  }
-  const efforts = summary.models.find(item => item.id === (model ?? summary.currentModelId))?.reasoningEfforts ?? summary.reasoningEfforts;
-  if (effort && !efforts.some(item => item.id === effort)) {
-    setReasoningEffortOverrideForProfile(profile, backendId, null);
-    console.warn(`[managerChat] Cleared unsupported persisted effort for ${profile}/${backendId}.`);
-  } else if (effort && effort !== summary.currentReasoningEffortId) {
-    await adapter.setReasoningEffort(conversation, effort);
-    summary = await adapter.listModels(conversation);
-  }
-  return summary;
-}
-
 export async function setModelForProfile(profile: string, modelId: string, nodeId?: string): Promise<void> {
   const backendId = backendForProfile(profile);
   const route = await chatRoute(profile, nodeId, backendId, false);
   const adapter = route.remote?.adapter(backendId) ?? resolveAdapter(backendId);
   await adapter.setModel({ key: profile, profile }, modelId);
   setModelOverrideForProfile(profile, backendId, modelId);
-  await restoreProfileSelections(profile, backendId, adapter);
+  await restoreProfileSelections(profile, backendId, adapter, route.remote?.selectionScope);
 }
 
 export async function setReasoningEffortForProfile(profile: string, effortId: string, nodeId?: string): Promise<void> {
   const backendId = backendForProfile(profile);
   const route = await chatRoute(profile, nodeId, backendId, false);
   const adapter = route.remote?.adapter(backendId) ?? resolveAdapter(backendId);
-  await restoreProfileSelections(profile, backendId, adapter);
   await adapter.setReasoningEffort({ key: profile, profile }, effortId);
   setReasoningEffortOverrideForProfile(profile, backendId, effortId);
 }
@@ -610,7 +583,7 @@ export async function listModelsForBackend(
   const route = await chatRoute(profile, nodeId, backendId, false);
   const adapter = route.remote?.adapter(backendId, undefined, backendInstance)
     ?? await resolveInstanceAdapter(profile, backendId, backendInstance);
-  return restoreProfileSelections(profile, backendId, adapter);
+  return restoreProfileSelections(profile, backendId, adapter, backendInstance ? adapter : route.remote?.selectionScope);
 }
 
 interface HandoffInfo {
@@ -1105,7 +1078,7 @@ export function sendManagerChatMessage(
       const backend = backendOverride ?? pinned?.backend ?? backendForProfile(profile);
       const route = await chatRoute(profile, nodeId, backend);
       if (!pinned && (modelOverrideForProfile(profile, backend) || reasoningEffortOverrideForProfile(profile, backend))) {
-        await restoreProfileSelections(profile, backend, route.remote?.adapter(backend) ?? resolveAdapter(backend));
+        await restoreProfileSelections(profile, backend, route.remote?.adapter(backend) ?? resolveAdapter(backend), route.remote?.selectionScope, false);
       }
       return { backend, backendInstance: pinned?.backendInstance ?? null, model: pinned ? pinned.model : modelOverrideForProfile(profile, backend) ?? null, reasoningEffort: pinned ? null : reasoningEffortOverrideForProfile(profile, backend) ?? null, route };
     }

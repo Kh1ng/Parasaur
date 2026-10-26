@@ -1131,10 +1131,10 @@ fn build_candidates_creates_four_distinct_agy_scopes() {
     assert_eq!(
         pools,
         vec![
-            Some("agy:gemini-weekly".to_string()),
-            Some("agy:3p-weekly".to_string()),
-            Some("agy-second:gemini-weekly".to_string()),
-            Some("agy-second:3p-weekly".to_string()),
+            Some("agy:google-native".to_string()),
+            Some("agy:external".to_string()),
+            Some("agy-second:google-native".to_string()),
+            Some("agy-second:external".to_string()),
         ]
     );
 }

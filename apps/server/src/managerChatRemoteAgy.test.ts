@@ -40,7 +40,17 @@ require('fs').writeFileSync(${JSON.stringify(argv)}, JSON.stringify(process.argv
 console.log(JSON.stringify({event:'result', result:{status:'SUCCESS', response:'ok'}}));
 `);
   chmodSync(executable, 0o755);
-  const makeAdapter = () => createHeadlessBackend({ ...agyBackendSpec({ executable, state_root: null }), modelOptions: async () => inventory });
+  let modelReads = 0;
+  let modelWrites = 0;
+  let effortWrites = 0;
+  const makeAdapter = () => {
+    const backend = createHeadlessBackend({ ...agyBackendSpec({ executable, state_root: null }), modelOptions: async () => inventory });
+    return { ...backend,
+      listModels: async (...args: Parameters<typeof backend.listModels>) => { modelReads++; return backend.listModels(...args); },
+      setModel: async (...args: Parameters<typeof backend.setModel>) => { modelWrites++; return backend.setModel(...args); },
+      setReasoningEffort: async (...args: Parameters<typeof backend.setReasoningEffort>) => { effortWrites++; return backend.setReasoningEffort(...args); }
+    };
+  };
   const localAdapter = resolveAdapter('agy');
   const originalAdapter = { ...localAdapter };
   setSessionLogOptions({ stateDir: root });
@@ -81,13 +91,30 @@ console.log(JSON.stringify({event:'result', result:{status:'SUCCESS', response:'
   assert.equal((await adapter.listModels({ key: profile.name, profile: profile.name })).currentModelId, 'gemini-3.8-flash-high');
   await setReasoningEffortForProfile(chatProfile, 'low', nodeId);
   assert.equal((await adapter.listModels({ key: profile.name, profile: profile.name })).currentReasoningEffortId, 'low');
+  const beforeTurns = [modelReads, modelWrites, effortWrites];
+  for (let turn = 0; turn < 3; turn++) {
+    await sendManagerChatMessage(chatProfile, '/status', undefined, undefined, undefined, nodeId);
+    assert.deepEqual([modelReads - beforeTurns[0], modelWrites - beforeTurns[1], effortWrites - beforeTurns[2]], [1, 0, 0],
+      'three unchanged turns restore once and add no further worker model/effort calls');
+  }
   adapter.dispose?.();
   adapter = makeAdapter();
   if (!remote) Object.assign(localAdapter, adapter);
+  await listModelsForProfile(chatProfile, nodeId); // Catalog refresh restores a recreated adapter.
   await setReasoningEffortForProfile(chatProfile, 'high', nodeId);
   const selected = await listModelsForProfile(chatProfile, nodeId);
   assert.equal(selected.currentModelId, 'gemini-3.8-flash-high');
   assert.equal(selected.currentReasoningEffortId, 'high');
+  setModelOverrideForProfile(chatProfile, 'agy', 'retired-saved-model');
+  const beforeEffortChange = [modelReads, modelWrites];
+  await setReasoningEffortForProfile(chatProfile, 'low', nodeId);
+  assert.equal(modelOverrideForProfile(chatProfile, 'agy'), 'retired-saved-model');
+  assert.equal(reasoningEffortOverrideForProfile(chatProfile, 'agy'), 'low');
+  await assert.rejects(setReasoningEffortForProfile(chatProfile, 'turbo', nodeId));
+  assert.equal(modelOverrideForProfile(chatProfile, 'agy'), 'retired-saved-model');
+  assert.equal(reasoningEffortOverrideForProfile(chatProfile, 'agy'), 'low');
+  assert.deepEqual([modelReads, modelWrites], beforeEffortChange, 'effort changes only validate effort on the current model');
+  setModelOverrideForProfile(chatProfile, 'agy', 'gemini-3.8-flash-high');
   await sendManagerChatMessage(chatProfile, '/status', undefined, undefined, undefined, nodeId);
   assert.ok(JSON.parse(readFileSync(argv, 'utf8')).includes('--effort'));
   await setModelForProfile(chatProfile, 'claude-sonnet-4-6', nodeId);

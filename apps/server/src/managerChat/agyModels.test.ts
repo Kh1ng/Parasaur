@@ -22,7 +22,7 @@ test('agy recorded inventory derives effort variants per model and shares provid
   assert.deepEqual(parsed.modelReasoningEfforts['claude-sonnet-4-6'], []);
   const usage = JSON.parse(fixture('usage.json'));
   assert.equal(usage.num_turns, 0);
-  assert.deepEqual(usage.command.data.groups.map((group: { buckets: { id: string }[] }) => agyGroupPool(group.buckets.map(b => b.id))), ['gemini-weekly', '3p-weekly']);
+  assert.deepEqual(usage.command.data.groups.map((group: { buckets: { id: string }[] }) => agyGroupPool(group.buckets.map(b => b.id))), ['google-native', 'external']);
   assert.equal(agyGroupPool(['future-weekly', 'future-short']), 'future-short');
   assert.equal(agyGroupPool(['invalid:pool']), undefined);
 });

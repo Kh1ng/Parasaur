@@ -1,5 +1,5 @@
 import { AgyQuotaScopes } from './agyQuotaScopes.js';
-import { agyGroupPool } from './agyQuota.js';
+import { agyGroupPool, agyLabel, agyFallbackPools } from './agyQuota.js';
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -396,14 +396,15 @@ async function refreshAntigravityQuota(account: UpstreamAuthFile, deps: QuotaRef
     for (const b of g.buckets) {
       if (!isObj(b)) continue;
       const name = boundedString(b.displayName, 80) ?? 'Unknown';
-      const window = boundedString(b.window, 40);
+      const window = agyLabel(b.window) ? b.window : undefined;
+      if (!window) agyComplete = false;
       quotas.push({
         label: [boundedString(g.displayName, 80), window ? `${name} (${window})` : name].filter(Boolean).join(' · '),
         remainingPercent: typeof b.remainingFraction === 'number' ? percent(b.remainingFraction * 100) : null,
         resetAt: isoOrNull(b.resetTime),
         observedAt,
         ...(window ? { window } : {}),
-        ...(pool ? { quotaPool: pool } : {}),
+        ...(pool && window ? { quotaPool: pool } : {}),
       });
     }
   }
@@ -554,7 +555,7 @@ export function createCliRouterQuotaObserver(deps: CliRouterDeps = {}) {
       agyScopes.set(key, [...routable, ...(result.agyComplete ? [] : missing)].map(scope => ({ quotaPool: scope.quotaPool, window: scope.window })));
     }
     const observations: (Partial<CliRouterQuota> | undefined)[] = provider === 'antigravity'
-      ? [...(hasReading ? routable : []), ...missing, ...(!hasReading && previousScopes === undefined ? [{ quotaPool: 'default' }] : [])]
+      ? [...(hasReading ? routable : []), ...missing, ...(!hasReading && !previousScopes?.length ? agyFallbackPools.map(quotaPool => ({ quotaPool })) : [])]
       : hasReading ? routable : [undefined];
     try {
       for (const quota of observations) {
