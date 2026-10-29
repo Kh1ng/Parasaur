@@ -17,23 +17,64 @@ fn wait_with_timeout(child: ProcessGroupGuard, timeout: Duration) -> Output {
             receive.recv_timeout(timeout),
             Err(RecvTimeoutError::Timeout)
         ) {
+            let processes = process_tree(pid);
             unsafe {
                 libc::kill(-pid, libc::SIGKILL);
             }
-            true
+            Some(processes)
         } else {
-            false
+            None
         }
     });
     let output = child.wait_with_output().unwrap();
     let _ = finished.send(());
-    assert!(
-        !watchdog.join().unwrap(),
-        "controller did not finish within {timeout:?}\nstdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
+    if let Some(processes) = watchdog.join().unwrap() {
+        panic!(
+            "controller did not finish within {timeout:?}\nprocesses:\n{processes}\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
     output
+}
+
+/// `ps` lines for `root` and every descendant, taken before a stuck
+/// controller is killed: which worker is still running, its state and
+/// kernel wait channel, and its arguments (#1662). Backends run in their
+/// own process groups, so this follows parent PIDs rather than the group.
+pub(super) fn process_tree(root: i32) -> String {
+    let listing = match std::process::Command::new("ps")
+        .args(["-eo", "pid=,ppid=,stat=,wchan:24=,etimes=,args="])
+        .output()
+    {
+        Ok(output) => String::from_utf8_lossy(&output.stdout).into_owned(),
+        Err(error) => return format!("ps failed: {error}"),
+    };
+    let rows: Vec<(i32, i32, &str)> = listing
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let pid = fields.next()?.parse().ok()?;
+            let ppid = fields.next()?.parse().ok()?;
+            Some((pid, ppid, line))
+        })
+        .collect();
+    let mut tree = vec![root];
+    let mut index = 0;
+    while index < tree.len() {
+        let parent = tree[index];
+        tree.extend(
+            rows.iter()
+                .filter(|(_, ppid, _)| *ppid == parent)
+                .map(|(pid, _, _)| *pid),
+        );
+        index += 1;
+    }
+    rows.iter()
+        .filter(|(pid, _, _)| tree.contains(pid))
+        .map(|(_, _, line)| *line)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[test]
