@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Bell, X } from 'lucide-react';
 import { activityPath, type ActivityEvent } from '@git-agent-harness/contracts';
 import { activityApi } from '../api/client.js';
+import { withBasePath } from '../lib/basePath.js';
 import { formatAge } from '../lib/format.js';
 
 /** How long a new notification stays popped open before it folds into the menu. */
@@ -15,7 +16,7 @@ function NotificationCard({ event, onClear, clearLabel }: { event: ActivityEvent
         <p className="text-sm font-semibold text-primary">{event.title}</p>
         <p className="mt-1 line-clamp-2 text-xs text-secondary">{event.message}</p>
         <div className="mt-2 flex items-center gap-3 text-xs">
-          <button type="button" className="font-medium text-accent hover:underline" onClick={() => window.location.assign(activityPath(event))}>
+          <button type="button" className="font-medium text-accent hover:underline" onClick={() => window.location.assign(withBasePath(activityPath(event)))}>
             {event.sessionId ? 'Open chat' : 'View activity'}
           </button>
           <span className="text-muted">{formatAge(event.occurredAt)}</span>
