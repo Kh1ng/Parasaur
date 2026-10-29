@@ -3,9 +3,10 @@
  * (src/api/client.ts). jest runs TypeScript as CommonJS, where `import.meta`
  * is a syntax error, so no unit test can even load the real client through
  * the default ts-jest transform. This transform pre-replaces the Vite-ism with
- * an empty env object and then transpiles exactly like ts-jest's isolatedModules
- * mode does (see jest.config.cjs): under jest the client therefore takes the
- * same `window.location.origin` / localhost fallback the browser build takes
+ * the test process environment and then transpiles like ts-jest's
+ * isolatedModules mode (see jest.config.cjs). Tests can exercise explicit
+ * VITE_SERVER_URL overrides and the same window.location.origin / localhost
+ * fallback the browser build takes
  * when Vite injects no server URL. Everything else in the module -- getJson,
  * apiUrl, every endpoint -- runs unmocked, so tests observe the request URLs
  * the real client issues. Extend the transform pattern in jest.config.cjs if
@@ -23,7 +24,7 @@ const COMPILER_OPTIONS = {
 
 module.exports = {
   process(sourceText) {
-    const transpiled = ts.transpileModule(sourceText.replace(/\bimport\.meta\b/g, '({ env: {} })'), {
+    const transpiled = ts.transpileModule(sourceText.replace(/\bimport\.meta\b/g, '({ env: process.env })'), {
       compilerOptions: COMPILER_OPTIONS
     });
     return {
