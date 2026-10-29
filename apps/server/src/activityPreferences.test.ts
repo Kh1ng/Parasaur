@@ -21,7 +21,7 @@ test('optional health alerts start off and persist while tasks, input requests a
     feed.record(event('offline'));
     for (const kind of ['node_back', 'quota_near_limit', 'auth_restored'] as const) feed.record(event(kind, kind));
     await new Promise((done) => setImmediate(done));
-    assert.deepEqual(delivered, [], 'node outages are opt-in');
+    assert.equal(delivered.length, 0, 'node outages are opt-in');
     feed.setNotificationPreferences({ nodeOffline: false, nodeBack: false, quotaNearLimit: false, authRestored: false });
     assert.equal(feed.unreadCount(), 0);
     assert.equal(feed.notifications().length, 0);
