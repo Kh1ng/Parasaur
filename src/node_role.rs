@@ -47,6 +47,8 @@ impl NodeRole {
 pub struct NodeRoleStatus {
     pub role: NodeRole,
     pub central_url: Option<String>,
+    /// Central arbitration never falls back automatically to local claims.
+    pub claim_policy: &'static str,
 }
 
 impl NodeRoleStatus {
@@ -79,7 +81,16 @@ impl NodeRoleStatus {
                 bail!("registry_central_url must be an HTTP(S) origin without credentials, query, or path");
             }
         }
-        Ok(Self { role, central_url })
+        let claim_policy = if central_url.is_some() {
+            "central_fail_closed"
+        } else {
+            "local"
+        };
+        Ok(Self {
+            role,
+            central_url,
+            claim_policy,
+        })
     }
 }
 

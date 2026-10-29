@@ -16,9 +16,11 @@ fn resolution() -> Value {
 }
 
 fn worker(central: &FakeCentral) -> ScenarioHarness {
-    let mut harness = ScenarioHarness::new("github")
-        .github_scenario("empty")
-        .with_central(central);
+    configure_worker(ScenarioHarness::new("github"), central)
+}
+
+fn configure_worker(harness: ScenarioHarness, central: &FakeCentral) -> ScenarioHarness {
+    let mut harness = harness.github_scenario("empty").with_central(central);
     let root = harness.artifacts_dir.parent().unwrap();
     let availability = root.join("xdg-state/gah/availability.json");
     fs::create_dir_all(availability.parent().unwrap()).unwrap();
@@ -190,6 +192,7 @@ fn worker_loop_claims_resolves_and_delivers_central_skill() {
     let before_status = calls.len();
     let status = harness.run_status_json().unwrap();
     assert_eq!(status["node"]["role"], "worker");
+    assert_eq!(status["node"]["claim_policy"], "central_fail_closed");
     assert_inventory_status(&status);
     assert_eq!(
         central.state()["calls"].as_array().unwrap().len(),
@@ -255,6 +258,7 @@ fn outage_refuses_central_claim_then_explicit_local_mode_dispatches_warmed_skill
     );
     let status = harness.run_status_json().unwrap();
     assert_eq!(status["node"]["role"], "worker");
+    assert_eq!(status["node"]["claim_policy"], "central_fail_closed");
     assert_inventory_status(&status);
 
     // Direct free-text dispatch has no work id to arbitrate. It reaches the real
@@ -316,6 +320,7 @@ fn outage_refuses_central_claim_then_explicit_local_mode_dispatches_warmed_skill
     );
     let status = harness.run_status_json().unwrap();
     assert_eq!(status["node"]["role"], "standalone");
+    assert_eq!(status["node"]["claim_policy"], "local");
     assert_inventory_status(&status);
     assert_worker_dispatch_counts(&central, 0);
 }
@@ -444,4 +449,170 @@ fn fleet_observation_is_recorded_and_central_lease_prevents_double_claim() {
     assert_eq!(acquire["body"]["work_id"], "#1516");
     assert_eq!(acquire["body"]["profile"], "test");
     assert_eq!(acquire["body"]["node_id"], "scenario-worker");
+}
+
+// Backends run in their own process groups, separate from the killed CLI.
+#[cfg(unix)]
+struct BackendCleanup(Vec<std::path::PathBuf>);
+
+#[cfg(unix)]
+impl Drop for BackendCleanup {
+    fn drop(&mut self) {
+        for marker in &self.0 {
+            if let Ok(pid) = fs::read_to_string(marker)
+                .unwrap_or_default()
+                .trim()
+                .parse::<i32>()
+            {
+                unsafe { libc::kill(-pid, libc::SIGKILL) };
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn two_nodes_race_one_issue_and_killed_holder_expires() {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    let central = FakeCentral::new();
+    let mut first = worker(&central);
+    let mut second = configure_worker(first.peer(), &central);
+    let _backend_cleanup = BackendCleanup(vec![
+        first.artifacts_dir.join("worker-argv"),
+        second.artifacts_dir.join("worker-argv"),
+    ]);
+    for (harness, node) in [(&first, "worker-a"), (&second, "worker-b")] {
+        let identity = harness
+            .artifacts_dir
+            .parent()
+            .unwrap()
+            .join("identity.json");
+        let mut value: Value = serde_json::from_slice(&fs::read(&identity).unwrap()).unwrap();
+        value["node_id"] = json!(node);
+        fs::write(identity, value.to_string()).unwrap();
+        // The winner stays alive until killed, holding its central lease.
+        support::write_executable(&harness.bin_dir.join("codex"), &format!(
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'test 1.0'; exit 0; fi\necho $$ > '{}'\nexec sleep 120\n",
+            harness.artifacts_dir.join("worker-argv").display()
+        ));
+    }
+    let mut a = first.prepare_loop_command(true);
+    let mut b = second.prepare_loop_command(true);
+    let mut processes: Vec<_> = [&mut a, &mut b]
+        .into_iter()
+        .map(|command| {
+            support::ProcessGroupGuard::new(
+                command
+                    .process_group(0)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .unwrap(),
+            )
+        })
+        .collect();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let state = central.state();
+        let acquisitions: Vec<_> = state["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|call| call["target"] == "/api/claims/acquire")
+            .collect();
+        let started = [&first, &second]
+            .iter()
+            .filter(|h| h.artifacts_dir.join("worker-argv").exists())
+            .count();
+        if acquisitions.len() == 2 && started == 1 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "workers did not arbitrate: {state}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let state = central.state();
+    assert_eq!(state["claims"].as_object().unwrap().len(), 1);
+    let acquires: Vec<_> = state["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|call| call["target"] == "/api/claims/acquire")
+        .collect();
+    assert_eq!(acquires.len(), 2);
+    assert_ne!(
+        acquires[0]["body"]["node_id"],
+        acquires[1]["body"]["node_id"]
+    );
+    for call in acquires {
+        assert_eq!(call["body"]["profile"], "test");
+        assert_eq!(call["body"]["work_id"], "#1516");
+    }
+    let winner = if first.artifacts_dir.join("worker-argv").exists() {
+        0
+    } else {
+        1
+    };
+    let loser = 1 - winner;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while processes[loser].try_wait().unwrap().is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "loser failed to skip in the same cycle"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let harnesses = [&first, &second];
+    let events = fs::read_to_string(&harnesses[loser].events_path).unwrap();
+    assert!(events.contains("held by node"), "{events}");
+    assert!(
+        support::fake_ledger::TestLedger::read_from(&harnesses[loser].ledger_path)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(!harnesses[loser].artifacts_dir.join("worker-argv").exists());
+
+    // Killing the entire process group cannot execute ClaimGuard::drop.
+    unsafe { libc::kill(-(processes[winner].id() as i32), libc::SIGKILL) };
+    processes[winner].wait().unwrap();
+    let backend_pid: i32 = fs::read_to_string(harnesses[winner].artifacts_dir.join("worker-argv"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    unsafe { libc::kill(-backend_pid, libc::SIGKILL) };
+    assert!(!central.state()["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|call| call["target"] == "/api/claims/release"));
+    let survivor = if loser == 0 { &mut first } else { &mut second };
+    let refused = survivor.run_one_loop().unwrap();
+    assert!(
+        !survivor.artifacts_dir.join("worker-argv").exists(),
+        "{refused:?}"
+    );
+    central.update(|state| state["clock_offset_seconds"] = json!(901));
+    support::write_executable(&survivor.bin_dir.join("codex"), &format!(
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'test 1.0'; exit 0; fi\ntouch '{}'\necho 'invalid model selection (--model test-model)'\nexit 1\n",
+        survivor.artifacts_dir.join("worker-argv").display()
+    ));
+    let recovered = survivor.run_one_loop().unwrap();
+    assert!(
+        survivor.artifacts_dir.join("worker-argv").exists(),
+        "{recovered:?}"
+    );
+    assert!(
+        recovered
+            .ledger_entries
+            .iter()
+            .any(|entry| entry["backend_exit_code"] == 1),
+        "{recovered:?}"
+    );
+    assert_eq!(central.state()["claims"], json!({}));
 }

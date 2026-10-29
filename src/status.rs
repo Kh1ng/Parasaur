@@ -1269,9 +1269,10 @@ pub fn run(cfg: &GahConfig, profile_name: &str, json: bool, light: bool) -> Resu
             cfg.defaults.node_capacity.floor_description(),
         );
         println!(
-            "Role: {:?} | Central URL: {}",
+            "Role: {:?} | Central URL: {} | Claim policy: {}",
             node.role,
-            node.central_url.as_deref().unwrap_or("(unset)")
+            node.central_url.as_deref().unwrap_or("(unset)"),
+            node.claim_policy
         );
         println!(
             "Observations: Sync={}, Availability={}, Ledger={}",
