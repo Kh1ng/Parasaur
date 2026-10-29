@@ -93,6 +93,7 @@ pub(crate) fn execute_action(
         NextAction::MergeMr { .. } => merge::execute(cfg, profile_name, action),
         NextAction::DispatchTicket { ticket_path, .. } => {
             let args = crate::dispatch::DispatchArgs {
+                mode: "improve".to_string(),
                 target: ticket_path.clone(),
                 dispatch_reason: Some("initial".to_string()),
                 ..base_args()
@@ -131,6 +132,7 @@ pub(crate) fn execute_action(
         ),
         NextAction::Retry { ticket_path, .. } => {
             let args = crate::dispatch::DispatchArgs {
+                mode: "improve".to_string(),
                 target: ticket_path.clone(),
                 dispatch_reason: Some("retry".to_string()),
                 ..base_args()
@@ -140,6 +142,7 @@ pub(crate) fn execute_action(
         }
         NextAction::Escalate { ticket_path, .. } => {
             let args = crate::dispatch::DispatchArgs {
+                mode: "improve".to_string(),
                 target: ticket_path.clone(),
                 escalate: true,
                 dispatch_reason: Some("escalate".to_string()),
