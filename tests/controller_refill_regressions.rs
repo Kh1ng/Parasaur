@@ -81,6 +81,12 @@ fn spawn_bin(state_root: &std::path::Path) -> ProcessCommand {
     cmd.env("TMPDIR", support::test_temp_root());
     cmd.env("GAH_TEST_NODE_PRESSURE_FILE", node_pressure);
     cmd.env("GAH_TEST_NODE_CAPACITY_REPROBE_MS", "100");
+    // Each dispatch recalls from and captures to the memory gateway, by
+    // default http://127.0.0.1:8420. Whatever the host runs there is not part
+    // of these tests, and a port that drops connections instead of refusing
+    // them costs a 10 s curl timeout per call (#1662). curl fails a file URL
+    // at once, and the dispatch carries on as it does with no gateway.
+    cmd.env("TDAI_GATEWAY_URL", "file:///nonexistent-memory-gateway");
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -145,6 +151,11 @@ fn wait_for_worker_event(
             } else {
                 format!("timed out after {}s", WORKER_EVENT_TIMEOUT.as_secs())
             };
+            let processes = if exited {
+                String::new()
+            } else {
+                watchdog::process_tree(child.id() as i32)
+            };
             fs::write(release, "release").unwrap();
             if !exited {
                 // A stuck controller would never exit on its own; kill its
@@ -155,7 +166,7 @@ fn wait_for_worker_event(
             }
             let output = child.wait_with_output().unwrap();
             panic!(
-                "{what}: {reason}\nstdout: {}\nstderr: {}",
+                "{what}: {reason}\nprocesses:\n{processes}\nstdout: {}\nstderr: {}",
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
@@ -903,6 +914,10 @@ fn parallel_loop_reprobes_node_pressure_with_active_worker_remaining() {
         "gh",
         "#!/bin/sh\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"list\" ]; then echo '[]'; exit 0; fi\nif [ \"$1\" = \"api\" ]; then echo '[]'; exit 0; fi\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"create\" ]; then printf 'https://github.com/owner/real/pull/1\\n'; exit 0; fi\nexit 0\n",
     );
+    // A worker takes its call number and counts itself active under one
+    // lock (#1662). With two critical sections, call 2 could count itself
+    // and write its marker while call 1 had its number but was not yet
+    // counted, so a loaded runner saw one active worker instead of two.
     make_fake_bin_with_body(
         &fake_bin,
         "codex",
@@ -914,12 +929,6 @@ fn parallel_loop_reprobes_node_pressure_with_active_worker_remaining() {
              slow_release='{slow_release}'\n\
              acquire_active_lock() {{ while ! mkdir \"$lock\" 2>/dev/null; do sleep 0.01; done; }}\n\
              release_active_lock() {{ rmdir \"$lock\"; }}\n\
-             inc_active() {{\n               acquire_active_lock\n\
-               count=$( [ -f \"$active_count_file\" ] && cat \"$active_count_file\" || echo 0 )\n\
-               count=$((count + 1))\n\
-               echo \"$count\" > \"$active_count_file\"\n\
-               release_active_lock\n\
-             }}\n\
              dec_active() {{\n               acquire_active_lock\n\
                count=$( [ -f \"$active_count_file\" ] && cat \"$active_count_file\" || echo 0 )\n\
                if [ \"$count\" -gt 0 ]; then count=$((count - 1)); fi\n\
@@ -930,9 +939,10 @@ fn parallel_loop_reprobes_node_pressure_with_active_worker_remaining() {
              n=$( [ -f \"${{call_count_file}}.count\" ] && cat \"${{call_count_file}}.count\" || echo 0 )\n\
              n=$((n + 1))\n\
              echo \"$n\" > \"${{call_count_file}}.count\"\n\
+             count=$( [ -f \"$active_count_file\" ] && cat \"$active_count_file\" || echo 0 )\n\
+             echo \"$((count + 1))\" > \"$active_count_file\"\n\
              release_active_lock\n\
              printf 'agent edit %s\n' \"$n\" > \"agent-edit-$n.txt\"\n\
-             inc_active\n\
              echo \"call-$n\" >> \"$call_count_file\"\n\
              case \"$n\" in\n\
                1) while [ ! -f \"$slow_release\" ]; do sleep 0.05; done ;;\n\
