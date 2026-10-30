@@ -87,6 +87,7 @@
   ],
   "node": {
     "central_url": null,
+    "claim_policy": "local",
     "role": "central"
   },
   "node_capacity": {

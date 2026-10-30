@@ -399,6 +399,8 @@ export interface PmParentStatus {
 export interface NodeRoleStatus {
   role: 'central' | 'standalone' | 'worker';
   central_url: string | null;
+  /** Configured arbitration policy; absent on older CLIs. No inferred health. */
+  claim_policy?: 'central_fail_closed' | 'local';
 }
 
 /** Dispatch-runtime observation, separate from lock ownership. Null routing facts are unknown. */

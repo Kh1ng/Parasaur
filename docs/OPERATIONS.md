@@ -919,6 +919,11 @@ registry_central_url = "https://central.example.com"
 another node aborts dispatch via `?` before any backend work starts. A
 central-node outage stops dispatch fleet-wide rather than risk a silent
 double-dispatch -- a deliberate tradeoff, not an oversight.
+`gah status --json` exposes `node.claim_policy = "central_fail_closed"`
+when a central URL is configured (`"local"` otherwise); text status prints
+the same policy. Outage refusals are recorded in `dispatch_finished`
+controller events. Switching to local claims requires an explicit operator
+configuration change; it is never an automatic outage fallback.
 
 **A node must declare which profiles it runs at registration time**
 (`--profiles` on `register-node`, issue #881) before it can claim work

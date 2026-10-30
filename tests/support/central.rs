@@ -216,6 +216,16 @@ fn respond(state: &mut Value, method: &str, url: &url::Url, body: Value) -> (u16
                 body["profile"].as_str().unwrap(),
                 body["work_id"].as_str().unwrap()
             );
+            // Advance the central clock independently of worker clocks, so a
+            // killed process's full lease can expire without a wall-clock wait.
+            let now = chrono::Utc::now()
+                + chrono::Duration::seconds(state["clock_offset_seconds"].as_i64().unwrap_or(0));
+            state["claims"].as_object_mut().unwrap().retain(|_, lease| {
+                lease["expires_at"]
+                    .as_str()
+                    .and_then(|expiry| chrono::DateTime::parse_from_rfc3339(expiry).ok())
+                    .is_none_or(|expiry| expiry > now)
+            });
             let held = state["claims"].get(&key);
             if let Some(held) = held {
                 if held["node_id"] != body["node_id"] {
@@ -228,8 +238,18 @@ fn respond(state: &mut Value, method: &str, url: &url::Url, body: Value) -> (u16
                 state["claims"].as_object_mut().unwrap().remove(&key);
                 (200, json!({"released":true}))
             } else {
-                state["claims"][&key] = body;
-                (200, json!({"expires_at":"2099-01-01T00:00:00Z"}))
+                let expires_at = (now
+                    + chrono::Duration::seconds(
+                        body["lease_seconds"]
+                            .as_i64()
+                            .unwrap_or(900)
+                            .clamp(60, 3600),
+                    ))
+                .to_rfc3339();
+                let mut lease = body;
+                lease["expires_at"] = json!(expires_at);
+                state["claims"][&key] = lease;
+                (200, json!({"expires_at":expires_at}))
             }
         }
         _ => (404, json!({"error":"route_not_seeded"})),

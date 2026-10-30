@@ -47,7 +47,7 @@ pub struct ScenarioHarness {
     // Also serializes this harness's `gah` subprocess fork+exec against
     // any other test in this binary that writes+execs a temp fake-backend
     // script concurrently -- see `ExecGuard`'s doc comment in `mod.rs`.
-    _lock: ExecGuard,
+    _lock: std::rc::Rc<ExecGuard>,
     pub config_path: PathBuf,
     pub bin_dir: PathBuf,
     pub ledger_path: PathBuf,
@@ -75,7 +75,15 @@ pub struct ScenarioHarness {
 
 impl ScenarioHarness {
     pub fn new(provider: &str) -> Self {
-        let lock = ExecGuard::new();
+        Self::with_exec_guard(provider, std::rc::Rc::new(ExecGuard::new()))
+    }
+
+    /// A second isolated node under the same test-owned execution guard.
+    pub fn peer(&self) -> Self {
+        Self::with_exec_guard(&self.provider, self._lock.clone())
+    }
+
+    fn with_exec_guard(provider: &str, lock: std::rc::Rc<ExecGuard>) -> Self {
         // Dispatch refuses to start with under 10 GiB free on the worktree
         // and temporary filesystems; `test_tempdir` picks a root that has
         // that room instead of the host's `/tmp`, which CI runners and
@@ -411,7 +419,7 @@ impl ScenarioHarness {
         self.run_one_loop_with_json(true)
     }
 
-    pub fn run_one_loop_with_json(&mut self, json: bool) -> Result<LoopResult, String> {
+    pub fn prepare_loop_command(&mut self, json: bool) -> Command {
         self.setup_env();
 
         // Ensure fake gh/glab scripts are in the bin_dir
@@ -428,6 +436,12 @@ impl ScenarioHarness {
         if json {
             command.arg("--json");
         }
+        command.env("XDG_RUNTIME_DIR", self._temp.path().join("runtime"));
+        command
+    }
+
+    pub fn run_one_loop_with_json(&mut self, json: bool) -> Result<LoopResult, String> {
+        let mut command = self.prepare_loop_command(json);
         let out = command
             .env("XDG_RUNTIME_DIR", self._temp.path().join("runtime"))
             .output()
