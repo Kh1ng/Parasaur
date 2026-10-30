@@ -484,7 +484,15 @@ impl ScenarioHarness {
     pub fn run_loops(&mut self, n: usize) -> Result<Vec<LoopResult>, String> {
         let mut results = Vec::with_capacity(n);
         for _ in 0..n {
-            results.push(self.run_one_loop()?);
+            let result = self.run_one_loop()?;
+            // setup_env writes the seed on every invocation. Carry forward
+            // real output so subsequent decisions see prior dispatches.
+            self.ledger = result
+                .ledger_entries
+                .iter()
+                .cloned()
+                .fold(TestLedger::new(), |ledger, entry| ledger.with_entry(entry));
+            results.push(result);
         }
         Ok(results)
     }

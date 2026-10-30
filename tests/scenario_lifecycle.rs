@@ -12,15 +12,25 @@ use support::{FakeBackend, Scenario};
 const FINDING: &str = "Reject an expired lease before publishing the worker result";
 
 fn harness() -> ScenarioHarness {
-    let mut harness = ScenarioHarness::new("github").with_config_append(
-        "validation_commands = [\"true\"]\n\
+    harness_with_config("")
+}
+
+fn harness_with_config(extra: &str) -> ScenarioHarness {
+    let config = extra.to_string() + "validation_commands = [\"true\"]\n\
          [profiles.test.publishing]\ntrusted_issue_human_authors = [\"gah-bot\"]\n\
          [profiles.test.publishing.issue_claim]\nmode = \"github_assignee\"\nverify_seconds = 0\n\
          [profiles.test.routing]\n\
+         pm_backend = \"claude\"\n\
          routine_reviewer = { backend = \"codex\", model = \"default\" }\n\
          improve_candidates = [{ backend = \"agy\", model = \"test-model\", priority = 100, included_in_quota = true }]\n\
-         review_candidates = [{ backend = \"codex\", model = \"default\", priority = 100, included_in_quota = true }]\n",
-    );
+         review_candidates = [{ backend = \"codex\", model = \"default\", priority = 100, included_in_quota = true }]\n";
+    let config = if extra.is_empty() {
+        config
+    } else {
+        config.replace("model = \"test-model\", priority = 100, included_in_quota = true }]",
+            "model = \"test-model\", priority = 100, included_in_quota = true }, { backend = \"claude\", model = \"retry-model\", priority = 50, included_in_quota = true }]")
+    };
+    let mut harness = ScenarioHarness::new("github").with_config_append(&config);
     // Publication constructs a provider URL rather than pushing to origin.
     // Rewrite it in this repository only, so every push stays in the fixture.
     let remote = harness.local_repo_dir.parent().unwrap().join("remote.git");
@@ -91,7 +101,8 @@ fn reviewer(harness: &mut ScenarioHarness, kind: &str) {
     reviewer.install(Scenario::success().with_stdout(json!({
         "verdict":kind,"confidence":"high","human_required":false,
         "actionable_findings":findings,"blocking_findings":[],
-        "evidence":["file:implementation.txt", "diff:implementation.txt:lease validation inspected"],
+        "evidence":["file:implementation.txt", "diff:implementation.txt:lease validation inspected",
+            "ac:1:file:implementation.txt"],
         "non_blocking_findings":[],"risk_notes":[]
     }).to_string()));
     harness.install_custom_worker("codex", &reviewer);
@@ -336,5 +347,158 @@ fn repair_retry_cap_requires_human() {
     assert_eq!(
         harness.stateful_forge().state()["pulls"]["2"]["state"],
         "open"
+    );
+}
+
+/// Scenario 8: provider-native PM children traverse the same unattended
+/// controller as ordinary improve/review work, with no synthesized ledger rows.
+#[test]
+fn pm_children_are_improved_reviewed_and_merged_in_one_loop() {
+    let mut harness = harness();
+    reviewer(&mut harness, "APPROVE");
+    harness.stateful_forge().update(|state| {
+        state["issues"]["1"]["labels"] = json!(["planning"]);
+        state["labels"] = json!(["exec:autonomous"]);
+    });
+    let tickets: Vec<_> = ["first", "second"]
+        .iter()
+        .map(|key| {
+            json!({
+                "key":key,"title":format!("Implement {key}"),"summary":"Bounded implementation",
+                "objective":"Implement the requested behavior","task_class":"feature",
+                "difficulty":"easy","risk":"low","execution_disposition":"autonomous",
+                "recommended_routing":{"capability":"edit","min_tier":"standard"},
+                "affected_areas":[key],"affected_files":[format!("{key}.txt")],
+                "acceptance_criteria":["Requested behavior works"],"verification_commands":["true"],
+                "depends_on":[],"duplicate_evidence":["No matching issue"],
+                "uncovered_reason":"No existing work covers this change"
+            })
+        })
+        .collect();
+    let planner = FakeBackend::new(&harness.artifacts_dir, "claude");
+    planner.install(
+        Scenario::success().with_stdout(
+            json!({
+                "title":"Implementation plan","summary":"Two bounded children","tickets":tickets
+            })
+            .to_string(),
+        ),
+    );
+    harness.install_custom_worker("claude", &planner);
+    let planned = harness.run_loops(1).unwrap().pop().unwrap();
+    assert_eq!(planned.exit_code, Some(0), "{planned:?}");
+    let publication = planned
+        .ledger_entries
+        .iter()
+        .find(|e| {
+            e["pm_child_issue_numbers"]
+                .as_array()
+                .is_some_and(|a| a.len() == 2)
+        })
+        .expect("PM publication records both children");
+    let children = publication["pm_child_issue_numbers"]
+        .as_array()
+        .unwrap()
+        .clone();
+    for child in &children {
+        let dispatched = harness.run_loops(1).unwrap().pop().unwrap();
+        assert_eq!(dispatched.exit_code, Some(0), "{dispatched:?}");
+        let entry = latest(&dispatched);
+        assert_eq!(entry["mode"], "improve", "{entry}");
+        assert_eq!(entry["source_issue_number"], *child);
+        assert_eq!(entry["mr_created"], true);
+        let state = harness.stateful_forge().state();
+        let (number, pull) = state["pulls"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .find(|(_, p)| p["state"] == "open")
+            .unwrap();
+        let branch = pull["branch"].as_str().unwrap();
+        let sha = git(
+            &harness,
+            &["--git-dir", "../remote.git", "rev-parse", branch],
+        );
+        let branch = branch.to_string();
+        assert_eq!(sha.len(), 40);
+        let number = number.clone();
+        harness.stateful_forge().update(|s| {
+            s["pulls"][&number]["sha"] = json!(sha);
+            s["branches"][&branch] = json!(sha);
+            s["checks"][&sha] = json!([{"status":"completed","conclusion":"success"}]);
+        });
+        let completed = harness.run_loops(3).unwrap();
+        for result in &completed {
+            assert_eq!(result.exit_code, Some(0), "{result:?}");
+        }
+        let entries = &completed.last().unwrap().ledger_entries;
+        assert!(
+            entries.iter().any(|e| e["mode"] == "review"
+                && e["review_source_sha"] == sha
+                && e["review_verdict"] == "APPROVE"
+                && e["human_required"] == false),
+            "{completed:?}"
+        );
+        let state = harness.stateful_forge().state();
+        assert_eq!(state["pulls"][&number]["state"], "closed");
+        assert!(state["pulls"][&number]["merged_at"].is_string());
+    }
+    let state = harness.stateful_forge().state();
+    assert_eq!(state["pulls"].as_object().unwrap().len(), 2);
+    assert_eq!(
+        state["issues"]["1"]["children"].as_array().unwrap().len(),
+        2
+    );
+}
+
+#[test]
+fn hung_worker_releases_claim_and_is_redispatched_once() {
+    let mut harness = harness_with_config("agy_idle_timeout_seconds = 1\n");
+    let marker = harness.artifacts_dir.join("worker-started");
+    support::write_executable(&harness.bin_dir.join("agy"), &format!(
+        "#!/bin/sh\nset -eu\ncase \"$1\" in --version) echo 'test 1.0'; exit 0;; models|--help) exit 0;; esac\nif [ \"$2\" = /usage ]; then exit 0; fi\n\
+         if [ ! -f '{}' ]; then touch '{}'; exec sleep 300; fi\n\
+         echo change >> implementation.txt\necho work complete\n",
+        marker.display(), marker.display()
+    ));
+    support::write_executable(
+        &harness.bin_dir.join("claude"),
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo \"test 1.0\"; exit 0; fi\necho change >> implementation.txt\necho work complete\n",
+    );
+    let failed = harness.run_loops(1).unwrap().pop().unwrap();
+    assert_eq!(failed.exit_code, Some(1), "{failed:?}");
+    assert_eq!(failed.ledger_entries.len(), 1);
+    let entry = latest(&failed);
+    assert_eq!(entry["failure_class"], "agent_no_progress", "{entry}");
+    assert_eq!(
+        entry["validation_result"], "not_run_backend_stalled",
+        "{entry}"
+    );
+    assert_eq!(entry["mr_created"], false);
+    assert_eq!(
+        harness.run_status_json().unwrap()["active_claims"],
+        json!([])
+    );
+    let retried = harness.run_loops(1).unwrap().pop().unwrap();
+    assert_eq!(retried.exit_code, Some(0), "{retried:?}");
+    assert_eq!(retried.ledger_entries.len(), 2);
+    assert_eq!(latest(&retried)["work_id"], "#1");
+    assert_eq!(latest(&retried)["mode"], "improve");
+    assert_eq!(latest(&retried)["mr_created"], true, "{retried:?}");
+    assert!(latest(&retried)["failure_class"].is_null());
+    let next = harness.run_loops(1).unwrap().pop().unwrap();
+    assert_eq!(
+        next.ledger_entries
+            .iter()
+            .filter(|e| e["mode"] == "improve")
+            .count(),
+        2
+    );
+    assert_eq!(
+        harness.stateful_forge().state()["pulls"]
+            .as_object()
+            .unwrap()
+            .len(),
+        1
     );
 }
