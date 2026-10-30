@@ -22,7 +22,7 @@ import type {
 } from '@git-agent-harness/contracts';
 import { notifiableActivity } from '@git-agent-harness/contracts';
 import { gahApi } from '../api/client.js';
-import { withBasePath } from '../lib/basePath.js';
+import { webSocketUrl } from './webSocketUrl.js';
 import { deliverSystemNotification, mergeActivityEvents } from '../lib/activityNotifications.js';
 
 export interface WebSocketInboxEntry {
@@ -79,16 +79,10 @@ type WebSocketContextType = {
 const WebSocketContext = createContext<WebSocketContextType | undefined>(undefined);
 const MAX_INBOX_MESSAGES = 100;
 
-// Vite injects import.meta.env - use type assertion for TypeScript
-const SERVER_WS_BASE = (import.meta as unknown as { env: { VITE_WS_URL?: string } }).env?.VITE_WS_URL ||
-  `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${withBasePath('/ws')}`;
-
+// Explicit socket URLs remain authoritative for desktop and development.
 function getWebSocketUrl(profile?: string | null): string {
-  const url = new URL(SERVER_WS_BASE);
-  if (profile) {
-    url.searchParams.set('profile', profile);
-  }
-  return url.toString();
+  const override = (import.meta as unknown as { env: { VITE_WS_URL?: string } }).env?.VITE_WS_URL;
+  return webSocketUrl(window.location, override, profile);
 }
 
 export function WebSocketProvider({ children }: { children: ReactNode }) {
