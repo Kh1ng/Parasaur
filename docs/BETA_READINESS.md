@@ -48,6 +48,11 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   output, source rebuild cleanup and failed-install preservation passed locally.
   Legacy bundles reject mismatched or unreadable lockfiles. The updated CLI and
   bundle still need deployment and acceptance on the live host.
+- A complete Linux candidate at `1c0c38af` passed the actual optimized CLI's
+  local-manifest install across dependency drift in a disposable checkout,
+  preserving tracked checkout files and serving the installed dashboard.
+  Its binaries require glibc 2.39; host compatibility remains unverified.
+  MacBook work is explicitly deferred by the owner.
 
 - Michael's controller status, route/claim state, and ledger are not available in this session. GitHub review comments establish recorded opinions, not why his running loop has not acted.
 - Parasaur was confirmed at `https://hermesagent.tail82695.ts.net:8443`; the original HTTPS listener serves Hermes. Windows saved desktop connection URLs were corrected. The live central reports v0.2.0 and ready backend checks, but its referenced JavaScript/CSS GETs return HTTP 500, preventing dashboard rendering. Protected API reads return 401 until a central credential is supplied. Repair asset delivery and authenticate before accepting the live factory.

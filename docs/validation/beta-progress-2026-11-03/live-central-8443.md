@@ -37,3 +37,11 @@ read-only factory/controller checks. The earlier MacBook SSH password requests
 expired; no SSH session or host configuration change succeeded. No token,
 pairing, role, service, migration, review gate, or runtime job was changed on
 the live host.
+
+Follow-up checks from Windows returned connection timeouts for health, API
+info and the previously referenced JavaScript asset (12-second curl limit).
+Tailscale reported the host online, which does not establish HTTP availability.
+The 500 responses above are the earlier successful network observations, not
+a claim that the current requests reached the service. The owner then deferred
+MacBook work; the new private SSH credential request was declined. No request
+remains pending and no host changes were made.
