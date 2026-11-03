@@ -23,6 +23,7 @@ pub enum EventType {
     ActionOverridden,
     DispatchStarted,
     DispatchFinished,
+    CentralClaimAttempt,
     /// Not yet emitted: would require `dispatch.rs`'s own
     /// `mark_backend_unavailable_from_output` to call into `events::record`,
     /// a separate change from `gah loop --once`'s own decision/execution
@@ -66,6 +67,7 @@ impl EventType {
             Self::ActionOverridden => "action_overridden",
             Self::DispatchStarted => "dispatch_started",
             Self::DispatchFinished => "dispatch_finished",
+            Self::CentralClaimAttempt => "central_claim_attempt",
             Self::BackendMarkedUnavailable => "backend_marked_unavailable",
             Self::WaitSelected => "wait_selected",
             Self::HumanRequired => "human_required",
@@ -114,6 +116,8 @@ pub struct ControllerEvent {
     /// `details` for people; readers that need it use this field.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skipped: Vec<SkippedRoute>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub central_claim: Option<crate::central_claims::observations::CentralClaimEvidence>,
 }
 
 /// One backend and model the router considered and passed over.
@@ -245,6 +249,7 @@ pub fn record_with_reason_code_and_plan(
             review_contract_version: Some(crate::ledger::CURRENT_REVIEW_CONTRACT_VERSION),
             remediation_plan: remediation_plan.cloned(),
             skipped: Vec::new(),
+            central_claim: None,
         },
     )
 }
@@ -271,6 +276,7 @@ pub fn record_with_run_id_and_reason_code(
             review_contract_version: Some(crate::ledger::CURRENT_REVIEW_CONTRACT_VERSION),
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         },
     )
 }
@@ -301,6 +307,7 @@ pub(crate) fn record_dispatch_error(
             review_contract_version: Some(crate::ledger::CURRENT_REVIEW_CONTRACT_VERSION),
             remediation_plan: None,
             skipped: skipped_routes(error),
+            central_claim: None,
         },
     )
 }
@@ -633,6 +640,7 @@ mod tests {
             details: String::new(),
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         };
         append(&cfg, &event).unwrap();
         append(&cfg, &event).unwrap();

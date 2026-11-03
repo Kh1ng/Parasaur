@@ -403,7 +403,13 @@ export interface PmParentStatus {
 export interface NodeRoleStatus {
   role: 'central' | 'standalone' | 'worker';
   central_url: string | null;
+  /** Latest admission attempt for this profile/repository/central, never a health probe or live lease. */
+  central_claim_observation?: CentralClaimObservation;
 }
+
+export type CentralClaimObservation =
+  | { state: 'not_observed' | 'unavailable' }
+  | { state: 'observed'; outcome: 'acquired' | 'refused' | 'unknown'; observed_at: string; work_id: string | null };
 
 /** Dispatch-runtime observation, separate from lock ownership. Null routing facts are unknown. */
 export interface RunningWorker {
@@ -1362,6 +1368,7 @@ export type ControllerEventType =
   | 'action_decided'
   | 'dispatch_started'
   | 'dispatch_finished'
+  | 'central_claim_attempt'
   | 'backend_marked_unavailable'
   | 'wait_selected'
   | 'human_required'
@@ -1379,6 +1386,7 @@ export interface ControllerEvent {
   remediation_plan?: RemediationPlan | null;
   /** Routes the router passed over, when the dispatch ended because none could take it. */
   skipped?: SkippedRoute[];
+  central_claim?: { central_url: string; repo_id: string; outcome: 'acquired' | 'refused' | 'unknown' };
 }
 
 /** One backend and model the router considered and passed over (src/events.rs SkippedRoute). */

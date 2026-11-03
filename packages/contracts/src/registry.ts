@@ -1,4 +1,4 @@
-import type { RunningWorker, ActiveClaim, AvailabilityScope, BackendInstanceSummary, RecentLedgerSummary, QuotaSnapshot } from './gah.js';
+import type { CentralClaimObservation, RunningWorker, ActiveClaim, AvailabilityScope, BackendInstanceSummary, RecentLedgerSummary, QuotaSnapshot } from './gah.js';
 import type { ClaimLease } from './claims.js';
 import coordinatorProtocol from './coordinator-protocol.json' with { type: 'json' };
 
@@ -163,6 +163,13 @@ export interface NodeObservationSnapshot {
   error?: NodeObservationError | null;
   /** The worker's latest login checks (#1271); absent from older workers. */
   auth_health?: NodeAuthHealth | null;
+  /** Per-profile admission history; source_state describes the latest poll, not the attempt. */
+  central_claim_observations?: {
+    profile: string;
+    central_url: string;
+    observation?: CentralClaimObservation;
+    source_state: NodeObservationState;
+  }[];
 }
 
 export type AuthState = 'ok' | 'expired' | 'missing' | 'unknown' | 'error';

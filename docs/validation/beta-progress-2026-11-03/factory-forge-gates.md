@@ -13,4 +13,6 @@ The recorded blocking findings are in [#1679's review comment](https://github.co
 
 The finishing branch retains controller `fix` mode and does not include the draft's controller-wide mode change. Its local enterprise tests now cover real disposable authentication/relay and a two-account browser invitation/removal flow. Those local results do not close either hosted acceptance issue.
 
+The finishing branch now also records actual central claim admission results in the existing event stream and projects the latest matching attempt into CLI/HTTP status and Factory. A real worker CLI regression distinguishes acquired admission from an outage refusal and confirms no backend/local claim on refusal. This addresses the observability gap independently; it does not change #1678's draft head or establish that Michael is running the change.
+
 To explain why work has not advanced, inspect Michael's current controller receipt, repair retry budget, selected route, claim, and latest decision for these exact heads. Without those runtime facts, a review finding is evidence of required work, not proof that a review gate is malfunctioning. The UI now surfaces available blocker/receipt/decision evidence; it still needs a real Parasaur endpoint for this check.

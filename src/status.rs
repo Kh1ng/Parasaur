@@ -1255,7 +1255,14 @@ pub fn run(cfg: &GahConfig, profile_name: &str, json: bool, light: bool) -> Resu
     let now = crate::clock::now_utc();
     let snapshot = build_snapshot_with(cfg, profile_name, now, !light)?;
 
-    let node = crate::node_role::NodeRoleStatus::resolve(&cfg.defaults)?;
+    let mut node = crate::node_role::NodeRoleStatus::resolve(&cfg.defaults)?;
+    if node.central_url.is_some() {
+        node.central_claim_observation = Some(crate::central_claims::observations::latest(
+            cfg,
+            profile_name,
+            crate::config::get_profile(cfg, profile_name)?,
+        ));
+    }
     if json {
         let mut output = serde_json::to_value(&snapshot)?;
         output["node"] = serde_json::to_value(&node)?;
@@ -1273,6 +1280,12 @@ pub fn run(cfg: &GahConfig, profile_name: &str, json: bool, light: bool) -> Resu
             node.role,
             node.central_url.as_deref().unwrap_or("(unset)")
         );
+        if let Some(observation) = &node.central_claim_observation {
+            println!(
+                "Central claim observation: {}",
+                serde_json::to_string(observation)?
+            );
+        }
         println!(
             "Observations: Sync={}, Availability={}, Ledger={}",
             snapshot.observations.sync.status,

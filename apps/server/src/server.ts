@@ -1258,7 +1258,11 @@ export function createServer(
       const enriched = {
         ...status,
         running_workers: runningWorkers(status, nodes, identity.node_id),
-        node,
+        node: {
+          ...node,
+          central_claim_observation: node.central_url && status.node?.central_url === node.central_url
+            ? status.node.central_claim_observation : undefined
+        },
         node_id: identity.node_id,
         display_name: identity.display_name,
         advertised_url: identity.advertised_url,

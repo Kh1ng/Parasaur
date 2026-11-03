@@ -1,4 +1,5 @@
 import { RunningWorkersRoster } from '../components/RunningWorkersRoster.js';
+import { CentralClaimStatus } from '../components/CentralClaimStatus.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, ListChecks, Rocket } from 'lucide-react';
 import { ExternalAnchor } from '../components/ExternalAnchor';
@@ -366,6 +367,12 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
         refreshing={status.loading}
         lastUpdated={status.fetchedAt}
       />
+
+      {status.data?.node?.central_url && <CentralClaimStatus observation={status.data.node.central_claim_observation} />}
+      {(status.data?.nodes ?? []).flatMap(node => (node.central_claim_observations ?? [])
+        .filter(claim => claim.profile === profile)
+        .map(claim => <CentralClaimStatus key={`${node.node_id}:${claim.profile}`} observation={claim.observation}
+          nodeName={`${node.display_name} · ${node.node_id}`} centralUrl={claim.central_url} sourceState={claim.source_state} />))}
 
       <section aria-labelledby="factory-flow-title">
         <h3 id="factory-flow-title" className="sr-only">Factory flow</h3>

@@ -486,7 +486,20 @@ fn acquire_claim_with<G>(
 
     if let Some(central_url) = central_url {
         let lease_id = crate::work_claim::normalize_work_identity(&work_id);
-        let guard = acquire_central(central_url, &lease_id)?;
+        let result = acquire_central(central_url, &lease_id);
+        if crate::central_claims::observations::record(
+            cfg,
+            profile,
+            args,
+            central_url,
+            &lease_id,
+            result.is_ok(),
+        )
+        .is_err()
+        {
+            eprintln!("warning: central claim observation could not be recorded");
+        }
+        let guard = result?;
         return Ok((Some(guard), Some(work_id)));
     }
 

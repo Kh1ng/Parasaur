@@ -885,6 +885,7 @@ mod tests {
             details: format!("{kind}: test"),
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         }
     }
 
@@ -907,6 +908,7 @@ mod tests {
             details: details.into(),
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         }
     }
 
@@ -1034,6 +1036,7 @@ mod tests {
             details: "fix_existing: deferred_capacity: claude/sonnet busy".into(),
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         });
 
         assert_eq!(
@@ -1072,6 +1075,7 @@ mod tests {
             details: "branch 'gah/real-1' already attached to worktree /tmp/gah/real-1 (clean=true); deferring to next eligible item".into(),
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         });
 
         assert_eq!(
@@ -1180,6 +1184,7 @@ mod tests {
             details: "fix_existing: deferred_capacity: claude/sonnet busy".into(),
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         }
     }
 
@@ -1470,6 +1475,7 @@ default_target_branch = "main"
             review_contract_version: None, // Pre-bump event
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         };
 
         let events = vec![old_event.clone(), old_event.clone(), old_event.clone()];

@@ -283,6 +283,39 @@ Run `gah update` again after you move the checkout or change the Node install.
 Keep local customization in `systemctl edit` drop-ins, because every update
 replaces the base unit.
 
+#### Central claim admission evidence
+
+With `registry_central_url` configured, each attempted central claim records a
+`central_claim_attempt` event before backend execution. `gah status --json`
+exposes the latest matching attempt as `node.central_claim_observation`, scoped
+to the selected profile, repository identity, and central origin. The Factory
+page shows the same observation. An outage refusal therefore differs from a
+successful admission; a later acquired claim supersedes the earlier refusal.
+
+The observation describes an attempt, not current service health or a live
+lease. `not_observed` means there is no matching evidence; `unavailable` means
+the local event history could not be read. Older CLIs omit the field. Neither
+case is evidence of a healthy central. Inspect the attempt's work ID and time,
+then check central connectivity, node authorization, and competing claims. A
+refused claim never falls back to a local claim or starts a backend.
+
+This evidence uses the existing event log, not a second claim store. Recording
+is best effort and emits a fixed warning if it fails; it cannot grant a claim
+or change the admission result. Claim errors, response bodies, and tokens are
+not copied into this new evidence. Disabling the central explicitly removes
+the observation from status; switching its origin or the repository starts
+with no matching observation. Upgrade the CLI and server together so the HTTP
+status response preserves the new field while retaining its configured role.
+
+Central's existing fleet poll also carries these observations from workers,
+per profile, into `nodes[].central_claim_observations`. Factory filters them to
+the selected profile and identifies the source machine and configured central.
+A failed poll retains the previous attempt with an explicit source state;
+it does not refresh the attempt's timestamp. A response for another profile
+cannot refresh that profile's evidence. Successful recovery replaces the
+cached reading. Unknown or malformed worker fields cannot become an acquired
+claim, and nested fleet reports are not forwarded as direct observations.
+
 #### Server bind host (issue #643)
 
 `apps/server` (the process this unit starts) defaults `HOST` to `0.0.0.0` and

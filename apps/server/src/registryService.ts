@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { parseNodeAuthHealth } from './authHealth.js';
+import { parseNodeCentralClaims } from './centralClaimObservation.js';
 import { resolve, dirname, sep } from 'node:path';
 import { hostname, networkInterfaces } from 'node:os';
 import type {
@@ -643,6 +644,15 @@ export class RegistryService {
             .filter(worker => (worker.profile ?? previous?.profile) === (requested ?? previous?.profile))
             .map(worker => ({ ...worker, profile: worker.profile ?? previous?.profile ?? undefined, state: 'stale' as const }));
         });
+        observation.central_claim_observations = results.flatMap((reading, index) => {
+          const requested = profiles[index];
+          if (reading.snapshot && (!requested || reading.snapshot.profile === requested)) {
+            return reading.snapshot.central_claim_observations ?? [];
+          }
+          return (previous?.central_claim_observations ?? [])
+            .filter(claim => claim.profile === (requested ?? previous?.profile))
+            .map(claim => ({ ...claim, source_state: reading.snapshot ? 'incompatible' as const : reading.state }));
+        });
         this.observations.set(node.node_id, observation);
       }
     }
@@ -829,6 +839,9 @@ export class RegistryService {
       backend_instances: Array.isArray(payload.backend_instances) ? payload.backend_instances : [],
       availability: Array.isArray(payload.availability) ? payload.availability : [],
       auth_health: parseNodeAuthHealth(payload.auth_health),
+      central_claim_observations: parseNodeCentralClaims(payload.node,
+        typeof payload.profile?.profile === 'string' ? payload.profile.profile : typeof payload.profile === 'string' ? payload.profile : null,
+        state),
       recent_ledger: payload.recent_ledger ?? null,
       running_workers: Array.isArray(payload.running_workers) ? payload.running_workers.map((worker: RunningWorker) => ({ ...worker, node_id: node.node_id })) : [],
       active_claims: Array.isArray(payload.active_claims) ? payload.active_claims : [],

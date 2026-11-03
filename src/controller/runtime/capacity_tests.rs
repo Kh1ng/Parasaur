@@ -164,6 +164,7 @@ fn capacity_event(work_id: &str, details: &str) -> crate::events::ControllerEven
         details: details.into(),
         remediation_plan: None,
         skipped: Vec::new(),
+        central_claim: None,
     }
 }
 

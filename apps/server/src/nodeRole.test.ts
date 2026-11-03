@@ -3,15 +3,16 @@ import assert from 'node:assert/strict';
 import { createServer as createHttpServer, type Server } from 'node:http';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateNodeRole, workerMemoryEnvironment, workerRouteGuard } from './nodeRole.js';
 import { workerMemoryRouter } from './workerMemory.js';
 import { RegistryService } from './registryService.js';
 import { authMiddleware } from './authMiddleware.js';
+import { resetCachedCoordinatorIdentity } from './coordinatorIdentity.js';
 import { initializeSkillBank, createServer } from './server.js';
-import type { DoctorSnapshot, NodeRoleStatus } from '@git-agent-harness/contracts';
+import type { DoctorSnapshot, NodeRoleStatus, StatusSnapshot } from '@git-agent-harness/contracts';
 
 async function listen(server: Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -21,6 +22,39 @@ async function listen(server: Server): Promise<string> {
 }
 const close = (server: Server) => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 const worker = { role: 'worker', central_url: 'https://central.test' } as const;
+
+test('status preserves fresh CLI claim evidence without replacing the configured node identity', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'gah-claim-status-'));
+  const savedBinary = process.env.GAH_BINARY;
+  const savedIdentity = process.env.GAH_COORDINATOR_IDENTITY_PATH;
+  const fixture = join(directory, 'status.json');
+  const binary = join(directory, 'gah');
+  writeFileSync(binary, `#!/usr/bin/env node\nprocess.stdout.write(require('node:fs').readFileSync(${JSON.stringify(fixture)},'utf8'));\n`);
+  chmodSync(binary, 0o755);
+  process.env.GAH_BINARY = binary;
+  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(directory, 'identity.json');
+  resetCachedCoordinatorIdentity();
+  const server = createHttpServer(createServer({ node: worker }));
+  const url = await listen(server);
+  try {
+    for (const [index, origin] of ['https://central.test', 'https://another.test'].entries()) {
+      const observation = { state: 'observed', outcome: 'refused', observed_at: '2026-11-03T12:00:00Z', work_id: '#1516' };
+      writeFileSync(fixture, JSON.stringify({ generated_at: '2026-11-03T12:00:00Z', active_claims: [], running_workers: [], node: { role: 'central', central_url: origin, central_claim_observation: observation } }));
+      const response = await fetch(`${url}/api/status?profile=claim-status-${index}`);
+      assert.equal(response.status, 200);
+      const status = await response.json() as StatusSnapshot;
+      assert.equal(status.node?.role, 'worker', 'the server owns role policy');
+      assert.equal(status.node?.central_url, worker.central_url);
+      assert.deepEqual(status.node?.central_claim_observation, index === 0 ? observation : undefined, 'a different central cannot supply this node’s claim history');
+    }
+  } finally {
+    await close(server);
+    if (savedBinary === undefined) delete process.env.GAH_BINARY; else process.env.GAH_BINARY = savedBinary;
+    if (savedIdentity === undefined) delete process.env.GAH_COORDINATOR_IDENTITY_PATH; else process.env.GAH_COORDINATOR_IDENTITY_PATH = savedIdentity;
+    resetCachedCoordinatorIdentity();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test('worker role reports central identity and permits execution without hosting central stores', async () => {
   assert.throws(() => validateNodeRole({ role: 'worker', central_url: null }), /requires/);

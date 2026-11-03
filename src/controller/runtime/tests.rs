@@ -357,6 +357,7 @@ fn blocked_pr_human_required_is_reported_once() {
         review_contract_version: None,
         remediation_plan: None,
         skipped: Vec::new(),
+        central_claim: None,
     });
     assert!(human_required_already_reported(&history, "real", &action));
     assert!(!human_required_already_reported(&history, "other", &action));
