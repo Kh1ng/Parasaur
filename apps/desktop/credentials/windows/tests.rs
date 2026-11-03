@@ -80,6 +80,22 @@ os.umask(0o077)
 root=pathlib.Path(sys.argv[1]); (root/'.cargo/bin').mkdir(parents=True)
 (root/'.cargo/bin/gah').symlink_to(sys.argv[2])
 (root/'config.toml').write_text('[defaults]\ncurrent_manager="codex"\n')
+(root/'bin').mkdir()
+runner=root/'bin/codex'
+runner.write_text('''#!/usr/bin/python3
+import json,os,pathlib,sys
+key=os.environ.get('OPENAI_API_KEY')
+account={'synthetic-key-one':'one','synthetic-key-two':'two'}[key]
+assert 'CODEX_API_KEY' not in os.environ
+assert key not in os.environ.get('CODEX_CONFIG','')
+assert any('requires_openai_auth=false' in arg for arg in sys.argv)
+assert os.environ.get('MODEL_PROVIDER')=='gah_selected_openai'
+home=pathlib.Path(os.environ['HOME'])
+assert home.name in ('personal','work')
+(home/'synthetic-session').write_text(account)
+print(json.dumps({'account':account,'home':str(home)}))
+''')
+runner.chmod(0o700)
 "#;
     let mut prepare = crate::wsl_command(&settings);
     prepare.args(["--exec", "/usr/bin/python3", "-c", setup, &root, &gah]);
@@ -95,7 +111,9 @@ root=pathlib.Path(sys.argv[1]); (root/'.cargo/bin').mkdir(parents=True)
                 "/usr/bin/env",
                 "-i",
                 &format!("HOME={root}"),
-                "PATH=/usr/bin:/bin",
+                &format!("PATH={root}/bin:/usr/bin:/bin"),
+                "OPENAI_API_KEY=synthetic-ambient-key",
+                "CODEX_API_KEY=synthetic-ambient-key",
                 &format!("GAH_CONFIG={root}/config.toml"),
             ])
             .args(&arguments[split..]);
@@ -166,11 +184,41 @@ root=pathlib.Path(sys.argv[1]); (root/'.cargo/bin').mkdir(parents=True)
             .iter()
             .any(|item| item["backend_instance"] == instance && item["credential_id"] == id));
     }
+    let launch_args = |instance: &str| {
+        [
+            "config",
+            "exec-backend-instance",
+            "--profile",
+            "test",
+            "--instance",
+            instance,
+        ]
+        .map(str::to_owned)
+        .into()
+    };
+    std::thread::scope(|scope| {
+        let first = scope.spawn(|| execute(launch_args("personal"), None).unwrap());
+        let second = scope.spawn(|| execute(launch_args("work"), None).unwrap());
+        for (bytes, instance, account) in [
+            (first.join().unwrap(), "personal", "one"),
+            (second.join().unwrap(), "work", "two"),
+        ] {
+            let observed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(observed["account"], account);
+            assert_eq!(
+                observed["home"],
+                format!("{root}/.config/gah/backend-instances/{instance}")
+            );
+        }
+    });
     execute(
         super::super::cli_args::bind("test", "personal", "account-two"),
         None,
     )
     .unwrap();
+    let rebound: serde_json::Value =
+        serde_json::from_slice(&execute(launch_args("personal"), None).unwrap()).unwrap();
+    assert_eq!(rebound["account"], "two");
     let catalog: serde_json::Value =
         serde_json::from_slice(&execute(super::super::cli_args::instances(), None).unwrap())
             .unwrap();
@@ -181,11 +229,25 @@ root=pathlib.Path(sys.argv[1]); (root/'.cargo/bin').mkdir(parents=True)
         .iter()
         .any(|instance| instance["backend_instance"] == "personal"
             && instance["credential_id"] == "account-two"));
+    assert!(instances
+        .iter()
+        .any(|instance| instance["backend_instance"] == "personal"
+            && instance["account_label"] == "account-two"));
     execute(super::super::cli_args::remove("account-one"), None).unwrap();
     let remaining: Vec<super::super::CredentialInfo> =
         serde_json::from_slice(&execute(super::super::cli_args::list(), None).unwrap()).unwrap();
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].id, "account-two");
+    execute(super::super::cli_args::remove("account-two"), None).unwrap();
+    let mut clear_markers = crate::wsl_command(&settings);
+    clear_markers.args(["--exec", "/usr/bin/python3", "-c", "import pathlib,sys; p=pathlib.Path(sys.argv[1]); [(p/'.config/gah/backend-instances'/name/'synthetic-session').unlink() for name in ('personal','work')]", &root]);
+    assert!(run(clear_markers, None, Duration::from_secs(10)).is_ok());
+    for instance in ["personal", "work"] {
+        assert!(execute(launch_args(instance), None).is_err());
+    }
+    let mut check_markers = crate::wsl_command(&settings);
+    check_markers.args(["--exec", "/usr/bin/python3", "-c", "import pathlib,sys; p=pathlib.Path(sys.argv[1]); assert not any((p/'.config/gah/backend-instances'/name/'synthetic-session').exists() for name in ('personal','work'))", &root]);
+    assert!(run(check_markers, None, Duration::from_secs(10)).is_ok());
     assert!(execute(super::super::cli_args::refresh("missing-account"), None).is_err());
     let stall = r#"import pathlib,sys
 p=pathlib.Path(sys.argv[1]); gah=p/'.cargo/bin/gah'; gah.unlink()

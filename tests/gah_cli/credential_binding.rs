@@ -150,6 +150,63 @@ impl BindingFixture {
 }
 
 #[test]
+fn rebinding_can_update_safe_attribution_without_persisting_a_partial_change() {
+    let f = BindingFixture::new("codex", "#!/bin/sh\nprintf launched\n");
+    f.save("one", "openai", "OPENAI_API_KEY", "synthetic-one");
+    f.save("two", "openai", "OPENAI_API_KEY", "synthetic-two");
+    f.add("codex-one", "codex", "one");
+    let rebind = |id: &str, label: Option<&str>| {
+        let mut command = f.command();
+        command.args([
+            "config",
+            "set-backend-instance-credential",
+            "--config",
+            f.config.to_str().unwrap(),
+            "--profile",
+            "test",
+            "--instance",
+            "codex-one",
+            "--credential-id",
+            id,
+        ]);
+        if let Some(label) = label {
+            command.args(["--account-label", label]);
+        }
+        command
+    };
+    let label = || {
+        let cfg = git_agent_harness::config::load(Some(f.config.to_str().unwrap())).unwrap();
+        let routing = git_agent_harness::config::get_profile(&cfg, "test")
+            .unwrap()
+            .effective_routing(&cfg.defaults);
+        let identity =
+            routing.execution_identity_for_candidate(&git_agent_harness::config::CandidateConfig {
+                backend: "codex".into(),
+                instance: Some("codex-one".into()),
+                ..Default::default()
+            });
+        serde_json::to_value(identity).unwrap()
+    };
+    let original_label = label()["account_label"].clone();
+    rebind("two", None).assert().success();
+    assert_eq!(
+        label()["account_label"],
+        original_label,
+        "legacy binding preserves an operator's label"
+    );
+    rebind("two", Some("Work")).assert().success();
+    let identity = label();
+    assert_eq!(identity["account_label"], "Work");
+    assert!(identity.get("credential_id").is_none());
+    assert!(!identity.to_string().contains("synthetic-"));
+    let saved = fs::read_to_string(&f.config).unwrap();
+    rebind("missing", Some("MustNotPersist")).assert().failure();
+    assert_eq!(fs::read_to_string(&f.config).unwrap(), saved);
+    rebind("one", Some("/invalid/path")).assert().failure();
+    assert_eq!(fs::read_to_string(&f.config).unwrap(), saved);
+}
+
+#[test]
 fn chat_environment_reaches_named_children_without_replacing_the_account() {
     let f = BindingFixture::new("codex", "#!/bin/sh\nprintf '%s|%s|%s|%s' \"$APP_LABEL\" \"$HOME\" \"$OPENAI_API_KEY\" \"${PRODUCTION_ONLY-unset}\"\n");
     f.save(

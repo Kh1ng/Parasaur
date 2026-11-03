@@ -84,6 +84,9 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   and transport limits passed; see [provider transport](validation/beta-progress-2026-11-03/windows-provider-transport.md).
   Actual provider authentication, per-account execution and billed usage still
   require acceptance. This does not establish Windows browser OAuth support.
+  The subsequent [account execution check](validation/beta-progress-2026-11-03/windows-account-execution.md)
+  verifies concurrent synthetic launches, rebind attribution and revocation at
+  the Windows-to-WSL launcher boundary. Real provider execution remains pending.
 - Hosted enterprise acceptance requires the actual service and provisioned accounts.
 - Workspace environment implementation now covers development application variables in interactive chat and exact factory checks. Local real-CLI/child-process validation passed with provider/state isolation and production exclusion. Other execution nodes retain their own configuration; a remote-node and real-provider workspace workflow still needs acceptance.
 - iOS background delivery requires the configured APNs service, a signed app, and a physical device check.

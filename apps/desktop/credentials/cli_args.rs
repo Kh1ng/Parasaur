@@ -59,6 +59,8 @@ pub fn bind(profile: &str, instance: &str, credential_id: &str) -> Vec<String> {
         instance,
         "--credential-id",
         credential_id,
+        "--account-label",
+        credential_id,
     ]
     .map(str::to_owned)
     .into()

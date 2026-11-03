@@ -697,6 +697,9 @@ pub enum ConfigCommands {
         instance: String,
         #[arg(long)]
         credential_id: String,
+        /// Update safe account attribution with the binding in one config save.
+        #[arg(long)]
+        account_label: Option<String>,
     },
     /// Private child-process environment for Manager Chat. Never a public projection.
     #[command(hide = true)]

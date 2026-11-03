@@ -328,11 +328,17 @@ pub fn run(command: ConfigCommands) -> Result<()> {
             profile,
             instance,
             credential_id,
+            account_label,
         } => {
             let credential_id = crate::execution_identity::validate_operator_label(
                 "credential identifier",
                 &credential_id,
             )?;
+            let account_label = account_label
+                .map(|label| {
+                    crate::execution_identity::validate_operator_label("account label", &label)
+                })
+                .transpose()?;
             let mut cfg = config::load(config_path.as_deref())?;
             let profile_config = cfg
                 .profiles
@@ -345,6 +351,9 @@ pub fn run(command: ConfigCommands) -> Result<()> {
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("backend instance is not declared"))?;
             entry.credential_id = Some(credential_id.clone());
+            if let Some(label) = account_label {
+                entry.account_label = Some(label);
+            }
             entry.auth_source_label = Some(credential_auth_source_label(
                 &entry.runner_kind,
                 &credential_id,
