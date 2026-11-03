@@ -26,6 +26,8 @@ jobs:
         with:
           node-version: 20
       - run: node --test scripts/dev-runner.test.mjs
+      - name: Check prebuilt worker prerequisites
+        run: node --test scripts/prebuilt-worker-prerequisites.test.mjs
 
   build:
     runs-on: ubuntu-latest
