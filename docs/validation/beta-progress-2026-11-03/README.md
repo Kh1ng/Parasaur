@@ -14,6 +14,7 @@ Branch: `beta/factory-observability`. This is development evidence, not deployed
 - Readiness, usage trends, and controller status reject late results from another project. Finishing a controller action after switching projects cannot restore the previous project's status.
 - Login repair keeps checking after repeated temporary read failures, clears the error on recovery, and stops polling on completion or unmount.
 - The Factory screen puts review and blocked work before manual dispatch, displays blocker messages and paused-review explanations inline, and searches by issue, title, or explanation. Each row has an explicit Details action.
+- The development launcher starts the npm CLI through Node on Windows, forwards single-surface arguments and exit status, and keeps the sample server's custom port aligned with both web proxies. It stops only its own Windows process trees when the paired command ends.
 
 ## Checks
 
@@ -23,6 +24,7 @@ Branch: `beta/factory-observability`. This is development evidence, not deployed
 - Focused Windows component suites: connection recovery, work drawer, blocker actions, profile configuration, and account creation passed.
 - Windows browser flows: factory environment/history, profile settings and project switching, and live account status passed, including narrow-screen checks.
 - Latest Factory browser run: six passed, including searching a paused-review explanation and opening its details. Desktop and 390px screenshots were inspected. Login repair and repository CLI installation component suites: five passed.
+- Development launcher regressions: four passed on native Windows and four under WSL. A real Windows sample launch on port 38776 returned sample identity both directly and through Vite on port 3000; its owned process tree was stopped afterward. The first smoke attempt queried before the sample server announced readiness; the corrected check waited for both servers before making requests.
 - Full Linux server integration run under Ubuntu/WSL: 973 passed, one opt-in test skipped, zero failures. The later per-account probe handling passed its two focused server tests.
 - Mock control plane suite: nine passed.
 - The opt-in paid-route HTTP test was exercised separately against the actual Rust CLI and an isolated ledger: five Rust/support tests passed.
@@ -37,3 +39,5 @@ The full server fixture suite requires POSIX executables and now refuses native 
 The Windows test application is the installed v0.3.0 Tauri shell loading the current local UI and sample backend. The CLI was built and tested inside WSL. This does not establish that a new Windows installer has been built, that a release has been published, or that the deployed factory is running these changes.
 
 The saved desktop central origin answered health checks but returned 404 for the dashboard and `/api/info`. The actual Parasaur address and Michael's runtime state remain unavailable; no live claim, review gate, retry budget, or deployed configuration was changed.
+
+The owner confirmed the saved tailnet hostname is intended to host both Hermes and Parasaur. A fresh request identified its current HTTPS service as Python aiohttp, `platform: hermes-agent`, version 0.21.4; the host was online in Tailscale. Direct ports 3773 and 3774 did not accept these Windows probes. SSH as the owner's specified `khing` user reached the host but rejected this Windows key. MacBook relay tools were unavailable in this session. A read-only routing/service check from the MacBook is pending before assigning Parasaur a separate HTTPS port; Hermes routing has not been changed.

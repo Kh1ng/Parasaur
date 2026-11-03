@@ -205,6 +205,14 @@ You can also choose the initial scenario when starting development:
 npm run dev:mock -- --scenario models-agy
 ```
 
+If another service uses the mock port, choose a different one. The launcher
+points both the HTTP and WebSocket proxies at that same port on Windows,
+macOS, and Linux:
+
+```bash
+npm run dev:mock -- --port 38776 --scenario normal
+```
+
 Named scenarios are `normal`, `slow-cancel-steer`, `reconnect-stream`,
 `reconnect-permission`, `archive-success`, `archive-failure`,
 `preview-unavailable`, `preview-available`, `preview-blocked`, `preview-error`,
