@@ -72,3 +72,10 @@ Development sources now also supply application variables to new chat agent proc
 The saved desktop central origin answered health checks but returned 404 for the dashboard and `/api/info`. The actual Parasaur address and Michael's runtime state remain unavailable; no live claim, review gate, retry budget, or deployed configuration was changed.
 
 The owner confirmed the saved tailnet hostname is intended to host both Hermes and Parasaur. A fresh request identified its current HTTPS service as Python aiohttp, `platform: hermes-agent`, version 0.21.4; the host was online in Tailscale. Direct ports 3773 and 3774 did not accept these Windows probes. SSH as the owner's specified `khing` user reached the host but rejected this Windows key. MacBook relay tools were unavailable in this session. A read-only routing/service check from the MacBook is pending before assigning Parasaur a separate HTTPS port; Hermes routing has not been changed.
+
+
+## Enterprise compatibility validation
+
+The local private submodule branch now pins the validated workspace core `11eb409d` and preserves its factory, account, navigation, and reconnect changes. Relay fixes prevent closed sockets from reopening after delayed replies and retain node-local authentication for named accounts. The combined production build passed 991 server tests (one opt-in skip), twelve mock tests, and artifact/input guards. Separate browser transport regressions passed. Disposable PostgreSQL migration replay and real Auth/JWT, edge, PostgREST, HTTP/WebSocket relay, recipient isolation, and removal checks passed. Private source and detailed evidence remain in the private submodule; nothing has been pushed or deployed.
+
+MacBook SSH was also tried from WSL and rejected the available key, matching Windows. A private password card is pending for the authorized MacBook login and its existing SSH route to the host as `khing`. No live service or Tailscale routing has been changed. Hermes can retain its current HTTPS listener while Parasaur uses a separate listener after the actual host configuration is inspected.
