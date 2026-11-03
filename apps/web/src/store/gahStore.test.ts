@@ -1,15 +1,16 @@
-import type { LedgerEntry, ReportData, SettingsConfigProfileSummary } from '@git-agent-harness/contracts';
+import type { ControllerEvent, LedgerEntry, ReportData, SettingsConfigProfileSummary } from '@git-agent-harness/contracts';
 import { gahApi } from '../api/client.js';
 import { useGahStore, workTimelineKey } from './gahStore.js';
 
 jest.mock('../api/client.js', () => ({
-  gahApi: { getReport: jest.fn(), getProfileConfig: jest.fn(), getWorkTimeline: jest.fn() },
+  gahApi: { getReport: jest.fn(), getProfileConfig: jest.fn(), getWorkTimeline: jest.fn(), getEvents: jest.fn() },
   GahApiError: class GahApiError extends Error {},
 }));
 
 const getReport = jest.mocked(gahApi.getReport);
 const getProfileConfig = jest.mocked(gahApi.getProfileConfig);
 const getWorkTimeline = jest.mocked(gahApi.getWorkTimeline);
+const getEvents = jest.mocked(gahApi.getEvents);
 const initialState = useGahStore.getState();
 const report = (profile: string, total_entries = 1): ReportData => ({
   ledger_path: '/ledger', total_entries, since: '', profile, group_by: 'backend', comparisons: [], trend: [],
@@ -25,11 +26,42 @@ beforeEach(() => {
   getReport.mockReset();
   getProfileConfig.mockReset();
   getWorkTimeline.mockReset();
+  getEvents.mockReset();
   jest.useFakeTimers().setSystemTime(new Date('2026-01-01T00:00:00Z'));
 });
 afterEach(() => jest.useRealTimers());
 
 const config = (profile: string) => ({ profile, backend_instances: [] }) as unknown as SettingsConfigProfileSummary;
+
+test('a rapid project round trip cannot restore an older account configuration', async () => {
+  const old = deferred<SettingsConfigProfileSummary>();
+  const other = deferred<SettingsConfigProfileSummary>();
+  const fresh = deferred<SettingsConfigProfileSummary>();
+  getProfileConfig.mockReturnValueOnce(old.promise).mockReturnValueOnce(other.promise).mockReturnValueOnce(fresh.promise);
+  const first = useGahStore.getState().fetchProfileConfig('alpha');
+  const second = useGahStore.getState().fetchProfileConfig('beta');
+  const third = useGahStore.getState().fetchProfileConfig('alpha');
+  fresh.resolve({ ...config('alpha'), max_fix_attempts_per_mr: 9 });
+  await third;
+  old.resolve({ ...config('alpha'), max_fix_attempts_per_mr: 1 });
+  other.resolve(config('beta'));
+  await Promise.all([first, second]);
+  expect(useGahStore.getState().profileConfig.data?.max_fix_attempts_per_mr).toBe(9);
+});
+
+test('a project switch fetches its own controller decisions while another read is in flight', async () => {
+  const alpha = deferred<ControllerEvent[]>();
+  const beta = deferred<ControllerEvent[]>();
+  getEvents.mockReturnValueOnce(alpha.promise).mockReturnValueOnce(beta.promise);
+  const first = useGahStore.getState().fetchEvents({ profile: 'alpha' });
+  const second = useGahStore.getState().fetchEvents({ profile: 'beta' });
+  expect(getEvents).toHaveBeenCalledTimes(2);
+  beta.resolve([{ profile: 'beta' }] as ControllerEvent[]);
+  await second;
+  alpha.resolve([{ profile: 'alpha' }] as ControllerEvent[]);
+  await first;
+  expect(useGahStore.getState().events.data?.[0].profile).toBe('beta');
+});
 
 test('the same issue number has independent cached history in each project', async () => {
   const alpha = deferred<LedgerEntry[]>();

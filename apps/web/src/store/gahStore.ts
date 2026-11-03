@@ -221,13 +221,16 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
   async fetchEvents(params, opts) {
     const key = JSON.stringify(params ?? {});
     const current = get().events;
-    if (current.loading || (!opts?.force && isFresh(current, key))) return;
-    set({ events: { ...current, loading: true, error: null } });
+    if ((current.loading && current.key === key) || (!opts?.force && isFresh(current, key))) return;
+    const pending = { ...(current.key === key ? current : emptyResource<ControllerEvent[]>()), loading: true, error: null, key };
+    set({ events: pending });
     try {
       const data = await gahApi.getEvents(params);
+      if (get().events !== pending) return;
       set({ events: { data, loading: false, error: null, fetchedAt: Date.now(), key } });
     } catch (error) {
-      set({ events: { ...get().events, loading: false, error: errorMessage(error), key } });
+      if (get().events !== pending) return;
+      set({ events: { ...pending, loading: false, error: errorMessage(error) } });
     }
   },
 
@@ -432,14 +435,15 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
     const current = get().profileConfig;
     if (current.loading && current.key === key) return;
     if (!opts?.force && isFresh(current, key)) return;
-    set({ profileConfig: { ...(current.key === key ? current : emptyResource<SettingsConfigProfileSummary>()), loading: true, error: null, key } });
+    const pending = { ...(current.key === key ? current : emptyResource<SettingsConfigProfileSummary>()), loading: true, error: null, key };
+    set({ profileConfig: pending });
     try {
       const data = await gahApi.getProfileConfig(profile);
-      if (get().profileConfig.key !== key) return;
+      if (get().profileConfig !== pending) return;
       set({ profileConfig: { data, loading: false, error: null, fetchedAt: Date.now(), key } });
     } catch (error) {
-      if (get().profileConfig.key !== key) return;
-      set({ profileConfig: { ...get().profileConfig, loading: false, error: errorMessage(error), key } });
+      if (get().profileConfig !== pending) return;
+      set({ profileConfig: { ...pending, loading: false, error: errorMessage(error) } });
     }
   },
 
