@@ -57,6 +57,13 @@ npm run test:server
 
 Run the platform build when a change affects the desktop or mobile application.
 
+The full server integration suite uses POSIX executable fixtures and must run
+inside Linux, macOS, or WSL with dependencies installed in that environment.
+Its runner refuses native Windows before starting tests: otherwise a fixture
+that cannot execute can fall through to a real installed provider CLI. Focused
+portable tests and browser tests can still run on Windows. Keep Linux and
+Windows `node_modules` separate.
+
 ### When a Parasaur profile works on this repository
 
 A dispatch validates its work with the profile's `validation_commands`, which

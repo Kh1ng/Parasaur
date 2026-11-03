@@ -3,6 +3,13 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
+// These integration fixtures are POSIX executables. On Windows an unlaunchable
+// fake can fall through to an installed provider CLI instead of staying hermetic.
+if (process.platform === 'win32') {
+  console.error('The full server integration suite requires a POSIX environment for its executable fixtures. Run it inside WSL or Linux with Linux-installed dependencies; native Windows may launch real provider CLIs when a fixture cannot execute.');
+  process.exit(1);
+}
+
 // Discover every server source test so adding a directory cannot silently
 // remove its coverage from CI. Mock-control-plane tests have their own suite.
 function testsIn(directory) {

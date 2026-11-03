@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
@@ -13,6 +13,19 @@ const [major, minor] = process.versions.node.split('.').map(Number);
 const skip = process.platform === 'win32'
   ? 'process-group cleanup is Unix-only'
   : major >= 22 || (major === 20 && minor >= 14) ? false : 'this Node has no --test-force-exit';
+
+test('the full integration runner refuses Windows before discovering or spawning fixtures', () => {
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e',
+    `Object.defineProperty(process, 'platform', { value: 'win32' }); await import('./test.mjs');`,
+  ], {
+    cwd: serverRoot, encoding: 'utf8', timeout: 5_000,
+    env: { ...process.env, GAH_SERVER_TEST_DIR: join(serverRoot, 'must-not-be-discovered') },
+  });
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stderr, /requires a POSIX environment/);
+  assert.doesNotMatch(run.stdout, /Running .* server test files/);
+  assert.doesNotMatch(run.stderr, /ENOENT/);
+});
 
 interface Run { code: number | null; timedOut: boolean; output: string }
 
