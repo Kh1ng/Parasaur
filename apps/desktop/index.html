@@ -38,6 +38,31 @@
       <button id="back" type="button">← Back to Settings</button>
       <h1>Settings · This computer</h1>
       <p>Change this computer’s connection, app presence, and worker. Pair devices and manage central from the dashboard’s Settings page.</p>
+      <section aria-labelledby="connection-heading">
+        <h2 id="connection-heading">Connection</h2>
+        <form id="connection">
+          <label for="central-url">Central node address</label>
+          <input id="central-url" type="url" required placeholder="https://central.example.ts.net" spellcheck="false" />
+          <label for="wsl-distribution" id="wsl-label" hidden>WSL distribution (blank uses your default)</label>
+          <input id="wsl-distribution" hidden placeholder="Ubuntu" spellcheck="false" />
+          <button type="submit">Save and connect</button>
+        </form>
+        <p id="status" role="status"></p>
+      </section>
+      <p id="error" role="alert"></p>
+      <section aria-labelledby="owner-heading">
+        <h2 id="owner-heading">Owner access</h2>
+        <p>Save the central token in this computer's credential vault. Parasaur sends it only to the exact central origin above. This is token access, not an account sign-in.</p>
+        <p id="owner-state" role="status">Checking saved owner access...</p>
+        <form id="owner-credential">
+          <label for="owner-token">Central owner token</label>
+          <input id="owner-token" type="password" autocomplete="off" spellcheck="false" />
+          <div class="actions">
+            <button type="submit">Save owner access</button>
+            <button id="forget-owner" type="button">Forget owner access</button>
+          </div>
+        </form>
+      </section>
       <section id="repository-tools">
         <h2>Repository tools</h2>
         <p>The full local workflow needs a repository CLI package and a login. Standalone mode does not require Tailscale or another Parasaur node.</p>
@@ -110,29 +135,6 @@
         <h2 id="desktop-update-heading">Desktop update</h2>
         <p id="desktop-update-status" role="status">Checking for a desktop update…</p>
         <button id="desktop-update-apply" type="button" hidden>Restart to update</button>
-      </section>
-      <h2>Connection</h2>
-      <form id="connection">
-        <label for="central-url">Central node address</label>
-        <input id="central-url" type="url" required placeholder="https://central.example.ts.net" spellcheck="false" />
-        <label for="wsl-distribution" id="wsl-label" hidden>WSL distribution (blank uses your default)</label>
-        <input id="wsl-distribution" hidden placeholder="Ubuntu" spellcheck="false" />
-        <button type="submit">Save and connect</button>
-      </form>
-      <p id="status" role="status"></p>
-      <p id="error" role="alert"></p>
-      <section aria-labelledby="owner-heading">
-        <h2 id="owner-heading">Owner access</h2>
-        <p>Save the central token in this computer's credential vault. Parasaur sends it only to the exact central origin above. This is token access, not an account sign-in.</p>
-        <p id="owner-state" role="status">Checking saved owner access...</p>
-        <form id="owner-credential">
-          <label for="owner-token">Central owner token</label>
-          <input id="owner-token" type="password" autocomplete="off" spellcheck="false" />
-          <div class="actions">
-            <button type="submit">Save owner access</button>
-            <button id="forget-owner" type="button">Forget owner access</button>
-          </div>
-        </form>
       </section>
       <section aria-labelledby="presence-heading">
         <h2 id="presence-heading">App presence</h2>
