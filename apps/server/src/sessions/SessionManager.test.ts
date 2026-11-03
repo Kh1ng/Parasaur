@@ -3,6 +3,57 @@ import { test } from 'node:test';
 
 import type { ServerMessage } from '@git-agent-harness/contracts';
 import { createSessionManager } from './SessionManager.js';
+import { MAX_DIAGNOSTIC_CHARS, DIAGNOSTIC_TRUNCATION } from '../diagnosticTail.js';
+
+test('session diagnostics retain a bounded tail and retired sessions ignore late output', async () => {
+  const published: ServerMessage[] = [];
+  let finish!: (result: { exitCode: number; stderr: string }) => void;
+  const manager = createSessionManager({ disableCleanupTimer: true,
+    providerRegistry: { isProviderAvailable: () => true },
+    pushBus: { publish: message => { published.push(message); } },
+    dispatchRunner: () => ({ promise: new Promise(resolve => { finish = resolve; }), cancel: async () => ({ cancelled: true }) })
+  });
+  const session = await manager.startSession({ profile: 'fixture', providerKind: 'github', instanceId: 'github-0', repo: 'fixture/repo', mode: 'fix' });
+  await new Promise(resolve => setImmediate(resolve));
+  manager.addSessionOutput(session.id, 'live stdout');
+  manager.addSessionOutput(session.id, 'live stderr', true);
+  assert.ok(published.some(message => message.type === 'session.stdout' && message.data === 'live stdout'));
+  assert.ok(published.some(message => message.type === 'session.stderr' && message.data === 'live stderr'));
+  finish({ exitCode: 1, stderr: 'old prefix\n' + 'x'.repeat(MAX_DIAGNOSTIC_CHARS * 3) + '\nfinal cause' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(session.status, 'error');
+  assert.ok(session.error?.startsWith(DIAGNOSTIC_TRUNCATION));
+  assert.ok(session.error?.endsWith('final cause'));
+  assert.ok(session.error!.length <= MAX_DIAGNOSTIC_CHARS + DIAGNOSTIC_TRUNCATION.length);
+  const count = published.length;
+  manager.addSessionOutput(session.id, 'late output');
+  manager.addSessionOutput('missing' as typeof session.id, 'unknown session');
+  assert.equal(published.length, count);
+});
+
+test('an expired cancelled session cannot launch after its queued metadata is cleaned up', async t => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: Date.now() });
+  const targets: string[] = [];
+  let finish!: (result: { exitCode: number; stderr: string }) => void;
+  const manager = createSessionManager({
+    providerRegistry: { isProviderAvailable: () => true }, pushBus: { publish() {} },
+    dispatchRunner: options => {
+      targets.push(options.target!);
+      return { promise: new Promise(resolve => { finish = resolve; }), cancel: async () => ({ cancelled: true }) };
+    }
+  });
+  const base = { profile: 'fixture', providerKind: 'github' as const, instanceId: 'github-0', repo: 'fixture/repo', mode: 'fix' };
+  await manager.startSession({ ...base, target: 'first' });
+  await new Promise(resolve => setImmediate(resolve));
+  const queued = await manager.startSession({ ...base, target: 'cancelled' });
+  await manager.stopSession(queued.id);
+  queued.endedAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  t.mock.timers.tick(60001);
+  assert.equal(manager.getSession(queued.id), undefined);
+  finish({ exitCode: 0, stderr: '' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(targets, ['first']);
+});
 
 test('explicit manual workers launch alongside an active same-profile session and retain their reasoning', async () => {
   const dispatched: { manualWorker?: boolean; reasoningEffort?: string; target?: string }[] = [];

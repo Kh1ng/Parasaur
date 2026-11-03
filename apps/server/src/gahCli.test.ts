@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { MAX_DIAGNOSTIC_CHARS, DIAGNOSTIC_TRUNCATION } from './diagnosticTail.js';
 import {
   buildConfigSetArgs,
   buildProfileAddArgs,
@@ -34,6 +35,19 @@ function pinFakeGah(body: string): () => void {
     rmSync(dir, { recursive: true, force: true });
   };
 }
+
+test('noisy dispatch stderr keeps a diagnostic tail without stopping stdout or changing failure status', async () => {
+  const restore = pinFakeGah(`exec "${process.execPath}" -e 'process.stdout.write("still-streaming\\n"); process.stderr.write("old-prefix\\n" + "x".repeat(${MAX_DIAGNOSTIC_CHARS * 10}) + "\\nfinal-cause"); process.exitCode=7;'`);
+  try {
+    const lines: string[] = [];
+    const result = await runDispatchCancellable({ profile: 'fixture', mode: 'fix' }, line => lines.push(line)).promise;
+    assert.equal(result.exitCode, 7);
+    assert.deepEqual(lines, ['still-streaming']);
+    assert.ok(result.stderr.startsWith(DIAGNOSTIC_TRUNCATION));
+    assert.ok(result.stderr.endsWith('final-cause'));
+    assert.ok(result.stderr.length <= MAX_DIAGNOSTIC_CHARS + DIAGNOSTIC_TRUNCATION.length);
+  } finally { restore(); }
+});
 
 test('manual worker and per-launch reasoning reach the actual dispatch CLI argv', async () => {
   const restore = pinFakeGah('printf "%s\\n" "$@"');

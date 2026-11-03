@@ -10,6 +10,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { accessSync, constants } from 'node:fs';
 import { AsyncTtlCache } from './asyncTtlCache.js';
+import { diagnosticTail } from './diagnosticTail.js';
 import type {
   StatusSnapshot,
   QuotaSnapshot,
@@ -708,7 +709,7 @@ export function runDispatchCancellable(
     });
 
     child.stderr?.on('data', (data) => {
-      stderr += data.toString();
+      stderr = diagnosticTail(stderr + diagnosticTail(data.toString()));
     });
 
     child.on('close', (code) => {
