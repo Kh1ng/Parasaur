@@ -44,7 +44,7 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 ## Evidence still required
 
 - Michael's controller status, route/claim state, and ledger are not available in this session. GitHub review comments establish recorded opinions, not why his running loop has not acted.
-- The desktop's saved central origin answers `/health`, but its dashboard and `/api/info` return 404. Identify the actual Parasaur address before using it for live acceptance.
+- Parasaur was confirmed at `https://hermesagent.tail82695.ts.net:8443`; the original HTTPS listener serves Hermes. Windows saved desktop connection URLs were corrected. The live central reports v0.2.0 and ready backend checks, but its referenced JavaScript/CSS GETs return HTTP 500, preventing dashboard rendering. Protected API reads return 401 until a central credential is supplied. Repair asset delivery and authenticate before accepting the live factory.
 - A current-source Windows v0.3.0 Tauri executable and NSIS installer were built locally on 2026-11-03. The executable loaded Overview and Factory in an isolated test profile against the local sample control plane. Installation, signed updates, and live factory acceptance remain pending.
 - Hosted enterprise acceptance requires the actual service and provisioned accounts.
 - Workspace environment implementation now covers development application variables in interactive chat and exact factory checks. Local real-CLI/child-process validation passed with provider/state isolation and production exclusion. Other execution nodes retain their own configuration; a remote-node and real-provider workspace workflow still needs acceptance.
