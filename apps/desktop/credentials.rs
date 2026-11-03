@@ -5,7 +5,7 @@ use std::time::Duration;
 
 pub(crate) mod cli_args;
 #[cfg(windows)]
-mod windows;
+pub(crate) mod windows;
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

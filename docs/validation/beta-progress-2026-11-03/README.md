@@ -13,6 +13,11 @@ synthetic launches, credential revocation and correct safe attribution after a
 rebind. Matching `b738b9d2` desktop/CLI artifacts were installed locally. Real
 provider execution, metered usage and live factory acceptance remain pending.
 
+The [Windows Mistral sign-in path](windows-mistral-sign-in.md) now implements
+native browser-to-WSL verification. Native cookie-store isolation, staged
+failure/success handling and actual installed-node preflight passed. Actual
+provider sign-in and live readings still require owner acceptance.
+
 Branch: `beta/factory-observability`. This is development evidence, not deployed beta acceptance. See [Beta acceptance](../../BETA_READINESS.md) for the remaining workflows.
 
 ## Verified changes

@@ -84,7 +84,10 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   A real Windows-to-WSL synthetic two-account save/list/create/bind/remove flow
   and transport limits passed; see [provider transport](validation/beta-progress-2026-11-03/windows-provider-transport.md).
   Actual provider authentication, per-account execution and billed usage still
-  require acceptance. This does not establish Windows browser OAuth support.
+  require acceptance. Windows Mistral browser sign-in is now implemented with
+  native cookie isolation and staged WSL checks; see
+  [Windows Mistral evidence](validation/beta-progress-2026-11-03/windows-mistral-sign-in.md).
+  Real owner-driven sign-in and other providers' OAuth remain unverified.
   The subsequent [account execution check](validation/beta-progress-2026-11-03/windows-account-execution.md)
   verifies concurrent synthetic launches, rebind attribution and revocation at
   the Windows-to-WSL launcher boundary. Real provider execution remains pending.

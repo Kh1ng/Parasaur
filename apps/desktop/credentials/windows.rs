@@ -20,22 +20,36 @@ fn command(
     args: Vec<String>,
     timeout: Duration,
 ) -> Command {
+    let mut shell_args = vec![
+        "-c".into(),
+        "exec \"$HOME/.cargo/bin/gah\" \"$@\"".into(),
+        "gah-credentials".into(),
+    ];
+    shell_args.extend(args);
+    wsl_command(settings, "/bin/sh", shell_args, timeout)
+}
+
+/// Only trusted native code supplies the program and script. User fields remain
+/// separate arguments; Linux bounds the entire collector process group.
+pub(crate) fn wsl_command(
+    settings: &super::super::DesktopSettings,
+    program: &str,
+    args: Vec<String>,
+    timeout: Duration,
+) -> Command {
     let mut command = super::super::wsl_command(settings);
     command.args([
         "--exec",
         "/usr/bin/timeout",
         "--kill-after=1s",
         &format!("{}s", timeout.as_secs_f64()),
-        "/bin/sh",
-        "-c",
-        "exec \"$HOME/.cargo/bin/gah\" \"$@\"",
-        "gah-credentials",
+        program,
     ]);
     command.args(args);
     command
 }
 
-pub(super) fn run(
+pub(crate) fn run(
     command: Command,
     input: Option<&[u8]>,
     timeout: Duration,

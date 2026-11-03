@@ -6,7 +6,7 @@ use std::path::Path;
 use std::path::PathBuf;
 #[cfg(unix)]
 use std::process::{Command, Stdio};
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use std::sync::atomic::Ordering;
 #[cfg(unix)]
 use std::time::{Duration, Instant};
@@ -22,6 +22,8 @@ const EVENT: &str = "gah:mistral-login";
 mod collector_args;
 mod cookies;
 mod target;
+#[cfg(windows)]
+mod windows;
 use cookies::cookie_header;
 #[cfg(test)]
 use cookies::matches_api_path;
@@ -54,27 +56,36 @@ pub async fn mistral_login_start(
 ) -> Result<LoginStatus, String> {
     super::local_only(&window)?;
     let target = LoginTarget::new(credential_id, account_label)?;
-    let mut reply = start(&app, &target)?;
+    let opening_target = target.clone();
+    let mut reply = tauri::async_runtime::spawn_blocking(move || start(&app, &opening_target))
+        .await
+        .map_err(|_| "Cannot open Mistral sign-in.")??;
     reply.credential_id = target.credential_id;
     Ok(reply)
 }
 
 fn start(app: &tauri::AppHandle, target: &LoginTarget) -> Result<LoginStatus, String> {
-    if !cfg!(unix) {
+    if !cfg!(any(unix, windows)) {
         return Ok(status(
             "unavailable",
             false,
-            "Mistral dashboard sign-in currently requires macOS or Linux.",
+            "Mistral dashboard sign-in is unavailable on this platform.",
         ));
     }
-    if super::installed_gah().is_err() {
+    #[cfg(not(windows))]
+    if !installed() {
         return Ok(status(
             "unavailable",
             false,
             "Install Parasaur on this computer before connecting Mistral.",
         ));
     }
-    if !target.isolated()
+    #[cfg(windows)]
+    if let Err(reply) = windows::preflight(target) {
+        return Ok(reply);
+    }
+    if cfg!(unix)
+        && !target.isolated()
         && !default_cookie_source(
             &super::config_dir(),
             std::env::var_os("MISTRAL_DASHBOARD_COOKIE_FILE").as_deref(),
@@ -114,21 +125,7 @@ fn start(app: &tauri::AppHandle, target: &LoginTarget) -> Result<LoginStatus, St
                 }
             });
         });
-        // A nonpersistent store belongs only to this WebView. Named accounts
-        // cannot inherit the default connection or another slot's cookies.
-        let builder = if target.isolated() {
-            builder.incognito(true)
-        } else {
-            #[cfg(target_os = "macos")]
-            {
-                builder.data_store_identifier(*b"gah-mistral-auth")
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                builder.data_directory(super::config_dir().join("mistral-webview"))
-            }
-        };
-        builder
+        browser_store(builder, target, &super::config_dir())
             .build()
             .map_err(|_| "Cannot create the Mistral sign-in window.")?;
     }
@@ -147,7 +144,9 @@ pub async fn mistral_login_finish(
     let Some(login) = app.get_webview_window(&target.window_label()) else {
         let mut reply = status(
             "cancelled",
-            super::installed_gah().is_ok(),
+            tauri::async_runtime::spawn_blocking(installed)
+                .await
+                .unwrap_or(false),
             "The sign-in window is closed. Connect Mistral to try again.",
         );
         reply.credential_id = target.credential_id;
@@ -175,6 +174,7 @@ fn finish(login: &tauri::WebviewWindow, target: &LoginTarget) -> LoginStatus {
     let Some(_checking) = target.start_check() else {
         return status("pending", true, "Checking the Mistral connection.");
     };
+    #[cfg(unix)]
     let Ok(gah) = super::installed_gah() else {
         return status(
             "unavailable",
@@ -213,19 +213,53 @@ fn finish(login: &tauri::WebviewWindow, target: &LoginTarget) -> LoginStatus {
     };
     #[cfg(unix)]
     let reply = verify_and_save_for(&gah, &super::config_dir(), &cookie, target);
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    let reply = windows::verify_and_save(&cookie, target);
+    #[cfg(not(any(unix, windows)))]
     let reply = {
-        let _ = (gah, cookie, target);
+        let _ = (cookie, target);
         status(
             "unavailable",
             true,
-            "Mistral dashboard sign-in currently requires macOS or Linux.",
+            "Mistral dashboard sign-in is unavailable on this platform.",
         )
     };
     if reply.state == "connected" {
         let _ = login.close();
     }
     reply
+}
+
+fn installed() -> bool {
+    #[cfg(windows)]
+    return windows::installed();
+    #[cfg(not(windows))]
+    super::installed_gah().is_ok()
+}
+
+/// Named sessions never inherit another slot's cookies. Windows also needs a
+/// separate WebView2 environment directory for each private profile.
+fn browser_store<'a, R: tauri::Runtime, M: Manager<R>>(
+    builder: tauri::WebviewWindowBuilder<'a, R, M>,
+    target: &LoginTarget,
+    root: &Path,
+) -> tauri::WebviewWindowBuilder<'a, R, M> {
+    if target.isolated() {
+        let builder = builder.incognito(true);
+        #[cfg(windows)]
+        let builder = builder.data_directory(root.join(target.window_label()));
+        builder
+    } else {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = root;
+            builder.data_store_identifier(*b"gah-mistral-auth")
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            builder.data_directory(root.join("mistral-webview"))
+        }
+    }
 }
 
 fn unix_seconds() -> i64 {
