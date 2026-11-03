@@ -6,6 +6,7 @@ test('the fixture server identifies sample data across page navigation', async (
   await expect(sample).toContainText('No live factory is connected');
   await expect(sample).toContainText('update notices are simulated');
   await page.getByRole('button', { name: 'Factory', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Factory', exact: true })).toBeVisible();
   await expect(sample).toBeVisible();
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
