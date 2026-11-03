@@ -341,7 +341,8 @@ export function ProfileConfigViewerSection({ selectedName, profileConfig, onRefr
     );
   }
 
-  if (profileConfig.loading && !profileConfig.data) {
+  const effective = profileConfig.data?.profile === selectedName ? profileConfig.data : null;
+  if (!effective && (profileConfig.loading || profileConfig.data)) {
     return (
       <section className="card-padded max-w-3xl">
         <h3 className="text-sm font-semibold text-primary mb-3">Effective profile configuration</h3>
@@ -350,7 +351,7 @@ export function ProfileConfigViewerSection({ selectedName, profileConfig, onRefr
     );
   }
 
-  if (profileConfig.error && !profileConfig.data) {
+  if (profileConfig.error && !effective) {
     return (
       <section className="card-padded max-w-3xl">
         <h3 className="text-sm font-semibold text-primary mb-3">Effective profile configuration</h3>
@@ -359,7 +360,6 @@ export function ProfileConfigViewerSection({ selectedName, profileConfig, onRefr
     );
   }
 
-  const effective = profileConfig.data;
   if (!effective) {
     return null;
   }
@@ -415,7 +415,7 @@ export function ProfileConfigViewerSection({ selectedName, profileConfig, onRefr
       </div>
 
       <div className="mt-3">
-        <BackendInstancesCard profileName={selectedName} effective={effective} />
+        <BackendInstancesCard key={selectedName} profileName={selectedName} effective={effective} />
       </div>
 
       <div className="mt-3">

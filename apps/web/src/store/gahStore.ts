@@ -426,7 +426,7 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
     const current = get().profileConfig;
     if (current.loading && current.key === key) return;
     if (!opts?.force && isFresh(current, key)) return;
-    set({ profileConfig: { ...current, loading: true, error: null, key } });
+    set({ profileConfig: { ...(current.key === key ? current : emptyResource<SettingsConfigProfileSummary>()), loading: true, error: null, key } });
     try {
       const data = await gahApi.getProfileConfig(profile);
       if (get().profileConfig.key !== key) return;

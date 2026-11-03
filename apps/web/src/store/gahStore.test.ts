@@ -1,13 +1,14 @@
-import type { ReportData } from '@git-agent-harness/contracts';
+import type { ReportData, SettingsConfigProfileSummary } from '@git-agent-harness/contracts';
 import { gahApi } from '../api/client.js';
 import { useGahStore } from './gahStore.js';
 
 jest.mock('../api/client.js', () => ({
-  gahApi: { getReport: jest.fn() },
+  gahApi: { getReport: jest.fn(), getProfileConfig: jest.fn() },
   GahApiError: class GahApiError extends Error {},
 }));
 
 const getReport = jest.mocked(gahApi.getReport);
+const getProfileConfig = jest.mocked(gahApi.getProfileConfig);
 const initialState = useGahStore.getState();
 const report = (profile: string, total_entries = 1): ReportData => ({
   ledger_path: '/ledger', total_entries, since: '', profile, group_by: 'backend', comparisons: [], trend: [],
@@ -21,9 +22,42 @@ function deferred<T>() {
 beforeEach(() => {
   useGahStore.setState(initialState, true);
   getReport.mockReset();
+  getProfileConfig.mockReset();
   jest.useFakeTimers().setSystemTime(new Date('2026-01-01T00:00:00Z'));
 });
 afterEach(() => jest.useRealTimers());
+
+const config = (profile: string) => ({ profile, backend_instances: [] }) as unknown as SettingsConfigProfileSummary;
+
+test('switching projects clears the previous account configuration before a request completes', async () => {
+  getProfileConfig.mockResolvedValueOnce(config('alpha'));
+  await useGahStore.getState().fetchProfileConfig('alpha');
+  const request = deferred<SettingsConfigProfileSummary>();
+  getProfileConfig.mockReturnValue(request.promise);
+  const pending = useGahStore.getState().fetchProfileConfig('beta');
+  expect(useGahStore.getState().profileConfig).toMatchObject({ key: 'beta', loading: true, data: null, fetchedAt: null });
+  request.resolve(config('beta'));
+  await pending;
+  expect(useGahStore.getState().profileConfig.data?.profile).toBe('beta');
+});
+
+test('a failed project switch never leaves another project account configuration visible', async () => {
+  getProfileConfig.mockResolvedValueOnce(config('alpha')).mockRejectedValueOnce(new Error('beta unavailable'));
+  await useGahStore.getState().fetchProfileConfig('alpha');
+  await useGahStore.getState().fetchProfileConfig('beta');
+  expect(useGahStore.getState().profileConfig).toMatchObject({ key: 'beta', data: null, loading: false, error: 'beta unavailable' });
+});
+
+test('refreshing the same project retains its own configuration while the request is pending', async () => {
+  getProfileConfig.mockResolvedValueOnce(config('alpha'));
+  await useGahStore.getState().fetchProfileConfig('alpha');
+  const request = deferred<SettingsConfigProfileSummary>();
+  getProfileConfig.mockReturnValue(request.promise);
+  const pending = useGahStore.getState().fetchProfileConfig('alpha', { force: true });
+  expect(useGahStore.getState().profileConfig.data?.profile).toBe('alpha');
+  request.resolve(config('alpha'));
+  await pending;
+});
 
 test('two readers share the fetched report with one API call', async () => {
   const data = report('alpha');
