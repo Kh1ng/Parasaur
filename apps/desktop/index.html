@@ -21,7 +21,7 @@
       button:disabled { opacity: .6; cursor: wait; } :focus-visible { outline: 2px solid #8ab4ff; outline-offset: 3px; }
       section { border-top: 1px solid #303849; margin-top: 2rem; padding-top: .75rem; }
       table { width: 100%; border-collapse: collapse; font-size: .875rem; font-variant-numeric: tabular-nums; } th, td { text-align: left; padding: .25rem .5rem; border-bottom: 1px solid #232936; }
-      #error { color: #ffb4b4; } #status:empty, #error:empty { display: none; } [hidden] { display: none !important; }
+      #error, #connection-timeout { color: #ffb4b4; } #status:empty, #error:empty { display: none; } [hidden] { display: none !important; }
       .actions { display: flex; gap: .75rem; flex-wrap: wrap; }
       #repository-tools .actions { align-items: flex-end; }
       #repository-tool-guide { color: #8ab4ff; display: inline-flex; align-items: center; min-height: 2.75rem; }
@@ -40,6 +40,7 @@
       <p>Change this computer’s connection, app presence, and worker. Pair devices and manage central from the dashboard’s Settings page.</p>
       <section aria-labelledby="connection-heading">
         <h2 id="connection-heading">Connection</h2>
+        <p id="connection-timeout" role="alert" tabindex="-1" hidden>The dashboard did not open in time. Check the saved address and your connection, then try again.</p>
         <form id="connection">
           <label for="central-url">Central node address</label>
           <input id="central-url" type="url" required placeholder="https://central.example.ts.net" spellcheck="false" />

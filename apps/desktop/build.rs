@@ -13,6 +13,7 @@ fn main() {
             "worker_status",
             "set_worker_running",
             "open_external_url",
+            "navigation_presented",
             "desktop_open_context",
             "open_local_checkout",
             "repository_tools",

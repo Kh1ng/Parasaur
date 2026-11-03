@@ -87,7 +87,7 @@ jobs:
         run: node scripts/test-desktop-settings.mjs
 
       - name: Check native dashboard load recovery
-        run: node --test scripts/dashboard-recovery.test.mjs
+        run: node --test scripts/dashboard-recovery.test.mjs scripts/navigation-presentation.test.mjs
 
       - name: Run unit tests
         run: npm run test:unit --workspace=apps/web

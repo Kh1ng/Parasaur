@@ -58,7 +58,9 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   stays blank because the app never mounts. Browser tests, all 27 native tests
   and rendering in an isolated failed-asset webview passed. Native settings-link
   activation remains unverified because Windows automation lacked input geometry;
-  never-finished navigations also remain outside this acceptance check.
+  unfinished navigation now also has bounded native recovery; see
+  [navigation timeout checks](validation/beta-progress-2026-11-03/desktop-navigation-timeout.md)
+  for successful cases and the concurrent-startup limitation.
 
 - New release bundles support isolated dependency installation from their own
   lockfile before replacing artifacts. Cold HTTP startup, moving the prepared
