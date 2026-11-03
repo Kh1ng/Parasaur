@@ -13,6 +13,7 @@
   "scripts": {
     "dev": "tsx --watch src/bin.ts",
     "dev:mock": "tsx mock/bin.ts",
+    "prebuild": "node ../../scripts/clean-server-runtime.mjs",
     "build": "tsc",
     "test": "node test.mjs && npm run test:mock",
     "test:mock": "tsx --test mock/*.test.ts",

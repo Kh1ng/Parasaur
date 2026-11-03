@@ -73,6 +73,14 @@ manifest with a SHA-256 per artifact. When the `TAURI_SIGNING_PRIVATE_KEY`
 secret is configured, the same release carries a signed Tauri updater feed
 (`latest.json`) for the desktop app.
 
+The server bundle embeds compiled `contracts` and `shared` workspace packages
+inside `apps/server/dist/node_modules`, so installation does not depend on
+ignored workspace build outputs. The bundle builder stages service-readable
+assets without changing the source build's permissions. A subsequent source
+build removes these embedded imports through the server's `prebuild` hook so
+the freshly compiled workspaces take effect. External npm dependencies are
+still required; this bundle is not a standalone Node installation.
+
 Install from the channel instead of rebuilding from source — the checkout
 stays the deployment root, only the artifact source changes (no git pull,
 cargo, or npm build):
