@@ -23,6 +23,8 @@ Branch: `beta/factory-observability`. This is development evidence, not deployed
 
 ## Checks
 
+- Full Windows browser end-to-end suite at `421407b6`: 159 passed (3.5 minutes).
+- Full Windows component suite after isolating the shell fixture: 193 passed, one POSIX execution test skipped. The skipped test passed separately with Linux Node under WSL. The first broad component attempt bypassed its fake curl through Windows bash/WSL forwarding and stalled in real setup; its two identified setup process trees were stopped. UI generation/copy assertions now run independently on Windows, and the shell helper refuses Windows before spawning, has a timeout, and removes its fixture.
 - Root `npm run typecheck`: passed across contracts, shared, server, mock, and web.
 - Web production build: passed.
 - Full Windows frontend unit suite: 130 passed after the environment-source refresh regression.

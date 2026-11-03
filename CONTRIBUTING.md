@@ -64,6 +64,11 @@ that cannot execute can fall through to a real installed provider CLI. Focused
 portable tests and browser tests can still run on Windows. Keep Linux and
 Windows `node_modules` separate.
 
+The colocated-provider component suite keeps its UI assertions portable, but
+executes generated shell commands only on POSIX hosts. Windows `bash` can
+forward into WSL and bypass a Windows temporary PATH fixture, launching the
+real installer. Run that shell test with Linux Node inside WSL or on Linux/macOS.
+
 ### When a Parasaur profile works on this repository
 
 A dispatch validates its work with the profile's `validation_commands`, which
