@@ -45,8 +45,7 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 - Michael's controller status, route/claim state, and ledger are not available in this session. GitHub review comments establish recorded opinions, not why his running loop has not acted.
 - The desktop's saved central origin answers `/health`, but its dashboard and `/api/info` return 404. Identify the actual Parasaur address before using it for live acceptance.
-- Windows native smoke testing currently uses the v0.3.0 release shell with the current UI served locally and a sample control plane. It is not a newly packaged release or a live factory test.
-- Native compilation on this Windows host requires the Visual C++ toolchain; its attempted installation was canceled at the administrator prompt.
+- A current-source Windows v0.3.0 Tauri executable and NSIS installer were built locally on 2026-11-03. The executable loaded Overview and Factory in an isolated test profile against the local sample control plane. Installation, signed updates, and live factory acceptance remain pending.
 - Hosted enterprise acceptance requires the actual service and provisioned accounts.
 - Workspace environment acceptance remains incomplete: Profile can configure factory file sources and exact validation/auto-fix commands on the connected node, but interactive chat does not yet apply the profile environment sources and other nodes retain their own configuration.
 - iOS background delivery requires the configured APNs service, a signed app, and a physical device check.

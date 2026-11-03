@@ -33,7 +33,7 @@ The shared React UI runs in web browsers and native shells. Desktop uses Tauri; 
 - Repository implementations, contracts, and tests.
 - `docs/CONTROL_SURFACES.md`: dated capability inventory; verify current code before relying on its status claims.
 - GitHub issues and PRs: the source of truth for tracked work.
-- Local Windows browser tests and a Tauri release shell loading the current local UI against sample data. These do not establish deployed factory health.
+- Local Windows browser tests, a current-source Tauri executable smoke-tested against sample data, and a locally built NSIS installer. These do not establish installation, signed-update acceptance, or deployed factory health.
 
 ## Product Principles
 
