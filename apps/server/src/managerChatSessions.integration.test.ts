@@ -716,8 +716,9 @@ test('a session preview auto-detects the dev-server port and proxies it', { time
   let createdSessionId: string | null = null;
   // The "dev server" the agent allegedly started: records the Host header.
   const seenHosts: string[] = [];
+  const readinessHosts: string[] = [];
   const devServer = http.createServer((req, res) => {
-    seenHosts.push(String(req.headers.host));
+    (req.method === 'HEAD' ? readinessHosts : seenHosts).push(String(req.headers.host));
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end('<h1>dev server</h1>');
   });
@@ -766,6 +767,8 @@ test('a session preview auto-detects the dev-server port and proxies it', { time
     assert.equal(served.status, 200);
     assert.match(served.body, /dev server/);
     assert.deepEqual(seenHosts, ['localhost:4599'], 'Host rewritten to localhost');
+    assert.ok(readinessHosts.length > 0, 'automatic detection checks HTTP readiness');
+    assert.ok(readinessHosts.every(host => host === 'localhost:4599'), 'readiness uses the same Host as the proxy');
 
     ws.close();
     await once(ws, 'close');

@@ -52,7 +52,7 @@ import {
   type SettleDetails,
   type ChatSessionStoreOptions
 } from './chatSessions.js';
-import { previewProxy, detectDevPort, loopbackPortListening } from './previewProxy.js';
+import { previewProxy, detectDevPort, loopbackHttpReady } from './previewProxy.js';
 import { runProfileList, runSubscriptionRoutes, runQuotaFailure, type SubscriptionRoute, type QuotaFailure } from '../gahCli.js';
 import { randomUUID } from 'node:crypto';
 import type { ChatSessionEvent, ChatTranscriptTurn, ChatUsage, Skill } from '@git-agent-harness/contracts';
@@ -1270,7 +1270,7 @@ export function sendManagerChatMessage(
         if (!sessionId || sessionId === 'default') return;
         const devPort = detectDevPort(text);
         if (devPort === null) return;
-        const setPromise = loopbackPortListening(devPort)
+        const setPromise = loopbackHttpReady(devPort)
           .then((listening) => (listening ? previewProxy.set(profile, sessionId, devPort) : null))
           .then((info) => {
             if (!info) return;
