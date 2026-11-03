@@ -43,9 +43,10 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
-- A Windows x64 candidate at `bbc37aa5` completed an actual current-user desktop
+- A Windows x64 candidate at `b280a5e2` completed an actual current-user desktop
   upgrade and was launched. Installed bytes and preserved settings were verified;
-  NSIS/MSI and same-revision WSL artifacts are saved locally. This is unsigned
+  NSIS/MSI artifacts are saved locally. The earlier `bbc37aa5` combined candidate
+  also has a same-revision WSL worker; do not mix their manifests. This is unsigned
   local setup evidence, not signed-update, fresh-OS or live-server acceptance.
 
 - Broad local shared-web checks passed at `0ee85993`: 160 Windows workflows,
@@ -75,7 +76,14 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 - Michael's controller status, route/claim state, and ledger are not available in this session. GitHub review comments establish recorded opinions, not why his running loop has not acted.
 - Parasaur was confirmed at `https://hermesagent.tail82695.ts.net:8443`; the original HTTPS listener serves Hermes. Windows saved desktop connection URLs were corrected. The live central reports v0.2.0 and ready backend checks, but its referenced JavaScript/CSS GETs return HTTP 500, preventing dashboard rendering. Protected API reads return 401 until a central credential is supplied. Repair asset delivery and authenticate before accepting the live factory.
-- A current-source Windows v0.3.0 Tauri executable and NSIS installer were built locally on 2026-11-03. The executable loaded Overview and Factory in an isolated test profile against the local sample control plane. Installation, signed updates, and live factory acceptance remain pending.
+- Windows v0.3.0 completed the local per-user upgrade and navigation recovery
+  checks described above. Signed updates, fresh-OS installation and live factory
+  acceptance remain pending.
+- Windows native provider management still needs a WSL credential transport:
+  `credentials::invoke` resolves the native home CLI, and `run` returns failure
+  on non-Unix targets. The current UI alone does not establish working named
+  account add/list/bind on Windows. This is an implementation gap, separate
+  from real-provider consent and billing acceptance.
 - Hosted enterprise acceptance requires the actual service and provisioned accounts.
 - Workspace environment implementation now covers development application variables in interactive chat and exact factory checks. Local real-CLI/child-process validation passed with provider/state isolation and production exclusion. Other execution nodes retain their own configuration; a remote-node and real-provider workspace workflow still needs acceptance.
 - iOS background delivery requires the configured APNs service, a signed app, and a physical device check.

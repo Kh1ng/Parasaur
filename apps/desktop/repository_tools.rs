@@ -9,15 +9,21 @@ pub struct RepositoryTool {
 }
 
 #[tauri::command]
-pub fn repository_tools(window: tauri::WebviewWindow) -> Result<Vec<RepositoryTool>, String> {
+pub async fn repository_tools(window: tauri::WebviewWindow) -> Result<Vec<RepositoryTool>, String> {
     local_only(&window)?;
-    Ok(["gh", "glab"]
-        .into_iter()
-        .map(|program| RepositoryTool {
-            program,
-            installed: repository_tool_installed(program),
-        })
-        .collect())
+    // WSL startup and shell profiles may block. Keep native menus and the
+    // connection recovery path available while checking repository tools.
+    tauri::async_runtime::spawn_blocking(|| {
+        ["gh", "glab"]
+            .into_iter()
+            .map(|program| RepositoryTool {
+                program,
+                installed: repository_tool_installed(program),
+            })
+            .collect()
+    })
+    .await
+    .map_err(|_| "Repository tools could not be checked on this computer.".into())
 }
 
 // Check the environment where GAH runs, including the worker environment in WSL.
