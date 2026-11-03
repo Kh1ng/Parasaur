@@ -53,3 +53,10 @@ delivered 40,960,000 characters with 43,376 bytes of post-GC retained heap growt
 The broad server validation is logged at
 `/tmp/parasaur-memory-fix-validation.log`. Deployment and comparable Mac idle/
 normal-workflow memory observations remain required before closing #1680.
+
+The combined enterprise build also passed with core `4fb326c8` and private
+source `b6e4973`: 998 server tests (one opt-in skip), twelve mock tests,
+server/web builds and typecheck, and private artifact/input guards. Its generated
+manifest binds these exact revisions. The public gitlink pins this private
+source so the enterprise variant includes the same fix. No private source was
+copied into the public repository, and neither variant was deployed.
