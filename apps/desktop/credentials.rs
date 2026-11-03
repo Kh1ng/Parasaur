@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 pub(crate) mod cli_args;
+#[cfg(windows)]
+mod windows;
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -79,28 +81,36 @@ pub async fn credential_save(
 }
 
 pub(crate) fn save(input: CredentialInput) -> Result<CredentialInfo, String> {
-    save_with_gah(&super::installed_gah()?, input)
+    save_connection(input, |args, secret| {
+        invoke(args, Some(secret), Duration::from_secs(10))
+    })
 }
 
+#[cfg(unix)]
 pub(crate) fn save_with_gah(
     gah: &std::path::Path,
     input: CredentialInput,
 ) -> Result<CredentialInfo, String> {
+    save_connection(input, |args, secret| {
+        invoke_with_gah(gah, args, Some(secret), Duration::from_secs(10))
+    })
+}
+
+fn save_connection(
+    input: CredentialInput,
+    execute: impl FnOnce(Vec<String>, &[u8]) -> Result<Vec<u8>, String>,
+) -> Result<CredentialInfo, String> {
     if input.secret.is_empty() || input.secret.len() > 32768 {
         return Err("Enter a provider key or session of at most 32 KB.".to_owned());
     }
-    let output = invoke_with_gah(
-        gah,
-        cli_args::save(
-            &input.id,
-            &input.provider,
-            &input.kind,
-            &input.account_label,
-            input.env_var.as_deref(),
-        ),
-        Some(input.secret.as_bytes()),
-        Duration::from_secs(10),
-    )?;
+    let args = cli_args::save(
+        &input.id,
+        &input.provider,
+        &input.kind,
+        &input.account_label,
+        input.env_var.as_deref(),
+    );
+    let output = execute(args, input.secret.as_bytes())?;
     serde_json::from_slice(&output).map_err(|_| FAILURE.to_owned())
 }
 
@@ -186,18 +196,12 @@ pub async fn credential_add_instance(
         let output = invoke(cli_args::list(), None, Duration::from_secs(10))?;
         let connections: Vec<CredentialInfo> =
             serde_json::from_slice(&output).map_err(|_| FAILURE.to_owned())?;
-        let connection = connections
+        connections
             .into_iter()
             .find(|info| info.id == credential_id && info.kind == "api_key")
             .ok_or_else(|| FAILURE.to_owned())?;
         invoke(
-            cli_args::add_instance(
-                &profile,
-                &instance,
-                &runner_kind,
-                &credential_id,
-                &connection.account_label,
-            ),
+            cli_args::add_instance(&profile, &instance, &runner_kind, &credential_id),
             None,
             Duration::from_secs(10),
         )
@@ -208,10 +212,16 @@ pub async fn credential_add_instance(
 }
 
 fn invoke(args: Vec<String>, input: Option<&[u8]>, timeout: Duration) -> Result<Vec<u8>, String> {
-    let gah = super::installed_gah()?;
-    invoke_with_gah(&gah, args, input, timeout)
+    #[cfg(windows)]
+    return windows::invoke(args, input, timeout);
+    #[cfg(not(windows))]
+    {
+        let gah = super::installed_gah()?;
+        invoke_with_gah(&gah, args, input, timeout)
+    }
 }
 
+#[cfg(not(windows))]
 fn invoke_with_gah(
     gah: &std::path::Path,
     args: Vec<String>,
@@ -223,7 +233,7 @@ fn invoke_with_gah(
     run(command, input, timeout).map_err(|_| FAILURE.to_owned())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn run(
     _command: std::process::Command,
     _input: Option<&[u8]>,

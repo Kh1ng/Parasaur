@@ -4,6 +4,10 @@ Latest desktop evidence: [unfinished navigation recovery](desktop-navigation-tim
 adds bounded recovery and keeps connection controls usable during stalled status
 reads. MacBook work remains deferred.
 
+Windows [provider credential transport](windows-provider-transport.md) now passes
+a real WSL synthetic two-account lifecycle and bounded-process checks. Real
+provider and per-account agent execution acceptance remain pending.
+
 Branch: `beta/factory-observability`. This is development evidence, not deployed beta acceptance. See [Beta acceptance](../../BETA_READINESS.md) for the remaining workflows.
 
 ## Verified changes
