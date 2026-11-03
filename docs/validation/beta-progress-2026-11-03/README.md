@@ -27,6 +27,12 @@ Branch: `beta/factory-observability`. This is development evidence, not deployed
 
 ## Checks
 
+- The final shared-web sweep at `0ee85993` passed all 160 Windows workflow tests,
+  195 Windows component tests (one platform-specific skip), 130 unit tests and
+  web typechecking. The skipped POSIX installer-command case passed separately
+  with Linux Node under WSL. See [workflow sweep](shared-web-workflows.md) for
+  coverage and acceptance limits; it is not live factory or provider evidence.
+
 - Memory retention (#1680): an isolated Node reproduction failed before the fix because the server retained the complete streamed transcript. The unused duplicate cache/accessor was removed, diagnostic strings now retain a bounded tail with an omission notice, and queued cancellation uses existing session state instead of permanent ID tombstones. All-package typecheck, server production build, 995 server tests (one opt-in skip), and twelve mock tests passed. See [memory evidence](memory-retention-1680.md); the user's Mac process and deployed source remain unverified.
 
 - Central admission pass: formatting and all-target/all-feature Clippy with warnings denied passed. All 2,481 unit tests and all 51 integration targets plus doc tests passed across the initial run and a corrected-PATH resume. The initial run stopped at an installer fixture because its Rust wrapper omitted npm from PATH; restoring the existing npm shim made that target and every remaining target pass. An automated comparison against Cargo's target list verified terminal passing results for every integration target. Logs: `/tmp/parasaur-beta-claim-rust.log` and `/tmp/parasaur-beta-claim-rust-resume.log`.

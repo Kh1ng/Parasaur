@@ -43,6 +43,12 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- Broad local shared-web checks passed at `0ee85993`: 160 Windows workflows,
+  195 Windows component cases, 130 unit cases, typechecking and the remaining
+  POSIX-only component case under WSL. These isolate the sample/API fixtures;
+  live factory, real provider consent/billing and physical iOS acceptance remain
+  required.
+
 - Native Windows now shows recovery controls when a loaded dashboard document
   stays blank because the app never mounts. Browser tests, all 27 native tests
   and rendering in an isolated failed-asset webview passed. Native settings-link
