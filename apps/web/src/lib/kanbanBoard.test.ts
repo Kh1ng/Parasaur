@@ -10,6 +10,18 @@ const status = (overrides: Partial<StatusSnapshot>): StatusSnapshot =>
   ({ profile: { max_fix_attempts_per_mr: 2, max_open_managed_mrs: 4 }, max_parallel_workers: 2, open_managed_mr_count: 0, implementation_intake_paused: false, blockers: [], available_tickets: [], merge_requests: [], active_claims: [], blocked_work_items: [], dependency_blockers: [], review_held_work_ids: [], running_workers: [], issue_intake_rejections: [], ...overrides }) as unknown as StatusSnapshot;
 const board = (snapshot: StatusSnapshot) => buildKanban({ status: snapshot, quota: null, controllerRuns: [], factoryAgents: [], loopRunning: true, now: Date.now() });
 
+test('an unchanged reviewed head waits for a push instead of claiming a reviewer is next', () => {
+  const review = {
+    work_id: '#7', branch: 'gah/7', id: '42', classification: 'NEEDS_REVIEW', merged: false,
+    source_sha: 'head-one', last_reviewed_head: 'head-one', ci_passed: true,
+  } as StatusSnapshot['merge_requests'][number];
+  const result = board(status({ merge_requests: [review] })).cards[0];
+  expect(result.column).toBe('waiting');
+  expect(result.job).toBeNull();
+  expect(result.reason).toContain('paused until a new commit is pushed');
+  expect(board(status({ merge_requests: [{ ...review, source_sha: 'head-two' }] })).cards[0].column).toBe('review');
+});
+
 test('managedIssues keys only the managed rejections by work key', () => {
   const managed = managedIssues(status({ issue_intake_rejections: [
     rejection('#7', 'managed', 'managed: assigned to colton, who is not this loop'),

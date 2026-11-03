@@ -438,6 +438,8 @@ export interface GahDataSource {
 }
 
 export interface CoordinatorInfo {
+  /** Only the fixture server declares mock mode. Absence does not prove a live connection. */
+  environment?: 'mock';
   identity: {
     node_id: string;
     display_name: string;

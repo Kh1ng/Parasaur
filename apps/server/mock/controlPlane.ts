@@ -1370,6 +1370,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
   app.post('/api/activity/read', (_req, res) => res.json({ changed: 0, unread: 0 }));
 
   app.get('/api/info', (_req, res) => res.json({
+    environment: 'mock',
     identity: { node_id: 'mock-central', display_name: 'Mock central', advertised_url: 'http://localhost:5173', version: '0.1.2', schema_digest: 'mock-digest' }
   }));
 

@@ -1,6 +1,7 @@
 import type { ActiveClaim, AvailableTicket, Blocker, ControllerActivity, DeviceAgent, MergeRequest, QuotaSnapshot, StatusSnapshot } from '@git-agent-harness/contracts';
 import { formatUntil, providerLabel, subscriptionUsage } from './subscriptionUsage.js';
 import { workKey } from './workKey.js';
+import { reviewWaitReason } from './reviewLabels.js';
 
 /**
  * The Kanban page's board, derived from records the server already serves:
@@ -339,6 +340,7 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
     const blocks: string[] = [];
     const gateCode = blocker?.reason_code ?? blocker?.reason ?? ticket?.human_required_reason_code ?? null;
     const managed = managedByKey.get(key) ?? null;
+    const reviewWait = reviewWaitReason(mergeRequest);
     if (managed) blocks.push(managed);
 
     let column: KanbanColumnKey;
@@ -362,6 +364,11 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
       blocks.push(blocker?.message && blocker.message !== 'Ledger indicates human intervention required' ? sentence(blocker.message) : reason);
       if (mergeRequest?.review_gate_reason) blocks.push(`Review gate: ${mergeRequest.review_gate_reason}`);
       for (const action of blocker?.remediation_plan?.safe_actions ?? []) blocks.push(`Next step: ${action.summary}`);
+    } else if (reviewWait) {
+      column = 'waiting';
+      reason = reviewWait;
+      tone = 'warning';
+      blocks.push(reason);
     } else if (mergeRequest) {
       const waitingOn = skipped.length ? `: ${skippedSummary(skipped)}` : '';
       switch (mergeRequest.classification) {

@@ -3,7 +3,8 @@ import { ArrowLeft, ExternalLink, GitPullRequest, Hammer, Pause, Play, RefreshCw
 import type { ProviderKind, Session } from '@git-agent-harness/contracts';
 import { gahApi, GahApiError } from '../api/client.js';
 import { workKey } from '../lib/workKey.js';
-import { ciLabelFor } from '../lib/reviewLabels.js';
+import { formatLocalTime } from '../lib/format.js';
+import { ciLabelFor, reviewWaitReason } from '../lib/reviewLabels.js';
 import { useAutoRefresh } from '../hooks/useAutoRefresh.js';
 import { useWsReconnectRefresh } from '../hooks/useWsReconnectRefresh.js';
 import { useGahStore } from '../store/gahStore.js';
@@ -14,6 +15,7 @@ import { EmptyState, ErrorState, LoadingState } from './ui/EmptyState.js';
 import { LastUpdated } from './ui/LastUpdated.js';
 import { StatusBadge, classificationTone } from './ui/StatusBadge.js';
 import { CommitPrDialog } from './CommitPrDialog.js';
+import { BlockedWorkItems } from './BlockedWorkItems.js';
 
 const REFRESH_MS = 30_000;
 
@@ -41,8 +43,10 @@ export function WorkDetailDrawer({ workId, profile, connected, sessions, onClose
   const status = useGahStore((state) => state.status);
   const timeline = useGahStore((state) => state.workTimelines[workId]);
   const profiles = useGahStore((state) => state.profiles);
+  const events = useGahStore((state) => state.events);
   const fetchStatus = useGahStore((state) => state.fetchStatus);
   const fetchProfiles = useGahStore((state) => state.fetchProfiles);
+  const fetchEvents = useGahStore((state) => state.fetchEvents);
   const fetchWorkTimeline = useGahStore((state) => state.fetchWorkTimeline);
   const [pending, setPending] = useState<'hold' | 'release' | 'clear' | 'dispatch' | null>(null);
   const [result, setResult] = useState<string | null>(null);
@@ -53,15 +57,16 @@ export function WorkDetailDrawer({ workId, profile, connected, sessions, onClose
     await Promise.all([
       fetchStatus(profile, { force: true }),
       fetchWorkTimeline(workId, { force: true }),
+      fetchEvents({ profile, since: '7d' }, { force: true }),
     ]);
   };
 
   useEffect(() => {
-    void Promise.all([fetchWorkTimeline(workId), fetchProfiles()]);
+    void Promise.all([fetchStatus(profile), fetchWorkTimeline(workId), fetchProfiles(), fetchEvents({ profile, since: '7d' })]);
     if (!inline) dialog.current?.showModal();
     closeButton.current?.focus();
     return () => dialog.current?.close();
-  }, [workId, inline, fetchProfiles, fetchWorkTimeline]);
+  }, [workId, profile, inline, fetchStatus, fetchProfiles, fetchWorkTimeline, fetchEvents]);
 
   useAutoRefresh(() => { void refresh(); }, REFRESH_MS);
   useWsReconnectRefresh(() => { void refresh(); });
@@ -69,12 +74,17 @@ export function WorkDetailDrawer({ workId, profile, connected, sessions, onClose
   const key = workKey(workId);
   const ticket = status.data?.available_tickets.find((item) => workKey(item.work_id ?? item.normalized_work_identity ?? item.ticket_path) === key);
   const mergeRequest = status.data?.merge_requests.find((item) => item.work_id && workKey(item.work_id) === key);
-  const blocker = status.data?.blocked_work_items.find((item) => {
-    const id = item.remediation_plan?.work_id ?? item.source_reference;
-    return id ? workKey(id) === key : false;
+  const blockers = (status.data?.blocked_work_items ?? []).filter((item) => {
+    const reference = item.source_reference;
+    return (item.remediation_plan?.work_id && workKey(item.remediation_plan.work_id) === key)
+      || (reference && (workKey(reference) === key || reference === mergeRequest?.branch || reference === mergeRequest?.url));
   });
   const held = status.data?.review_held_work_ids.some((id) => workKey(id) === key) ?? false;
   const entries = timeline?.data ?? [];
+  const workEvents = (events.data ?? [])
+    .filter(event => event.profile === profile && event.work_id && workKey(event.work_id) === key)
+    .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
+    .slice(0, 10);
   const lastEntry = entries.at(-1);
   const repo = profiles.data?.find((item) => item.name === profile)?.repo ?? lastEntry?.repo ?? null;
   const backend = (ticket?.recommended_backend ?? lastEntry?.effective_backend ?? 'auto') as ProviderKind;
@@ -128,6 +138,7 @@ export function WorkDetailDrawer({ workId, profile, connected, sessions, onClose
 
   const reviewTone = mergeRequest ? classificationTone(mergeRequest.classification) : { tone: 'unknown' as const, label: 'No review' };
   const ci = ciLabelFor(mergeRequest);
+  const reviewWait = reviewWaitReason(mergeRequest);
 
   const body = (
     <>
@@ -145,7 +156,7 @@ export function WorkDetailDrawer({ workId, profile, connected, sessions, onClose
           <section aria-labelledby="work-status-heading" className="card-padded mb-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 id="work-status-heading" className="text-sm font-semibold text-primary">Current state</h3>
-              <LastUpdated at={timeline?.fetchedAt ?? null} />
+              <LastUpdated at={status.fetchedAt} />
             </div>
             <dl className="mt-3 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
               <div><dt className="text-muted">Review</dt><dd className="mt-1"><StatusBadge tone={reviewTone.tone} label={reviewTone.label} /></dd></div>
@@ -153,13 +164,27 @@ export function WorkDetailDrawer({ workId, profile, connected, sessions, onClose
               <div><dt className="text-muted">CI</dt><dd className="mt-1 text-secondary">{ci}</dd></div>
               <div><dt className="text-muted">Hold</dt><dd className="mt-1"><StatusBadge tone={held ? 'warning' : 'good'} label={held ? 'Held' : 'Clear'} /></dd></div>
             </dl>
-            {blocker && <p className="mt-3 text-xs text-warning">{blocker.reason_code?.replaceAll('_', ' ') ?? blocker.message ?? 'Blocked'}</p>}
+            <dl className="mt-3 space-y-2 text-xs">
+              <div><dt className="text-muted">Reviewer verdict</dt><dd className="mt-1 break-words text-secondary">{mergeRequest?.review_verdict?.replaceAll('_', ' ') ?? 'Not recorded'}</dd></div>
+              {mergeRequest?.review_gate_reason && <div><dt className="text-muted">Review gate</dt><dd className="mt-1 break-words text-warning">{mergeRequest.review_gate_reason}</dd></div>}
+              {mergeRequest?.review_generation_status && <div><dt className="text-muted">Review evidence</dt><dd className="mt-1 break-words text-warning">{mergeRequest.review_generation_status}</dd></div>}
+              {reviewWait && <div><dt className="text-muted">Automatic handoff</dt><dd className="mt-1 break-words text-warning">{reviewWait}</dd></div>}
+              {held && <div><dt className="text-muted">Manager hold</dt><dd className="mt-1 text-warning">Automatic merging waits until this hold is cleared.</dd></div>}
+            </dl>
+            {status.error && <p role="alert" className="mt-3 text-xs text-critical">Factory state could not refresh: {status.error}. Displayed state may be out of date.</p>}
             {mergeRequest?.url && (
               <ExternalAnchor href={mergeRequest.url} className="mt-3 inline-flex min-h-11 items-center gap-1 text-xs text-accent hover:underline sm:min-h-0">
                 Open provider review <ExternalLink size={13} aria-hidden="true" />
               </ExternalAnchor>
             )}
           </section>
+
+          {blockers.length > 0 && (
+            <section aria-labelledby="work-blockers-heading" className="mb-6">
+              <h3 id="work-blockers-heading" className="mb-2 text-sm font-semibold text-primary">What is blocking this work</h3>
+              <BlockedWorkItems blockers={blockers} />
+            </section>
+          )}
 
           <section aria-labelledby="work-actions-heading" className="mb-6">
             <h3 id="work-actions-heading" className="mb-2 text-sm font-semibold text-primary">Actions</h3>
@@ -187,6 +212,32 @@ export function WorkDetailDrawer({ workId, profile, connected, sessions, onClose
             </div>
             {result && <p role="status" className="mt-2 text-xs text-good">{result}</p>}
             {error && <p role="alert" className="mt-2 text-xs text-critical">{error}</p>}
+          </section>
+
+          <section aria-labelledby="work-decisions-heading" className="mb-6">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h3 id="work-decisions-heading" className="text-sm font-semibold text-primary">Recent controller decisions</h3>
+              <LastUpdated at={events.fetchedAt} />
+            </div>
+            <p className="mb-3 text-xs text-muted">Up to 10 matching records from the connected controller in the last 7 days.</p>
+            {events.loading && !events.data ? <LoadingState label="Loading controller decisions…" />
+              : events.error ? <ErrorState message={events.error} endpoint="/api/events" onRetry={() => fetchEvents({ profile, since: '7d' }, { force: true })} />
+              : workEvents.length === 0 ? <p className="text-xs text-muted">No matching decisions were reported. This does not establish whether another factory is running.</p>
+              : <ol className="space-y-3">
+                {workEvents.map((event, index) => (
+                  <li key={`${event.timestamp}-${index}`} className="break-words text-xs">
+                    <div className="flex flex-wrap justify-between gap-2">
+                      <span className="font-medium text-primary">{event.event_type.replaceAll('_', ' ')}</span>
+                      <time dateTime={event.timestamp} className="text-muted">{formatLocalTime(event.timestamp) ?? event.timestamp}</time>
+                    </div>
+                    <p className="mt-1 whitespace-pre-wrap text-secondary">{event.details}</p>
+                    {event.reason_code && <p className="mt-1 text-muted">Reason: {event.reason_code}</p>}
+                    {(event.skipped ?? []).map((route, routeIndex) => (
+                      <p key={routeIndex} className="mt-1 text-warning">{route.backend_instance ?? route.backend}{route.model ? ` / ${route.model}` : ''}: {route.reason}{route.unavailable_until ? ` · Retry after ${formatLocalTime(route.unavailable_until) ?? route.unavailable_until}` : ''}</p>
+                    ))}
+                  </li>
+                ))}
+              </ol>}
           </section>
 
           <section aria-labelledby="attempt-history-heading">

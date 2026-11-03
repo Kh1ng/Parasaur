@@ -291,6 +291,10 @@ export interface MergeRequest {
   review_gate_reason?: string | null;
   /** Immutable PR/MR head commit used for review identity. */
   source_sha?: string | null;
+  /** Completed review receipt for this head; suppresses duplicate reviewer calls. */
+  last_reviewed_head?: string | null;
+  /** A current-head veto that prevents automatic merge without creating a durable hold. */
+  merge_review_block_reason?: string | null;
   /** Provider-created commit that landed a merged PR/MR. */
   merge_commit_sha?: string | null;
   review_contract_version: number;
