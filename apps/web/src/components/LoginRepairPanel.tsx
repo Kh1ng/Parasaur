@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { repositoryCli, type LoginRepairView } from '@git-agent-harness/contracts';
 import { loginRepairApi } from '../api/client.js';
 import { ExternalAnchor } from './ExternalAnchor.js';
@@ -17,19 +17,28 @@ export function LoginRepairPanel({ login }: { login: RepairableLogin }) {
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState('');
   const [copied, setCopied] = useState(false);
-  const alive = useRef(true);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-
   const repair = session?.repair;
   const active = !!repair && !FINISHED.has(repair.status);
   useEffect(() => {
     if (!session || !active) return;
-    const timer = window.setTimeout(() => {
-      loginRepairApi.view(session.repair.id, session.key)
-        .then((next) => { if (alive.current) setSession((current) => current && current.repair.id === next.id ? { ...current, repair: next } : current); })
-        .catch((err) => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); });
-    }, POLL_MS);
-    return () => window.clearTimeout(timer);
+    let cancelled = false;
+    let timer: number;
+    const poll = async () => {
+      try {
+        const next = await loginRepairApi.view(session.repair.id, session.key);
+        if (cancelled) return;
+        setError('');
+        setSession((current) => current && current.repair.id === next.id ? { ...current, repair: next } : current);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        // A failed read must not strand a login that is still running on its node.
+        if (!cancelled) timer = window.setTimeout(() => void poll(), POLL_MS);
+      }
+    };
+    timer = window.setTimeout(() => void poll(), POLL_MS);
+    return () => { cancelled = true; window.clearTimeout(timer); };
   }, [session, active]);
 
   const start = async () => {
