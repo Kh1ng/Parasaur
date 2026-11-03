@@ -41,6 +41,13 @@ lines.on('line', (line) => {
       options: [{ value: runtime, name: runtime }] }] } });
     return;
   }
+  if (request.method === 'session/new' && mode === 'workspace-env') {
+    const model = process.env.APP_LABEL + '|' + process.env.APP_OVERRIDE;
+    respond({ jsonrpc: '2.0', id: request.id, result: { sessionId: 'fake-session', configOptions: [{
+      id: 'model', name: 'Model', type: 'select', category: 'model', currentValue: model,
+      options: [{ value: model, name: model }] }] } });
+    return;
+  }
   if (request.method === 'session/new') {
     respond({ jsonrpc: '2.0', id: request.id, result: { sessionId: 'fake-session' } });
     return;
@@ -146,6 +153,56 @@ function fakeAcpScript(): { dir: string; path: string } {
   writeFileSync(scriptPath, FAKE_ACP_SOURCE);
   return { dir, path: scriptPath };
 }
+
+test('ACP workspace startup uses the real profile and shares concurrent connection reads', async () => {
+  const fake = fakeAcpScript();
+  const count = join(fake.dir, 'count');
+  let reads = 0;
+  const backend = createAcpBackend('Workspace', () => ({ command: process.execPath, args: [fake.path, 'workspace-env', count], env: { APP_OVERRIDE: 'adapter' } }), {
+    environment: async ({ profile }) => { reads++; await Promise.resolve(); return { APP_LABEL: profile, APP_OVERRIDE: 'workspace' }; }
+  });
+  try {
+    const conversation = { key: 'opaque/not-a-profile', profile: 'real-project' };
+    const [first, second] = await Promise.all([backend.listModels(conversation), backend.listModels(conversation)]);
+    assert.equal(first.currentModelId, 'real-project|adapter');
+    assert.equal(second.currentModelId, first.currentModelId);
+    assert.equal(reads, 1);
+    assert.equal(readFileSync(count, 'utf8'), '1');
+  } finally { backend.dispose(); rmSync(fake.dir, { recursive: true, force: true }); }
+});
+
+test('a failed workspace read can recover on the next ACP request', async () => {
+  const fake = fakeAcpScript();
+  let reads = 0;
+  const backend = createAcpBackend('Workspace', () => ({ command: process.execPath, args: [fake.path, 'workspace-env'] }), {
+    environment: async () => {
+      if (++reads === 1) throw new Error('Workspace source unavailable');
+      return { APP_LABEL: 'recovered', APP_OVERRIDE: 'workspace' };
+    }
+  });
+  try {
+    const conversation = { key: 'recoverable-conversation', profile: 'project' };
+    await assert.rejects(backend.listModels(conversation), /Workspace source unavailable/);
+    assert.equal((await backend.listModels(conversation)).currentModelId, 'recovered|workspace');
+    assert.equal(reads, 2);
+  } finally { backend.dispose(); rmSync(fake.dir, { recursive: true, force: true }); }
+});
+
+test('cancel and disposal during workspace reads cannot launch a late ACP child', async () => {
+  for (const action of ['cancel', 'dispose']) {
+    let release!: (env: Record<string, string>) => void;
+    let spawned = false;
+    const backend = createAcpBackend('Workspace', () => { spawned = true; throw new Error('must not spawn'); }, {
+      environment: () => new Promise(resolve => { release = resolve; })
+    });
+    const pending = backend.listModels({ key: 'conversation', profile: 'project' });
+    if (action === 'cancel') await backend.cancelTurn('conversation'); else backend.dispose();
+    release({ APP_LABEL: 'late' });
+    await assert.rejects(pending, /startup cancelled/);
+    assert.equal(spawned, false);
+    backend.dispose();
+  }
+});
 
 const emptyTurnInput = {
   prompt: 'hello',

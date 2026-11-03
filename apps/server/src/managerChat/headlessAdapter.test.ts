@@ -7,6 +7,20 @@ import { execPath } from 'node:process';
 import type { ChatTranscriptTurn } from '@git-agent-harness/contracts';
 import { agyBackendSpec, createHeadlessBackend, decodeVibeToolRequest, openhandsBackendSpec, parseOpenhandsReply, vibeBackendSpec, type HeadlessBackendSpec } from './headlessAdapter.js';
 
+test('headless workspace variables follow the real profile and leave the parent unchanged', async () => {
+  const backend = createHeadlessBackend({
+    id: 'workspace', displayName: 'Workspace',
+    turnArgs: () => [process.execPath, '-e', 'process.stdout.write(process.env.APP_LABEL + "|" + process.env.APP_OVERRIDE)'],
+    encodeStdin: prompt => prompt, spawnEnv: async () => ({ APP_OVERRIDE: 'adapter' })
+  }, { environment: async ({ profile }) => ({ APP_LABEL: profile, APP_OVERRIDE: 'workspace' }) });
+  const previous = process.env.APP_LABEL;
+  const result = await backend.runTurn({ key: 'opaque/conversation', profile: 'real-project' }, {
+    prompt: 'hello', history: [], onChunk: () => {}, onToolResult: () => {}
+  });
+  assert.equal(result.reply, 'real-project|adapter');
+  assert.equal(process.env.APP_LABEL, previous);
+});
+
 /** A fake one-shot CLI: echoes its cwd marker file's content so the test
  * proves the turn ran in the session cwd, and echoes the prompt tail. The
  * prompt arrives over stdin (issue #1009), never argv. */

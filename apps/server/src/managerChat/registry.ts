@@ -28,6 +28,7 @@ import { bindOpenCodeModels, instanceAcpSpawn, instanceHeadlessSpec } from './in
 import { findInstalledExecutable } from './installedExecutable.js';
 import { readAgentUpdates } from '../agentCliState.js';
 import { createCliRouterModelRefresher } from '../cliRouter.js';
+import { workspaceEnvironment } from './workspaceEnvironment.js';
 
 export type { ManagerCommandInfo, ManagerModelInfo, ManagerReasoningEffortInfo };
 
@@ -110,9 +111,12 @@ function acpManagerAdapter(
   id: string,
   displayName: string,
   spawnSpec: () => import('./acpAdapter.js').SpawnSpec,
-  options?: { consecutiveFailureReconnectThreshold?: number }
+  options?: { consecutiveFailureReconnectThreshold?: number; workspaceEnvironment?: boolean }
 ): ManagerAdapter {
-  const backend = createAcpBackend(displayName, spawnSpec, options);
+  const backend = createAcpBackend(displayName, spawnSpec, {
+    consecutiveFailureReconnectThreshold: options?.consecutiveFailureReconnectThreshold,
+    ...(options?.workspaceEnvironment ? { environment: workspaceEnvironment } : {})
+  });
   return { id, displayName, implemented: true, ...backend };
 }
 
@@ -131,13 +135,13 @@ export function defaultClaudeSpawn(searchPath?: string): SpawnSpec & { bundledRu
 }
 
 const DEFAULT_ADAPTERS: Record<string, () => ManagerAdapter> = {
-  hermes: () => acpManagerAdapter('hermes', 'Hermes', hermesSpawnSpec),
-  codex: () => acpManagerAdapter('codex', 'Codex', codexSpawnSpec, { consecutiveFailureReconnectThreshold: 2 }),
-  claude: () => acpManagerAdapter('claude', 'Claude', () => defaultClaudeSpawn()),
-  opencode: () => acpManagerAdapter('opencode', 'OpenCode', opencodeSpawnSpec),
-  vibe: () => ({ ...createHeadlessBackend(vibeBackendSpec()) }) as ManagerAdapter,
-  agy: () => ({ ...createHeadlessBackend(agyBackendSpec()) }) as ManagerAdapter,
-  openhands: () => ({ ...createHeadlessBackend(openhandsBackendSpec()) }) as ManagerAdapter
+  hermes: () => acpManagerAdapter('hermes', 'Hermes', hermesSpawnSpec, { workspaceEnvironment: true }),
+  codex: () => acpManagerAdapter('codex', 'Codex', codexSpawnSpec, { consecutiveFailureReconnectThreshold: 2, workspaceEnvironment: true }),
+  claude: () => acpManagerAdapter('claude', 'Claude', () => defaultClaudeSpawn(), { workspaceEnvironment: true }),
+  opencode: () => acpManagerAdapter('opencode', 'OpenCode', opencodeSpawnSpec, { workspaceEnvironment: true }),
+  vibe: () => ({ ...createHeadlessBackend(vibeBackendSpec(), { environment: workspaceEnvironment }) }) as ManagerAdapter,
+  agy: () => ({ ...createHeadlessBackend(agyBackendSpec(), { environment: workspaceEnvironment }) }) as ManagerAdapter,
+  openhands: () => ({ ...createHeadlessBackend(openhandsBackendSpec(), { environment: workspaceEnvironment }) }) as ManagerAdapter
 };
 
 const REGISTRY = Object.fromEntries(Object.entries(DEFAULT_ADAPTERS).map(([id, create]) => [id, create()]));

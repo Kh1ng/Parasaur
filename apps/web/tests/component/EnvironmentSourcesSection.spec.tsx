@@ -19,7 +19,7 @@ test('environment sources preserve untouched settings and send explicit paths an
   }
   await component.getByRole('button', { name: 'Save environment sources' }).click();
   expect(body).toEqual({ env_file: '/srv/workspace/.env.dev', clear: ['env_file_prod'] });
-  await expect(component.getByRole('status')).toHaveText('Environment sources saved for new factory dispatches.');
+  await expect(component.getByRole('status')).toHaveText('Environment sources saved for new agents.');
   await expect(component.getByRole('textbox')).toHaveCount(0);
 });
 

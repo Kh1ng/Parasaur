@@ -21,6 +21,7 @@ test('two quick manager wakes share one durable backend session', { timeout: 15_
   const profile = `wake-${Date.now()}`;
   const savedEnv = { ...process.env };
   process.env.PATH = `${join(fixtures, 'hermes')}:${process.env.PATH}`;
+  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
   process.env.GAH_CHAT_STATE_DIR = stateDir;
   process.env.GAH_GATEWAY_SETTINGS_PATH = join(root, 'gateway.json');
   process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(root, 'manager-chat.json');

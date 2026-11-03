@@ -11,12 +11,14 @@ const fixtures = resolve(dirname(fileURLToPath(import.meta.url)), '../tests/fixt
 test('OpenCode Manager Chat overrides a review-only default for its isolated ACP child', { timeout: 10_000 }, async () => {
   const worktree = mkdtempSync(join(tmpdir(), 'gah-manager-chat-opencode-'));
   const previousPath = process.env.PATH;
+  const previousGah = process.env.GAH_BINARY;
   const previousConfig = process.env.OPENCODE_CONFIG_CONTENT;
   const previousDefaultAgent = process.env.GAH_TEST_OPENCODE_DEFAULT_AGENT;
   const inheritedConfig = JSON.stringify({
     model: 'provider/preserved-model'
   });
   process.env.PATH = `${join(fixtures, 'opencode')}:${previousPath ?? ''}`;
+  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
   process.env.OPENCODE_CONFIG_CONTENT = inheritedConfig;
   process.env.GAH_TEST_OPENCODE_DEFAULT_AGENT = 'gah-reviewer';
   writeFileSync(join(worktree, 'README.md'), '# isolated worktree\n');
@@ -47,6 +49,8 @@ test('OpenCode Manager Chat overrides a review-only default for its isolated ACP
       'Manager Chat must not mutate the parent/global OpenCode configuration'
     );
   } finally {
+    if (previousGah === undefined) delete process.env.GAH_BINARY;
+    else process.env.GAH_BINARY = previousGah;
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
     if (previousConfig === undefined) delete process.env.OPENCODE_CONFIG_CONTENT;

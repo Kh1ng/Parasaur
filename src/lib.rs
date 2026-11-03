@@ -10,6 +10,7 @@ pub mod build_cache;
 pub mod candidates;
 pub mod capability;
 pub mod central_claims;
+mod chat_environment;
 pub mod claude_monitor;
 pub mod cli;
 pub mod clock;

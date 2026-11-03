@@ -698,6 +698,14 @@ pub enum ConfigCommands {
         #[arg(long)]
         credential_id: String,
     },
+    /// Private child-process environment for Manager Chat. Never a public projection.
+    #[command(hide = true)]
+    ShowChatEnvironment {
+        #[arg(long = "config", visible_alias = "config-path")]
+        config_path: Option<String>,
+        #[arg(long)]
+        profile: String,
+    },
     /// Launch a declared instance without exporting its key to a caller.
     ExecBackendInstance {
         #[arg(long = "config", visible_alias = "config-path")]
@@ -710,6 +718,9 @@ pub enum ConfigCommands {
         model: Option<String>,
         #[arg(long)]
         work_id: Option<String>,
+        /// Apply development application variables, preserving account identity.
+        #[arg(long)]
+        chat_environment: bool,
         #[arg(long, conflicts_with = "adapter_program")]
         acp_bridge: Option<String>,
         /// Worker-selected Python interpreter for the fixed Vibe stdin bridge.

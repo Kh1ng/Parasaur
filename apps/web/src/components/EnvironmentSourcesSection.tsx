@@ -49,8 +49,8 @@ export function EnvironmentSourcesSection({ profile, configured, onSaved }: {
   };
 
   return <section className="card-padded max-w-4xl" aria-labelledby="environment-sources-title">
-    <h3 id="environment-sources-title" className="text-sm font-semibold text-primary">Factory environment files</h3>
-    <p className="mt-1 max-w-prose text-xs leading-relaxed text-muted">Choose files on the connected node for new factory dispatches. Development is the default; production is used with <code>gah dispatch --prod</code>. Running jobs keep their environment. These settings do not configure interactive chat.</p>
+    <h3 id="environment-sources-title" className="text-sm font-semibold text-primary">Workspace environment files</h3>
+    <p className="mt-1 max-w-prose text-xs leading-relaxed text-muted">Development files supply application variables to new chats and factory dispatches. Chat keeps provider account settings and work-scoped credentials separate. Production is used only with <code>gah dispatch --prod</code>. Running agents keep their environment.</p>
     <form onSubmit={event => void save(event)} className="mt-4 space-y-4">
       <div className="grid gap-4 md:grid-cols-2">
         {SOURCES.map(([field, label]) => <fieldset key={field} disabled={pending} className="min-w-0 space-y-2">
@@ -71,12 +71,12 @@ export function EnvironmentSourcesSection({ profile, configured, onSaved }: {
               setChoices(current => ({ ...current, [field]: { ...current[field], path } })); setSaved(false);
             }} className="input w-full" autoComplete="off" spellCheck={false} required placeholder="/srv/project/.env" />
           </div>}
-          {choices[field].action === 'clear' && <p className="text-xs text-warning">New dispatches will stop loading this source. The file itself stays on the node.</p>}
+          {choices[field].action === 'clear' && <p className="text-xs text-warning">New agents will stop loading this source. The file itself stays on the node.</p>}
         </fieldset>)}
       </div>
-      <p className="max-w-prose text-xs text-muted">Owner access is required to save. Enter file paths, never keys or environment assignments. Existing source values and file contents are not displayed.</p>
+      <p className="max-w-prose text-xs text-muted">Owner access is required to save. Use absolute paths on the execution node to share a source between chat and factory. Enter file paths, never keys or environment assignments. Existing source values and file contents are not displayed.</p>
       {error && <p role="alert" className="text-sm text-critical">{error}</p>}
-      {saved && <p role="status" className="text-sm text-good">Environment sources saved for new factory dispatches.</p>}
+      {saved && <p role="status" className="text-sm text-good">Environment sources saved for new agents.</p>}
       <button type="submit" disabled={!changed || invalid || pending} className="btn-primary">{pending ? 'Saving…' : 'Save environment sources'}</button>
     </form>
   </section>;

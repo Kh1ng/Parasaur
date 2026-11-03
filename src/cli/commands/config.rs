@@ -371,12 +371,24 @@ pub fn run(command: ConfigCommands) -> Result<()> {
             config::save(&cfg, config_path.as_deref())?;
             println!("Updated backend instance credential binding");
         }
+        ConfigCommands::ShowChatEnvironment {
+            config_path,
+            profile,
+        } => {
+            let cfg = config::load(config_path.as_deref())?;
+            let profile = config::get_profile(&cfg, &profile)?;
+            println!(
+                "{}",
+                serde_json::to_string(&crate::chat_environment::load(profile)?)?
+            );
+        }
         ConfigCommands::ExecBackendInstance {
             config_path,
             profile,
             instance,
             model,
             work_id,
+            chat_environment,
             acp_bridge,
             adapter_program,
             mut args,
@@ -423,7 +435,13 @@ pub fn run(command: ConfigCommands) -> Result<()> {
                 work_id.as_deref(),
                 &selected,
             )?;
-            let mut env = Vec::new();
+            let mut env = if chat_environment {
+                crate::chat_environment::load(selected_profile)?
+                    .into_iter()
+                    .collect()
+            } else {
+                Vec::new()
+            };
             identity.apply_instance_state_env(&mut env);
             // Preserve adapter settings; a bound source replaces the legacy key below.
             if identity.runner_kind == "openhands" {

@@ -47,7 +47,7 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 - The desktop's saved central origin answers `/health`, but its dashboard and `/api/info` return 404. Identify the actual Parasaur address before using it for live acceptance.
 - A current-source Windows v0.3.0 Tauri executable and NSIS installer were built locally on 2026-11-03. The executable loaded Overview and Factory in an isolated test profile against the local sample control plane. Installation, signed updates, and live factory acceptance remain pending.
 - Hosted enterprise acceptance requires the actual service and provisioned accounts.
-- Workspace environment acceptance remains incomplete: Profile can configure factory file sources and exact validation/auto-fix commands on the connected node, but interactive chat does not yet apply the profile environment sources and other nodes retain their own configuration.
+- Workspace environment implementation now covers development application variables in interactive chat and exact factory checks. Local real-CLI/child-process validation passed with provider/state isolation and production exclusion. Other execution nodes retain their own configuration; a remote-node and real-provider workspace workflow still needs acceptance.
 - iOS background delivery requires the configured APNs service, a signed app, and a physical device check.
 
 Record the exact build, platform, commands, and live acceptance results before declaring beta ready. Keep this checklist pending while any required workflow remains unverified.

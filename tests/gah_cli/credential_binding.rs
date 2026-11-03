@@ -150,6 +150,67 @@ impl BindingFixture {
 }
 
 #[test]
+fn chat_environment_reaches_named_children_without_replacing_the_account() {
+    let f = BindingFixture::new("codex", "#!/bin/sh\nprintf '%s|%s|%s|%s' \"$APP_LABEL\" \"$HOME\" \"$OPENAI_API_KEY\" \"${PRODUCTION_ONLY-unset}\"\n");
+    f.save(
+        "workspace-account",
+        "openai",
+        "OPENAI_API_KEY",
+        "selected-account",
+    );
+    f.add("workspace-codex", "codex", "workspace-account");
+    let development = f.root.path().join("development.env");
+    let production = f.root.path().join("production.env");
+    fs::write(
+        &development,
+        "APP_LABEL=application\nHOME=/wrong/account\nOPENAI_API_KEY=wrong-account\n",
+    )
+    .unwrap();
+    fs::write(&production, "PRODUCTION_ONLY=must-not-load\n").unwrap();
+    f.command()
+        .args([
+            "profile",
+            "set",
+            "test",
+            "--config",
+            f.config.to_str().unwrap(),
+            "--env-file",
+            development.to_str().unwrap(),
+            "--env-file-prod",
+            production.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    f.exec("workspace-codex")
+        .arg("--chat-environment")
+        .assert()
+        .success()
+        .stdout(format!(
+            "application|{}|selected-account|unset",
+            f.state("workspace-codex").display()
+        ));
+    let output = f
+        .command()
+        .args([
+            "config",
+            "show-chat-environment",
+            "--profile",
+            "test",
+            "--config-path",
+            f.config.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output).unwrap(),
+        serde_json::json!({"APP_LABEL":"application"})
+    );
+}
+
+#[test]
 fn two_named_sources_override_ambient_and_keep_account_state_separate() {
     let f = BindingFixture::new("vibe", "#!/bin/sh\nprintf '%s|%s|%s' \"$MISTRAL_API_KEY\" \"$HOME\" \"${ANTHROPIC_AUTH_TOKEN-unset}\"\n");
     f.save(

@@ -28,6 +28,10 @@ was modified.
 | `responses/config-show.json` | `gah config show --json` |
 | `responses/profile-list.json` | `gah profile list --json` |
 
+`responses/chat-environment.json` is the synthetic empty development environment
+for `gah config show-chat-environment --profile fixture`. It is a private launch
+pipe used by chat tests, not an HTTP response or a captured credential file.
+
 The report-query parity patch adds `ledger-summary.json` and
 `report-series.json`, captured from the native CLI on 2026-09-08 with the
 synthetic `inputs/report-query-ledger.jsonl`. The entry has unknown usage

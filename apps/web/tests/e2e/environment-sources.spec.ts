@@ -12,7 +12,7 @@ test('Profile saves explicit environment source edits and refreshes redacted con
     return route.continue();
   });
   await page.goto('/?page=profile');
-  const sources = page.getByRole('region', { name: 'Factory environment files' });
+  const sources = page.getByRole('region', { name: 'Workspace environment files' });
   await expect(sources.getByRole('group', { name: 'Production · configured' })).toBeVisible();
   await sources.getByLabel('Development source', { exact: true }).selectOption('replace');
   await sources.getByLabel('Development file path on node').fill('/srv/project/.env.dev');

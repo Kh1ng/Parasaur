@@ -877,6 +877,20 @@ Profiles may set `env_file` (dev credentials, loaded by default) and
 `env_file_prod` (loaded only with `--prod`). Keep prod credentials out of
 dev runs; `--prod` also switches policy enforcement to `git-push-prod`.
 
+Manager Chat also loads development application variables from `env_file` for
+new agent processes. It never loads `env_file_prod`. Chat excludes provider
+configuration/credentials, account state paths, harness controls, and credentials
+registered for work-scoped approval; configure provider accounts separately.
+Values go only to the agent child, never the server's environment or a public
+settings response. A configured unreadable, invalid, non-file, or oversized
+source (over 128 KiB) stops startup rather than silently dropping the environment.
+
+Use absolute paths on the execution node to share a file with factory dispatch.
+Chat resolves relative paths from the profile's configured checkout. Files and
+settings remain node-local. Long-running agents retain their initial environment;
+start a new chat to apply changes. One-shot agents reread the source for their
+next invocation. Deploy the updated core CLI and Node server together.
+
 ## Manager Agent
 
 `docs/gah-manager-skill.md` is the system prompt / skill file for a manager

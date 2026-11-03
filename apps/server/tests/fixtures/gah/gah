@@ -109,6 +109,8 @@ if (command === 'pm') {
   respond('ledger-work');
 } else if (command === 'config' && sub === 'show') {
   respond('config-show');
+} else if (command === 'config' && sub === 'show-chat-environment') {
+  respond('chat-environment');
 } else if (command === 'profile' && sub === 'list') {
   respond('profile-list');
 } else if (command === '--help') {
