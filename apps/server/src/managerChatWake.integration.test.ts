@@ -45,10 +45,10 @@ test('two quick manager wakes share one durable backend session', { timeout: 15_
   });
 
   try {
-    const [first, second] = await Promise.all([
-      wake('Remember code word WAKE-QUEUE-819. Reply only OK.'),
-      wake('What code word did I ask you to remember in the previous chat? Reply only with the code word.')
-    ]);
+    // Independent HTTP connections may arrive in either order. Wait for the
+    // first enqueue acknowledgement before sending the wake that depends on it.
+    const first = await wake('Remember code word WAKE-QUEUE-819. Reply only OK.');
+    const second = await wake('What code word did I ask you to remember in the previous chat? Reply only with the code word.');
     assert.equal(first.status, 202);
     assert.equal(second.status, 202);
 
