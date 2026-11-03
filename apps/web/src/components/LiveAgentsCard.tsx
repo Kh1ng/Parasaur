@@ -5,7 +5,7 @@ import { backendInstancesApi, gahApi } from '../api/client.js';
 import { formatLocalTime } from '../lib/format.js';
 
 /** What an agent account is doing right now, in the order the rows sort. */
-export type LiveState = 'working' | 'gates' | 'stale' | 'paused' | 'down' | 'halted' | 'idle';
+export type LiveState = 'working' | 'gates' | 'stale' | 'paused' | 'down' | 'halted' | 'idle' | 'unknown';
 
 /** An agent account: a declared backend instance, or a routing candidate
  * from the quota snapshot when the profile declares no instances. */
@@ -19,6 +19,8 @@ export interface LiveAccount {
   enabled: boolean;
   /** Why the account cannot take work, when it cannot. */
   notReady: string | null;
+  /** An explicit missing auth observation is neither a ready nor a broken login. */
+  readinessUnknown?: boolean;
   /** Quota resume time, when routing skips it until then. */
   resumes: string | null;
   pausedReason: string | null;
@@ -45,7 +47,7 @@ export interface LiveAgentRow {
   reason: string | null;
 }
 
-const RANK: Record<LiveState, number> = { working: 0, gates: 0, stale: 0, paused: 1, down: 1, halted: 1, idle: 2 };
+const RANK: Record<LiveState, number> = { working: 0, gates: 0, stale: 0, paused: 1, down: 1, halted: 1, unknown: 1, idle: 2 };
 const DOT: Record<LiveState, { className: string; pulse: boolean; label: string }> = {
   working: { className: 'bg-good', pulse: true, label: 'working' },
   gates: { className: 'bg-accent', pulse: true, label: 'running gates' },
@@ -53,7 +55,8 @@ const DOT: Record<LiveState, { className: string; pulse: boolean; label: string 
   paused: { className: 'bg-warning', pulse: false, label: 'paused' },
   idle: { className: 'bg-muted/40', pulse: false, label: 'idle' },
   halted: { className: 'bg-critical', pulse: false, label: 'halted' },
-  down: { className: 'bg-critical', pulse: false, label: 'down' }
+  down: { className: 'bg-critical', pulse: false, label: 'down' },
+  unknown: { className: 'bg-muted', pulse: false, label: 'availability unknown' }
 };
 const LEDGER_REFRESH_MS = 60 * 1000;
 /** A job the loop has claimed but not yet routed to an agent. */
@@ -100,6 +103,7 @@ export function liveAccounts(instances: BackendInstanceSummary[], candidates: Qu
       model: instance.supported_models[0] ?? null,
       enabled: instance.enabled,
       notReady: unhealthy ? instance.resolution_error ?? 'not ready' : null,
+      readinessUnknown: instance.auth_ready === null && instance.healthy === null,
       resumes: null,
       pausedReason: null
     });
@@ -239,14 +243,14 @@ export function buildLiveRows(input: {
       detail: account.backend,
       provider: account.provider,
       model: job ? (input.workers === undefined ? job.model ?? account.model : job.model) : account.model,
-      state: job ? state(job) : !account.enabled ? 'halted' : account.notReady ? 'down' : account.resumes ? 'paused' : 'idle',
+      state: job ? state(job) : !account.enabled ? 'halted' : account.notReady ? 'down' : account.readinessUnknown ? 'unknown' : account.resumes ? 'paused' : 'idle',
       job: job?.workId ?? null,
       runId: job?.runId ?? null,
       mode: job?.mode ?? null,
       since: job?.since ?? null,
       claimAgeSeconds: claimAge(job?.workId ?? null),
       resumes: job ? null : account.resumes,
-      reason: job ? null : account.notReady ?? account.pausedReason
+      reason: job ? null : account.notReady ?? (account.readinessUnknown ? 'Account auth could not be checked. Refresh or use Test in Profile.' : account.pausedReason)
     });
   }
   for (const job of jobs) {
@@ -286,6 +290,7 @@ function LiveRow({ row, now, ledger, onWatch }: { row: LiveAgentRow; now: number
   else if (row.state === 'paused') line = <>paused on quota{row.reason ? ` (${row.reason})` : ''}, resumes in {formatDuration(Date.parse(row.resumes!) - now)} ({formatLocalTime(row.resumes) ?? row.resumes})</>;
   else if (row.state === 'halted') line = 'disabled, routing skips it';
   else if (row.state === 'down') line = <>not ready{row.reason ? `: ${row.reason}` : ''}</>;
+  else if (row.state === 'unknown') line = row.reason ?? 'account availability is unknown';
   else line = 'idle, waiting for the router';
   const busy = row.state === 'working' || row.state === 'gates';
   const files = ledger?.files_changed;

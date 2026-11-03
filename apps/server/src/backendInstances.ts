@@ -23,8 +23,14 @@ export function backendInstancesRouter(
     const summary = await read(profile);
     const backend_instances = await Promise.all(summary.backend_instances.map(async (instance) => {
       if (!instance.credential_id && !['codex', 'claude'].includes(instance.runner_kind)) return instance;
-      const auth = await testAuth(profile, instance.backend_instance);
-      return { ...instance, auth_ready: auth.auth_ready, healthy: auth.auth_ready };
+      try {
+        const auth = await testAuth(profile, instance.backend_instance);
+        return { ...instance, auth_ready: auth.auth_ready, healthy: auth.auth_ready };
+      } catch {
+        // A failed observation is unknown, not a failed login, and must not
+        // hide healthy sibling accounts or turn a completed mutation into 502.
+        return { ...instance, auth_ready: null, healthy: null };
+      }
     }));
     return res.json({ profile, backend_instances });
   };
