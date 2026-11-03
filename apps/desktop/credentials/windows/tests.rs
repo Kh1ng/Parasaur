@@ -58,6 +58,22 @@ fn pipes_keep_stdin_private_and_bound_output_failure_and_stalls() {
 }
 
 #[test]
+#[ignore = "read-only check of the actual configured WSL CLI"]
+fn installed_wsl_account_metadata_is_readable() {
+    assert_eq!(
+        std::env::var("GAH_WINDOWS_WSL_TEST_INSTALLED_READS").as_deref(),
+        Ok("1")
+    );
+    let bytes = super::invoke(
+        super::super::cli_args::list(),
+        None,
+        Duration::from_secs(10),
+    )
+    .unwrap();
+    let _: Vec<super::super::CredentialInfo> = serde_json::from_slice(&bytes).unwrap();
+}
+
+#[test]
 #[ignore = "requires GAH_WINDOWS_WSL_TEST_GAH and an installed WSL distribution"]
 fn real_wsl_two_accounts_and_literal_arguments() {
     let gah = std::env::var("GAH_WINDOWS_WSL_TEST_GAH").expect("Linux fixture CLI path required");

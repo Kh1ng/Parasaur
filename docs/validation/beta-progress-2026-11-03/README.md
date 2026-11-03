@@ -8,6 +8,11 @@ Windows [provider credential transport](windows-provider-transport.md) now passe
 a real WSL synthetic two-account lifecycle and bounded-process checks. Real
 provider and per-account agent execution acceptance remain pending.
 
+The [account execution pass](windows-account-execution.md) now verifies concurrent
+synthetic launches, credential revocation and correct safe attribution after a
+rebind. Matching `b738b9d2` desktop/CLI artifacts were installed locally. Real
+provider execution, metered usage and live factory acceptance remain pending.
+
 Branch: `beta/factory-observability`. This is development evidence, not deployed beta acceptance. See [Beta acceptance](../../BETA_READINESS.md) for the remaining workflows.
 
 ## Verified changes

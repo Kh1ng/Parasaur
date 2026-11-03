@@ -40,3 +40,39 @@ successful runs cleaned up their own fixtures.
 The new native rebind command requires the updated CLI. An older CLI rejects the
 new option before changing the binding; it cannot silently retain stale labels.
 Desktop and worker release artifacts must be delivered from the same revision.
+
+## Paired candidate and local installation
+
+Both optimized builds completed from immutable source
+`b738b9d2820770c3aee3e23fae71a8dd1fe76b43`. The complete Windows-to-WSL fixture
+passed again against that optimized CLI. The paired desktop/worker manifests
+passed the actual packaged Windows installer's validator for all five routes.
+The ignored delivery artifact is `artifacts/parasaur-windows-beta-b738b9d2.zip`,
+SHA-256 `aa53e2e572122c022d9d1d939ddec6987cd7b6de48f03b50fcea702002e139c3`.
+The ZIP contains the combined bundle, both manifests and the public source
+archive. Private submodule contents and user/test profiles are not in it.
+
+The saved desktop distribution is Ubuntu-24.04. Read-only inspection confirmed
+its user had no `~/.cargo/bin/gah`. The verified CLI was installed there with
+mode 755; version and credential-list commands passed (no saved accounts).
+This installs only a user CLI: no setup wizard, daemon, worker loop or service
+was run. Its SHA-256 is
+`ce84046e95b5e47a6a253eeb36df95c256732cd6c4bc8b115c52fb0ac0efe3ee`.
+The binary requires glibc 2.39; this does not establish older-Linux compatibility.
+
+The matching current-user desktop installer returned zero and preserved the
+saved settings hash. Installed bytes match the optimized executable with only
+Tauri's expected `UNK` to `NSS` bundle marker patch; installed SHA-256 is
+`b70ca858f0c56c1a49f778d62082ae76432b2adddb5067a374c8987dc44c9139`.
+The executable was launched by its exact installed path.
+Process inspection confirmed that path after launch. The final UI observation
+reported a minimized window; it was left minimized rather than counted as a
+successful rendering check. Earlier recovery rendering evidence remains separate.
+
+A separate opt-in read-only native test now invokes the production credential
+path against the actual saved Windows settings and installed WSL CLI, without
+injecting an isolated home. It passed and parsed the account metadata contract.
+No user account was created or changed by that check. The final native suite
+passed 35 cases with three skipped fixtures; both opt-in WSL checks were run
+explicitly and passed. These artifacts are unsigned and unpublished, and the
+live central server has not been changed.

@@ -43,10 +43,11 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
-- A Windows x64 candidate at `a7728f46` completed an actual current-user desktop
+- A Windows x64 candidate at `b738b9d2` completed an actual current-user desktop
   upgrade and was launched. Installed bytes and preserved settings were verified;
-  NSIS/MSI artifacts are saved locally. The earlier `bbc37aa5` combined candidate
-  also has a same-revision WSL worker; do not mix their manifests. This is unsigned
+  NSIS/MSI and same-revision WSL CLI artifacts are saved locally. The user CLI
+  was installed in the saved WSL distribution and the production metadata read
+  passed; no worker service was started. Do not mix candidate manifests. This is unsigned
   local setup evidence, not signed-update, fresh-OS or live-server acceptance.
 
 - Broad local shared-web checks passed at `0ee85993`: 160 Windows workflows,
