@@ -1230,6 +1230,8 @@ components:
         provider: { type: string }
         repo: { type: string }
         local_path: { type: string }
+        artifact_root: { type: string, description: Absent on older nodes }
+        default_target_branch: { type: string, description: Absent on older nodes }
         web_url: { type: string, nullable: true }
         max_parallel_workers: { type: integer, nullable: true }
         max_open_managed_mrs: { type: integer }

@@ -842,6 +842,9 @@ export interface ProfileSummary {
   provider: string;
   repo: string;
   local_path: string;
+  /** Workspace configuration metadata; absent on older nodes. */
+  artifact_root?: string;
+  default_target_branch?: string;
   /** Stable repo identity used for GAH-owned branch/worktree naming
    * (`gah/<repo_id>-<ts>`, `gah-chat-<repo_id>-<session>`). Clients that
    * materialize worktrees MUST use this rather than deriving from `repo`,

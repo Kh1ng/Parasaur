@@ -53,6 +53,8 @@ export function projectProfile(value: unknown): ProfileSummary {
   return {
     name: p.name, display_name: p.display_name, provider: p.provider, repo: p.repo,
     repo_id: p.repo_id, local_path: p.local_path, worktree_base: p.worktree_base,
+    ...(typeof p.artifact_root === 'string' ? { artifact_root: p.artifact_root } : {}),
+    ...(typeof p.default_target_branch === 'string' ? { default_target_branch: p.default_target_branch } : {}),
     web_url: p.web_url, max_parallel_workers: p.max_parallel_workers,
     max_open_managed_mrs: p.max_open_managed_mrs, manager_wake_autonomy: p.manager_wake_autonomy,
     validation_timeout_seconds: p.validation_timeout_seconds,

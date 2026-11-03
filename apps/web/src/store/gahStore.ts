@@ -265,13 +265,16 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
 
   async fetchProfiles(opts) {
     const current = get().profiles;
-    if (current.loading || (!opts?.force && isFresh(current, ''))) return;
-    set({ profiles: { ...current, loading: true, error: null } });
+    if ((current.loading && !opts?.force) || (!opts?.force && isFresh(current, ''))) return;
+    const pending = { ...current, loading: true, error: null };
+    set({ profiles: pending });
     try {
       const data = await gahApi.getProfiles();
+      if (get().profiles !== pending) return;
       set({ profiles: { data, loading: false, error: null, fetchedAt: Date.now(), key: '' } });
     } catch (error) {
-      set({ profiles: { ...get().profiles, loading: false, error: errorMessage(error), key: '' } });
+      if (get().profiles !== pending) return;
+      set({ profiles: { ...pending, loading: false, error: errorMessage(error), key: '' } });
     }
   },
 
@@ -285,25 +288,9 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
           adding: false, 
           addError: null, 
           lastAddSuccess: true 
-        },
-        // Refresh profiles list
-        profiles: { ...get().profiles, loading: true }
+        }
       });
-      // Re-fetch profiles
-      try {
-        const profilesData = await gahApi.getProfiles();
-        set({ 
-          profiles: { 
-            data: profilesData, 
-            loading: false, 
-            error: null, 
-            fetchedAt: Date.now(), 
-            key: '' 
-          }
-        });
-      } catch {
-        // If refetch fails, that's okay - the add might still have succeeded
-      }
+      await get().fetchProfiles({ force: true });
     } catch (error) {
       set({ 
         profileCrud: { 
@@ -326,25 +313,9 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
           updating: false,
           updateError: null,
           lastUpdateSuccess: true
-        },
-        // Refresh profiles list
-        profiles: { ...get().profiles, loading: true }
+        }
       });
-      // Re-fetch profiles
-      try {
-        const profilesData = await gahApi.getProfiles();
-        set({
-          profiles: {
-            data: profilesData,
-            loading: false,
-            error: null,
-            fetchedAt: Date.now(),
-            key: ''
-          }
-        });
-      } catch {
-        // If refetch fails, that's okay - the update might still have succeeded
-      }
+      await get().fetchProfiles({ force: true });
     } catch (error) {
       set({ 
         profileCrud: { 
@@ -367,25 +338,9 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
           removing: false, 
           removeError: null, 
           lastRemoveSuccess: true 
-        },
-        // Refresh profiles list
-        profiles: { ...get().profiles, loading: true }
+        }
       });
-      // Re-fetch profiles
-      try {
-        const profilesData = await gahApi.getProfiles();
-        set({ 
-          profiles: { 
-            data: profilesData, 
-            loading: false, 
-            error: null, 
-            fetchedAt: Date.now(), 
-            key: '' 
-          }
-        });
-      } catch {
-        // If refetch fails, that's okay - the remove might still have succeeded
-      }
+      await get().fetchProfiles({ force: true });
     } catch (error) {
       set({ 
         profileCrud: { 

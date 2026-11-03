@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import type { ProfileSummary } from '@git-agent-harness/contracts';
 import type { ProfileAddOptions } from './gahCli.js';
-import { addProject, addRemoteProject, CheckoutHasLocalWork, importGitProject, listProjects, parseGitUrl, removeProject, resolveChatProject } from './projectCatalog.js';
+import { addProject, addRemoteProject, CheckoutHasLocalWork, importGitProject, listProjects, parseGitUrl, projectProfile, removeProject, resolveChatProject } from './projectCatalog.js';
 
 const savedCatalogPath = process.env.GAH_PROJECT_CATALOG_PATH;
 const savedEnvironment = new Map(
@@ -44,6 +44,13 @@ function profile(name: string): ProfileSummary {
     validation_timeout_seconds: 300
   };
 }
+
+test('project metadata retains workspace settings while excluding environment source values', () => {
+  const projected = projectProfile({ ...profile('repo'), artifact_root: '/srv/artifacts', default_target_branch: 'release/stable', env_file: 'PRIVATE_ENV_SOURCE' });
+  assert.equal(projected.artifact_root, '/srv/artifacts');
+  assert.equal(projected.default_target_branch, 'release/stable');
+  assert.doesNotMatch(JSON.stringify(projected), /PRIVATE_ENV_SOURCE/);
+});
 
 test('catalog lists only explicitly added profiles', () => {
   process.env.GAH_PROJECT_CATALOG_PATH = join(mkdtempSync(join(tmpdir(), 'gah-projects-')), 'projects.json');

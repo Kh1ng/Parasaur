@@ -1,10 +1,10 @@
-import type { ControllerEvent, DoctorSnapshot, LedgerEntry, ReportData, ReportSeriesData, SettingsConfigProfileSummary } from '@git-agent-harness/contracts';
+import type { ControllerEvent, DoctorSnapshot, LedgerEntry, ProfileSummary, ReportData, ReportSeriesData, SettingsConfigProfileSummary } from '@git-agent-harness/contracts';
 import { gahApi } from '../api/client.js';
 import type { LoopStatus, StartLoopResult, StopLoopResult } from '../api/client.js';
 import { useGahStore, workTimelineKey } from './gahStore.js';
 
 jest.mock('../api/client.js', () => ({
-  gahApi: { getReport: jest.fn(), getProfileConfig: jest.fn(), getWorkTimeline: jest.fn(), getEvents: jest.fn(), getDoctor: jest.fn(), getReportSeries: jest.fn(), getLoopStatus: jest.fn(), startLoop: jest.fn(), stopLoop: jest.fn() },
+  gahApi: { getReport: jest.fn(), getProfileConfig: jest.fn(), getWorkTimeline: jest.fn(), getEvents: jest.fn(), getDoctor: jest.fn(), getReportSeries: jest.fn(), getLoopStatus: jest.fn(), startLoop: jest.fn(), stopLoop: jest.fn(), getProfiles: jest.fn(), addProfile: jest.fn(), updateProfile: jest.fn(), removeProfile: jest.fn() },
   GahApiError: class GahApiError extends Error {},
 }));
 
@@ -23,6 +23,7 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
+  jest.resetAllMocks();
   useGahStore.setState(initialState, true);
   getReport.mockReset();
   getProfileConfig.mockReset();
@@ -38,6 +39,27 @@ beforeEach(() => {
 afterEach(() => jest.useRealTimers());
 
 const config = (profile: string) => ({ profile, backend_instances: [] }) as unknown as SettingsConfigProfileSummary;
+
+test.each(['add', 'update', 'remove'] as const)('%s remains successful when its list refresh fails and releases loading', async action => {
+  jest.mocked(gahApi.getProfiles).mockRejectedValueOnce(new Error('List unavailable'));
+  const store = useGahStore.getState();
+  if (action === 'add') await store.addProfile({ name: 'new', display_name: 'New', repo_id: 'new', provider: 'github', repo: 'owner/repo', local_path: '/repo', artifact_root: '/artifacts' });
+  if (action === 'update') await store.updateProfile('new', { display_name: 'New' });
+  if (action === 'remove') await store.removeProfile('new');
+  expect(useGahStore.getState().profiles).toMatchObject({ loading: false, error: 'List unavailable' });
+  const crud = useGahStore.getState().profileCrud;
+  expect(action === 'add' ? crud.lastAddSuccess : action === 'update' ? crud.lastUpdateSuccess : crud.lastRemoveSuccess).toBe(true);
+});
+
+test('a read started before a profile edit cannot restore the old list afterward', async () => {
+  const old = deferred<ProfileSummary[]>();
+  jest.mocked(gahApi.getProfiles).mockReturnValueOnce(old.promise).mockResolvedValueOnce([{ name: 'updated' }] as ProfileSummary[]);
+  const initialRead = useGahStore.getState().fetchProfiles();
+  await useGahStore.getState().updateProfile('alpha', { display_name: 'Updated' });
+  old.resolve([{ name: 'old' }] as ProfileSummary[]);
+  await initialRead;
+  expect(useGahStore.getState().profiles.data?.[0].name).toBe('updated');
+});
 
 describe.each(['readiness', 'usage trend', 'controller'] as const)('%s project isolation', (resource) => {
   const fetchResource = (profile: string) => resource === 'readiness'
