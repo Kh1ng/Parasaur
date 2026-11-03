@@ -101,6 +101,10 @@ An exact-revision Linux candidate also passed its actual optimized CLI release
 installation against a disposable checkout; see
 [Linux release candidate](linux-release-candidate.md). MacBook acceptance is
 explicitly deferred by the owner.
+The Windows finishing pass also added
+[native dashboard load recovery](desktop-dashboard-recovery.md), verified in
+an isolated native webview against failed app assets. Native link activation
+remains an explicit acceptance item because Windows input geometry was absent.
 
 Parasaur is confirmed at `https://hermesagent.tail82695.ts.net:8443`, with central role and version 0.2.0. The real Windows desktop connection and the owned native test window were corrected to that port. The earlier statement that the Parasaur address was unavailable is superseded. Its HTML returns 200, but both referenced JavaScript and CSS GETs return 500; asset HEAD succeeds. The native window reached the correct origin but could not render the application. Protected API reads require a central credential, requested through a private card. See [live central evidence](live-central-8443.md). No host routing or service was changed.
 

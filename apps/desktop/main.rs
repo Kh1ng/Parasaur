@@ -189,6 +189,11 @@ fn central_origin(value: &str) -> Result<String, String> {
     Ok(central_url(value)?.origin().ascii_serialization())
 }
 
+/// Recovery can open the bundled connection screen, never invoke its commands.
+fn can_recover_dashboard(from: &tauri::Url, central: &str) -> bool {
+    central_origin(central).is_ok_and(|origin| from.origin().ascii_serialization() == origin)
+}
+
 /// External links must be plain HTTP(S) URLs without embedded credentials.
 /// Everything the dashboard opens in the OS browser goes through this
 /// validation so a compromised page cannot aim file://, javascript:, or
@@ -973,6 +978,7 @@ fn main() {
                 if payload.url().origin().ascii_serialization() != origin {
                     return;
                 }
+                let _ = window.eval(include_str!("dashboard_recovery.js"));
                 match read_owner_credential(&origin) {
                     Ok(token) => {
                         if let Some(script) = owner_session_script(&origin, payload.url(), token.as_deref()) {
@@ -983,6 +989,21 @@ fn main() {
                 }
             })
             .on_navigation(move |url| {
+                if url.as_str() == "gah://connection-recovery"
+                    || url.as_str() == "gah://connection-recovery/"
+                {
+                    let allowed = navigation_app
+                        .get_webview_window("dashboard")
+                        .and_then(|window| window.url().ok())
+                        .is_some_and(|from| {
+                            can_recover_dashboard(&from, &read_settings().central_url)
+                        });
+                    if allowed {
+                        let app = navigation_app.clone();
+                        let _ = navigation_app.run_on_main_thread(move || show_settings(&app));
+                    }
+                    return false;
+                }
                 if url.as_str() == "gah://settings" || url.as_str() == "gah://settings/" {
                     let allowed = navigation_app
                         .get_webview_window("dashboard")
@@ -1309,6 +1330,28 @@ mod tests {
                 "{value}"
             );
         }
+    }
+
+    #[test]
+    fn dashboard_recovery_opens_settings_only_from_the_configured_origin() {
+        let central = "https://gah.example:8443";
+        assert!(can_recover_dashboard(&central.parse().unwrap(), central));
+        assert!(can_recover_dashboard(
+            &"https://gah.example:8443/?page=work".parse().unwrap(),
+            central
+        ));
+        for from in [
+            "https://evil.example",
+            "https://gah.example",
+            "http://gah.example:8443",
+            "tauri://localhost/index.html",
+        ] {
+            assert!(
+                !can_recover_dashboard(&from.parse().unwrap(), central),
+                "{from}"
+            );
+        }
+        assert!(!can_recover_dashboard(&central.parse().unwrap(), "invalid"));
     }
 
     #[test]

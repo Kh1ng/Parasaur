@@ -43,6 +43,12 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- Native Windows now shows recovery controls when a loaded dashboard document
+  stays blank because the app never mounts. Browser tests, all 27 native tests
+  and rendering in an isolated failed-asset webview passed. Native settings-link
+  activation remains unverified because Windows automation lacked input geometry;
+  never-finished navigations also remain outside this acceptance check.
+
 - New release bundles support isolated dependency installation from their own
   lockfile before replacing artifacts. Cold HTTP startup, moving the prepared
   output, source rebuild cleanup and failed-install preservation passed locally.
