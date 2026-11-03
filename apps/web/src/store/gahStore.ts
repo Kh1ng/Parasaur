@@ -179,13 +179,16 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
   async fetchDoctor(profile, opts) {
     const key = profile ?? '';
     const current = get().doctor;
-    if (current.loading || (!opts?.force && isFresh(current, key))) return;
-    set({ doctor: { ...current, loading: true, error: null } });
+    if ((current.loading && current.key === key) || (!opts?.force && isFresh(current, key))) return;
+    const pending = { ...(current.key === key ? current : emptyResource<DoctorSnapshot>()), loading: true, error: null, key };
+    set({ doctor: pending });
     try {
       const data = await gahApi.getDoctor(profile);
+      if (get().doctor !== pending) return;
       set({ doctor: { data, loading: false, error: null, fetchedAt: Date.now(), key } });
     } catch (error) {
-      set({ doctor: { ...get().doctor, loading: false, error: errorMessage(error), key } });
+      if (get().doctor !== pending) return;
+      set({ doctor: { ...pending, loading: false, error: errorMessage(error) } });
     }
   },
 
@@ -208,13 +211,16 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
   async fetchReportSeries(params, opts) {
     const key = JSON.stringify(params ?? {});
     const current = get().reportSeries;
-    if (current.loading || (!opts?.force && isFresh(current, key))) return;
-    set({ reportSeries: { ...current, loading: true, error: null } });
+    if ((current.loading && current.key === key) || (!opts?.force && isFresh(current, key))) return;
+    const pending = { ...(current.key === key ? current : emptyResource<ReportSeriesData>()), loading: true, error: null, key };
+    set({ reportSeries: pending });
     try {
       const data = await gahApi.getReportSeries(params);
+      if (get().reportSeries !== pending) return;
       set({ reportSeries: { data, loading: false, error: null, fetchedAt: Date.now(), key } });
     } catch (error) {
-      set({ reportSeries: { ...get().reportSeries, loading: false, error: errorMessage(error), key } });
+      if (get().reportSeries !== pending) return;
+      set({ reportSeries: { ...pending, loading: false, error: errorMessage(error) } });
     }
   },
 
@@ -453,13 +459,16 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
 
   async fetchLoopStatus(profile, opts) {
     const current = get().loopStatus;
-    if (current.loading || (!opts?.force && isFresh(current, profile))) return;
-    set({ loopStatus: { ...current, loading: true, error: null } });
+    if ((current.loading && current.key === profile) || (!opts?.force && isFresh(current, profile))) return;
+    const pending = { ...(current.key === profile ? current : emptyResource<LoopStatus>()), loading: true, error: null, key: profile };
+    set({ loopStatus: pending });
     try {
       const data = await gahApi.getLoopStatus(profile);
+      if (get().loopStatus !== pending) return;
       set({ loopStatus: { data, loading: false, error: null, fetchedAt: Date.now(), key: profile } });
     } catch (error) {
-      set({ loopStatus: { ...get().loopStatus, loading: false, error: errorMessage(error), key: profile } });
+      if (get().loopStatus !== pending) return;
+      set({ loopStatus: { ...pending, loading: false, error: errorMessage(error) } });
     }
   },
 
@@ -471,7 +480,7 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
     } catch (error) {
       set({ loopAction: { pending: false, error: errorMessage(error) } });
     }
-    await get().fetchLoopStatus(profile, { force: true });
+    if (get().loopStatus.key === profile) await get().fetchLoopStatus(profile, { force: true });
   },
 
   async stopLoop(profile) {
@@ -482,6 +491,6 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
     } catch (error) {
       set({ loopAction: { pending: false, error: errorMessage(error) } });
     }
-    await get().fetchLoopStatus(profile, { force: true });
+    if (get().loopStatus.key === profile) await get().fetchLoopStatus(profile, { force: true });
   }
 }));

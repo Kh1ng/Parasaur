@@ -1,9 +1,10 @@
-import type { ControllerEvent, LedgerEntry, ReportData, SettingsConfigProfileSummary } from '@git-agent-harness/contracts';
+import type { ControllerEvent, DoctorSnapshot, LedgerEntry, ReportData, ReportSeriesData, SettingsConfigProfileSummary } from '@git-agent-harness/contracts';
 import { gahApi } from '../api/client.js';
+import type { LoopStatus, StartLoopResult, StopLoopResult } from '../api/client.js';
 import { useGahStore, workTimelineKey } from './gahStore.js';
 
 jest.mock('../api/client.js', () => ({
-  gahApi: { getReport: jest.fn(), getProfileConfig: jest.fn(), getWorkTimeline: jest.fn(), getEvents: jest.fn() },
+  gahApi: { getReport: jest.fn(), getProfileConfig: jest.fn(), getWorkTimeline: jest.fn(), getEvents: jest.fn(), getDoctor: jest.fn(), getReportSeries: jest.fn(), getLoopStatus: jest.fn(), startLoop: jest.fn(), stopLoop: jest.fn() },
   GahApiError: class GahApiError extends Error {},
 }));
 
@@ -27,11 +28,75 @@ beforeEach(() => {
   getProfileConfig.mockReset();
   getWorkTimeline.mockReset();
   getEvents.mockReset();
+  jest.mocked(gahApi.getDoctor).mockReset();
+  jest.mocked(gahApi.getReportSeries).mockReset();
+  jest.mocked(gahApi.getLoopStatus).mockReset();
+  jest.mocked(gahApi.startLoop).mockReset();
+  jest.mocked(gahApi.stopLoop).mockReset();
   jest.useFakeTimers().setSystemTime(new Date('2026-01-01T00:00:00Z'));
 });
 afterEach(() => jest.useRealTimers());
 
 const config = (profile: string) => ({ profile, backend_instances: [] }) as unknown as SettingsConfigProfileSummary;
+
+describe.each(['readiness', 'usage trend', 'controller'] as const)('%s project isolation', (resource) => {
+  const fetchResource = (profile: string) => resource === 'readiness'
+    ? useGahStore.getState().fetchDoctor(profile)
+    : resource === 'controller' ? useGahStore.getState().fetchLoopStatus(profile)
+    : useGahStore.getState().fetchReportSeries({ profile, since: '14d', bucket: 'daily' });
+  const readResource = () => resource === 'readiness' ? useGahStore.getState().doctor : resource === 'controller' ? useGahStore.getState().loopStatus : useGahStore.getState().reportSeries;
+  const mockRequest = (promise: Promise<unknown>) => {
+    if (resource === 'readiness') jest.mocked(gahApi.getDoctor).mockReturnValueOnce(promise as Promise<DoctorSnapshot>);
+    else if (resource === 'controller') jest.mocked(gahApi.getLoopStatus).mockReturnValueOnce(promise as Promise<LoopStatus>);
+    else jest.mocked(gahApi.getReportSeries).mockReturnValueOnce(promise as Promise<ReportSeriesData>);
+  };
+
+  test('a new project starts immediately and a late old result cannot overwrite it', async () => {
+    const old = deferred<unknown>();
+    const latest = deferred<unknown>();
+    mockRequest(old.promise);
+    mockRequest(latest.promise);
+    const first = fetchResource('alpha');
+    const second = fetchResource('beta');
+    expect(readResource()).toMatchObject({ data: null, loading: true });
+    const beta = resource === 'readiness'
+      ? { schema_version: 1, generated_at: '', overall_status: 'ok', checks: [] }
+      : resource === 'controller' ? { running: true, pid: 42 }
+      : { ledger_path: '/beta', profile: 'beta', since: '14d', bucket: 'daily', series: [] };
+    latest.resolve(beta);
+    await second;
+    expect(readResource().data).toEqual(beta);
+    old.resolve({ stale: true });
+    await first;
+    expect(readResource().data).toEqual(beta);
+  });
+
+  test('a failed project switch clears the previous result', async () => {
+    mockRequest(Promise.resolve({ old: true }));
+    await fetchResource('alpha');
+    const failure = deferred<unknown>();
+    mockRequest(failure.promise.then(() => { throw new Error('beta unavailable'); }));
+    const second = fetchResource('beta');
+    expect(readResource().data).toBeNull();
+    failure.resolve(null);
+    await second;
+    expect(readResource()).toMatchObject({ data: null, loading: false, error: 'beta unavailable' });
+  });
+});
+
+test.each(['start', 'stop'] as const)('completing %s on a previous project cannot restore its controller status', async (action) => {
+  jest.mocked(gahApi.getLoopStatus).mockResolvedValue({ running: false });
+  await useGahStore.getState().fetchLoopStatus('alpha');
+  const mutation = deferred<StartLoopResult & StopLoopResult>();
+  jest.mocked(gahApi.startLoop).mockReturnValue(mutation.promise);
+  jest.mocked(gahApi.stopLoop).mockReturnValue(mutation.promise);
+  const pending = action === 'start' ? useGahStore.getState().startLoop('alpha') : useGahStore.getState().stopLoop('alpha');
+  await useGahStore.getState().fetchLoopStatus('beta');
+  mutation.resolve({ started: true, stopped: true });
+  await pending;
+  expect(jest.mocked(gahApi.getLoopStatus).mock.calls).toEqual([['alpha'], ['beta']]);
+  expect(useGahStore.getState().loopStatus.key).toBe('beta');
+});
 
 test('a rapid project round trip cannot restore an older account configuration', async () => {
   const old = deferred<SettingsConfigProfileSummary>();
