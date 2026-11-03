@@ -43,6 +43,11 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- Release updates now reject mismatched or unreadable dependency lockfiles
+  before replacing artifacts. Nineteen focused Rust release tests passed.
+  A complete isolated dependency installation across lock changes remains
+  required; source updates are the current recovery path.
+
 - Michael's controller status, route/claim state, and ledger are not available in this session. GitHub review comments establish recorded opinions, not why his running loop has not acted.
 - Parasaur was confirmed at `https://hermesagent.tail82695.ts.net:8443`; the original HTTPS listener serves Hermes. Windows saved desktop connection URLs were corrected. The live central reports v0.2.0 and ready backend checks, but its referenced JavaScript/CSS GETs return HTTP 500, preventing dashboard rendering. Protected API reads return 401 until a central credential is supplied. Repair asset delivery and authenticate before accepting the live factory.
 - A current-source Windows v0.3.0 Tauri executable and NSIS installer were built locally on 2026-11-03. The executable loaded Overview and Factory in an isolated test profile against the local sample control plane. Installation, signed updates, and live factory acceptance remain pending.

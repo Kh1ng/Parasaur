@@ -41,8 +41,21 @@ published or deployed and contains no CLI binary or private enterprise source.
 
 The bundle still requires a compatible external npm dependency tree. These
 checks used matching dependencies; they do not establish upgrades across
-dependency-lock changes. The current updater's dependency-refresh behavior
-needs separate validation before relying on that path for mismatched locks.
+dependency-lock changes. A subsequent updater fix now rejects mismatched or
+unreadable lockfiles before replacing any artifact. Previously it installed
+the new CLI and server and then ran `npm ci` against the checkout's old
+lockfile, leaving the new code paired with old dependencies. Nineteen release
+tests and Rust formatting passed, including actual local-manifest installs
+that verify dependency drift or a missing lockfile preserves the old CLI and
+server and creates no MCP server, alias or new dashboard. This is a safety
+fix; automatic dependency refresh across lock changes remains unfinished.
+The complete updater unit group also passed (85 tests), and all-target,
+all-feature Clippy passed with warnings denied. These checks ran in the
+independent WSL test checkout against the current changed source files.
+
+The saved bundle's `BUILDINFO.json` still identifies the earlier server source
+and packaging revisions. It contains no CLI binary and therefore does not
+carry the subsequent updater preflight fix.
 
 The live v0.2.0 host's JavaScript/CSS GET failures remain unresolved. Permission
 normalization is useful packaging hardening, not proof of their cause. Host

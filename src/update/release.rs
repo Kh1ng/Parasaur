@@ -408,14 +408,25 @@ fn install_server_bundle(staging: &Path, repo: &Path, central: bool) -> Result<(
     Ok(())
 }
 
-/// True when the bundle's lockfile differs from the checkout's: the prebuilt
-/// `dist/` output was produced against different dependencies, so
-/// `node_modules` must be refreshed (`npm ci`) even though nothing is rebuilt.
+/// A legacy bundle has no isolated dependency installation. Running `npm ci`
+/// in the checkout would reinstall its old lockfile, not the release's.
+/// Refuse incompatible dependencies before replacing any installed artifact.
+fn validate_server_bundle_dependencies(staging: &Path, repo: &Path) -> Result<()> {
+    if server_bundle_needs_dependency_refresh(staging, repo) {
+        bail!(
+            "release bundle dependencies differ from the checkout or its lockfile is unavailable; \
+             no release artifacts were installed. Use a source update (`gah update` without \
+             --from-release) to install the release's matching dependencies"
+        );
+    }
+    Ok(())
+}
+
 fn server_bundle_needs_dependency_refresh(staging: &Path, repo: &Path) -> bool {
     let bundled = staging.join("package-lock.json");
     let installed = repo.join("package-lock.json");
     let (Ok(bundled), Ok(installed)) = (std::fs::read(&bundled), std::fs::read(&installed)) else {
-        return false;
+        return true;
     };
     bundled != installed
 }
@@ -540,6 +551,7 @@ fn install_release_artifacts(
                 )
             })?;
         let staging = extract_server_bundle(&fetch(asset)?, repo, serves_control_plane)?;
+        validate_server_bundle_dependencies(staging.path(), repo)?;
         Some((asset, staging))
     } else {
         None
@@ -568,13 +580,6 @@ fn install_release_artifacts(
         return Ok(None);
     };
     install_server_bundle(staging.path(), repo, serves_control_plane)?;
-    if server_bundle_needs_dependency_refresh(staging.path(), repo) {
-        println!(
-            "Release bundle ships different dependencies; refreshing node_modules with npm ci \
-             (no rebuild -- the bundle's dist output is already installed)."
-        );
-        super::run_command(repo, "npm", super::NPM_CI_ARGS)?;
-    }
     println!("Installed server bundle {}", bundle.name);
     Ok(Some(staging))
 }
@@ -1052,6 +1057,19 @@ mod tests {
     }
 
     #[test]
+    fn bundle_dependency_preflight_requires_readable_matching_lockfiles() {
+        let staging = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        assert!(validate_server_bundle_dependencies(staging.path(), repo.path()).is_err());
+        fs::write(staging.path().join("package-lock.json"), "new").unwrap();
+        assert!(validate_server_bundle_dependencies(staging.path(), repo.path()).is_err());
+        fs::write(repo.path().join("package-lock.json"), "old").unwrap();
+        assert!(validate_server_bundle_dependencies(staging.path(), repo.path()).is_err());
+        fs::write(repo.path().join("package-lock.json"), "new").unwrap();
+        validate_server_bundle_dependencies(staging.path(), repo.path()).unwrap();
+    }
+
+    #[test]
     fn server_bundle_without_server_dist_is_rejected() {
         let outer = tempfile::tempdir().unwrap();
         let repo = outer.path().join("repo");
@@ -1247,6 +1265,26 @@ mod tests {
             "old server"
         );
         assert!(!repo.join("apps/web/dist").exists());
+    }
+
+    #[test]
+    fn dependency_drift_leaves_all_release_artifacts_intact() {
+        assert_failed_release_leaves_install_intact(
+            |outer, _manifest| {
+                fs::write(outer.join("repo/package-lock.json"), "old dependencies").unwrap();
+            },
+            "release bundle dependencies differ",
+        );
+    }
+
+    #[test]
+    fn missing_checkout_lockfile_leaves_all_release_artifacts_intact() {
+        assert_failed_release_leaves_install_intact(
+            |outer, _manifest| {
+                fs::remove_file(outer.join("repo/package-lock.json")).unwrap();
+            },
+            "release bundle dependencies differ",
+        );
     }
 
     #[test]

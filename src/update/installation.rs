@@ -4,10 +4,8 @@ use anyhow::{bail, Context, Result};
 use std::env;
 use std::path::{Path, PathBuf};
 
-/// `npm ci` arguments shared by the source build path and the release
-/// path's dependency-drift reinstall (issue #1416): the release bundle
-/// normally ships prebuilt `dist/` output, but when its lockfile differs
-/// from the checkout's the installed node_modules must be refreshed too.
+/// `npm ci` arguments for source builds. Release installation must not run
+/// this against a checkout whose lockfile differs from the release bundle.
 pub(super) const NPM_CI_ARGS: &[&str] = &[
     "ci",
     "--include=dev",

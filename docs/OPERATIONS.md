@@ -81,6 +81,13 @@ build removes these embedded imports through the server's `prebuild` hook so
 the freshly compiled workspaces take effect. External npm dependencies are
 still required; this bundle is not a standalone Node installation.
 
+Release installation currently requires the bundle and checkout lockfiles to
+match. A mismatch or unreadable lockfile stops the update before any CLI, MCP
+server or dashboard output is replaced. Running npm against the checkout's
+older lockfile cannot install the release's dependencies. Use the source update
+path to obtain matching source and dependencies until isolated release
+dependency installation is available.
+
 Install from the channel instead of rebuilding from source — the checkout
 stays the deployment root, only the artifact source changes (no git pull,
 cargo, or npm build):
