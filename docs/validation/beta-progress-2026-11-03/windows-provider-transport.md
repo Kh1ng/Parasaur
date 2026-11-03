@@ -62,3 +62,24 @@ This proves local API-key transport and account configuration, not provider
 authentication, billed usage, agent execution through each account, browser
 OAuth on Windows, signed updates or live factory deployment. Native Unix tests
 were not rerun: WSL lacks the GTK build prerequisites, and MacBook work is deferred.
+
+## Local Windows upgrade
+
+Source `a7728f46` built optimized NSIS and MSI installers. The desktop-only
+candidate is staged under ignored `artifacts/parasaur-desktop-a7728f46`, with
+revision and hashes in its manifest. NSIS SHA-256:
+`cd93026e5face4c08a1e6a010680ce5bfd1751ec83a01547dc8485e4663e99db`.
+The verified current-user installer upgraded the existing `ParasaurNativeTest`
+installation and returned zero. Saved settings stayed byte-for-byte identical.
+The new process was started by its exact installed path. This upgrade also
+includes the earlier repository-check UI-thread fix. It does not install a WSL
+worker or update the live server, and the package is unsigned.
+
+Installed SHA-256 is
+`ddc23ad06eb4c2c3b1dabd5c20aab63eaaac5840bd7732f1b29ec6044579cf52`,
+matching the raw build after only Tauri's expected `UNK` to `NSS` marker patch.
+The actual installed window displayed the dashboard-load recovery card at the
+saved central origin, with Retry dashboard, Open This computer and the native
+Settings menu available. The new navigation timeout preserved that existing
+error screen as intended. Settings remained unchanged after launch. The updated
+app was left open; this is not successful rendering of the live dashboard.

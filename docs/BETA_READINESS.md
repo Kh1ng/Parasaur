@@ -43,7 +43,7 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
-- A Windows x64 candidate at `b280a5e2` completed an actual current-user desktop
+- A Windows x64 candidate at `a7728f46` completed an actual current-user desktop
   upgrade and was launched. Installed bytes and preserved settings were verified;
   NSIS/MSI artifacts are saved locally. The earlier `bbc37aa5` combined candidate
   also has a same-revision WSL worker; do not mix their manifests. This is unsigned
