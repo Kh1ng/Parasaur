@@ -17,6 +17,24 @@ async function post(baseUrl: string, path: string, body: unknown = {}): Promise<
   });
 }
 
+test('sample environment sources round-trip presence without storing source values and reset cleanly', async () => {
+  const running = await createMockControlPlane().listen(0);
+  const patch = (body: object) => fetch(`${running.baseUrl}/api/profiles/fixture`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const read = async () => (await fetch(`${running.baseUrl}/api/config/effective?profile=fixture`)).json() as Promise<{ notifications: { env_file_configured: boolean; env_file_prod_configured: boolean } }>;
+  try {
+    assert.equal((await patch({ env_file: 'PRIVATE_ENV_SOURCE_CANARY', env_file_prod: '/private/prod.env' })).status, 200);
+    const configured = await read();
+    assert.equal(configured.notifications.env_file_configured, true);
+    assert.equal(configured.notifications.env_file_prod_configured, true);
+    assert.doesNotMatch(JSON.stringify(configured), /PRIVATE_ENV_SOURCE_CANARY|\/private\/prod.env/);
+    await patch({ clear: ['env_file_prod'] });
+    assert.equal((await read()).notifications.env_file_configured, true);
+    assert.equal((await read()).notifications.env_file_prod_configured, false);
+    await post(running.baseUrl, '/api/mock/reset');
+    assert.equal((await read()).notifications.env_file_configured, false);
+  } finally { await running.close(); }
+});
+
 test('sample named account sign-in returns repair-shaped data and never asks for real credentials', async () => {
   const running = await createMockControlPlane().listen(0, '127.0.0.1');
   try {

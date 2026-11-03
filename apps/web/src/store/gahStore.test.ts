@@ -40,6 +40,16 @@ afterEach(() => jest.useRealTimers());
 
 const config = (profile: string) => ({ profile, backend_instances: [] }) as unknown as SettingsConfigProfileSummary;
 
+test('a forced configuration refresh after a save supersedes an older in-flight read', async () => {
+  const old = deferred<SettingsConfigProfileSummary>();
+  getProfileConfig.mockReturnValueOnce(old.promise).mockResolvedValueOnce({ ...config('alpha'), max_fix_attempts_per_mr: 9 });
+  const pending = useGahStore.getState().fetchProfileConfig('alpha');
+  await useGahStore.getState().fetchProfileConfig('alpha', { force: true });
+  old.resolve({ ...config('alpha'), max_fix_attempts_per_mr: 1 });
+  await pending;
+  expect(useGahStore.getState().profileConfig.data?.max_fix_attempts_per_mr).toBe(9);
+});
+
 test.each(['add', 'update', 'remove'] as const)('%s remains successful when its list refresh fails and releases loading', async action => {
   jest.mocked(gahApi.getProfiles).mockRejectedValueOnce(new Error('List unavailable'));
   const store = useGahStore.getState();

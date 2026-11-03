@@ -11,6 +11,7 @@ import { ProviderStatusCard } from '../components/ProviderStatusCard.js';
 import { ProfileEditor } from '../components/ProfileEditor.js';
 import { WorkerScalingSection } from '../components/WorkerScalingSection.js';
 import { LoginRepairPanel } from '../components/LoginRepairPanel.js';
+import { EnvironmentSourcesSection } from '../components/EnvironmentSourcesSection.js';
 import { oldestFetchedAt } from '../lib/format.js';
 import { backendInstancesApi, promptPoliciesApi, routingCandidatesApi, GahApiError, type BackendRunnerKind } from '../api/client.js';
 import type { BackendInstanceSummary, WakeAutonomyValue, SettingsConfigProfileSummary, RoutingCandidateSummary } from '@git-agent-harness/contracts';
@@ -113,6 +114,9 @@ export function ProfilePanel() {
         profileError={profiles.error}
       />
       {selected && <WorkerScalingSection selectedName={selectedName} selected={selected} />}
+      {profileConfig.data?.profile === selectedName && <EnvironmentSourcesSection key={selectedName} profile={selectedName}
+        configured={{ env_file: profileConfig.data.notifications.env_file_configured, env_file_prod: profileConfig.data.notifications.env_file_prod_configured }}
+        onSaved={() => fetchProfileConfig(selectedName, { force: true })} />}
       <ProfileConfigViewerSection
         selectedName={selectedName}
         profileConfig={profileConfig}

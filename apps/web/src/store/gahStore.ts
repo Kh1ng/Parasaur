@@ -394,7 +394,7 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
     const key = profile ?? '';
     if (!profile) return;
     const current = get().profileConfig;
-    if (current.loading && current.key === key) return;
+    if (current.loading && current.key === key && !opts?.force) return;
     if (!opts?.force && isFresh(current, key)) return;
     const pending = { ...(current.key === key ? current : emptyResource<SettingsConfigProfileSummary>()), loading: true, error: null, key };
     set({ profileConfig: pending });

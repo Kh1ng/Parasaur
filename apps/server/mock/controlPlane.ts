@@ -202,6 +202,7 @@ interface MockState {
   connectionCount: number;
   settings: ManagerChatSettingsSummary;
   profiles: ProfileSummary[];
+  environmentSources: Map<string, { env_file_configured: boolean; env_file_prod_configured: boolean }>;
   config: ConfigSummary;
   notificationPreferences: ActivityNotificationPreferences;
   gateway: GatewaySettingsSummary;
@@ -618,6 +619,7 @@ function createState(scenario: MockScenarioName, reset: number, previewOrigin?: 
   }
 
   return {
+    environmentSources: new Map(),
     pairingRequests: [{ schema_version: 1, id: 'mock-pairing-request-1', name: 'Mock Linux', matching_code: 'ABCD1234',
       expires_at: new Date(Date.now() + 5 * 60_000).toISOString(), server: { id: 'mock-central', name: 'Mock central', origin: 'http://localhost:5173' },
       access: 'Dashboard control: read projects and chats, run agent work, and choose chat models.', status: 'pending' }],
@@ -1533,6 +1535,11 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     if (index < 0) return jsonError(res, 404, 'Profile not found', req.params.name);
     const current = state.profiles[index];
     const clear = Array.isArray(req.body?.clear) ? req.body.clear : [];
+    const sources = state.environmentSources.get(req.params.name) ?? { env_file_configured: false, env_file_prod_configured: false };
+    state.environmentSources.set(req.params.name, {
+      env_file_configured: bodyString(req.body?.env_file) ? true : clear.includes('env_file') ? false : sources.env_file_configured,
+      env_file_prod_configured: bodyString(req.body?.env_file_prod) ? true : clear.includes('env_file_prod') ? false : sources.env_file_prod_configured,
+    });
     state.profiles[index] = {
       ...current,
       ...(bodyString(req.body?.display_name) ? { display_name: req.body.display_name as string } : {}),
@@ -1555,6 +1562,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     const index = state.profiles.findIndex((profile) => profile.name === req.params.name);
     if (index < 0) return jsonError(res, 404, 'Profile not found', req.params.name);
     state.profiles.splice(index, 1);
+    state.environmentSources.delete(req.params.name);
     res.json({ success: true, message: `Profile '${req.params.name}' removed` });
   });
 
@@ -1712,7 +1720,10 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
   app.put('/api/settings/notifications', (_req, res) => res.json({ saved: true }));
   app.post('/api/settings/notifications/test', (_req, res) => jsonError(res, 409, 'notifications_off', 'Turn notifications on and choose a channel first.'));
   app.get('/api/config/effective', (req, res) => {
-    res.json({ ...MOCK_PROFILE_CONFIG, profile: bodyString(req.query.profile) ?? 'fixture' } satisfies SettingsConfigProfileSummary);
+    const profile = bodyString(req.query.profile) ?? 'fixture';
+    res.json({ ...MOCK_PROFILE_CONFIG, profile, notifications: {
+      ...MOCK_PROFILE_CONFIG.notifications, ...state.environmentSources.get(profile)
+    } } satisfies SettingsConfigProfileSummary);
   });
   app.get('/api/loop/status', (_req, res) => res.json({ running: state.loopRunning, ...(state.loopRunning ? { pid: 998 } : {}) }));
   app.post('/api/dispatch', (req, res) => {

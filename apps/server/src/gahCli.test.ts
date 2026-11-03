@@ -171,6 +171,11 @@ test('node capacity fields survive the config API read projection', async () => 
   }
 });
 
+test('environment source changes preserve the explicit replacement and removal', () => {
+  assert.deepEqual(buildProfileSetArgs({ name: 'workspace', env_file: '/srv/workspace/dev.env', clear: ['env_file_prod'] }),
+    ['profile', 'set', 'workspace', '--env-file', '/srv/workspace/dev.env', '--clear', 'env_file_prod']);
+});
+
 test('profile add args map required and optional fields without spawning gah', () => {
   assert.deepEqual(
     buildProfileAddArgs({
