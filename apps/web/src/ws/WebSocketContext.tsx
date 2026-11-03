@@ -78,6 +78,7 @@ type WebSocketContextType = {
 
 const WebSocketContext = createContext<WebSocketContextType | undefined>(undefined);
 const MAX_INBOX_MESSAGES = 100;
+const CONNECTION_TIMEOUT_MS = 15_000;
 
 // Vite injects import.meta.env - use type assertion for TypeScript
 const SERVER_WS_BASE = (import.meta as unknown as { env: { VITE_WS_URL?: string } }).env?.VITE_WS_URL ||
@@ -171,7 +172,17 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     try {
       const newSocket = new WebSocket(getWebSocketUrl(profileOverride), coordinatorWebSocketProtocols());
 
+      // A stalled handshake must release Connecting so the normal retry can run.
+      const connectionTimeout = setTimeout(() => {
+        if (newSocket.readyState !== WebSocket.CONNECTING) return;
+        connectionCleanupRef.current?.();
+        connectionCleanupRef.current = null;
+        setIsConnecting(false);
+        setError('Connection timed out. Retrying…');
+      }, CONNECTION_TIMEOUT_MS);
+
       newSocket.onopen = () => {
+        clearTimeout(connectionTimeout);
         setIsConnected(true);
         setIsConnecting(false);
         setError(null);
@@ -197,6 +208,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       };
 
       newSocket.onclose = () => {
+        clearTimeout(connectionTimeout);
         setIsConnected(false);
         setIsConnecting(false);
         setSocket(null);
@@ -334,6 +346,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       }, 30000);
 
       connectionCleanupRef.current = () => {
+        clearTimeout(connectionTimeout);
         clearInterval(keepaliveInterval);
         newSocket.onopen = null;
         newSocket.onclose = null;

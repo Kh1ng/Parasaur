@@ -3,6 +3,45 @@ import React from 'react';
 import { WebSocketConnectionProbe } from '../../src/test-utils/WebSocketConnectionProbe.js';
 import { WebSocketProvider } from '../../src/ws/WebSocketContext.js';
 
+test('a stalled handshake times out and retries, without timing out a live connection', async ({ mount, page }) => {
+  await page.clock.install();
+  await page.evaluate(() => {
+    const sockets: WebSocket[] = [];
+    (window as typeof window & { __stalledSockets: WebSocket[] }).__stalledSockets = sockets;
+    class StalledWebSocket {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 3;
+      readyState = 0;
+      onopen: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      onerror = null;
+      onmessage = null;
+      constructor() { sockets.push(this as unknown as WebSocket); }
+      send() {}
+      close() { this.readyState = 3; this.onclose?.(); }
+    }
+    window.WebSocket = StalledWebSocket as unknown as typeof WebSocket;
+  });
+  const component = await mount(<WebSocketProvider><WebSocketConnectionProbe /></WebSocketProvider>);
+  await expect(component.getByText('Connecting', { exact: true })).toBeVisible();
+  await page.clock.runFor(15_000);
+  await expect(component.getByText('Connection error: Connection timed out. Retrying…')).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__stalledSockets.map((socket: WebSocket) => socket.readyState))).toEqual([3]);
+  await page.clock.runFor(5_000);
+  await expect(component.getByText('Connecting', { exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    const socket = (window as any).__stalledSockets[1];
+    socket.readyState = WebSocket.OPEN;
+    socket.onopen();
+  });
+  await expect(component.getByText('Live', { exact: true })).toBeVisible();
+  await page.clock.runFor(20_000);
+  await expect(component.getByText('Live', { exact: true })).toBeVisible();
+  await component.unmount();
+  expect(await page.evaluate(() => (window as any).__stalledSockets.map((socket: WebSocket) => socket.readyState))).toEqual([3, 3]);
+});
+
 test('a transient websocket failure reconnects and clears the error', async ({ mount, page }) => {
   await page.evaluate(() => {
     const testWindow = window as typeof window & { __wsAttempts: number; __wsCloses: number };
