@@ -20,6 +20,7 @@ import { ControllerActivityCard } from '../components/ControllerActivityCard.js'
 import { ProviderPicker } from '../components/ProviderPicker.js';
 import { formatCost, formatPercent } from '../lib/format.js';
 import { workKey } from '../lib/workKey.js';
+import { reviewWaitReason } from '../lib/reviewLabels.js';
 import {
   WAYPOINTS,
   WaypointStrip,
@@ -205,6 +206,7 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
   const fetchReport = useGahStore((s) => s.fetchReport);
   const [holdPending, setHoldPending] = useState<string | null>(null);
   const [holdError, setHoldError] = useState<string | null>(null);
+  const [reviewQuery, setReviewQuery] = useState('');
   const [factoryData, setFactoryData] = useState<{ profile: string | null; usageTickets: UsageRollupTicketRow[]; managerBackends: ManagerBackendInfo[] }>({
     profile: null,
     usageTickets: [],
@@ -244,6 +246,7 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
   };
 
   useEffect(() => {
+    setReviewQuery('');
     setPaidReviewWorkIds([]);
     setExternalReviewWorkIds([]);
     void refresh();
@@ -288,25 +291,29 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
     if (ticket.execution_policy?.dispatchable_now && ticket.prior_attempt_count === 0 && !ticket.has_active_claim && !ticket.has_active_mr && !ticket.human_required && !inactiveSessionKeys.has(key)) queuedWork.add(key);
   }
 
-  const reviewWork = new Map<string, { workId: string; title: string | null; url: string | null; reasons: Set<string> }>();
-  const addReviewWork = (workId: string, reason: string, title: string | null = null, url: string | null = null) => {
+  const reviewWork = new Map<string, { workId: string; title: string | null; url: string | null; reasons: Set<string>; details: Set<string> }>();
+  const addReviewWork = (workId: string, reason: string, title: string | null = null, url: string | null = null, detail?: string | null) => {
     const key = workKey(workId);
     const existing = reviewWork.get(key);
     if (existing) {
       existing.reasons.add(reason);
       if (!existing.title && title) existing.title = title;
       if (!existing.url && url) existing.url = url;
-    } else reviewWork.set(key, { workId, title, url, reasons: new Set([reason]) });
+      if (detail) existing.details.add(detail);
+    } else reviewWork.set(key, { workId, title, url, reasons: new Set([reason]), details: new Set(detail ? [detail] : []) });
   };
   for (const workId of heldWorkIds) addReviewWork(workId, 'Review hold');
   for (const ticket of status.data?.available_tickets ?? []) if (ticket.human_required) addReviewWork(ticket.work_id ?? ticket.normalized_work_identity ?? ticket.ticket_path, 'Human required', ticket.title);
-  for (const mergeRequest of status.data?.merge_requests ?? []) if (!mergeRequest.merged && mergeRequest.work_id) addReviewWork(mergeRequest.work_id, 'Pull request', mergeRequest.title ?? null, mergeRequest.url);
+  for (const mergeRequest of status.data?.merge_requests ?? []) if (!mergeRequest.merged && mergeRequest.work_id) addReviewWork(mergeRequest.work_id, 'Pull request', mergeRequest.title ?? null, mergeRequest.url, reviewWaitReason(mergeRequest));
   for (const blocker of status.data?.blocked_work_items ?? []) {
     const workId = blocker.remediation_plan?.work_id ?? blocker.source_reference;
-    if (workId) addReviewWork(workId, blocker.reason_code?.replace(/_/g, ' ') ?? 'Blocked');
+    if (workId) addReviewWork(workId, blocker.reason_code?.replace(/_/g, ' ') ?? 'Blocked', null, null, blocker.message);
   }
   for (const workId of paidReviewWorkIds) addReviewWork(workId, 'Paid route approval');
   for (const workId of externalReviewWorkIds) addReviewWork(workId, 'External API approval');
+  const query = reviewQuery.trim().toLocaleLowerCase();
+  const visibleReviewWork = [...reviewWork.values()].filter(item => !query
+    || [item.workId, item.title, ...item.reasons, ...item.details].some(value => value?.toLocaleLowerCase().includes(query)));
   const shippedWork = new Set((status.data?.merge_requests ?? []).filter(mergeRequest => mergeRequest.merged).map(mergeRequest => workKey(mergeRequest.work_id ?? mergeRequest.id ?? mergeRequest.branch)));
   const factoryCounts = {
     queued: queuedWork.size,
@@ -362,48 +369,59 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
 
       <section aria-labelledby="factory-flow-title">
         <h3 id="factory-flow-title" className="sr-only">Factory flow</h3>
-        <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        <dl className="grid grid-cols-2 overflow-hidden rounded-lg border border-subtle sm:grid-cols-3 lg:grid-cols-6">
           {[
             ['Queued', factoryCounts.queued],
             ['Running', factoryCounts.running],
-            ['Needs review', factoryCounts.review],
+            ['Review / blocked', factoryCounts.review],
             ['Shipped', factoryCounts.shipped]
           ].map(([label, value]) => (
-            <div key={label} className="card-padded">
+            <div key={label} className="px-4 py-3">
               <dt className="text-xs text-muted">{label}</dt>
               <dd className="mt-1 text-xl font-semibold tabular-nums text-primary">{value}</dd>
             </div>
           ))}
-          <div className="card-padded col-span-2 sm:col-span-1">
+          <div className="px-4 py-3">
             <dt className="text-xs text-muted">Capacity</dt>
             <dd className="mt-1 text-xl font-semibold tabular-nums text-primary">
               {workers.length}/{status.data?.max_parallel_workers ?? '—'}
             </dd>
           </div>
-          <div className="card-padded">
+          <div className="px-4 py-3">
             <dt className="text-xs text-muted">Success · 7d</dt>
             <dd className="mt-1 text-xl font-semibold tabular-nums text-primary">{formatPercent(successRate)}</dd>
           </div>
         </dl>
       </section>
 
-      <NewDispatchForm profile={profile ?? 'gah'} repo={activeProfileRepo} backends={dispatchBackends} />
-
       {profile && (
         <div aria-labelledby="factory-review-title">
-          <h3 id="factory-review-title" className="mb-3 text-sm font-semibold text-primary">Needs review ({factoryCounts.review})</h3>
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h3 id="factory-review-title" className="text-sm font-semibold text-primary">Review and blockers ({factoryCounts.review})</h3>
+              <p className="mt-1 max-w-prose text-xs text-muted">Open pull requests, holds, and work waiting for a decision. Open details for evidence and available actions.</p>
+            </div>
+            {reviewWork.size > 0 && <label className="block w-full space-y-1 text-xs text-secondary sm:w-72">
+              <span>Find work</span>
+              <input type="search" value={reviewQuery} onChange={event => setReviewQuery(event.target.value)} placeholder="Issue, title, or blocker" className="input w-full" />
+            </label>}
+          </div>
           <div className="space-y-3">
             {reviewWork.size > 0 && (
               <ul className="card divide-y divide-subtle" aria-label="Review queue">
-                {[...reviewWork.values()].map(item => (
+                {visibleReviewWork.map(item => (
                   <li key={workKey(item.workId)} className="flex flex-wrap items-center justify-between gap-3 px-3 py-3">
-                    <button type="button" onClick={() => onOpenWork(item.workId)} className="min-h-11 min-w-0 text-left sm:min-h-0">
-                      <p className="text-sm text-primary"><span className="font-mono text-xs text-muted">{item.workId}</span>{item.title ? ` ${item.title}` : ''}</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="break-words text-sm text-primary"><span className="font-mono text-xs text-muted">{item.workId}</span>{item.title ? ` ${item.title}` : ''}</p>
                       <div className="mt-1 flex flex-wrap gap-1">
                         {[...item.reasons].map(reason => <StatusBadge key={reason} tone="warning" label={reason} />)}
                       </div>
-                    </button>
+                      {item.details.size > 0 && <div className="mt-2 max-w-prose space-y-1 break-words text-xs leading-relaxed text-secondary">
+                        {[...item.details].map(detail => <p key={detail}>{detail}</p>)}
+                      </div>}
+                    </div>
                     <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => onOpenWork(item.workId)} aria-label={`View details for ${item.workId}`} className="btn-secondary min-h-11 sm:min-h-0 sm:py-1">Details</button>
                       {item.url && <ExternalAnchor href={item.url} className="text-xs text-accent hover:underline">Open PR</ExternalAnchor>}
                       {item.reasons.has('Review hold') && (
                         <button type="button" disabled={holdPending !== null} onClick={() => clearHold(item.workId)} className="btn-secondary min-h-11 sm:min-h-0 sm:py-1">
@@ -413,6 +431,10 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
                     </div>
                   </li>
                 ))}
+                {visibleReviewWork.length === 0 && <li className="px-4 py-5 text-sm text-secondary">
+                  No work matches your search.
+                  <button type="button" onClick={() => setReviewQuery('')} className="ml-2 min-h-11 text-accent hover:underline">Clear search</button>
+                </li>}
               </ul>
             )}
             <PaidRouteApprovals
@@ -428,6 +450,8 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
           </div>
         </div>
       )}
+
+      <NewDispatchForm profile={profile ?? 'gah'} repo={activeProfileRepo} backends={dispatchBackends} />
 
       <section>
         <ControllerActivityCard activity={controllerActivity} />

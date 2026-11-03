@@ -11,14 +11,18 @@ Branch: `beta/factory-observability`. This is development evidence, not deployed
 - Account configuration, work history, and controller decisions stay scoped to their selected project across delayed responses and rapid switches.
 - An unavailable auth observation stays unknown without hiding healthy sibling accounts.
 - Preview auto-detection requires an HTTP response from the actual upstream address, rather than relying on a TCP handshake.
+- Readiness, usage trends, and controller status reject late results from another project. Finishing a controller action after switching projects cannot restore the previous project's status.
+- Login repair keeps checking after repeated temporary read failures, clears the error on recovery, and stops polling on completion or unmount.
+- The Factory screen puts review and blocked work before manual dispatch, displays blocker messages and paused-review explanations inline, and searches by issue, title, or explanation. Each row has an explicit Details action.
 
 ## Checks
 
 - Root `npm run typecheck`: passed across contracts, shared, server, mock, and web.
 - Web production build: passed.
-- Full Windows frontend unit suite: 117 passed.
+- Full Windows frontend unit suite: 125 passed after the project-isolation changes.
 - Focused Windows component suites: connection recovery, work drawer, blocker actions, profile configuration, and account creation passed.
 - Windows browser flows: factory environment/history, profile settings and project switching, and live account status passed, including narrow-screen checks.
+- Latest Factory browser run: six passed, including searching a paused-review explanation and opening its details. Desktop and 390px screenshots were inspected. Login repair and repository CLI installation component suites: five passed.
 - Full Linux server integration run under Ubuntu/WSL: 973 passed, one opt-in test skipped, zero failures. The later per-account probe handling passed its two focused server tests.
 - Mock control plane suite: nine passed.
 - The opt-in paid-route HTTP test was exercised separately against the actual Rust CLI and an isolated ledger: five Rust/support tests passed.

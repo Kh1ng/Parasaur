@@ -41,7 +41,17 @@ test('review receipt fields explain the same paused handoff in work details and 
     await route.fulfill({ json: snapshot });
   });
   await page.goto('/?page=work');
-  await page.getByRole('row').filter({ hasText: '#116' }).getByRole('button', { name: 'View details' }).click();
+  const reviewQueue = page.getByRole('list', { name: 'Review queue' });
+  await expect(reviewQueue).toContainText('Automatic review is paused until a new commit is pushed');
+  const search = page.getByRole('searchbox', { name: 'Find work' });
+  await search.fill('already been reviewed');
+  await expect(reviewQueue).toContainText('#116');
+  await search.fill('not-a-work-item');
+  await expect(reviewQueue).toContainText('No work matches your search.');
+  await reviewQueue.getByRole('button', { name: 'Clear search' }).click();
+  await expect(search).toHaveValue('');
+  await expect(reviewQueue).toContainText('Review receipt handoff');
+  await reviewQueue.getByRole('button', { name: 'View details for #116', exact: true }).click();
   await expect(page.getByRole('dialog')).toContainText('Automatic review is paused until a new commit is pushed');
   const decisions = page.getByRole('region', { name: 'Recent controller decisions' });
   await expect(decisions).toContainText('No configured route could take this job.');
