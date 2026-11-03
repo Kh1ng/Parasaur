@@ -51,3 +51,26 @@ Validation on Windows:
 These are local client checks. MacBook RSS, the deployed central's assets,
 live review gates, signed update delivery and physical iOS remain unverified.
 MacBook work is deferred at the owner's request.
+
+## Optimized Windows installation
+
+The optimized NSIS/MSI build passed for source `b280a5e2`. A desktop-only
+candidate was staged under ignored `artifacts/parasaur-desktop-b280a5e2`, with
+its exact revision and hashes in `desktop-artifact.json`. This is separate
+from the older combined desktop/worker candidate; their manifests must not be
+mixed. The new NSIS SHA-256 is
+`6d55cf0e988d3eb35026b93d93e5a0cd379b16423695ce23c1dbe6fdc6dff468`.
+
+The current-user installer upgraded the existing `ParasaurNativeTest` app and
+returned zero. The previous executable was backed up outside the repository.
+The installed executable matches the built bytes after only Tauri's expected
+`UNK` to `NSS` bundle marker patch, with installed SHA-256
+`9a86122c366fe3fb5d950f2b5785a0e1395150a9dd8f794d9da76e1ebf522f82`.
+Saved desktop settings were byte-for-byte unchanged. The updated app was
+started by its exact installed path. No worker/service setup, administrator
+prompt, signed update publication or live backend change was performed.
+
+The actual installed window returned to local Settings with the timeout notice
+for its saved central connection; the native Settings menu remained present.
+The settings hash was still unchanged after launch. The updated app was left
+open, and all owned navigation fixture apps and their loopback server stopped.

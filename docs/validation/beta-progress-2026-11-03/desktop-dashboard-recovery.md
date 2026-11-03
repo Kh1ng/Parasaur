@@ -48,7 +48,10 @@ windows and the real saved central URL were untouched. The new code is local;
 no installer or signed updater was published. MacBook and live-host work remain
 explicitly deferred.
 
-This handles a loaded dashboard document whose app never mounts. A navigation
+This original check handles a loaded dashboard document whose app never mounts. A navigation
 that never finishes loading still relies on the native Settings menu or the
 webview's own network-error UI; that broader navigation case is not accepted
 by these tests.
+
+The later [navigation timeout pass](desktop-navigation-timeout.md) adds and
+validates bounded recovery for unfinished navigations, with limitations noted.
