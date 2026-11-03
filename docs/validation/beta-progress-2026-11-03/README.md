@@ -27,6 +27,12 @@ Branch: `beta/factory-observability`. This is development evidence, not deployed
 
 ## Checks
 
+- A current Windows x64 app and NSIS/MSI candidate at `bbc37aa5` were built and
+  packaged with a matching prebuilt WSL worker. The actual per-user Windows
+  desktop installation was upgraded and launched; settings were preserved and
+  installed payload bytes were verified, allowing only Tauri's documented NSIS
+  bundle marker. See [Windows candidate and upgrade](windows-release-candidate.md).
+
 - The final shared-web sweep at `0ee85993` passed all 160 Windows workflow tests,
   195 Windows component tests (one platform-specific skip), 130 unit tests and
   web typechecking. The skipped POSIX installer-command case passed separately

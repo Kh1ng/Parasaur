@@ -43,6 +43,11 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- A Windows x64 candidate at `bbc37aa5` completed an actual current-user desktop
+  upgrade and was launched. Installed bytes and preserved settings were verified;
+  NSIS/MSI and same-revision WSL artifacts are saved locally. This is unsigned
+  local setup evidence, not signed-update, fresh-OS or live-server acceptance.
+
 - Broad local shared-web checks passed at `0ee85993`: 160 Windows workflows,
   195 Windows component cases, 130 unit cases, typechecking and the remaining
   POSIX-only component case under WSL. These isolate the sample/API fixtures;
