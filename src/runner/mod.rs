@@ -50,6 +50,10 @@ pub fn load_env_file(path: &str) -> Vec<(String, String)> {
     let Ok(text) = fs::read_to_string(path) else {
         return vec![];
     };
+    parse_env_file(&text)
+}
+
+pub(crate) fn parse_env_file(text: &str) -> Vec<(String, String)> {
     text.lines()
         .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
         .filter_map(|l| {
