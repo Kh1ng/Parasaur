@@ -3,6 +3,9 @@ import { defineConfig, devices } from '@playwright/test';
 const port = process.env.GAH_WEB_TEST_PORT ?? '3000';
 const baseURL = `http://localhost:${port}`;
 const mockPort = process.env.GAH_MOCK_TEST_PORT ?? '3774';
+// Fixture API requests must reach the same server as the browser's proxy,
+// including when occupied local ports require a different test port.
+process.env.GAH_MOCK_BASE_URL = `http://127.0.0.1:${mockPort}`;
 
 /**
  * Hermetic Playwright setup (issue #636). Two webServers:

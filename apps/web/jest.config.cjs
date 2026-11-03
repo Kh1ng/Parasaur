@@ -4,7 +4,7 @@ module.exports = {
   transform: {
     // src/api/client.ts reads Vite's import.meta.env, which CommonJS jest
     // cannot parse; its transform strips that one Vite-ism (see the file).
-    '^.+\\/api\\/client\\.ts$': ['<rootDir>/jest.transform.noImportMeta.cjs', {}],
+    '^.+[/\\\\]api[/\\\\]client\\.ts$': ['<rootDir>/jest.transform.noImportMeta.cjs', {}],
     '^.+\\.tsx?$': ['ts-jest', {
       tsconfig: { module: 'CommonJS', isolatedModules: true, composite: false },
     }],
