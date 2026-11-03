@@ -318,6 +318,27 @@ for normal review routing: use the ordered `review_candidates` pool and
 a weak reviewer `NEEDS_FIX` consumes the same post-review repair budget as
 any other `NEEDS_FIX` verdict.
 
+### Editing factory checks
+
+Open **Profile → Factory checks → Edit factory checks** to review validation
+and automatic-fix commands on the connected node. Viewing and saving require
+owner access. Each command has its own editor, including multiline commands;
+removing every entry explicitly clears that list. Saving does not run checks
+or change another node's configuration. The server and CLI must both be updated.
+
+For exact commands at the terminal, repeat the singular flags. Commas inside
+one command are preserved:
+
+```bash
+gah profile set my-project \
+  --validation-command 'node -e "console.log([1,2])"' \
+  --validation-command 'npm test'
+```
+
+The older comma-delimited `--validation-commands` and `--auto-fix-commands`
+flags remain supported. The matching `--auto-fix-command` singular flag also
+preserves one complete command per occurrence.
+
 ### Per-issue budget
 
 `routing.issue_budget` bounds the total automatic effort one issue may

@@ -17,6 +17,20 @@ async function post(baseUrl: string, path: string, body: unknown = {}): Promise<
   });
 }
 
+test('sample workspace checks preserve whole command lists and stay out of public profile metadata', async () => {
+  const running = await createMockControlPlane().listen(0);
+  const commands = ['echo PRIVATE_CHECKS_CANARY', 'node -e "console.log([1,2])"'];
+  try {
+    assert.equal((await fetch(`${running.baseUrl}/api/profiles/fixture`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ validation_commands: commands }) })).status, 200);
+    const checks = await (await fetch(`${running.baseUrl}/api/profiles/fixture/checks`)).json() as { validation_commands: string[] };
+    assert.deepEqual(checks.validation_commands, commands);
+    assert.doesNotMatch(await (await fetch(`${running.baseUrl}/api/profiles`)).text(), /PRIVATE_CHECKS_CANARY/);
+    await post(running.baseUrl, '/api/mock/reset');
+    assert.deepEqual((await (await fetch(`${running.baseUrl}/api/profiles/fixture/checks`)).json() as { validation_commands: string[] }).validation_commands, []);
+  } finally { await running.close(); }
+});
+
 test('sample environment sources round-trip presence without storing source values and reset cleanly', async () => {
   const running = await createMockControlPlane().listen(0);
   const patch = (body: object) => fetch(`${running.baseUrl}/api/profiles/fixture`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -392,6 +406,9 @@ test('every used frontend API call has a registered mock route', async () => {
   const running = await createMockControlPlane().listen(0);
   try {
     for (const { method, path } of frontendApiRoutes()) {
+      // Each route needs the seeded fixture: an earlier DELETE otherwise
+      // makes a later resource read look like an unregistered endpoint.
+      await post(running.baseUrl, '/api/mock/reset');
       const requestPath = path.replaceAll(':param', 'fixture');
       const response = await fetch(`${running.baseUrl}${requestPath}`, {
         method,

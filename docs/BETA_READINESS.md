@@ -48,7 +48,7 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 - Windows native smoke testing currently uses the v0.3.0 release shell with the current UI served locally and a sample control plane. It is not a newly packaged release or a live factory test.
 - Native compilation on this Windows host requires the Visual C++ toolchain; its attempted installation was canceled at the administrator prompt.
 - Hosted enterprise acceptance requires the actual service and provisioned accounts.
-- Workspace environment acceptance remains incomplete: Profile can configure factory file sources, but interactive chat does not yet apply them. A validation-command editor needs lossless command transport before commands containing commas can be saved safely.
+- Workspace environment acceptance remains incomplete: Profile can configure factory file sources and exact validation/auto-fix commands on the connected node, but interactive chat does not yet apply the profile environment sources and other nodes retain their own configuration.
 - iOS background delivery requires the configured APNs service, a signed app, and a physical device check.
 
 Record the exact build, platform, commands, and live acceptance results before declaring beta ready. Keep this checklist pending while any required workflow remains unverified.

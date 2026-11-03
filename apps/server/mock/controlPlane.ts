@@ -203,6 +203,7 @@ interface MockState {
   settings: ManagerChatSettingsSummary;
   profiles: ProfileSummary[];
   environmentSources: Map<string, { env_file_configured: boolean; env_file_prod_configured: boolean }>;
+  profileChecks: Map<string, { validation_commands: string[]; auto_fix_commands: string[] }>;
   config: ConfigSummary;
   notificationPreferences: ActivityNotificationPreferences;
   gateway: GatewaySettingsSummary;
@@ -620,6 +621,7 @@ function createState(scenario: MockScenarioName, reset: number, previewOrigin?: 
 
   return {
     environmentSources: new Map(),
+    profileChecks: new Map(),
     pairingRequests: [{ schema_version: 1, id: 'mock-pairing-request-1', name: 'Mock Linux', matching_code: 'ABCD1234',
       expires_at: new Date(Date.now() + 5 * 60_000).toISOString(), server: { id: 'mock-central', name: 'Mock central', origin: 'http://localhost:5173' },
       access: 'Dashboard control: read projects and chats, run agent work, and choose chat models.', status: 'pending' }],
@@ -1501,6 +1503,19 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
   app.post('/api/external-approvals/:action', (_req, res) => res.json([]));
   app.post('/api/route-approvals/:action', (_req, res) => res.json([]));
 
+  const saveProfileChecks = (profile: string, body: Record<string, unknown>) => {
+    const checks = { ...(state.profileChecks.get(profile) ?? { validation_commands: [], auto_fix_commands: [] }) };
+    for (const key of ['validation_commands', 'auto_fix_commands'] as const) {
+      if (Array.isArray(body[key]) && body[key].every(command => typeof command === 'string')) checks[key] = [...body[key]];
+      else if (Array.isArray(body.clear) && body.clear.includes(key)) checks[key] = [];
+    }
+    state.profileChecks.set(profile, checks);
+  };
+  app.get('/api/profiles/:name/checks', (req, res) => {
+    const profile = state.profiles.find(profile => profile.name === req.params.name);
+    if (!profile) return jsonError(res, 404, 'Profile not found', req.params.name);
+    res.json({ profile: profile.name, ...(state.profileChecks.get(profile.name) ?? { validation_commands: [], auto_fix_commands: [] }), validation_timeout_seconds: profile.validation_timeout_seconds });
+  });
   app.get('/api/profiles', (_req, res) => res.json(state.profiles.map((profile) => ({ agent_reasoning_effort: {}, ...profile }))));
   app.post('/api/profiles', (req, res) => {
     const required = ['name', 'display_name', 'repo_id', 'provider', 'repo', 'local_path', 'artifact_root'] as const;
@@ -1528,6 +1543,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       max_concurrent_per_model: {},
       chat_session_idle_days: 14
     } satisfies ProfileSummary);
+    saveProfileChecks(name, req.body ?? {});
     res.status(201).json({ success: true, message: `Profile '${name}' added` });
   });
   app.patch('/api/profiles/:name', (req, res) => {
@@ -1535,6 +1551,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     if (index < 0) return jsonError(res, 404, 'Profile not found', req.params.name);
     const current = state.profiles[index];
     const clear = Array.isArray(req.body?.clear) ? req.body.clear : [];
+    saveProfileChecks(req.params.name, req.body ?? {});
     const sources = state.environmentSources.get(req.params.name) ?? { env_file_configured: false, env_file_prod_configured: false };
     state.environmentSources.set(req.params.name, {
       env_file_configured: bodyString(req.body?.env_file) ? true : clear.includes('env_file') ? false : sources.env_file_configured,
@@ -1563,6 +1580,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     if (index < 0) return jsonError(res, 404, 'Profile not found', req.params.name);
     state.profiles.splice(index, 1);
     state.environmentSources.delete(req.params.name);
+    state.profileChecks.delete(req.params.name);
     res.json({ success: true, message: `Profile '${req.params.name}' removed` });
   });
 

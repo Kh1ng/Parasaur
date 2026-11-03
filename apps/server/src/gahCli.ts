@@ -21,6 +21,7 @@ import type {
   ConfigShowFull,
   ConfigProfileSummary,
   ProfileSummary,
+  ProfileChecks,
   DoctorSnapshot,
   MergeRequest,
   LedgerSummary,
@@ -903,10 +904,10 @@ export function buildProfileAddArgs(options: ProfileAddOptions): string[] {
     args.push('--env-file-prod', options.env_file_prod);
   }
   if (options.validation_commands?.length) {
-    args.push('--validation-commands', options.validation_commands.join(','));
+    for (const command of options.validation_commands) args.push('--validation-command', command);
   }
   if (options.auto_fix_commands?.length) {
-    args.push('--auto-fix-commands', options.auto_fix_commands.join(','));
+    for (const command of options.auto_fix_commands) args.push('--auto-fix-command', command);
   }
   if (options.max_parallel_workers !== undefined && options.max_parallel_workers !== null) {
     args.push('--max-parallel-workers', String(options.max_parallel_workers));
@@ -1080,10 +1081,14 @@ export function buildProfileSetArgs(options: ProfileSetOptions): string[] {
     args.push('--env-file-prod', options.env_file_prod);
   }
   if (options.validation_commands?.length) {
-    args.push('--validation-commands', options.validation_commands.join(','));
+    for (const command of options.validation_commands) args.push('--validation-command', command);
+  } else if (options.validation_commands !== undefined || options.clear?.includes('validation_commands')) {
+    args.push('--clear', 'validation_commands');
   }
   if (options.auto_fix_commands?.length) {
-    args.push('--auto-fix-commands', options.auto_fix_commands.join(','));
+    for (const command of options.auto_fix_commands) args.push('--auto-fix-command', command);
+  } else if (options.auto_fix_commands !== undefined || options.clear?.includes('auto_fix_commands')) {
+    args.push('--clear', 'auto_fix_commands');
   }
   if (options.max_parallel_workers !== undefined && options.max_parallel_workers !== null) {
     args.push('--max-parallel-workers', String(options.max_parallel_workers));
@@ -1127,6 +1132,8 @@ export function buildProfileSetArgs(options: ProfileSetOptions): string[] {
       'manager_wake_autonomy',
       'validation_timeout_seconds',
       'hold_contract_changes',
+      'validation_commands',
+      'auto_fix_commands',
     ])
   );
   
@@ -1160,6 +1167,17 @@ export async function runProfileSet(options: ProfileSetOptions): Promise<void> {
       reject(new Error(`Failed to spawn gah: ${error instanceof Error ? error.message : String(error)}`));
     });
   });
+}
+
+export async function runProfileChecks(profile: string): Promise<ProfileChecks> {
+  const data = await runJsonCommand<ProfileChecks>(['profile', 'show', '--json', '--', profile]);
+  if (data.profile !== profile || !Number.isFinite(data.validation_timeout_seconds)
+    || ![data.validation_commands, data.auto_fix_commands].every(list => Array.isArray(list) && list.every(command => typeof command === 'string'))) {
+    throw new Error('Invalid workspace checks response');
+  }
+  // Keep the HTTP owner view narrow even if the CLI adds more workspace fields.
+  return { profile: data.profile, validation_commands: data.validation_commands,
+    auto_fix_commands: data.auto_fix_commands, validation_timeout_seconds: data.validation_timeout_seconds };
 }
 
 export interface ProfileRemoveOptions {

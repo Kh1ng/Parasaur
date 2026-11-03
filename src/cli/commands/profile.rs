@@ -21,9 +21,22 @@ pub fn run(command: ProfileCommands) -> Result<()> {
                 }
             }
         }
-        ProfileCommands::Show { name, config } => {
+        ProfileCommands::Show { name, config, json } => {
             let cfg = config::load(config.as_deref())?;
             let p = config::get_profile(&cfg, &name)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "profile": name, "display_name": p.display_name, "repo_id": p.repo_id,
+                        "provider": p.provider, "repo": p.repo, "local_path": p.local_path,
+                        "artifact_root": p.artifact_root, "default_target_branch": p.default_target_branch,
+                        "validation_commands": p.validation_commands, "auto_fix_commands": p.auto_fix_commands,
+                        "validation_timeout_seconds": p.validation_timeout_seconds(),
+                    })
+                );
+                return Ok(());
+            }
             println!("name:                  {}", name);
             println!("display_name:          {}", p.display_name);
             println!("repo_id:               {}", p.repo_id);
@@ -87,14 +100,18 @@ pub fn run(command: ProfileCommands) -> Result<()> {
             policy_path,
             env_file,
             env_file_prod,
-            validation_commands,
-            auto_fix_commands,
+            mut validation_commands,
+            validation_command,
+            mut auto_fix_commands,
+            auto_fix_command,
             max_parallel_workers,
             max_open_managed_mrs,
             validation_timeout_seconds,
             manager_wake_autonomy,
             delivery_mode,
         } => {
+            validation_commands.extend(validation_command);
+            auto_fix_commands.extend(auto_fix_command);
             let mut cfg = config::load(config_path.as_deref())?;
             let profile = Profile {
                 display_name,
@@ -196,8 +213,10 @@ pub fn run(command: ProfileCommands) -> Result<()> {
             policy_path,
             env_file,
             env_file_prod,
-            validation_commands,
-            auto_fix_commands,
+            mut validation_commands,
+            validation_command,
+            mut auto_fix_commands,
+            auto_fix_command,
             max_parallel_workers,
             max_open_managed_mrs,
             validation_timeout_seconds,
@@ -216,6 +235,8 @@ pub fn run(command: ProfileCommands) -> Result<()> {
             max_concurrent,
             clear,
         } => {
+            validation_commands.extend(validation_command);
+            auto_fix_commands.extend(auto_fix_command);
             let mut cfg = config::load(config_path.as_deref())?;
             let defaults = cfg.defaults.clone();
             let existing = config::get_profile_mut(&mut cfg, &name)?;

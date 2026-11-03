@@ -41,6 +41,7 @@ import {
   runProfileList,
   runProfileAdd,
   runProfileSet,
+  runProfileChecks,
   runProfileRemove,
   runConfigSet,
   runConfigShow,
@@ -173,6 +174,7 @@ type ConfigEffectiveDeps = {
 };
 
 type CreateServerOptions = Partial<ConfigEffectiveDeps> & {
+  runProfileChecks?: typeof runProfileChecks;
   runProfileList?: () => Promise<ProfileSummary[]>;
   runProfileAdd?: (options: ProfileAddOptions) => Promise<void>;
   registryService?: RegistryService;
@@ -1923,7 +1925,25 @@ export function createServer(
   });
 
   // Profile CRUD operations for Issue #148
+  const validCommandLists = (body: unknown): boolean => {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+    return ['validation_commands', 'auto_fix_commands'].every(field => {
+      const commands = (body as Record<string, unknown>)[field];
+      return commands === undefined || (Array.isArray(commands) && commands.length <= 128
+        && commands.every(command => typeof command === 'string' && command.trim().length > 0
+          && command.length <= 16_384 && !command.includes('\0')));
+    });
+  };
+  app.get('/api/profiles/:name/checks', requireOwner, async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    if (!req.params.name.trim() || req.params.name.length > 128 || /[\x00-\x1f\x7f]/.test(req.params.name)) {
+      return res.status(400).json({ error: 'invalid_profile', message: 'Choose a configured profile.' });
+    }
+    try { return res.json(await (configDeps.runProfileChecks ?? runProfileChecks)(req.params.name)); }
+    catch { return res.status(502).json({ error: 'profile_checks_unavailable', message: 'Cannot load workspace checks. Check the profile and update Parasaur on this node.' }); }
+  });
   app.post('/api/profiles', requireOwner, async (req, res) => {
+    if (!validCommandLists(req.body)) return res.status(400).json({ error: 'invalid_commands', message: 'Commands must be lists of up to 128 nonempty strings, each at most 16384 characters without NUL.' });
     // Issue #635 AC3: a missing required field must fail closed with 4xx
     // before ever reaching the CLI, not surface as an opaque 502 once
     // `gah profile add` itself rejects it.
@@ -1969,6 +1989,7 @@ export function createServer(
   });
 
   app.patch('/api/profiles/:name', requireOwner, async (req, res) => {
+    if (!validCommandLists(req.body)) return res.status(400).json({ error: 'invalid_commands', message: 'Commands must be lists of up to 128 nonempty strings, each at most 16384 characters without NUL.' });
     try {
       const options: ProfileSetOptions = {
         name: req.params.name,

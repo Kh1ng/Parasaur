@@ -17,6 +17,9 @@ pub enum ProfileCommands {
         name: String,
         #[arg(long)]
         config: Option<String>,
+        /// Workspace settings and checks as JSON; runner argument arrays are omitted.
+        #[arg(long)]
+        json: bool,
     },
     /// Add a new profile
     Add {
@@ -96,9 +99,19 @@ pub enum ProfileCommands {
         /// Validation commands
         #[arg(long, value_delimiter = ',')]
         validation_commands: Vec<String>,
+        /// One complete validation command; repeat for multiple commands. Commas are preserved.
+        #[arg(
+            long,
+            conflicts_with = "validation_commands",
+            allow_hyphen_values = true
+        )]
+        validation_command: Vec<String>,
         /// Auto-fix commands
         #[arg(long, value_delimiter = ',')]
         auto_fix_commands: Vec<String>,
+        /// One complete auto-fix command; repeat for multiple commands. Commas are preserved.
+        #[arg(long, conflicts_with = "auto_fix_commands", allow_hyphen_values = true)]
+        auto_fix_command: Vec<String>,
         /// How many tickets `gah loop` may execute concurrently for this
         /// profile (defaults to 1). Exposed in the dashboard Settings UI.
         #[arg(long)]
@@ -176,8 +189,18 @@ pub enum ProfileCommands {
         env_file_prod: Option<String>,
         #[arg(long, value_delimiter = ',')]
         validation_commands: Vec<String>,
+        /// One complete validation command; repeat for multiple commands. Commas are preserved.
+        #[arg(
+            long,
+            conflicts_with = "validation_commands",
+            allow_hyphen_values = true
+        )]
+        validation_command: Vec<String>,
         #[arg(long, value_delimiter = ',')]
         auto_fix_commands: Vec<String>,
+        /// One complete auto-fix command; repeat for multiple commands. Commas are preserved.
+        #[arg(long, conflicts_with = "auto_fix_commands", allow_hyphen_values = true)]
+        auto_fix_command: Vec<String>,
         /// How many tickets `gah loop` may execute concurrently for this
         /// profile (defaults to 1). Exposed in the dashboard Settings UI.
         #[arg(long)]
@@ -244,4 +267,3 @@ pub enum ProfileCommands {
         force: bool,
     },
 }
-

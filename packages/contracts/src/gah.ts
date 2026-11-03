@@ -886,6 +886,15 @@ export interface ProfileSummary {
   chat_session_idle_days?: number;
 }
 
+/** Owner-only workspace checks. Command text may contain private values and
+ * must not be included in public profile/configuration projections. */
+export interface ProfileChecks {
+  profile: string;
+  validation_commands: string[];
+  auto_fix_commands: string[];
+  validation_timeout_seconds: number;
+}
+
 /** Catalog ownership is node-qualified. Paths describe the owning worker, never a central checkout. */
 export interface ProjectSummary extends ProfileSummary {
   node_id: string;

@@ -622,6 +622,8 @@ paths:
                 repo: { type: string }
                 local_path: { type: string }
                 artifact_root: { type: string }
+                validation_commands: { $ref: "#/components/schemas/CommandListInput" }
+                auto_fix_commands: { $ref: "#/components/schemas/CommandListInput" }
       responses:
         "201": { description: Created }
         "502": { $ref: "#/components/responses/GahError" }
@@ -630,6 +632,7 @@ paths:
     patch:
       tags: [profiles]
       summary: Update fields on an existing profile
+      description: Each supplied command list replaces that list; an empty array clears it. Omitted lists remain unchanged. Commands are not executed by this request.
       parameters:
         - name: name
           in: path
@@ -639,7 +642,11 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object }
+            schema:
+              type: object
+              properties:
+                validation_commands: { $ref: "#/components/schemas/CommandListInput" }
+                auto_fix_commands: { $ref: "#/components/schemas/CommandListInput" }
       responses:
         "200": { description: Updated }
         "502": { $ref: "#/components/responses/GahError" }
@@ -657,6 +664,26 @@ paths:
       responses:
         "200": { description: Removed }
         "502": { $ref: "#/components/responses/GahError" }
+
+  /api/profiles/{name}/checks:
+    get:
+      tags: [profiles]
+      summary: Read private factory validation and auto-fix commands
+      description: Owner-only, on the connected node. Command text is excluded from public profile and settings projections. Responses use Cache-Control no-store. Requires a CLI supporting profile show --json.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        "200":
+          description: Private ProfileChecks
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProfileChecks" }
+        "400": { description: Invalid profile }
+        "403": { description: Owner access required }
+        "502": { description: Profile or CLI unavailable; no private CLI error is returned }
 
   /api/config:
     get:
@@ -1221,6 +1248,19 @@ components:
         error: { type: string }
         message: { type: string }
         operationId: { type: string, description: Opaque operation receipt identifier when available }
+    CommandListInput:
+      type: array
+      maxItems: 128
+      description: One item is one complete command. Commas, quotes and newlines are preserved. NUL and whitespace-only commands are rejected.
+      items: { type: string, minLength: 1, maxLength: 16384, pattern: '\S' }
+    ProfileChecks:
+      type: object
+      required: [profile, validation_commands, auto_fix_commands, validation_timeout_seconds]
+      properties:
+        profile: { type: string }
+        validation_commands: { type: array, items: { type: string } }
+        auto_fix_commands: { type: array, items: { type: string } }
+        validation_timeout_seconds: { type: integer }
     ProfileSummary:
       type: object
       description: Mirrors packages/contracts/src/gah.ts ProfileSummary

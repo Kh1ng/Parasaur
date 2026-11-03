@@ -37,6 +37,7 @@ import type {
   ControllerActivity,
   LoopDecision,
   ProfileSummary,
+  ProfileChecks,
   WakeAutonomyValue,
   ConfigSummary,
   SettingsConfigProfileSummary,
@@ -345,6 +346,7 @@ export interface GahDataSource {
   getControllerActivity(params?: { profile?: string; since?: string }): Promise<ControllerActivity[]>;
   getLoopDecision(profile: string): Promise<LoopDecision | null>;
   getProfiles(): Promise<ProfileSummary[]>;
+  getProfileChecks(profile: string): Promise<ProfileChecks>;
   startWorker(params: { profile: string; providerKind: string; repo: string; backend: string; model: string; target: string; reasoningEffort?: string; requestId: string }): Promise<{ session: Session }>;
   getProjects(): Promise<ProjectSummary[]>;
   addProject(profile: string): Promise<ProjectSummary>;
@@ -671,6 +673,9 @@ export const gahApi: GahDataSource = {
   },
   getProfileConfig(profile) {
     return getJson<SettingsConfigProfileSummary>('/api/config/effective', { profile });
+  },
+  getProfileChecks(profile) {
+    return getJson<ProfileChecks>(`/api/profiles/${encodeURIComponent(profile)}/checks`);
   },
   async ledgerClearAttempts(params) {
     return postJson('/api/ledger/clear-attempts', {
