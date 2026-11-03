@@ -1518,9 +1518,13 @@ export function createServer(
   });
 
   app.get('/api/work/:workId', async (req, res) => {
+    const profile = req.query.profile;
+    if (profile !== undefined && (typeof profile !== 'string' || !profile || profile.length > 128 || profile.trim() !== profile || /[\x00-\x1f\x7f]/.test(profile))) {
+      return res.status(400).json({ error: 'invalid_profile', message: 'Profile must be one non-empty project name.' });
+    }
     try {
       const entries = await runLedgerWork(req.params.workId);
-      res.json(entries);
+      res.json(typeof profile === 'string' ? entries.filter(entry => entry.profile === profile) : entries);
     } catch (error) {
       res.status(502).json({
         error: 'Failed to load work item history',

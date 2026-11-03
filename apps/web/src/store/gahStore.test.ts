@@ -1,14 +1,15 @@
-import type { ReportData, SettingsConfigProfileSummary } from '@git-agent-harness/contracts';
+import type { LedgerEntry, ReportData, SettingsConfigProfileSummary } from '@git-agent-harness/contracts';
 import { gahApi } from '../api/client.js';
-import { useGahStore } from './gahStore.js';
+import { useGahStore, workTimelineKey } from './gahStore.js';
 
 jest.mock('../api/client.js', () => ({
-  gahApi: { getReport: jest.fn(), getProfileConfig: jest.fn() },
+  gahApi: { getReport: jest.fn(), getProfileConfig: jest.fn(), getWorkTimeline: jest.fn() },
   GahApiError: class GahApiError extends Error {},
 }));
 
 const getReport = jest.mocked(gahApi.getReport);
 const getProfileConfig = jest.mocked(gahApi.getProfileConfig);
+const getWorkTimeline = jest.mocked(gahApi.getWorkTimeline);
 const initialState = useGahStore.getState();
 const report = (profile: string, total_entries = 1): ReportData => ({
   ledger_path: '/ledger', total_entries, since: '', profile, group_by: 'backend', comparisons: [], trend: [],
@@ -23,11 +24,28 @@ beforeEach(() => {
   useGahStore.setState(initialState, true);
   getReport.mockReset();
   getProfileConfig.mockReset();
+  getWorkTimeline.mockReset();
   jest.useFakeTimers().setSystemTime(new Date('2026-01-01T00:00:00Z'));
 });
 afterEach(() => jest.useRealTimers());
 
 const config = (profile: string) => ({ profile, backend_instances: [] }) as unknown as SettingsConfigProfileSummary;
+
+test('the same issue number has independent cached history in each project', async () => {
+  const alpha = deferred<LedgerEntry[]>();
+  const beta = deferred<LedgerEntry[]>();
+  getWorkTimeline.mockReturnValueOnce(alpha.promise).mockReturnValueOnce(beta.promise);
+  const first = useGahStore.getState().fetchWorkTimeline('#42', { profile: 'alpha' });
+  const second = useGahStore.getState().fetchWorkTimeline('#42', { profile: 'beta' });
+  beta.resolve([{ profile: 'beta' }] as LedgerEntry[]);
+  await second;
+  alpha.resolve([{ profile: 'alpha' }] as LedgerEntry[]);
+  await first;
+  const timelines = useGahStore.getState().workTimelines;
+  expect(timelines[workTimelineKey('#42', 'alpha')].data?.[0].profile).toBe('alpha');
+  expect(timelines[workTimelineKey('#42', 'beta')].data?.[0].profile).toBe('beta');
+  expect(getWorkTimeline).toHaveBeenNthCalledWith(2, '#42', 'beta');
+});
 
 test('switching projects clears the previous account configuration before a request completes', async () => {
   getProfileConfig.mockResolvedValueOnce(config('alpha'));

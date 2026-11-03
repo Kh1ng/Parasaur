@@ -7,7 +7,7 @@ import { formatLocalTime } from '../lib/format.js';
 import { ciLabelFor, reviewWaitReason } from '../lib/reviewLabels.js';
 import { useAutoRefresh } from '../hooks/useAutoRefresh.js';
 import { useWsReconnectRefresh } from '../hooks/useWsReconnectRefresh.js';
-import { useGahStore } from '../store/gahStore.js';
+import { useGahStore, workTimelineKey } from '../store/gahStore.js';
 import { AttemptTimeline } from './AttemptTimeline.js';
 import { ExternalAnchor } from './ExternalAnchor.js';
 import { WaypointHistory, type WaypointEvidence } from './WaypointProgress.js';
@@ -41,7 +41,7 @@ export function WorkDetailDrawer({ workId, profile, connected, sessions, onClose
   const closeButton = useRef<HTMLButtonElement>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const status = useGahStore((state) => state.status);
-  const timeline = useGahStore((state) => state.workTimelines[workId]);
+  const timeline = useGahStore((state) => state.workTimelines[workTimelineKey(workId, profile)]);
   const profiles = useGahStore((state) => state.profiles);
   const events = useGahStore((state) => state.events);
   const fetchStatus = useGahStore((state) => state.fetchStatus);
@@ -56,13 +56,13 @@ export function WorkDetailDrawer({ workId, profile, connected, sessions, onClose
   const refresh = async () => {
     await Promise.all([
       fetchStatus(profile, { force: true }),
-      fetchWorkTimeline(workId, { force: true }),
+      fetchWorkTimeline(workId, { profile, force: true }),
       fetchEvents({ profile, since: '7d' }, { force: true }),
     ]);
   };
 
   useEffect(() => {
-    void Promise.all([fetchStatus(profile), fetchWorkTimeline(workId), fetchProfiles(), fetchEvents({ profile, since: '7d' })]);
+    void Promise.all([fetchStatus(profile), fetchWorkTimeline(workId, { profile }), fetchProfiles(), fetchEvents({ profile, since: '7d' })]);
     if (!inline) dialog.current?.showModal();
     closeButton.current?.focus();
     return () => dialog.current?.close();
@@ -245,7 +245,7 @@ export function WorkDetailDrawer({ workId, profile, connected, sessions, onClose
             {timeline?.loading && !timeline.data ? (
               <LoadingState label="Loading attempt history…" />
             ) : timeline?.error ? (
-              <ErrorState message={timeline.error} endpoint={`/api/work/${workId}`} onRetry={() => fetchWorkTimeline(workId, { force: true })} />
+              <ErrorState message={timeline.error} endpoint={`/api/work/${workId}`} onRetry={() => fetchWorkTimeline(workId, { profile, force: true })} />
             ) : entries.length === 0 ? (
               <div className="space-y-4">
                 <WaypointHistory evidence={evidence} label={workId} />

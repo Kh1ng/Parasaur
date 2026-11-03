@@ -38,6 +38,22 @@ function captureFetch(): { requested: () => URL; restore: () => void } {
 
 const CONTEXT = { project: 'group/repo', kind: 'issue' as const, iid: 42, gitlab: 'https://gitlab.example.com', branch: 'main', limit: 10 };
 
+test('work history stays project-scoped even when an older server returns every project', async () => {
+  const original = globalThis.fetch;
+  let requested = '';
+  globalThis.fetch = (async input => {
+    requested = String(input);
+    return new Response(JSON.stringify([{ profile: 'alpha' }, { profile: 'beta' }]));
+  }) as typeof fetch;
+  try {
+    expect(await gahApi.getWorkTimeline('#42', 'beta')).toEqual([{ profile: 'beta' }]);
+    expect(new URL(requested).searchParams.get('profile')).toBe('beta');
+    expect(await gahApi.getWorkTimeline('#42')).toEqual([{ profile: 'alpha' }, { profile: 'beta' }]);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test('getGitLabRuns keeps the deployment prefix in the request URL', async () => {
   await withInjectedBootstrap({ basePath: '/parasaur', gitLabOrigins: [] }, async () => {
     const fetch = captureFetch();

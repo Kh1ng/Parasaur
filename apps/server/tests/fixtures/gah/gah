@@ -105,6 +105,8 @@ if (command === 'pm') {
   respond('events');
 } else if (command === 'ledger' && sub === 'summary') {
   respond('ledger-summary');
+} else if (command === 'ledger' && sub === 'work') {
+  respond('ledger-work');
 } else if (command === 'config' && sub === 'show') {
   respond('config-show');
 } else if (command === 'profile' && sub === 'list') {

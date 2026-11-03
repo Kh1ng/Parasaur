@@ -79,7 +79,7 @@ interface GahStoreState {
   fetchReport: (params?: { profile?: string; since?: string; groupBy?: ReportGroupBy }, opts?: { force?: boolean }) => Promise<void>;
   fetchReportSeries: (params?: { profile?: string; since?: string; bucket?: string }, opts?: { force?: boolean }) => Promise<void>;
   fetchEvents: (params?: { profile?: string; since?: string }, opts?: { force?: boolean }) => Promise<void>;
-  fetchWorkTimeline: (workId: string, opts?: { force?: boolean }) => Promise<void>;
+  fetchWorkTimeline: (workId: string, opts?: { force?: boolean; profile?: string }) => Promise<void>;
   fetchProfiles: (opts?: { force?: boolean }) => Promise<void>;
   addProfile: (data: ProfileAddData) => Promise<void>;
   updateProfile: (name: string, data: ProfileUpdateData) => Promise<void>;
@@ -104,6 +104,11 @@ function isFresh(resource: Resource<unknown>, key: string): boolean {
 function errorMessage(error: unknown): string {
   if (error instanceof GahApiError) return error.message;
   return error instanceof Error ? error.message : String(error);
+}
+
+/** One issue number can exist in multiple project ledgers. */
+export function workTimelineKey(workId: string, profile = ''): string {
+  return JSON.stringify([profile, workId]);
 }
 
 export const useGahStore = create<GahStoreState>((set, get) => ({
@@ -227,22 +232,23 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
   },
 
   async fetchWorkTimeline(workId, opts) {
-    const current = get().workTimelines[workId] ?? emptyResource<LedgerEntry[]>();
-    if (current.loading || (!opts?.force && isFresh(current, workId))) return;
-    set({ workTimelines: { ...get().workTimelines, [workId]: { ...current, loading: true, error: null } } });
+    const key = workTimelineKey(workId, opts?.profile);
+    const current = get().workTimelines[key] ?? emptyResource<LedgerEntry[]>();
+    if (current.loading || (!opts?.force && isFresh(current, key))) return;
+    set({ workTimelines: { ...get().workTimelines, [key]: { ...current, loading: true, error: null } } });
     try {
-      const data = await gahApi.getWorkTimeline(workId);
+      const data = await gahApi.getWorkTimeline(workId, opts?.profile);
       set({
         workTimelines: {
           ...get().workTimelines,
-          [workId]: { data, loading: false, error: null, fetchedAt: Date.now(), key: workId }
+          [key]: { data, loading: false, error: null, fetchedAt: Date.now(), key }
         }
       });
     } catch (error) {
       set({
         workTimelines: {
           ...get().workTimelines,
-          [workId]: { ...current, loading: false, error: errorMessage(error), key: workId }
+          [key]: { ...current, loading: false, error: errorMessage(error), key }
         }
       });
     }

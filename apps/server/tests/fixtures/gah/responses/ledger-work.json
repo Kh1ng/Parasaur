@@ -1,0 +1,4 @@
+[
+  { "profile": "alpha", "work_id": "#42", "work_title": "Alpha issue" },
+  { "profile": "beta", "work_id": "#42", "work_title": "Beta issue" }
+]

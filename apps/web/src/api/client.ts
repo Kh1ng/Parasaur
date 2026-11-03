@@ -339,7 +339,7 @@ export interface GahDataSource {
   getDoctor(profile?: string): Promise<DoctorSnapshot>;
   getReport(params?: { profile?: string; since?: string; groupBy?: ReportGroupBy }): Promise<ReportData>;
   getReportSeries(params?: { profile?: string; since?: string; bucket?: string }): Promise<ReportSeriesData>;
-  getWorkTimeline(workId: string): Promise<LedgerEntry[]>;
+  getWorkTimeline(workId: string, profile?: string): Promise<LedgerEntry[]>;
   getEvents(params?: { profile?: string; since?: string }): Promise<ControllerEvent[]>;
   getGitLabRuns(params: { project: string; kind: 'issue' | 'merge_request'; iid: number; gitlab?: string; branch?: string; limit?: number }): Promise<GitLabRunsFeedResponse>;
   getControllerActivity(params?: { profile?: string; since?: string }): Promise<ControllerActivity[]>;
@@ -583,8 +583,10 @@ export const gahApi: GahDataSource = {
       bucket: params.bucket
     });
   },
-  getWorkTimeline(workId) {
-    return getJson<LedgerEntry[]>(`/api/work/${encodeURIComponent(workId)}`);
+  async getWorkTimeline(workId, profile) {
+    const entries = await getJson<LedgerEntry[]>(`/api/work/${encodeURIComponent(workId)}`, { profile });
+    // Older central nodes ignore the query; retain project isolation on upgrade.
+    return profile ? entries.filter(entry => entry.profile === profile) : entries;
   },
   getEvents(params = {}) {
     return getJson<ControllerEvent[]>('/api/events', {

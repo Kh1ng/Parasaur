@@ -319,6 +319,10 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: profile
+          in: query
+          description: Filter to one project; omitted for legacy aggregate history.
+          schema: { type: string, minLength: 1, maxLength: 128 }
       responses:
         "200":
           description: LedgerEntry[]

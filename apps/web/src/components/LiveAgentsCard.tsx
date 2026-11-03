@@ -389,12 +389,13 @@ export function LiveAgentsCard({ profile, sessions, controllerRuns, claims, cand
   }, [busyJobs.length]);
   useEffect(() => {
     let cancelled = false;
+    if (!profile) return;
     const pending = new Set<string>();
     for (const job of busyJobs) {
       if (fetchedIn.current.get(job) === ledgerEpoch) continue;
       fetchedIn.current.set(job, ledgerEpoch);
       pending.add(job);
-      gahApi.getWorkTimeline(job)
+      gahApi.getWorkTimeline(job, profile)
         .then((entries) => { if (!cancelled) setLedgers((current) => ({ ...current, [job]: entries.at(-1) ?? null })); })
         .catch(() => { if (!cancelled) setLedgers((current) => ({ ...current, [job]: current[job] ?? null })); })
         .finally(() => pending.delete(job));
