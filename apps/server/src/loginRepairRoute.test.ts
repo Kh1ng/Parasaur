@@ -5,13 +5,75 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { spawn, type SpawnOptions } from 'node:child_process';
 import type { LoginRepairView } from '@git-agent-harness/contracts';
 import { AuthHealthProber, type AuthHealthMonitor } from './authHealth.js';
 import { resetCachedCoordinatorIdentity } from './coordinatorIdentity.js';
 import { DEVICE_COOKIE, DeviceAccess } from './deviceAccess.js';
 import { LoginRepairBroker, LoginRepairs } from './loginRepair.js';
+import type { BackendInstanceRuntime } from './gahCli.js';
 import type { RegistryService } from './registryService.js';
 import { createServer } from './server.js';
+
+test('only the owner may start a configured named account login, with no client-selected paths', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'gah-instance-login-route-'));
+  const saved = { ...process.env };
+  Object.assign(process.env, { COORDINATOR_TOKEN: 'instance-owner-token', GAH_ALLOW_INSECURE_HTTP: '1',
+    GAH_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json'), GAH_MUTATION_STORE_PATH: join(root, 'mutations') });
+  resetCachedCoordinatorIdentity();
+  const access = new DeviceAccess(join(root, 'devices.json'));
+  const calls: string[][] = [];
+  const local = new LoginRepairs({ gahBinary: () => '/configured/gah',
+    instanceAuth: async (_profile, instance) => ({ backend_instance: instance, auth_ready: true }),
+    spawn: ((command: string, args: string[], options: SpawnOptions) => {
+      assert.equal(command, '/configured/gah');
+      assert.deepEqual(args, ['config', 'authenticate-backend-instance', '--profile', 'alpha', '--instance', 'work']);
+      return spawn(process.execPath, ['-e', "console.log('https://auth.openai.com/codex/device K7QD-M2XPA'); setTimeout(() => {}, 500)"], options);
+    }) as typeof spawn,
+    instanceRuntime: async (profile, instance) => {
+    calls.push([profile, instance]);
+    return { backend_instance: instance, runner_kind: instance === 'work' ? 'codex' : 'vibe', logical_backend: 'codex', executable: '/tools/provider',
+      state_root: '/isolated/vibe', account_label: 'Vibe' } satisfies BackendInstanceRuntime;
+  } });
+  const broker = new LoginRepairBroker({ localNodeId: 'central', local, registry: {} as RegistryService });
+  const server = http.createServer(createServer({ deviceAccess: access, loginRepairBroker: broker }));
+  await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
+  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const offer = access.create({ id: 'central', name: 'Central', origin });
+  const phone = access.redeem(offer.code, 'central', origin, 'Phone');
+  let sequence = 0;
+  const start = (body: object, owner = true, idempotent = true) => fetch(`${origin}/api/backend-instances/authenticate`, {
+    method: 'POST', headers: { Origin: origin, 'X-Forwarded-For': '203.0.113.9', 'Content-Type': 'application/json',
+      ...(owner ? { Authorization: 'Bearer instance-owner-token' } : { Cookie: `${DEVICE_COOKIE}=${phone.token}` }),
+      ...(idempotent ? { 'Idempotency-Key': `instance-login-test-${++sequence}` } : {}) }, body: JSON.stringify(body)
+  });
+  try {
+    assert.equal((await start({ profile: 'alpha', instance: 'work' }, false)).status, 403);
+    assert.equal((await start({ profile: 'alpha', instance: 'work' }, true, false)).status, 400);
+    for (const input of [{ profile: '', instance: 'work' }, { profile: 'alpha', instance: 'work', executable: '/evil' },
+      { profile: 'alpha', instance: 'work', state_root: '/evil' }, { profile: 'alpha', instance: 'work', node_id: 'other-node' }]) {
+      assert.equal((await start(input)).status, 400);
+    }
+    assert.deepEqual(calls, []);
+    const unsupported = await start({ profile: 'alpha', instance: 'vibe' });
+    assert.equal(unsupported.status, 409);
+    assert.match((await unsupported.json() as { message: string }).message, /supported isolated browser login/);
+    assert.deepEqual(calls, [['alpha', 'vibe']]);
+    const response = await start({ profile: 'alpha', instance: 'work' });
+    assert.equal(response.status, 201);
+    const created = await response.json() as { key: string; repair: LoginRepairView };
+    assert.equal(created.key.length, 64);
+    assert.equal(created.repair.backend, 'codex');
+    const headers = { Authorization: 'Bearer instance-owner-token', 'X-Login-Repair-Key': created.key };
+    assert.equal((await fetch(`${origin}/api/auth-health/repairs/${created.repair.id}`, { headers })).status, 200);
+    assert.equal((await fetch(`${origin}/api/auth-health/repairs/${created.repair.id}`, { method: 'DELETE', headers })).status, 200);
+  } finally {
+    await new Promise<void>(done => server.close(() => done()));
+    process.env = saved;
+    resetCachedCoordinatorIdentity();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('a paired phone may repair a login it can see, and only it can read that repair (#1272)', async () => {
   const root = mkdtempSync(join(tmpdir(), 'gah-login-repair-route-'));

@@ -44,6 +44,48 @@ tags:
 security: [{ nodeAuth: [] }]
 
 paths:
+  /api/backend-instances/authenticate:
+    post:
+      operationId: backend_instance.authenticate
+      tags: [config]
+      summary: Sign in a configured Codex or Claude account on the connected central node
+      description: |
+        Owner-only. Resolves the named instance through the local CLI and runs
+        its browser/device login in isolated state. Saved credentials and
+        unsupported runners return 409. No executable, state path, or remote
+        node can be supplied. The returned repair ID and private key use the
+        existing /api/auth-health/repairs/{id} status, input, and cancel routes.
+        Keep the key in memory; the repair expires after ten minutes.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [profile, instance]
+              properties:
+                profile: { type: string, minLength: 1, maxLength: 128 }
+                instance: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '201':
+          description: Login repair started; repair follows LoginRepairView in contracts/registry.ts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key, repair]
+                properties:
+                  key: { type: string }
+                  repair: { type: object }
+        '400': { description: Invalid input or missing idempotency key }
+        '403': { description: Owner access required }
+        '409': { description: Account unavailable, unsupported, already signing in, or repeated mutation }
   /api/planning/epics:
     get:
       operationId: planning.epics

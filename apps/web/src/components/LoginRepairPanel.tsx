@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { repositoryCli, type LoginRepairView } from '@git-agent-harness/contracts';
-import { loginRepairApi } from '../api/client.js';
+import { backendInstancesApi, GahApiError, loginRepairApi } from '../api/client.js';
 import { ExternalAnchor } from './ExternalAnchor.js';
 
 const POLL_MS = 2_000;
@@ -11,14 +11,27 @@ export type RepairableLogin = { node_id: string; node_name?: string; backend: st
 /** "Fix login" for one broken login (#1272). The login runs on the machine
  * that owns the credential; this device sees only the link, the code, and
  * the outcome. The repair key lives in this component's memory only. */
-export function LoginRepairPanel({ login }: { login: RepairableLogin }) {
+export function LoginRepairPanel({ login, instanceProfile, onComplete }: { login: RepairableLogin; instanceProfile?: string; onComplete?: () => void }) {
   const [session, setSession] = useState<{ key: string; repair: LoginRepairView } | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState('');
   const [copied, setCopied] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const repair = session?.repair;
   const active = !!repair && !FINISHED.has(repair.status);
+  useEffect(() => {
+    if (!instanceProfile || !session || !active) return;
+    return () => { void loginRepairApi.cancel(session.repair.id, session.key).catch(() => undefined); };
+  }, [instanceProfile, session?.repair.id, session?.key, active]);
+  const notified = useRef<string | null>(null);
+  useEffect(() => {
+    if (repair?.status === 'succeeded' && notified.current !== repair.id) {
+      notified.current = repair.id;
+      onComplete?.();
+    }
+  }, [repair?.id, repair?.status, onComplete]);
   useEffect(() => {
     if (!session || !active) return;
     let cancelled = false;
@@ -43,9 +56,22 @@ export function LoginRepairPanel({ login }: { login: RepairableLogin }) {
 
   const start = async () => {
     setBusy(true); setError(''); setText(''); setCopied(false);
-    try { setSession(await loginRepairApi.start({ node_id: login.node_id, backend: login.backend, provider: login.provider })); }
-    catch (err) { setError(err instanceof Error ? err.message : String(err)); }
-    finally { setBusy(false); }
+    try {
+      const next = await (instanceProfile && login.backend_instance
+      ? backendInstancesApi.authenticate(instanceProfile, login.backend_instance)
+      : loginRepairApi.start({ node_id: login.node_id, backend: login.backend, provider: login.provider }));
+      if (!alive.current) {
+        if (instanceProfile) await loginRepairApi.cancel(next.repair.id, next.key).catch(() => undefined);
+        return;
+      }
+      setSession(next);
+    }
+    catch (err) {
+      if (alive.current) setError(instanceProfile && err instanceof GahApiError && err.status === 404
+        ? 'This node does not support in-app account sign-in yet. Update Parasaur on the connected node, then try again.'
+        : err instanceof Error ? err.message : String(err));
+    }
+    finally { if (alive.current) setBusy(false); }
   };
   const submit = async () => {
     if (!session) return;
@@ -64,7 +90,7 @@ export function LoginRepairPanel({ login }: { login: RepairableLogin }) {
   };
   const where = login.node_name ?? 'that machine';
 
-  if (login.backend_instance) {
+  if (login.backend_instance && !instanceProfile) {
     return <p className="text-sm text-secondary">
       Repair instance {login.backend_instance} on {where}. If it uses a subscription token, replace its saved credential.
       Otherwise, sign in through the instance's isolated state using <code>gah config authenticate-backend-instance</code> with its profile and instance name.
@@ -85,11 +111,11 @@ export function LoginRepairPanel({ login }: { login: RepairableLogin }) {
   }
   if (!repair) {
     return <div className="space-y-1">
-      <button type="button" className="btn-secondary min-h-11 text-xs" disabled={busy} onClick={() => void start()}>{busy ? 'Starting…' : 'Fix login'}</button>
+      <button type="button" className="btn-secondary min-h-11 text-xs" disabled={busy} onClick={() => void start()}>{busy ? 'Starting…' : instanceProfile ? 'Start sign-in' : 'Fix login'}</button>
       {error && <p role="alert" className="text-sm text-critical">{error}</p>}
     </div>;
   }
-  return <div className="space-y-2 rounded-md border border-subtle p-3" aria-label="Login repair">
+  return <div className={instanceProfile ? 'space-y-2' : 'space-y-2 rounded-md border border-subtle p-3'} aria-label="Login repair">
     {(repair.status === 'starting' || repair.status === 'waiting') && <p role="status" className="text-sm text-secondary">Waiting for {repair.backend} on {where}…</p>}
     {repair.status === 'open_url' && <>
       <p className="text-sm text-primary">Open the sign-in page{repair.code ? ' and enter this code' : ''}. This updates when you finish.</p>

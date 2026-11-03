@@ -947,7 +947,7 @@ export function createServer(
   // code or submit a key.
   if (node.role === 'central' && configDeps.loginRepairBroker) {
     const broker = configDeps.loginRepairBroker;
-    app.use('/api/auth-health/repairs', rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: true, legacyHeaders: false }));
+    app.use(['/api/auth-health/repairs', '/api/backend-instances/authenticate'], rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: true, legacyHeaders: false }));
     const principal = (res: express.Response): RepairPrincipal | null => {
       const value = res.locals.authPrincipal;
       if (value?.kind === 'owner') return { kind: 'owner' };
@@ -966,6 +966,15 @@ export function createServer(
           return res.status(status).json({ error: 'login_repair_failed', message: error instanceof LoginRepairError ? error.message : 'The login repair failed.' });
         }
       };
+    app.post('/api/backend-instances/authenticate', requireOwner, mutation('backend_instance.authenticate'), repairRoute(async (req, res, who) => {
+      const body = req.body;
+      const valid = (value: unknown): value is string => typeof value === 'string' && value.length > 0
+        && value.length <= 128 && value.trim() === value && !/[\x00-\x1f\x7f]/.test(value);
+      if (!body || Object.keys(body).some(key => !['profile', 'instance'].includes(key)) || !valid(body.profile) || !valid(body.instance)) {
+        return res.status(400).json({ error: 'invalid_instance', message: 'Choose a configured profile and account instance.' });
+      }
+      return res.status(201).json(await broker.startInstance(who, body.profile, body.instance));
+    }));
     app.post('/api/auth-health/repairs', mutation('auth.repair.start'), repairRoute(async (req, res, who) => {
       const { node_id: nodeId, backend, provider } = req.body ?? {};
       if (req.body?.backend_instance != null) {

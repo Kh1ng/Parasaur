@@ -17,6 +17,19 @@ async function post(baseUrl: string, path: string, body: unknown = {}): Promise<
   });
 }
 
+test('sample named account sign-in returns repair-shaped data and never asks for real credentials', async () => {
+  const running = await createMockControlPlane().listen(0, '127.0.0.1');
+  try {
+    const response = await post(running.baseUrl, '/api/backend-instances/authenticate', { profile: 'fixture', instance: 'codex-work' });
+    assert.equal(response.status, 201);
+    const payload = await response.json() as { key: string; repair: { status: string; instructions: string } };
+    assert.equal(payload.key.length, 64);
+    assert.equal(payload.repair.status, 'manual');
+    assert.match(payload.repair.instructions, /sample data/);
+    assert.match(payload.repair.instructions, /No provider sign-in was started/);
+  } finally { await running.close(); }
+});
+
 function nextMessage(ws: WebSocket, type: ServerMessage['type'], timeoutMs = 3_000): Promise<ServerMessage> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timed out waiting for ${type}`)), timeoutMs);

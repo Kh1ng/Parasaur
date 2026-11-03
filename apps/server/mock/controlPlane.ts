@@ -1487,6 +1487,10 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
   app.get('/api/backend-instances', (req, res) => res.json(backendInstanceFixture(bodyString(req.query.profile) ?? 'fixture')));
   app.post('/api/backend-instances/add', (req, res) => res.json(backendInstanceFixture(bodyString(req.body?.profile) ?? 'fixture')));
   app.post('/api/backend-instances/label', (req, res) => res.json(backendInstanceFixture(bodyString(req.body?.profile) ?? 'fixture')));
+  app.post('/api/backend-instances/authenticate', (_req, res) => res.status(201).json({
+    key: '0'.repeat(64),
+    repair: { ...mockRepair, backend: 'codex', instructions: 'This is sample data. No provider sign-in was started. Connect a real Parasaur node to authenticate an account.' }
+  }));
   // Enable/disable arrive as templated paths from the client; accept any
   // action token and keep the fixture enabled (stateless mock).
   app.post('/api/backend-instances/:action', (req, res) => res.json(backendInstanceFixture(bodyString(req.body?.profile) ?? 'fixture')));

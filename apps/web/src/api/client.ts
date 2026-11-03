@@ -1000,6 +1000,7 @@ export const promptPoliciesApi = {
 
 export type BackendRunnerKind = 'codex' | 'claude' | 'opencode' | 'openhands' | 'vibe' | 'agy' | 'hermes';
 export const backendInstancesApi = {
+  authenticate: (profile: string, instance: string) => postJson<{ key: string; repair: LoginRepairView }, { profile: string; instance: string }>('/api/backend-instances/authenticate', { profile, instance }),
   list: (profile: string) => getJson<{ profile: string; backend_instances: import('@git-agent-harness/contracts').BackendInstanceSummary[] }>('/api/backend-instances', { profile }),
   setEnabled: (profile: string, instance: string, enabled: boolean) => postJson<{ profile: string; backend_instances: import('@git-agent-harness/contracts').BackendInstanceSummary[] }, { profile: string; instance: string }>(`/api/backend-instances/${enabled ? 'enable' : 'disable'}`, { profile, instance }),
   add: (profile: string, instance: string, runnerKind: BackendRunnerKind, accountLabel: string) => postJson<{ profile: string; backend_instances: import('@git-agent-harness/contracts').BackendInstanceSummary[] }, { profile: string; instance: string; runnerKind: BackendRunnerKind; accountLabel: string }>('/api/backend-instances/add', { profile, instance, runnerKind, accountLabel }),

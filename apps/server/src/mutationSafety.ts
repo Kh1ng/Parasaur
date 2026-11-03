@@ -20,6 +20,7 @@ type Operation =
   | 'external_approval.revoke'
   | 'backend_instance.set_enabled'
   | 'backend_instance.configure'
+  | 'backend_instance.authenticate'
   | 'git.commit'
   | 'git.publish'
   | 'git.update'

@@ -488,6 +488,63 @@ fn add_backend_instance_creates_isolated_runtime_and_safe_projection() {
 }
 
 #[test]
+fn named_browser_logins_keep_codex_and_claude_accounts_isolated() {
+    let (tmp, config) = config_with_profile();
+    let fake_bin = tmp.path().join("bin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    let home = tmp.path().join("owner");
+    for (runner, state_var) in [("codex", "CODEX_HOME"), ("claude", "CLAUDE_CONFIG_DIR")] {
+        make_fake_bin_with_body(
+            &fake_bin,
+            runner,
+            &format!(
+                "#!/bin/sh\nstate=\"${state_var}\"\n[ -n \"$state\" ] || exit 1\nmkdir -p \"$state\"\nprintf '%s' \"$HOME\" > \"$state/login-proof\"\n"
+            ),
+        );
+        let ambient = home.join(format!(".{runner}"));
+        fs::create_dir_all(&ambient).unwrap();
+        fs::write(
+            ambient.join("login-proof"),
+            "owner login must stay unchanged",
+        )
+        .unwrap();
+        for account in ["personal", "work"] {
+            let instance = format!("{runner}-{account}");
+            for action in ["add-backend-instance", "authenticate-backend-instance"] {
+                let mut command = bin();
+                command
+                    .env("HOME", &home)
+                    .env("PATH", prepend_path(&fake_bin))
+                    .env(state_var, &ambient)
+                    .args([
+                        "config",
+                        action,
+                        "--config",
+                        config.to_str().unwrap(),
+                        "--profile",
+                        "test",
+                        "--instance",
+                        &instance,
+                    ]);
+                if action == "add-backend-instance" {
+                    command.args(["--runner-kind", runner, "--account-label", account]);
+                }
+                command.assert().success();
+            }
+            let isolated = home.join(".config/gah/backend-instances").join(&instance);
+            assert_eq!(
+                fs::read_to_string(isolated.join(format!(".{runner}/login-proof"))).unwrap(),
+                isolated.to_string_lossy()
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(ambient.join("login-proof")).unwrap(),
+            "owner login must stay unchanged"
+        );
+    }
+}
+
+#[test]
 fn notification_channel_settings_round_trip_and_validate() {
     let (tmp, config) = config_with_profile();
     let config_path = config.to_str().unwrap();
