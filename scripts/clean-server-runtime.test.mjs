@@ -38,3 +38,32 @@ test('cleanup rejects a symlink out of the server directory', t => {
   assert.match(result.stderr, /Refusing to clean a release runtime outside/);
   assert.equal(readFileSync(join(external, 'keep'), 'utf8'), 'keep');
 });
+
+test('source rebuild removes isolated release dependencies and keeps server output', t => {
+  const { root, run } = fixture(t);
+  const runtime = join(root, 'apps/server/dist/.release-runtime');
+  mkdirSync(runtime);
+  writeFileSync(join(runtime, 'format.json'), '{"schema":1}');
+  writeFileSync(join(root, 'apps/server/dist/node_modules/release-only'), 'old dependency');
+  writeFileSync(join(root, 'apps/server/dist/bin.js'), 'compiled server');
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(runtime), false);
+  assert.equal(existsSync(join(root, 'apps/server/dist/node_modules')), false);
+  assert.equal(readFileSync(join(root, 'apps/server/dist/bin.js'), 'utf8'), 'compiled server');
+});
+
+test('an escaping isolated runtime prevents any source cleanup', t => {
+  const { root, run } = fixture(t);
+  const external = join(root, 'external');
+  mkdirSync(external);
+  writeFileSync(join(external, 'format.json'), '{"schema":1}');
+  const marker = join(root, 'apps/server/dist/node_modules/keep');
+  writeFileSync(marker, 'keep');
+  symlinkSync(external, join(root, 'apps/server/dist/.release-runtime'), process.platform === 'win32' ? 'junction' : 'dir');
+  const result = run();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Refusing to clean a release runtime outside/);
+  assert.equal(readFileSync(marker, 'utf8'), 'keep');
+  assert.equal(readFileSync(join(external, 'format.json'), 'utf8'), '{"schema":1}');
+});

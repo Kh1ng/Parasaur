@@ -43,10 +43,11 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
-- Release updates now reject mismatched or unreadable dependency lockfiles
-  before replacing artifacts. Nineteen focused Rust release tests passed.
-  A complete isolated dependency installation across lock changes remains
-  required; source updates are the current recovery path.
+- New release bundles support isolated dependency installation from their own
+  lockfile before replacing artifacts. Cold HTTP startup, moving the prepared
+  output, source rebuild cleanup and failed-install preservation passed locally.
+  Legacy bundles reject mismatched or unreadable lockfiles. The updated CLI and
+  bundle still need deployment and acceptance on the live host.
 
 - Michael's controller status, route/claim state, and ledger are not available in this session. GitHub review comments establish recorded opinions, not why his running loop has not acted.
 - Parasaur was confirmed at `https://hermesagent.tail82695.ts.net:8443`; the original HTTPS listener serves Hermes. Windows saved desktop connection URLs were corrected. The live central reports v0.2.0 and ready backend checks, but its referenced JavaScript/CSS GETs return HTTP 500, preventing dashboard rendering. Protected API reads return 401 until a central credential is supplied. Repair asset delivery and authenticate before accepting the live factory.

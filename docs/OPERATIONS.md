@@ -81,12 +81,20 @@ build removes these embedded imports through the server's `prebuild` hook so
 the freshly compiled workspaces take effect. External npm dependencies are
 still required; this bundle is not a standalone Node installation.
 
-Release installation currently requires the bundle and checkout lockfiles to
-match. A mismatch or unreadable lockfile stops the update before any CLI, MCP
-server or dashboard output is replaced. Running npm against the checkout's
-older lockfile cannot install the release's dependencies. Use the source update
-path to obtain matching source and dependencies until isolated release
-dependency installation is available.
+New bundles also carry an isolated `.release-runtime` inside the server output:
+the exact release lockfile, workspace manifests and compiled internal packages.
+The updater installs dependencies there before replacing any CLI, MCP server or
+dashboard output. Relative module links preserve workspace-local and hoisted
+dependency versions when the prepared output moves into place. npm failure
+leaves the existing installation intact; tracked checkout files and its npm
+dependencies are not changed. Installation needs Node/npm and registry access
+or an adequate npm cache, but does not rebuild the application.
+
+Legacy bundles without this metadata require matching readable bundle and
+checkout lockfiles. Otherwise the update stops before installing anything;
+use a source update for those releases. An older updater does not gain isolated
+installation merely by downloading a new bundle: install the updated CLI first
+or use the source update path when upgrading such a deployment.
 
 Install from the channel instead of rebuilding from source — the checkout
 stays the deployment root, only the artifact source changes (no git pull,

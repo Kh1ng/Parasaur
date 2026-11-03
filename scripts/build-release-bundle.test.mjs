@@ -14,6 +14,9 @@ function fixture(t, { complete = true } = {}) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, 'scripts'), { recursive: true });
   writeFileSync(join(root, 'scripts/build-release-bundle.sh'), script, { mode: 0o755 });
+  for (const name of ['stage-release-runtime.mjs', 'link-release-runtime.mjs']) {
+    writeFileSync(join(root, 'scripts', name), readFileSync(new URL(name, import.meta.url)));
+  }
   const outputs = [
     'apps/server/dist/bin.js',
     'apps/web/dist/index.html',
@@ -32,7 +35,7 @@ function fixture(t, { complete = true } = {}) {
       continue;
     }
     if (path === 'package-lock.json' && complete) {
-      writeFileSync(join(root, path), '{"lockfileVersion":3}');
+      writeFileSync(join(root, path), JSON.stringify({ lockfileVersion: 3, packages: { '': {}, 'packages/contracts': {}, 'packages/shared': {} } }));
       continue;
     }
     if (complete || path !== 'apps/web/dist/index.html') {
@@ -58,6 +61,10 @@ test('a complete build archives exactly the release install layout', t => {
     'apps/server/dist/node_modules/@git-agent-harness/shared/dist/index.js',
     'apps/server/dist/node_modules/@git-agent-harness/contracts/package.json',
     'apps/server/dist/node_modules/@git-agent-harness/shared/package.json',
+    'apps/server/dist/.release-runtime/package-lock.json',
+    'apps/server/dist/.release-runtime/packages/contracts/dist/index.js',
+    'apps/server/dist/.release-runtime/packages/shared/dist/index.js',
+    'apps/server/dist/.release-runtime/link.mjs',
     'packaging/opencode/agents/gah-reviewer.md',
     'package.json',
     'package-lock.json'
@@ -77,6 +84,18 @@ test('an absent workspace runtime fails before an archive is written', t => {
   assert.throws(() => readFileSync(out), { code: 'ENOENT' });
 });
 
+test('workspace metadata cannot escape release staging', t => {
+  const { root, out, run } = fixture(t);
+  const lockPath = join(root, 'package-lock.json');
+  const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+  lock.packages['../escape'] = {};
+  writeFileSync(lockPath, JSON.stringify(lock));
+  const result = run();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Invalid workspace path/);
+  assert.throws(() => readFileSync(out), { code: 'ENOENT' });
+});
+
 test('archive assets are service-readable without changing restrictive build outputs', t => {
   const { root, out, run } = fixture(t);
   const asset = join(root, 'apps/web/dist/index.html');
@@ -92,6 +111,8 @@ test('archive assets are service-readable without changing restrictive build out
 
 test('the archived server resolves fresh internal packages without a built workspace', t => {
   const { root, out, run } = fixture(t);
+  mkdirSync(join(root, 'apps/server/dist/.release-runtime/node_modules/old'), { recursive: true });
+  writeFileSync(join(root, 'apps/server/dist/.release-runtime/node_modules/old/keep-out'), 'stale dependencies');
   for (const name of ['contracts', 'shared']) {
     writeFileSync(join(root, `packages/${name}/package.json`), JSON.stringify({ name: `@git-agent-harness/${name}`, type: 'module', main: './dist/index.js' }));
     writeFileSync(join(root, `packages/${name}/dist/index.js`), `export const tag = 'fresh-${name}';`);
@@ -103,6 +124,7 @@ test('the archived server resolves fresh internal packages without a built works
   const extracted = join(root, 'cold');
   mkdirSync(extracted);
   assert.equal(spawnSync('tar', ['-xzf', out, '-C', extracted]).status, 0);
+  assert.throws(() => readFileSync(join(extracted, 'apps/server/dist/.release-runtime/node_modules/old/keep-out')), { code: 'ENOENT' });
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
     import { tag as contracts } from '@git-agent-harness/contracts';
     import { tag as shared } from '@git-agent-harness/shared';

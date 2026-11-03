@@ -4,8 +4,8 @@ use anyhow::{bail, Context, Result};
 use std::env;
 use std::path::{Path, PathBuf};
 
-/// `npm ci` arguments for source builds. Release installation must not run
-/// this against a checkout whose lockfile differs from the release bundle.
+/// `npm ci` arguments for source builds and isolated release runtimes.
+/// Releases run this inside staged metadata, never against the old checkout.
 pub(super) const NPM_CI_ARGS: &[&str] = &[
     "ci",
     "--include=dev",

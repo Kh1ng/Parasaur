@@ -46,13 +46,15 @@ for path in "${paths[@]}"; do
 done
 # Keep workspace imports inside the server output that existing updaters already
 # install. A clean checkout has no ignored packages/*/dist to resolve at runtime.
-rm -rf -- "$staging/apps/server/dist/node_modules"
+rm -rf -- "$staging/apps/server/dist/node_modules" "$staging/apps/server/dist/.release-runtime"
 for package in contracts shared; do
   target="$staging/apps/server/dist/node_modules/@git-agent-harness/$package"
   mkdir -p "$target"
   cp -R "$root/packages/$package/dist" "$target/dist"
   cp "$root/packages/$package/package.json" "$target/package.json"
 done
+node "$root/scripts/stage-release-runtime.mjs" "$root" \
+  "$staging/apps/server/dist/.release-runtime"
 # These are public runtime/build outputs, not credential files. A restrictive
 # build umask must not leave assets unreadable to the service account.
 chmod -R u+rwX,go+rX,go-w "$staging"

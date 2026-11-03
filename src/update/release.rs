@@ -408,10 +408,32 @@ fn install_server_bundle(staging: &Path, repo: &Path, central: bool) -> Result<(
     Ok(())
 }
 
-/// A legacy bundle has no isolated dependency installation. Running `npm ci`
-/// in the checkout would reinstall its old lockfile, not the release's.
-/// Refuse incompatible dependencies before replacing any installed artifact.
-fn validate_server_bundle_dependencies(staging: &Path, repo: &Path) -> Result<()> {
+/// Prepare an isolated release dependency tree before replacing any artifact.
+/// Legacy bundles have no workspace metadata for that installation, so they
+/// require matching checkout dependencies instead of reinstalling an old lock.
+fn prepare_server_bundle_dependencies(staging: &Path, repo: &Path) -> Result<()> {
+    let runtime = staging.join("apps/server/dist/.release-runtime");
+    if runtime.exists() {
+        let format: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(runtime.join("format.json"))
+                .context("reading release runtime format")?,
+        )
+        .context("parsing release runtime format")?;
+        if format["schema"] != 1 {
+            bail!("unsupported release dependency runtime schema");
+        }
+        if std::fs::read(runtime.join("package-lock.json"))?
+            != std::fs::read(staging.join("package-lock.json"))?
+        {
+            bail!("release dependency runtime lockfile does not match the bundle");
+        }
+        // Prepare everything before any binary or dist output is replaced.
+        // npm uses the release's complete workspace metadata, never the old
+        // checkout's manifests. Failure drops only the extraction directory.
+        super::run_command(&runtime, "npm", super::NPM_CI_ARGS)?;
+        super::run_command(&runtime, "node", &["link.mjs"])?;
+        return Ok(());
+    }
     if server_bundle_needs_dependency_refresh(staging, repo) {
         bail!(
             "release bundle dependencies differ from the checkout or its lockfile is unavailable; \
@@ -551,7 +573,7 @@ fn install_release_artifacts(
                 )
             })?;
         let staging = extract_server_bundle(&fetch(asset)?, repo, serves_control_plane)?;
-        validate_server_bundle_dependencies(staging.path(), repo)?;
+        prepare_server_bundle_dependencies(staging.path(), repo)?;
         Some((asset, staging))
     } else {
         None
@@ -1060,13 +1082,87 @@ mod tests {
     fn bundle_dependency_preflight_requires_readable_matching_lockfiles() {
         let staging = tempfile::tempdir().unwrap();
         let repo = tempfile::tempdir().unwrap();
-        assert!(validate_server_bundle_dependencies(staging.path(), repo.path()).is_err());
+        assert!(prepare_server_bundle_dependencies(staging.path(), repo.path()).is_err());
         fs::write(staging.path().join("package-lock.json"), "new").unwrap();
-        assert!(validate_server_bundle_dependencies(staging.path(), repo.path()).is_err());
+        assert!(prepare_server_bundle_dependencies(staging.path(), repo.path()).is_err());
         fs::write(repo.path().join("package-lock.json"), "old").unwrap();
-        assert!(validate_server_bundle_dependencies(staging.path(), repo.path()).is_err());
+        assert!(prepare_server_bundle_dependencies(staging.path(), repo.path()).is_err());
         fs::write(repo.path().join("package-lock.json"), "new").unwrap();
-        validate_server_bundle_dependencies(staging.path(), repo.path()).unwrap();
+        prepare_server_bundle_dependencies(staging.path(), repo.path()).unwrap();
+    }
+
+    #[test]
+    fn isolated_release_installs_its_own_lock_without_changing_the_checkout() {
+        let staging = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let runtime = staging.path().join("apps/server/dist/.release-runtime");
+        fs::create_dir_all(runtime.join("packages/local")).unwrap();
+        fs::write(runtime.join("format.json"), r#"{"schema":1}"#).unwrap();
+        fs::write(
+            runtime.join("package.json"),
+            r#"{"name":"runtime","version":"1.0.0","workspaces":["packages/*"],"dependencies":{"@example/local":"*"}}"#,
+        ).unwrap();
+        fs::write(
+            runtime.join("packages/local/package.json"),
+            r#"{"name":"@example/local","version":"2.0.0","type":"module","main":"index.js"}"#,
+        )
+        .unwrap();
+        fs::write(
+            runtime.join("packages/local/index.js"),
+            "export default 'release-version';",
+        )
+        .unwrap();
+        let lock = r#"{"name":"runtime","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"runtime","version":"1.0.0","workspaces":["packages/*"],"dependencies":{"@example/local":"*"}},"packages/local":{"name":"@example/local","version":"2.0.0"},"node_modules/@example/local":{"resolved":"packages/local","link":true}}}"#;
+        fs::write(runtime.join("package-lock.json"), lock).unwrap();
+        fs::write(staging.path().join("package-lock.json"), lock).unwrap();
+        fs::write(repo.path().join("package-lock.json"), "old checkout lock").unwrap();
+        fs::write(repo.path().join("package.json"), "old checkout manifest").unwrap();
+        fs::write(
+            runtime.join("link.mjs"),
+            include_str!("../../scripts/link-release-runtime.mjs"),
+        )
+        .unwrap();
+        prepare_server_bundle_dependencies(staging.path(), repo.path()).unwrap();
+        let probe = runtime.parent().unwrap().join("probe.mjs");
+        fs::write(
+            &probe,
+            "import value from '@example/local'; if(value !== 'release-version') process.exit(1);",
+        )
+        .unwrap();
+        assert!(Command::new("node").arg(probe).status().unwrap().success());
+        assert_eq!(
+            fs::read_to_string(repo.path().join("package-lock.json")).unwrap(),
+            "old checkout lock"
+        );
+        assert_eq!(
+            fs::read_to_string(repo.path().join("package.json")).unwrap(),
+            "old checkout manifest"
+        );
+        assert!(!repo.path().join("node_modules").exists());
+    }
+
+    #[test]
+    fn isolated_release_rejects_unknown_schema_and_inconsistent_lockfiles() {
+        let staging = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let runtime = staging.path().join("apps/server/dist/.release-runtime");
+        fs::create_dir_all(&runtime).unwrap();
+        fs::write(runtime.join("format.json"), r#"{"schema":2}"#).unwrap();
+        assert!(
+            prepare_server_bundle_dependencies(staging.path(), repo.path())
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported release dependency runtime schema")
+        );
+        fs::write(runtime.join("format.json"), r#"{"schema":1}"#).unwrap();
+        fs::write(runtime.join("package-lock.json"), "different").unwrap();
+        fs::write(staging.path().join("package-lock.json"), "bundle lock").unwrap();
+        assert!(
+            prepare_server_bundle_dependencies(staging.path(), repo.path())
+                .unwrap_err()
+                .to_string()
+                .contains("lockfile does not match")
+        );
     }
 
     #[test]
@@ -1284,6 +1380,46 @@ mod tests {
                 fs::remove_file(outer.join("repo/package-lock.json")).unwrap();
             },
             "release bundle dependencies differ",
+        );
+    }
+
+    #[test]
+    fn failed_isolated_dependency_install_preserves_all_release_artifacts() {
+        assert_failed_release_leaves_install_intact(
+            |outer, manifest| {
+                let bundle = outer.join("gah-server-bundle.tar.gz");
+                let expanded = outer.join("expanded");
+                fs::create_dir(&expanded).unwrap();
+                assert!(Command::new("tar")
+                    .arg("-xzf")
+                    .arg(&bundle)
+                    .arg("-C")
+                    .arg(&expanded)
+                    .status()
+                    .unwrap()
+                    .success());
+                let runtime = expanded.join("apps/server/dist/.release-runtime");
+                fs::create_dir_all(&runtime).unwrap();
+                fs::write(runtime.join("format.json"), r#"{"schema":1}"#).unwrap();
+                fs::copy(
+                    expanded.join("package-lock.json"),
+                    runtime.join("package-lock.json"),
+                )
+                .unwrap();
+                // Invalid JSON fails npm before any network request or install.
+                fs::write(runtime.join("package.json"), "invalid JSON").unwrap();
+                assert!(Command::new("tar")
+                    .arg("-czf")
+                    .arg(&bundle)
+                    .arg("-C")
+                    .arg(&expanded)
+                    .arg(".")
+                    .status()
+                    .unwrap()
+                    .success());
+                manifest["assets"][2]["sha256"] = sha256_of(&bundle).unwrap().into();
+            },
+            "npm ci",
         );
     }
 
