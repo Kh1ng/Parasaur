@@ -11,7 +11,7 @@ const event = (id: string, kind: ActivityKind = 'node_offline', nodeState: Activ
   kind, severity: 'error', title: 'Worker activity', message: 'Three bad checks.'
 });
 
-test('optional health preferences persist while tasks, input requests and security keep notifying', async () => {
+test('optional health alerts start off and persist while tasks, input requests and security keep notifying', async () => {
   const root = mkdtempSync(join(tmpdir(), 'gah-activity-preferences-'));
   const path = join(root, 'activity.jsonl');
   const delivered: string[] = [];
@@ -21,7 +21,7 @@ test('optional health preferences persist while tasks, input requests and securi
     feed.record(event('offline'));
     for (const kind of ['node_back', 'quota_near_limit', 'auth_restored'] as const) feed.record(event(kind, kind));
     await new Promise((done) => setImmediate(done));
-    assert.deepEqual(delivered, ['offline']);
+    assert.equal(delivered.length, 0, 'node outages are opt-in');
     feed.setNotificationPreferences({ nodeOffline: false, nodeBack: false, quotaNearLimit: false, authRestored: false });
     assert.equal(feed.unreadCount(), 0);
     assert.equal(feed.notifications().length, 0);
@@ -35,7 +35,7 @@ test('optional health preferences persist while tasks, input requests and securi
     const attention: ActivityKind[] = ['dispatch_completed', 'review_ready', 'chat_turn_completed', 'dispatch_failed', 'chat_turn_failed', 'chat_permission_requested', 'action_required', 'gateway_down', 'auth_expired'];
     for (const kind of attention) restored.record(event(kind, kind));
     await new Promise((done) => setImmediate(done));
-    assert.deepEqual(delivered.slice(1), ['security', 'schema', ...attention]);
+    assert.deepEqual(delivered, ['security', 'schema', ...attention]);
     assert.equal(restored.replay('gah').length, 16, 'muted observations remain in the audit feed');
     assert.equal(notifiableActivity(restored.replay('gah').find(({ id }) => id === 'muted')!), false);
     restored.setNotificationPreferences({ nodeOffline: true, nodeBack: true, quotaNearLimit: true, authRestored: true });

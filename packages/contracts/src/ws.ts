@@ -131,7 +131,7 @@ export interface ActivityNotificationPreferences {
 }
 
 export const DEFAULT_ACTIVITY_NOTIFICATION_PREFERENCES: ActivityNotificationPreferences = {
-  nodeOffline: true, nodeBack: false, quotaNearLimit: false, authRestored: false
+  nodeOffline: false, nodeBack: false, quotaNearLimit: false, authRestored: false
 };
 
 export function notifiableActivity(event: Pick<ActivityEvent, "kind" | "notificationMuted">): boolean {
