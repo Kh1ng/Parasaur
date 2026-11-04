@@ -99,6 +99,10 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   The subsequent [account execution check](validation/beta-progress-2026-11-03/windows-account-execution.md)
   verifies concurrent synthetic launches, rebind attribution and revocation at
   the Windows-to-WSL launcher boundary. Real provider execution remains pending.
+- The shared model browser now remains usable when one provider never answers:
+  independent results, configured defaults, timed reads, cancellation and Retry
+  passed headless Windows checks. See [model-browser recovery](validation/beta-progress-2026-11-03/model-browser-recovery.md).
+  This web change is local and has not been deployed to the central dashboard.
 - Hosted enterprise acceptance requires the actual service and provisioned accounts.
 - Workspace environment implementation now covers development application variables in interactive chat and exact factory checks. Local real-CLI/child-process validation passed with provider/state isolation and production exclusion. Other execution nodes retain their own configuration; a remote-node and real-provider workspace workflow still needs acceptance.
 - iOS background delivery requires the configured APNs service, a signed app, and a physical device check.

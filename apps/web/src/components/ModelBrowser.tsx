@@ -36,6 +36,7 @@ export function entryFavorite(entry: ModelCatalogEntry): ProviderFavorite {
 }
 
 const DEFAULT_MODEL_NAME = 'Default model';
+const MODEL_READ_TIMEOUT_MS = 15_000;
 
 /**
  * The full provider/model catalog (#1203): every implemented backend's
@@ -58,7 +59,7 @@ export function ModelBrowser({
 }: ModelBrowserProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [catalog, setCatalog] = useState<Record<string, ManagerModelInfo[]>>({});
-  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState<string[]>([]);
   const [failed, setFailed] = useState<string[]>([]);
   const [retryEpoch, setRetryEpoch] = useState(0);
   const [query, setQuery] = useState('');
@@ -80,21 +81,34 @@ export function ModelBrowser({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setLoading(true);
-    // One read per provider instance: the same per-backend endpoint the
-    // composer already uses, asked for every instance instead of only the
-    // active one. A rejection degrades that provider to its default entry.
-    Promise.all(implemented.map((backend) =>
-      gahApi.getManagerChatModelsForBackend(source.profile, backend.id, source.nodeId)
-        .then(({ models }) => [backend.id, models] as const)
-        .catch(() => [backend.id, null] as const)
-    )).then((results) => {
-      if (cancelled) return;
-      setCatalog(Object.fromEntries(results.map(([id, models]) => [id, models ?? []])));
-      setFailed(results.filter(([, models]) => models === null).map(([id]) => id));
-      setLoading(false);
+    setCatalog({});
+    setFailed([]);
+    setPending(implemented.map(backend => backend.id));
+    // Publish each instance independently. A silent provider must not hide
+    // healthy model lists or the always-usable configured defaults.
+    const requests = implemented.map(backend => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), MODEL_READ_TIMEOUT_MS);
+      gahApi.getManagerChatModelsForBackend(source.profile, backend.id, source.nodeId, undefined, controller.signal)
+        .then(({ models }) => {
+          if (!cancelled) setCatalog(current => ({ ...current, [backend.id]: models }));
+        })
+        .catch(() => {
+          if (!cancelled) setFailed(current => [...current, backend.id]);
+        })
+        .finally(() => {
+          clearTimeout(timer);
+          if (!cancelled) setPending(current => current.filter(id => id !== backend.id));
+        });
+      return { controller, timer };
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      for (const { controller, timer } of requests) {
+        clearTimeout(timer);
+        controller.abort();
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, retryEpoch, implemented, source.profile, source.nodeId]);
 
@@ -179,13 +193,7 @@ export function ModelBrowser({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          {loading ? (
-            <ul className="grid gap-2 sm:grid-cols-2" aria-label="Loading models">
-              {Array.from({ length: 6 }, (_, index) => (
-                <li key={index} className="h-[4.5rem] animate-pulse rounded-lg border border-subtle bg-raised/60" />
-              ))}
-            </ul>
-          ) : visible.length === 0 ? (
+          {visible.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted">
               {entries.length === 0 ? 'No providers are configured yet.' : 'No model matches that search.'}
             </p>
@@ -225,7 +233,11 @@ export function ModelBrowser({
                       ) : entry.model ? (
                         <span className="mt-1 block truncate font-mono text-[10px] text-muted">{entry.model.id}</span>
                       ) : (
-                        <span className="mt-1 block text-xs text-secondary">Whatever this instance is configured to use.</span>
+                        <span className="mt-1 block text-xs text-secondary">{pending.includes(entry.backend.id)
+                          ? 'Loading models. The configured default is ready to use.'
+                          : failed.includes(entry.backend.id)
+                            ? 'Model list unavailable. Use the configured default or retry.'
+                            : 'Whatever this instance is configured to use.'}</span>
                       )}
                     </button>
                     {enabled && <button
@@ -249,7 +261,7 @@ export function ModelBrowser({
           <p className="text-[11px] text-muted" role="status">
             {failed.length > 0
               ? `${failed.length} provider${failed.length === 1 ? '' : 's'} did not answer. Their defaults are still selectable.`
-              : loading ? 'Loading models…' : `${visible.length} of ${entries.length} shown`}
+              : pending.length > 0 ? `Loading models from ${pending.length} provider${pending.length === 1 ? '' : 's'}…` : `${visible.length} of ${entries.length} shown`}
           </p>
           {failed.length > 0 && (
             <button type="button" onClick={() => setRetryEpoch((value) => value + 1)} className="btn-secondary text-xs max-sm:min-h-11 max-sm:min-w-11">

@@ -178,14 +178,14 @@ export const activityApi = {
   )
 };
 
-async function getJson<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
+async function getJson<T>(path: string, params?: Record<string, string | undefined>, signal?: AbortSignal): Promise<T> {
   const url = apiUrl(path);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined) url.searchParams.set(key, value);
     }
   }
-  const res = await fetch(url.toString(), { headers: authHeaders() });
+  const res = await fetch(url.toString(), { headers: authHeaders(), ...(signal ? { signal } : {}) });
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
@@ -417,7 +417,7 @@ export interface GahDataSource {
   getChatStorage(profile: string): Promise<ChatReclaimResult>;
   reclaimChatSessions(profile: string, dryRun: boolean): Promise<ChatReclaimResult>;
   getChatNodes(profile?: string, backend?: string): Promise<{ nodes: ChatNodeInfo[] }>;
-  getManagerChatModelsForBackend(profile: string, backend: string, nodeId?: string, backendInstance?: string | null): Promise<ManagerModelsSummary>;
+  getManagerChatModelsForBackend(profile: string, backend: string, nodeId?: string, backendInstance?: string | null, signal?: AbortSignal): Promise<ManagerModelsSummary>;
   getChatPreview(profile: string, sessionId: string): Promise<{ preview: ChatPreviewInfo | null }>;
   setChatPreview(profile: string, sessionId: string, port: number | null): Promise<{ preview: ChatPreviewInfo | null }>;
   getChatIssues(profile: string): Promise<{ issues: ChatIssueSummary[] }>;
@@ -868,8 +868,8 @@ export const gahApi: GahDataSource = {
   getChatNodes(profile, backend) {
     return getJson<{ nodes: ChatNodeInfo[] }>('/api/manager-chat/nodes', { profile, backend });
   },
-  getManagerChatModelsForBackend(profile, backend, nodeId, backendInstance) {
-    return getJson<ManagerModelsSummary>('/api/manager-chat/models', { profile, backend, nodeId, backendInstance: backendInstance ?? undefined });
+  getManagerChatModelsForBackend(profile, backend, nodeId, backendInstance, signal) {
+    return getJson<ManagerModelsSummary>('/api/manager-chat/models', { profile, backend, nodeId, backendInstance: backendInstance ?? undefined }, signal);
   },
   getChatPreview(profile, sessionId) {
     return getJson<{ preview: ChatPreviewInfo | null }>('/api/manager-chat/preview', { profile, sessionId });
