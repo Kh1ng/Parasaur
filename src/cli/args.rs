@@ -108,6 +108,9 @@ pub enum PmCommands {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Private-descriptor host admission and lifetime supervision for isolated jobs.
+    #[command(hide = true)]
+    IsolationHost(crate::cli::commands::isolation_host::Args),
     /// Project memory retrieval, flush, deletion and migration.
     Memory(crate::cli::commands::memory::MemoryArgs),
     /// Export a diagnostics bundle (memory timeline, host details) to send when debugging.

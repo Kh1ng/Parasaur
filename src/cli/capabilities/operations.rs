@@ -7,6 +7,25 @@ use super::*;
 
 // Operation definitions for each CLI command module
 
+pub(super) fn add_isolation_host_operations(manifest: &mut CapabilityManifest) {
+    manifest.add_operation(OperationDefinition {
+        operation_id: "isolation-host.run".into(),
+        display_name: "Supervise Isolated Host Execution".into(),
+        class: OperationClass::Admin,
+        profile_scope: ProfileScope::Global,
+        request_schema: None,
+        response_schema: None,
+        streaming: StreamingBehavior::Jsonl,
+        idempotency: Idempotency::NonIdempotent,
+        secret_fields: vec![],
+        remote_disposition: RemoteDisposition::LocalOnly,
+        local_only_reason: Some(LocalOnlyReason::SecuritySensitive),
+        documentation: Some("Private descriptor protocol for host capacity, affirmative execution approval and heartbeat-bounded cgroup lifetime; never expose as a remote command.".into()),
+        cli_command_path: "gah isolation-host".into(),
+        is_stable: true,
+    });
+}
+
 pub(super) fn add_availability_operations(manifest: &mut CapabilityManifest) {
     // gah availability
     manifest.add_operation(OperationDefinition {

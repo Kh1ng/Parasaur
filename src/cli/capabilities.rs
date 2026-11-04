@@ -321,6 +321,7 @@ pub fn generate_manifest() -> CapabilityManifest {
     let mut manifest = CapabilityManifest::new();
 
     // Add all operations from all CLI command modules
+    add_isolation_host_operations(&mut manifest);
     add_availability_operations(&mut manifest);
     add_candidates_operations(&mut manifest);
     add_policy_operations(&mut manifest);

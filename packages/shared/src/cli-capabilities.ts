@@ -694,6 +694,22 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
       "cli_command_path": "gah installer",
       "is_stable": true
     },
+    "isolation-host.run": {
+      "operation_id": "isolation-host.run",
+      "display_name": "Supervise Isolated Host Execution",
+      "class": "admin",
+      "profile_scope": "global",
+      "request_schema": null,
+      "response_schema": null,
+      "streaming": "jsonl",
+      "idempotency": "non_idempotent",
+      "secret_fields": [],
+      "remote_disposition": "local_only",
+      "local_only_reason": "security_sensitive",
+      "documentation": "Private descriptor protocol for host capacity, affirmative execution approval and heartbeat-bounded cgroup lifetime; never expose as a remote command.",
+      "cli_command_path": "gah isolation-host",
+      "is_stable": true
+    },
     "ledger.clear_attempts": {
       "operation_id": "ledger.clear_attempts",
       "display_name": "Clear Ledger Attempts",
@@ -1431,6 +1447,7 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
     "gah hold set": "hold.set",
     "gah init": "init.create",
     "gah installer": "installer.files",
+    "gah isolation-host": "isolation-host.run",
     "gah ledger clear-attempts": "ledger.clear_attempts",
     "gah ledger reconcile": "ledger.reconcile",
     "gah ledger repair-tail": "ledger.repair_tail",
@@ -1534,6 +1551,7 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
     "config.show_vibe_models": "filesystem_access_required",
     "init.create": "filesystem_access_required",
     "installer.files": "filesystem_access_required",
+    "isolation-host.run": "security_sensitive",
     "loop.run": "local_backend_execution_required",
     "manager-log.add": "filesystem_access_required",
     "manager-log.show": "filesystem_access_required",

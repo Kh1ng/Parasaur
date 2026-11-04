@@ -25,14 +25,20 @@ pub mod capabilities;
 pub mod commands;
 
 pub fn run() -> Result<()> {
-    let _agy_refresh_guard = AgyRefreshGuard;
     // Before any thread, runtime or child: process-group cleanup needs exited
     // children to stay unreaped until it has signalled their group.
     crate::runner::pipes::keep_exited_children_waitable()
         .context("restoring the default SIGCHLD disposition")?;
-    crate::update::heal_parasaur_alias();
     let cli = Cli::parse();
+    // The private host protocol must not probe providers, repair aliases or
+    // resolve ambient user configuration before supervising its exact job.
+    if let Commands::IsolationHost(args) = cli.command {
+        return commands::isolation_host::run(args);
+    }
+    let _agy_refresh_guard = AgyRefreshGuard;
+    crate::update::heal_parasaur_alias();
     match cli.command {
+        Commands::IsolationHost(_) => unreachable!("handled before interactive startup"),
         Commands::Memory(args) => commands::memory::run(args)?,
         Commands::Diag(args) => commands::diag::run(args)?,
         Commands::Route(args) => commands::route::run(

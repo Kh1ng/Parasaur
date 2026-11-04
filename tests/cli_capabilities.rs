@@ -5,6 +5,58 @@
 use git_agent_harness::cli::capabilities::*;
 
 #[test]
+fn isolated_host_protocol_is_never_a_remote_command() {
+    let manifest = generate_manifest();
+    let operation = &manifest.operations["isolation-host.run"];
+    assert_eq!(operation.remote_disposition, RemoteDisposition::LocalOnly);
+    assert_eq!(
+        operation.local_only_reason,
+        Some(LocalOnlyReason::SecuritySensitive)
+    );
+    assert_eq!(operation.idempotency, Idempotency::NonIdempotent);
+    assert!(!manifest.is_remote_available("isolation-host.run"));
+}
+
+#[test]
+fn isolated_host_parser_rejects_unbounded_resources_and_invalid_identity() {
+    use clap::Parser;
+    use git_agent_harness::cli::args::Cli;
+    let arguments = vec![
+        "gah",
+        "isolation-host",
+        "--execution-id",
+        "10000000-0000-0000-0000-000000000001",
+        "--config",
+        "/private/host.toml",
+        "--memory-mib",
+        "512",
+        "--max-processes",
+        "32",
+        "--timeout-seconds",
+        "30",
+        "--bubblewrap",
+        "/usr/bin/bwrap",
+        "--",
+        "/usr/bin/python3.12",
+    ];
+    assert!(Cli::try_parse_from(&arguments).is_ok());
+    for (flag, invalid) in [
+        ("--execution-id", "unknown"),
+        ("--memory-mib", "63"),
+        ("--max-processes", "7"),
+        ("--timeout-seconds", "0"),
+    ] {
+        let mut changed = arguments.clone();
+        let index = changed.iter().position(|value| *value == flag).unwrap();
+        changed[index + 1] = invalid;
+        assert!(
+            Cli::try_parse_from(changed).is_err(),
+            "accepted {flag}={invalid}"
+        );
+    }
+}
+
+#[test]
 fn test_manifest_generation_includes_all_major_cli_commands() {
     let manifest = generate_manifest();
 

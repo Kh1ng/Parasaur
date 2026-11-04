@@ -54,6 +54,13 @@ pub(crate) struct NodeCapacityLease {
     _file: std::fs::File,
 }
 
+impl NodeCapacityLease {
+    #[cfg(target_os = "linux")]
+    pub(crate) fn monitor_file(&self) -> std::io::Result<std::fs::File> {
+        self._file.try_clone()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum LiveAdmission {
     Admit(NodeCapacityLease),
