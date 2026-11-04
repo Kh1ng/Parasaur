@@ -17,6 +17,9 @@ export interface ModelCatalogEntry {
 export interface ModelCatalogSource {
   profile: string;
   nodeId?: string;
+  /** Only this runner uses the session's named account; switching runners
+   * clears that binding in the existing session-selection path. */
+  instance?: { backendId: string; id: string; label?: string };
 }
 
 export interface ModelBrowserProps {
@@ -76,7 +79,10 @@ export function ModelBrowser({
     setFilter('all');
   }, [open]);
 
-  const implemented = useMemo(() => backends.filter((backend) => backend.implemented), [backends]);
+  const catalogBackends = useMemo(() => backends.map(backend => backend.id === source.instance?.backendId
+    ? { ...backend, displayName: `${backend.displayName} · ${source.instance.label ?? source.instance.id}` }
+    : backend), [backends, source.instance?.backendId, source.instance?.id, source.instance?.label]);
+  const implemented = useMemo(() => catalogBackends.filter((backend) => backend.implemented), [catalogBackends]);
 
   useEffect(() => {
     if (!open) return;
@@ -89,7 +95,8 @@ export function ModelBrowser({
     const requests = implemented.map(backend => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), MODEL_READ_TIMEOUT_MS);
-      gahApi.getManagerChatModelsForBackend(source.profile, backend.id, source.nodeId, undefined, controller.signal)
+      const instance = source.instance?.backendId === backend.id ? source.instance.id : undefined;
+      gahApi.getManagerChatModelsForBackend(source.profile, backend.id, source.nodeId, instance, controller.signal)
         .then(({ models }) => {
           if (!cancelled) setCatalog(current => ({ ...current, [backend.id]: models }));
         })
@@ -110,13 +117,13 @@ export function ModelBrowser({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, retryEpoch, implemented, source.profile, source.nodeId]);
+  }, [open, retryEpoch, implemented, source.profile, source.nodeId, source.instance?.backendId, source.instance?.id]);
 
   // A configured-but-unwired provider still appears, flagged and
   // unselectable (#945) -- silently dropping it reads as "not configured".
-  const entries = useMemo<ModelCatalogEntry[]>(() => backends.flatMap((backend) => backend.implemented
+  const entries = useMemo<ModelCatalogEntry[]>(() => catalogBackends.flatMap((backend) => backend.implemented
     ? [{ backend, model: null }, ...(catalog[backend.id] ?? []).map((model) => ({ backend, model }))]
-    : [{ backend, model: null }]), [backends, catalog]);
+    : [{ backend, model: null }]), [catalogBackends, catalog]);
 
   const needle = query.trim().toLowerCase();
   const visible = entries.filter((entry) => {
@@ -188,7 +195,7 @@ export function ModelBrowser({
           <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter models">
             {chip('all', 'All')}
             {chip('favorites', 'Favorites')}
-            {backends.map((backend) => chip(backend.id, backend.displayName))}
+            {catalogBackends.map((backend) => chip(backend.id, backend.displayName))}
           </div>
         </div>
 

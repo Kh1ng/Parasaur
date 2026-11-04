@@ -1276,7 +1276,17 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork, gitlab
         currentReasoningEffortId: activeSession.reasoningEffort,
         modelsLoaded: sessionModelsLoaded,
         busy: turnBusy || !nodeReady || sessionSelectionChanging,
-        catalog: { profile, ...(chosenNode ? { nodeId: chosenNode } : {}) },
+        catalog: {
+          profile,
+          ...(chosenNode ? { nodeId: chosenNode } : {}),
+          ...(activeSession.backendInstance ? {
+            instance: {
+              backendId: activeSession.backend,
+              id: activeSession.backendInstance,
+              label: backendInstanceLabels[activeSession.backendInstance] ?? activeSession.backendInstance
+            }
+          } : {})
+        },
         onSelect: applySessionSelection
       };
     }

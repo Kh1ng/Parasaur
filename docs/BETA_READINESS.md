@@ -114,3 +114,8 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 - iOS background delivery requires the configured APNs service, a signed app, and a physical device check.
 
 Record the exact build, platform, commands, and live acceptance results before declaring beta ready. Keep this checklist pending while any required workflow remains unverified.
+
+The [2026-11-04 scope audit](validation/beta-progress-2026-11-03/readiness-audit-2026-11-04.md)
+maps every requested capability to evidence and remaining acceptance. It also
+records the later named-account catalog repair; the recovery ZIP at `d86a59b4`
+predates that repair.

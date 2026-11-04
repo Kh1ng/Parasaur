@@ -254,3 +254,30 @@ test('closing the model browser cancels pending reads and reopening can discover
   await expect(browser.getByRole('listitem')).toHaveCount(7);
   await expect(browser.getByRole('status')).toHaveText('7 of 7 shown');
 });
+
+test('catalog discovery scopes the selected runner to its named account without sending it to other runners', async ({ mount, page }) => {
+  const reads: URL[] = [];
+  await page.route('**/api/manager-chat/models*', route => {
+    const url = new URL(route.request().url());
+    reads.push(url);
+    return route.fulfill({ json: { models: [{ id: 'work-only', name: 'Work-only model' }] } });
+  });
+  const selections: ProviderSelection[] = [];
+  const component = await mount(<ProviderPicker
+    backends={[{ id: 'codex', displayName: 'Codex', implemented: true }, { id: 'claude', displayName: 'Claude', implemented: true }]}
+    selectedBackendId="codex" selectedInstanceLabel="Work login" models={[]} currentModelId={null}
+    reasoningEfforts={efforts} currentReasoningEffortId="medium" modelsLoaded busy={false} variant="session"
+    catalog={{ profile: 'work', nodeId: 'worker-one', instance: { backendId: 'codex', id: 'codex-work', label: 'Work login' } }}
+    onSelect={selection => { selections.push(selection); }}
+  />);
+  await component.getByRole('button', { name: 'Provider picker' }).click();
+  await page.getByRole('dialog', { name: 'Provider picker' }).getByRole('button', { name: 'Browse all models' }).click();
+  const browser = page.getByRole('dialog', { name: 'Browse models' });
+  const selected = browser.getByRole('button', { name: /Work-only model\s+Codex · Work login/ });
+  await expect(selected).toBeVisible();
+  expect(reads.find(url => url.searchParams.get('backend') === 'codex')?.searchParams.get('backendInstance')).toBe('codex-work');
+  expect(reads.find(url => url.searchParams.get('backend') === 'claude')?.searchParams.has('backendInstance')).toBe(false);
+  expect(reads.every(url => url.searchParams.get('profile') === 'work' && url.searchParams.get('nodeId') === 'worker-one')).toBe(true);
+  await selected.click();
+  expect(selections.at(-1)).toEqual({ backendId: 'codex', modelId: 'work-only', reasoningEffortId: 'medium' });
+});

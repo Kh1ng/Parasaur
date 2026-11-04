@@ -1107,7 +1107,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
         } satisfies ServerMessage);
         return;
       case 'manager.chat.sessionCreate': {
-        const created = createSession(message.profile, message.backend, message.model ?? null, message.title);
+        const created = createSession(message.profile, message.backend, message.model ?? null, message.title, message.backendInstance ?? null);
         send(ws, { type: 'manager.chat.sessionCreated', requestId: message.requestId, profile: message.profile, session: created } satisfies ServerMessage);
         return;
       }
@@ -1128,7 +1128,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     }
   }
 
-  function createSession(profile: string, backend?: string, model: string | null = null, title?: string): ChatSessionSummary {
+  function createSession(profile: string, backend?: string, model: string | null = null, title?: string, backendInstance: string | null = null): ChatSessionSummary {
     const id = `mock-session-${state.sessions.size + 1}`;
     const created = {
       id,
@@ -1136,6 +1136,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       worktreePath: '/mock/in-memory-only',
       branch: `gah/${id}`,
       backend: backend ?? state.settings.defaultBackend,
+      backendInstance,
       model,
       reasoningEffort: null,
       title: title ?? null,
@@ -1150,12 +1151,13 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     return created;
   }
 
-  function updateSession(profile: string, id: string, patch: { backend?: string; model?: string | null; reasoningEffort?: string | null; title?: string }): ChatSessionSummary | null {
+  function updateSession(profile: string, id: string, patch: { backend?: string; backendInstance?: string | null; model?: string | null; reasoningEffort?: string | null; title?: string }): ChatSessionSummary | null {
     const current = state.sessions.get(id);
     if (!current || current.profile !== profile || current.archivedAt !== null) return null;
     const updated = {
       ...current,
       ...(patch.backend !== undefined ? { backend: patch.backend } : {}),
+      ...(patch.backendInstance !== undefined ? { backendInstance: patch.backendInstance } : {}),
       ...(patch.model !== undefined ? { model: patch.model } : {}),
       ...(patch.reasoningEffort !== undefined ? { reasoningEffort: patch.reasoningEffort } : {}),
       ...(patch.title !== undefined ? { title: patch.title } : {}),
@@ -1200,12 +1202,13 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
 
   /** PR → chat: a read-only session seeded with the PR -- worktree-less,
    * riding the PR's head branch, with the PR as the opening message. */
-  function createPrSession(profile: string, backend: string | undefined, model: string | null, pr: ChatPrSummary): ChatSessionSummary {
+  function createPrSession(profile: string, backend: string | undefined, model: string | null, pr: ChatPrSummary, backendInstance: string | null = null): ChatSessionSummary {
     const id = `mock-session-${state.sessions.size + 1}`;
     const created = {
       id,
       profile,
       prNumber: pr.number,
+      backendInstance,
       worktreePath: null,
       branch: pr.headRefName ?? `gah/pr/${id}`,
       backend: backend ?? state.settings.defaultBackend,
@@ -2032,7 +2035,8 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       profile,
       bodyString(req.body?.backend),
       bodyString(req.body?.model) ?? null,
-      `#${issue.number} ${issue.title}`
+      `#${issue.number} ${issue.title}`,
+      bodyString(req.body?.backendInstance) ?? null
     );
     const session = { ...created, branch: `gah/issue-${issue.number}` } satisfies ChatSessionSummary;
     state.sessions.set(session.id, session);
@@ -2094,7 +2098,8 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       profile,
       bodyString(req.body?.backend),
       bodyString(req.body?.model) ?? null,
-      pr
+      pr,
+      bodyString(req.body?.backendInstance) ?? null
     );
     res.status(201).json({ session: created, existing: false } satisfies ChatPrStartResult);
   });
@@ -2167,7 +2172,8 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       bodyString(req.body?.profile) ?? 'fixture',
       bodyString(req.body?.backend),
       bodyString(req.body?.model) ?? null,
-      bodyString(req.body?.title)
+      bodyString(req.body?.title),
+      bodyString(req.body?.backendInstance) ?? null
     );
     res.status(201).json(created satisfies ChatSessionSummary);
   });
@@ -2177,6 +2183,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     if (!id) return jsonError(res, 400, 'Missing required field: sessionId', 'sessionId is required');
     const updated = updateSession(profile, id, {
       ...(bodyString(req.body?.backend) ? { backend: req.body.backend as string } : {}),
+      ...(typeof req.body?.backendInstance === 'string' || req.body?.backendInstance === null ? { backendInstance: req.body.backendInstance as string | null } : {}),
       ...(typeof req.body?.model === 'string' || req.body?.model === null ? { model: req.body.model as string | null } : {}),
       ...(typeof req.body?.reasoningEffort === 'string' || req.body?.reasoningEffort === null ? { reasoningEffort: req.body.reasoningEffort as string | null } : {}),
       ...(bodyString(req.body?.title) ? { title: req.body.title as string } : {})
