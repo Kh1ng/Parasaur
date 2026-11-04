@@ -43,9 +43,10 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
-- A matched Windows x64 desktop and WSL CLI candidate at `c1a55cf0` completed
-  an actual current-user upgrade. Installed bytes and preserved settings were
-  verified; NSIS/MSI and the combined bundle are saved locally. Installed-CLI
+- Windows x64 desktop `c1a55cf0` completed an actual current-user upgrade.
+  Installed bytes and preserved settings were verified; its NSIS/MSI and
+  matched combined bundle are saved locally. The user WSL CLI was subsequently
+  updated to `d86a59b4` with a rollback copy. Installed-CLI
   metadata and Mistral preflight passed. The app was left closed; current-build
   rendering and real sign-in remain unverified. No worker service was started.
   Do not mix candidate manifests. This is unsigned
@@ -82,6 +83,11 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   preserving tracked checkout files and serving the installed dashboard.
   Its binaries require glibc 2.39; host compatibility remains unverified.
   MacBook work is explicitly deferred by the owner.
+- The newer central recovery candidate at `d86a59b4` passed an actual optimized
+  release install with Windows npm first on WSL's PATH, preserving checkout
+  manifests and serving installed asset bodies. The WSL updater now selects
+  Linux npm for that case. See [toolchain and recovery handoff](validation/beta-progress-2026-11-03/wsl-release-toolchain.md).
+  The package still requires glibc 2.39 and is not deployed to the live host.
 
 - Michael's controller status, route/claim state, and ledger are not available in this session. GitHub review comments establish recorded opinions, not why his running loop has not acted.
 - Parasaur was confirmed at `https://hermesagent.tail82695.ts.net:8443`; the original HTTPS listener serves Hermes. Windows saved desktop connection URLs were corrected. The live central reports v0.2.0 and ready backend checks, but its referenced JavaScript/CSS GETs return HTTP 500, preventing dashboard rendering. Protected API reads return 401 until a central credential is supplied. Repair asset delivery and authenticate before accepting the live factory.

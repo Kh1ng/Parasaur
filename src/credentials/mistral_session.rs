@@ -107,7 +107,7 @@ fn destination(root: &Path) -> Result<PathBuf> {
 fn check_default_source(root: &Path) -> Result<()> {
     let default = destination(root)?;
     if std::env::var_os("MISTRAL_DASHBOARD_COOKIE_FILE")
-        .is_some_and(|path| PathBuf::from(path) != default)
+        .is_some_and(|path| Path::new(&path) != default)
     {
         bail!("a custom Mistral cookie source is configured");
     }
