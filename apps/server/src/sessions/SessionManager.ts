@@ -32,6 +32,7 @@ export type SessionOptions = {
   mr?: string;
   mode: string;
   backend?: string;
+  backendInstance?: string;
   model?: string;
   budget?: number;
   dryRun?: boolean;
@@ -137,6 +138,7 @@ class SessionManagerImpl {
     // Create initial session
     const session: Session = {
       id: sessionId,
+      requestId: options.requestId,
       providerKind: options.providerKind,
       instanceId: options.instanceId,
       status: 'starting',
@@ -147,6 +149,7 @@ class SessionManagerImpl {
       mr: options.mr,
       mode: options.mode,
       backend: options.backend,
+      backendInstance: options.backendInstance,
       model: options.model,
       budget: options.budget,
       gitlab: options.gitlab
@@ -165,6 +168,7 @@ class SessionManagerImpl {
       profile: options.profile,
       mode: options.mode,
       backend: options.backend,
+      backendInstance: options.backendInstance,
       target: options.target,
       branch: options.branch,
       mr: options.mr,

@@ -1260,6 +1260,7 @@ export function createServer(
       const enriched = {
         ...status,
         running_workers: runningWorkers(status, nodes, identity.node_id),
+        dispatch_backend_instances: true,
         node: {
           ...node,
           central_claim_observation: node.central_url && status.node?.central_url === node.central_url
@@ -1711,6 +1712,7 @@ export function createServer(
       target: typeof body.target === 'string' ? body.target : undefined,
       mr: typeof body.mr === 'string' ? body.mr : undefined,
       backend: typeof body.backend === 'string' ? body.backend : undefined,
+      backendInstance: body.backendInstance,
       model: typeof body.model === 'string' ? body.model : undefined,
       budget: typeof body.budget === 'number' ? body.budget : undefined,
       dryRun: body.dryRun === true,

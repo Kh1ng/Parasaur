@@ -1,10 +1,9 @@
 import { RunningWorkersRoster } from '../components/RunningWorkersRoster.js';
 import { CentralClaimStatus } from '../components/CentralClaimStatus.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, ListChecks, Rocket } from 'lucide-react';
+import { ChevronRight, ListChecks } from 'lucide-react';
 import { ExternalAnchor } from '../components/ExternalAnchor';
-import type { AvailableTicket, ManagerBackendInfo, MergeRequest, ProviderKind, Session, UsageRollupTicketRow, WorkWaypointEvidence } from '@git-agent-harness/contracts';
-import { generateProviderInstanceId } from '@git-agent-harness/shared';
+import type { AvailableTicket, ManagerBackendInfo, MergeRequest, Session, UsageRollupTicketRow, WorkWaypointEvidence } from '@git-agent-harness/contracts';
 import { gahApi, GahApiError } from '../api/client.js';
 import { useWebSocket } from '../ws/WebSocketContext.js';
 import { useUiStore } from '../store/uiStore.js';
@@ -18,7 +17,7 @@ import { SessionCard } from '../components/SessionCard.js';
 import { PaidRouteApprovals } from '../components/PaidRouteApprovals.js';
 import { ExternalApprovals } from '../components/ExternalApprovals.js';
 import { ControllerActivityCard } from '../components/ControllerActivityCard.js';
-import { ProviderPicker } from '../components/ProviderPicker.js';
+import { FactoryDispatchForm } from '../components/FactoryDispatchForm.js';
 import { formatCost, formatPercent } from '../lib/format.js';
 import { workKey } from '../lib/workKey.js';
 import { reviewWaitReason } from '../lib/reviewLabels.js';
@@ -30,90 +29,6 @@ import {
 } from '../components/WaypointProgress.js';
 
 const WORK_REFRESH_MS = 30 * 1000;
-
-const DISPATCH_MODES = ['fix', 'improve', 'review', 'pm', 'experiment'] as const;
-
-/** Minimal "start a new dispatch" form -- the dashboard could only stop/
- * command sessions that already existed, with no way to start one. Sends
- * the same `session.start` message the WS contract already defines
- * (apps/server's SessionManager.startSession); no new server-side work. */
-function NewDispatchForm({ profile, repo, backends }: { profile: string; repo: string | null; backends: ManagerBackendInfo[] }) {
-  const { sendMessage, isConnected } = useWebSocket();
-  const [mode, setMode] = useState<(typeof DISPATCH_MODES)[number]>('fix');
-  const [backend, setBackend] = useState<ProviderKind>('auto');
-  const [target, setTarget] = useState('');
-  const [justSent, setJustSent] = useState(false);
-
-  const dispatch = () => {
-    if (!repo) return;
-    sendMessage({
-      type: 'session.start',
-      requestId: `dispatch_${Date.now()}`,
-      profile,
-      providerKind: backend,
-      instanceId: generateProviderInstanceId(backend, 0),
-      repo,
-      mode,
-      backend,
-      target: target.trim() || undefined
-    });
-    setJustSent(true);
-    setTimeout(() => setJustSent(false), 3000);
-  };
-
-  return (
-    <section className="card-padded">
-      <h3 className="text-sm font-semibold text-primary mb-3 flex items-center gap-2">
-        <Rocket size={15} aria-hidden="true" />
-        Queue work
-      </h3>
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="text-xs text-muted">
-          Mode
-          <select
-            value={mode}
-            onChange={(e) => setMode(e.target.value as typeof mode)}
-            className="block mt-1 bg-raised border border-subtle rounded-md px-2 py-1.5 text-sm text-primary"
-          >
-            {DISPATCH_MODES.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
-        </label>
-        <div className="text-xs text-muted">
-          <span className="mb-1 block">Backend</span>
-          <ProviderPicker
-            backends={backends}
-            selectedBackendId={backend}
-            models={[]}
-            currentModelId={null}
-            reasoningEfforts={[]}
-            currentReasoningEffortId={null}
-            modelsLoaded
-            busy={false}
-            variant="backend"
-            triggerAriaLabel="Factory backend"
-            onSelect={(selection) => setBackend(selection.backendId as ProviderKind)}
-          />
-        </div>
-        <label className="text-xs text-muted flex-1 min-w-[160px]">
-          Target (issue number or ticket path)
-          <input
-            type="text"
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-            placeholder="e.g. 148"
-            className="block mt-1 w-full bg-raised border border-subtle rounded-md px-2 py-1.5 text-sm text-primary placeholder:text-muted"
-          />
-        </label>
-        <button onClick={dispatch} disabled={!isConnected || !repo || !backends.find(item => item.id === backend)?.implemented} className="btn-primary">
-          {justSent ? 'Sent' : 'Dispatch'}
-        </button>
-      </div>
-      {!repo && <p className="text-xs text-critical mt-2">No repo known for this profile yet -- check Settings.</p>}
-    </section>
-  );
-}
 
 type WorkPageProps = {
   sessions: Session[];
@@ -322,9 +237,13 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
     review: reviewWork.size,
     shipped: shippedWork.size
   };
+  const backendConfigured = (id: string) => status.data?.backend_configured?.[id] === true
+    || status.data?.nodes?.some(node => node.state === 'healthy'
+      && (!node.profile || node.profile === profile) && (!node.profiles.length || node.profiles.includes(profile ?? 'gah'))
+      && node.backend_configured[id] === true) === true;
   const dispatchBackends: ManagerBackendInfo[] = [
-    { id: 'auto', displayName: 'Auto', implemented: factoryData.managerBackends.some(item => item.implemented && status.data?.backend_configured?.[item.id] === true) },
-    ...factoryData.managerBackends.map(item => ({ ...item, implemented: item.implemented && status.data?.backend_configured?.[item.id] === true }))
+    { id: 'auto', displayName: 'Auto', implemented: factoryData.managerBackends.some(item => item.implemented && backendConfigured(item.id)) },
+    ...factoryData.managerBackends.map(item => ({ ...item, implemented: item.implemented && backendConfigured(item.id) }))
   ];
   const reportKey = JSON.stringify({ profile: profile ?? undefined, since: '7d', groupBy: 'backend' });
   const currentReport = report.key === reportKey && !report.error ? report.data : null;
@@ -458,7 +377,13 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
         </div>
       )}
 
-      <NewDispatchForm profile={profile ?? 'gah'} repo={activeProfileRepo} backends={dispatchBackends} />
+      <FactoryDispatchForm key={JSON.stringify([profile, activeProfileRepo])} profile={profile ?? 'gah'} repo={activeProfileRepo} backends={dispatchBackends}
+        nodes={[
+          ...(status.data?.node_id ? [{ node_id: status.data.node_id, display_name: status.data.display_name ?? 'Central',
+            state: 'healthy' as const, profile: profile ?? 'gah', profiles: [], backend_instances: status.data.backend_instances ?? [],
+            dispatch_backend_instances: status.data.dispatch_backend_instances }] : []),
+          ...(status.data?.nodes ?? [])
+        ]} accountSelectionSupported={!status.error && status.data?.dispatch_backend_instances === true} />
 
       <section>
         <ControllerActivityCard activity={controllerActivity} />

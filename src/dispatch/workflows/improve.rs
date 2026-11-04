@@ -21,13 +21,12 @@ use super::super::validation::{
 };
 use super::super::DispatchArgs;
 use super::already_satisfied_reconcile::AlreadySatisfiedRun;
-use crate::config::{self, GahConfig, Profile};
+use crate::config::{GahConfig, Profile};
 use crate::controller::HumanRequiredReason;
 use crate::job_kind::JobKind;
-use crate::ledger::{self, LedgerEntry};
+use crate::ledger::LedgerEntry;
 use crate::notifications::{notify_event, NotifyEvent};
 use crate::policy::enforce_policy;
-use crate::routing::RouteRequest;
 use crate::usage_attribution::UsageAttribution;
 use crate::validation_runner::{validate_with_exit_code, VALIDATION_COMMAND_TIMEOUT_EXIT_CODE};
 use crate::{runner, worktree};
@@ -47,6 +46,7 @@ pub(in crate::dispatch) use job_contract::preflight as preflight_job_contract;
 mod publish_mr;
 use finish::finish_improve_workflow;
 mod repair;
+mod route_request;
 mod shutdown;
 use shutdown::record_cancelled_attempt;
 mod stall;
@@ -98,37 +98,7 @@ pub(crate) fn improve(
     } else {
         parse_ticket_metadata(Path::new(&target)).ok().flatten()
     };
-    let usage_summary = ledger::usage_summary_for_backend(
-        cfg,
-        args.backend.as_str(),
-        args.model.as_deref(),
-        Some(
-            session_dir
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or(""),
-        ),
-    )
-    .ok();
-    let route_req = RouteRequest {
-        mode: &args.mode,
-        requested_backend: config::canonical_backend_name(&args.backend),
-        requested_model: args.model.as_deref(),
-        recommended_backend: ticket_meta
-            .as_ref()
-            .and_then(|m| m.recommended_backend.as_deref()),
-        recommended_model: ticket_meta
-            .as_ref()
-            .and_then(|m| m.recommended_model.as_deref()),
-        session_id: session_dir.file_name().and_then(|s| s.to_str()),
-        usage_summary,
-        last_failure_class: if args.escalate {
-            Some(crate::ledger::FailureClass::AgentNoProgress.as_str())
-        } else {
-            None
-        },
-        exact_route_required: false,
-    };
+    let route_req = route_request::for_dispatch(cfg, args, ticket_meta.as_ref(), session_dir);
     let mut route = decide_route(
         cfg,
         profile,

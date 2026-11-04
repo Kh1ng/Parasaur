@@ -121,7 +121,7 @@ function encodeKeyPart(value: string): string {
   return encodeURIComponent(value);
 }
 
-function deriveDispatchWorkKey(options: Pick<RoutedSessionOptions, 'profile' | 'repo' | 'branch' | 'target' | 'mr' | 'mode' | 'backend' | 'model'>): string {
+function deriveDispatchWorkKey(options: Pick<RoutedSessionOptions, 'profile' | 'repo' | 'branch' | 'target' | 'mr' | 'mode' | 'backend' | 'backendInstance' | 'model' | 'nodeId'>): string {
   return [
     options.profile,
     options.repo,
@@ -130,7 +130,8 @@ function deriveDispatchWorkKey(options: Pick<RoutedSessionOptions, 'profile' | '
     options.mr ?? '',
     options.mode,
     options.backend ?? '',
-    options.model ?? ''
+    options.model ?? '',
+    ...(options.backendInstance ? [options.backendInstance, options.nodeId ?? ''] : [])
   ].map(encodeKeyPart).join('|');
 }
 
@@ -147,6 +148,8 @@ function deriveLeaseWorkKey(lease: Pick<LeaseRecord, 'profile' | 'session'>): st
     mr: session.mr,
     mode: session.mode,
     backend: session.backend,
+    backendInstance: session.backendInstance,
+    nodeId: session.nodeId,
     model: session.model
   });
 }
@@ -161,10 +164,11 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
-const WORK_KEY_SESSION_FIELDS = ['repo', 'branch', 'target', 'mr', 'mode', 'backend', 'model'] as const;
+const WORK_KEY_SESSION_FIELDS = ['repo', 'branch', 'target', 'mr', 'mode', 'backend', 'backendInstance', 'model', 'nodeId'] as const;
 
 /** Rebuilds a stored work key in today's format. Writers stored seven parts
- * before #1102 added mr as the fifth, and eight since. Anything else, a key for
+ * before #1102 added mr as the fifth, eight since, and ten for node-local
+ * account pins. Anything else, a key for
  * another profile, or one without repo and mode is not a key any writer made. */
 function normalizeStoredWorkKey(profile: string, workKey: unknown): string | null {
   if (!isNonEmptyString(workKey)) {
@@ -174,7 +178,7 @@ function normalizeStoredWorkKey(profile: string, workKey: unknown): string | nul
   if (parts.length === 7) {
     parts.splice(4, 0, '');
   }
-  if (parts.length !== 8) {
+  if (parts.length !== 8 && parts.length !== 10) {
     return null;
   }
   let decoded: string[];
@@ -183,11 +187,11 @@ function normalizeStoredWorkKey(profile: string, workKey: unknown): string | nul
   } catch {
     return null;
   }
-  const [keyProfile, repo, branch, target, mr, mode, backend, model] = decoded as [string, ...string[]];
+  const [keyProfile, repo, branch, target, mr, mode, backend, model, backendInstance, nodeId] = decoded as [string, ...string[]];
   if (keyProfile !== profile || !repo || !mode) {
     return null;
   }
-  const normalized = deriveDispatchWorkKey({ profile, repo, branch, target, mr, mode, backend, model });
+  const normalized = deriveDispatchWorkKey({ profile, repo, branch, target, mr, mode, backend, model, backendInstance, nodeId });
   // A writer encoded every part, so a differently encoded key did not come from one.
   return normalized === parts.join('|') ? normalized : null;
 }
@@ -214,6 +218,8 @@ function isCompleteLease(value: unknown): value is LeaseRecord {
     return false;
   }
   const session = lease.session;
+  if (session.backendInstance !== undefined && (!/^[a-zA-Z0-9_-]{1,128}$/.test(session.backendInstance)
+    || session.nodeId !== lease.nodeId)) return false;
   if (!WORK_KEY_SESSION_FIELDS.every((field) => session[field] == null || typeof session[field] === 'string')) {
     return false;
   }
@@ -454,6 +460,7 @@ class RemoteNodeTransport implements NodeDispatchTransport {
           mr: options.mr,
           mode: options.mode,
           backend: options.backend,
+          backendInstance: options.backendInstance,
           model: options.model,
           budget: options.budget,
           dryRun: options.dryRun,
@@ -702,11 +709,17 @@ export class FleetDispatchCoordinator {
   }
 
   async startSession(options: RoutedSessionOptions): Promise<Session> {
+    if (options.backendInstance !== undefined && (typeof options.backendInstance !== 'string'
+      || !/^[a-zA-Z0-9_-]{1,128}$/.test(options.backendInstance)
+      || !options.backend || options.backend === 'auto' || !options.nodeId)) {
+      throw new GAHError('An exact account requires a valid account identifier, explicit backend and execution node.', 'INVALID_BACKEND_INSTANCE');
+    }
     const requestId = options.requestId ?? generateRequestId();
     const workKey = deriveDispatchWorkKey(options);
     const pending = this.pendingRequestStarts.get(requestId) ?? this.pendingWorkStarts.get(workKey);
     if (pending) {
       const session = await pending;
+      this.assertAccountBinding(session, options);
       if (options.retainReceipt) this.pinReceipt(requestId, session.id);
       return session;
     }
@@ -732,12 +745,14 @@ export class FleetDispatchCoordinator {
 
     const existingByRequest = this.leaseStore.getByRequestId(requestId);
     if (existingByRequest && existingByRequest.state !== 'expired') {
+      this.assertAccountBinding(existingByRequest.session, options);
       if (options.retainReceipt) this.pinReceipt(requestId, existingByRequest.session.id);
       return existingByRequest.session;
     }
 
     const existingByWorkKey = this.leaseStore.getByWorkKey(workKey);
     if (existingByWorkKey) {
+      this.assertAccountBinding(existingByWorkKey.session, options);
       if (options.retainReceipt) this.pinReceipt(requestId, existingByWorkKey.session.id);
       return existingByWorkKey.session;
     }
@@ -753,6 +768,7 @@ export class FleetDispatchCoordinator {
       });
       const session = await transport.startSession(options);
       const routed = decorateSession(session, this.coordinatorIdentity.node_id, 'running');
+      await this.verifyStartedAccount(transport, routed, options);
       this.remoteTransports.set(routed.id, transport);
       this.recordLease({
         requestId,
@@ -785,6 +801,7 @@ export class FleetDispatchCoordinator {
     });
     this.remoteTransports.set(session.id, transport);
     const routed = decorateSession(session, target.nodeId, 'running');
+    await this.verifyStartedAccount(transport, routed, options);
     this.recordLease({
       requestId,
       retainReceipt: options.retainReceipt,
@@ -804,6 +821,18 @@ export class FleetDispatchCoordinator {
       session: routed
     });
     return routed;
+  }
+
+  private assertAccountBinding(session: Session, options: RoutedSessionOptions): void {
+    if (session.backendInstance !== options.backendInstance
+      || options.backendInstance && session.nodeId !== options.nodeId) {
+      throw new GAHError('Dispatch receipt does not match the requested account and execution node. Use a new request ID for a different selection.', 'DISPATCH_ACCOUNT_MISMATCH');
+    }
+  }
+
+  private async verifyStartedAccount(transport: NodeDispatchTransport, session: Session, options: RoutedSessionOptions): Promise<void> {
+    try { this.assertAccountBinding(session, options); }
+    catch (error) { await transport.stopSession(session.id).catch(() => {}); throw error; }
   }
 
   async stopSession(sessionId: string): Promise<Session> {
@@ -1054,7 +1083,8 @@ export class FleetDispatchCoordinator {
       });
     }
 
-    if (!candidates.some((candidate) => candidate.nodeId === coordinatorId)) {
+    if (!candidates.some((candidate) => candidate.nodeId === coordinatorId)
+      && (!options.backendInstance || !nodes.some(snapshot => snapshot.node_id === coordinatorId))) {
       candidates.push({
         nodeId: coordinatorId,
         advertisedUrl: this.coordinatorIdentity.advertised_url,
@@ -1067,6 +1097,13 @@ export class FleetDispatchCoordinator {
     if (pin) {
       const pinned = candidates.find((candidate) => candidate.nodeId === pin);
       if (!pinned) {
+        const snapshot = nodes.find(node => node.node_id === pin);
+        if (options.backendInstance && snapshot && pin !== coordinatorId && snapshot.dispatch_backend_instances !== true) {
+          throw new GAHError(`Update worker ${pin} before dispatching to a named account. It does not advertise exact account routing.`, 'BACKEND_INSTANCE_UNSUPPORTED');
+        }
+        if (options.backendInstance && snapshot) {
+          throw new GAHError(`Account ${options.backendInstance} on node ${pin} is unavailable for this dispatch. Check node health, login, model support and limits.`, 'NODE_PINNING_FAILED');
+        }
         throw new GAHError(`Pinned node ${pin} is not healthy or not registered for profile ${options.profile}`, 'NODE_PINNING_FAILED');
       }
       return pinned;
@@ -1111,6 +1148,10 @@ export class FleetDispatchCoordinator {
   }
 
   private isSnapshotEligible(snapshot: NodeObservationSnapshot, options: RoutedSessionOptions): boolean {
+    if (options.backendInstance && (
+      snapshot.node_id !== this.coordinatorIdentity.node_id && snapshot.dispatch_backend_instances !== true
+      || !this.relevantBackendInstances(snapshot, options).some(instance => instance.enabled
+        && (instance.executable_resolved ?? instance.executable_configured) && instance.auth_ready !== false))) return false;
     if (snapshot.state !== 'healthy') {
       return false;
     }
@@ -1155,7 +1196,9 @@ export class FleetDispatchCoordinator {
     if (!options.backend) {
       return true;
     }
-    const relevant = snapshot.availability.filter((scope) => scope.backend === options.backend);
+    const relevant = snapshot.availability.filter((scope) => scope.backend === options.backend
+      && (!options.backendInstance || (!scope.backend_instance || scope.backend_instance === options.backendInstance)
+        && (!scope.quota_pool || this.relevantBackendInstances(snapshot, options).some(instance => instance.quota_pool === scope.quota_pool))));
     if (relevant.length === 0) {
       return true;
     }
@@ -1189,6 +1232,7 @@ export class FleetDispatchCoordinator {
 
   private relevantBackendInstances(snapshot: NodeObservationSnapshot, options: RoutedSessionOptions): typeof snapshot.backend_instances {
     return snapshot.backend_instances.filter((instance) => {
+      if (options.backendInstance && instance.backend_instance !== options.backendInstance) return false;
       if (!options.backend) {
         return true;
       }
@@ -1197,7 +1241,7 @@ export class FleetDispatchCoordinator {
   }
 
   private getConfiguredConcurrencyCap(snapshot: NodeObservationSnapshot, options: RoutedSessionOptions): number | null {
-    const matchingInstances = this.relevantBackendInstances(snapshot, options).filter((instance) => {
+    const matchingInstances = this.relevantBackendInstances(snapshot, { ...options, backendInstance: undefined }).filter((instance) => {
       if (!(instance.executable_resolved ?? instance.executable_configured)) {
         return false;
       }

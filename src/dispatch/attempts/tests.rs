@@ -1002,6 +1002,7 @@ fn decide_route_classifies_no_eligible_backend_as_backend_error() {
     let req = RouteRequest {
         mode: "pm",
         requested_backend: "auto",
+        requested_instance: None,
         requested_model: None,
         recommended_backend: None,
         recommended_model: None,
@@ -1044,6 +1045,7 @@ fn exact_route_deferral_preserves_requested_identity_in_ledger_diagnostics() {
     let req = RouteRequest {
         mode: "review",
         requested_backend: "not-a-real-reviewer",
+        requested_instance: None,
         requested_model: Some("exact-model"),
         recommended_backend: None,
         recommended_model: None,

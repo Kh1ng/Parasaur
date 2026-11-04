@@ -837,6 +837,7 @@ export class RegistryService {
         ? payload.backend_configured
         : {},
       backend_instances: Array.isArray(payload.backend_instances) ? payload.backend_instances : [],
+      dispatch_backend_instances: payload.dispatch_backend_instances === true,
       availability: Array.isArray(payload.availability) ? payload.availability : [],
       auth_health: parseNodeAuthHealth(payload.auth_health),
       central_claim_observations: parseNodeCentralClaims(payload.node,

@@ -153,6 +153,8 @@ export function activityPath(event: Pick<ActivityEvent, "id" | "profile" | "sess
 // Session type - manually defined instead of using Effect Schema
 // to avoid version compatibility issues
 export interface Session {
+  /** Dispatch receipt correlation, retained in reconnect snapshots. */
+  requestId?: string;
   id: SessionId;
   providerKind: ProviderKind;
   instanceId: ProviderInstanceId;
@@ -170,6 +172,8 @@ export interface Session {
   mr?: string;
   mode?: string;
   backend?: string;
+  /** Exact declared account on nodeId; distinct from provider transport instanceId. */
+  backendInstance?: string;
   model?: string;
   budget?: number;
   /** GitLab page context when this dispatch was started from a GitLab
@@ -224,6 +228,8 @@ export type ServerMessage =
     }
   | {
       type: "session.started";
+      /** Present on the direct reply, including replies that joined existing work. */
+      requestId?: string;
       session: Session;
     }
   | {
@@ -419,6 +425,8 @@ export type ClientMessage =
       mr?: string;
       mode: string;
       backend?: string;
+      /** Exact account on the explicitly selected node; no sibling fallback. */
+      backendInstance?: string;
       model?: string;
       budget?: number;
       /** GitLab page context for dispatches started from GitLab events

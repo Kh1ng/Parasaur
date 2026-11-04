@@ -379,6 +379,9 @@ pub enum Commands {
         /// Backend: openhands, cloud-coder, codex, claude, agy, vibe, opencode, auto
         #[arg(long, default_value = "auto")]
         backend: String,
+        /// Exact declared account on the selected execution node. Never falls back.
+        #[arg(long)]
+        backend_instance: Option<String>,
         #[arg(long, default_value = "")]
         target: String,
         #[arg(long)]

@@ -9,6 +9,43 @@ import { WebSocket } from 'ws';
 import type { ClientMessage, ProjectImportResult, ServerMessage, PairingAccessRequest, PairedDevice } from '@git-agent-harness/contracts';
 import { createMockControlPlane, MOCK_SCENARIOS } from './controlPlane.js';
 
+test('sample factory dispatch acknowledges and retains exact account identity across a retry', async () => {
+  const running = await createMockControlPlane().listen(0);
+  const ws = new WebSocket(running.wsUrl);
+  try {
+    const welcome = nextMessage(ws, 'server.welcome');
+    await new Promise<void>((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
+    await welcome;
+    const status = await (await fetch(`${running.baseUrl}/api/status`)).json() as { dispatch_backend_instances: boolean; backend_instances: { backend_instance: string }[] };
+    assert.equal(status.dispatch_backend_instances, true);
+    assert.ok(status.backend_instances.some(item => item.backend_instance === 'codex-work'));
+    const message: ClientMessage = { type: 'session.start', requestId: 'sample-exact', profile: 'fixture',
+      repo: 'Kh1ng/git-agent-harness', providerKind: 'codex', instanceId: 'codex-0', mode: 'improve',
+      backend: 'codex', backendInstance: 'codex-work', model: 'gpt-5.3-codex', nodeId: 'mock-central' };
+    let sessionId: string | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const reply = nextMessage(ws, 'session.started');
+      ws.send(JSON.stringify(message));
+      const result = await reply;
+      assert.equal(result.type, 'session.started');
+      if (result.type !== 'session.started') throw new Error('Expected session receipt');
+      assert.equal(result.requestId, message.requestId);
+      assert.equal(result.session.backendInstance, 'codex-work');
+      assert.equal(result.session.nodeId, 'mock-central');
+      if (sessionId) assert.equal(result.session.id, sessionId);
+      sessionId = result.session.id;
+    }
+    const failure = nextMessage(ws, 'error');
+    ws.send(JSON.stringify({ ...message, backendInstance: 'codex-personal' }));
+    const error = await failure;
+    assert.equal(error.type, 'error');
+    const stopped = nextMessage(ws, 'session.stopped');
+    ws.send(JSON.stringify({ type: 'session.stop', requestId: 'stop', sessionId }));
+    const result = await stopped;
+    assert.equal(result.type === 'session.stopped' && result.session.status, 'stopped');
+  } finally { ws.terminate(); await running.close(); }
+});
+
 async function post(baseUrl: string, path: string, body: unknown = {}): Promise<Response> {
   return fetch(`${baseUrl}${path}`, {
     method: 'POST',

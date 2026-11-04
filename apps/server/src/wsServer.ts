@@ -456,6 +456,7 @@ async function handleStartSession(ws: WebSocket, message: Extract<ClientMessage,
       mr: message.mr,
       mode: message.mode,
       backend: message.backend,
+      backendInstance: message.backendInstance,
       model: message.model,
       budget: message.budget,
       manualWorker: message.manualWorker,
@@ -466,6 +467,7 @@ async function handleStartSession(ws: WebSocket, message: Extract<ClientMessage,
     // Send success response
     ws.send(JSON.stringify({
       type: 'session.started' as const,
+      requestId,
       session
     }));
     

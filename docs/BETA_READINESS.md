@@ -43,6 +43,13 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Exact factory account routing](validation/beta-progress-2026-11-03/factory-account-routing.md)
+  now carries node/account/model selection through the real CLI and ledger,
+  refuses older workers that cannot preserve it, and acknowledges submission
+  with safe identical retries. Local CLI, fleet, server and Windows browser
+  checks passed. Real-provider execution and live central/worker deployment
+  remain unverified; installed artifacts still predate this feature.
+
 - Windows x64 desktop `c1a55cf0` completed an actual current-user upgrade.
   Installed bytes and preserved settings were verified; its NSIS/MSI and
   matched combined bundle are saved locally. The user WSL CLI was subsequently

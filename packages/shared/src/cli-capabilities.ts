@@ -1904,6 +1904,10 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
           "description": "Explicit backend override.",
           "type": "string"
         },
+        "backendInstance": {
+          "description": "Exact declared account on nodeId; requires an explicit backend and node. Never falls back to another account.",
+          "type": "string"
+        },
         "branch": {
           "description": "Worktree branch to create/use.",
           "type": "string"

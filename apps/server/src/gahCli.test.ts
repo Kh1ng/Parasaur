@@ -53,9 +53,10 @@ test('manual worker and per-launch reasoning reach the actual dispatch CLI argv'
   const restore = pinFakeGah('printf "%s\\n" "$@"');
   const lines: string[] = [];
   try {
-    const result = await runDispatchCancellable({ profile: 'repo', mode: 'improve', backend: 'codex', model: 'gpt-6.1-sol', target: 'ticket.md', manualWorker: true, reasoningEffort: 'high' }, (line) => lines.push(line)).promise;
+    const result = await runDispatchCancellable({ profile: 'repo', mode: 'improve', backend: 'codex', backendInstance: 'work', model: 'gpt-6.1-sol', target: 'ticket.md', manualWorker: true, reasoningEffort: 'high' }, (line) => lines.push(line)).promise;
     assert.equal(result.exitCode, 0);
     assert.ok(lines.includes('--manual-worker'));
+    assert.equal(lines[lines.indexOf('--backend-instance') + 1], 'work');
     const effortFlag = lines.indexOf('--reasoning-effort');
     assert.equal(lines[effortFlag + 1], 'high');
   } finally { restore(); }

@@ -480,6 +480,7 @@ export interface DispatchOptions {
   profile: string;
   mode: string;
   backend?: string;
+  backendInstance?: string;
   target?: string;
   branch?: string;
   mr?: string;
@@ -520,6 +521,7 @@ function buildDispatchArgs(options: DispatchOptions): string[] {
   if (options.backend) {
     args.push('--backend', options.backend);
   }
+  if (options.backendInstance) args.push('--backend-instance', options.backendInstance);
 
   if (options.target) {
     args.push('--target', options.target);

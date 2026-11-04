@@ -159,6 +159,7 @@ class FakeTransport {
     target?: string;
     mode: string;
     backend?: string;
+    backendInstance?: string;
     model?: string;
     budget?: number;
   }): Promise<Session> {
@@ -170,6 +171,7 @@ class FakeTransport {
     }
     const session: Session = {
       id: options.requestId ?? `${this.nodeId}-${this.startCalls}`,
+      requestId: options.requestId,
       providerKind: options.providerKind,
       instanceId: options.instanceId,
       status: 'running',
@@ -179,6 +181,7 @@ class FakeTransport {
       target: options.target,
       mode: options.mode,
       backend: options.backend,
+      backendInstance: options.backendInstance,
       model: options.model,
       budget: options.budget
     };
@@ -220,6 +223,64 @@ class FakeTransport {
 
   async close(): Promise<void> {}
 }
+
+test('named factory accounts remain node-local through admission, retries and lease recovery', async () => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'gah-fleet-account-'));
+  const node = await createMockNode();
+  const transports = new Map<string, FakeTransport>();
+  const account = (id: string) => ({
+    backend_instance: id, logical_backend: 'codex', runner_kind: 'codex', account_label: id,
+    auth_source_label: null, quota_pool: id, supported_models: ['gpt-4.1'],
+    executable_configured: true, isolated_state_configured: true, enabled: true,
+  });
+  let snapshot = makeSnapshot('worker', node.url, 0, 0, 0, {
+    dispatch_backend_instances: true,
+    backend_instances: [account('personal'), account('work')],
+    availability: [{ backend: 'codex', backend_instance: 'personal', model: null,
+      quota_pool: 'personal', eligible_now: false, reason: 'quota exhausted',
+      unavailable_until: null, source: 'test', last_error_summary: null,
+      observed_at: new Date().toISOString(), scope: 'backend_wide' }],
+  });
+  const registryService = { getNode: () => undefined, getNodeObservations: async () => [snapshot] } as unknown as RegistryService;
+  const fresh = () => createCoordinatorHarness({ leaseStorePath: resolve(dir, 'leases.json'),
+    registryService, coordinatorNodeId: 'central', coordinatorUrl: 'http://127.0.0.1:9999',
+    transportMap: transports, published: [] });
+  const options = { profile: 'gah', providerKind: 'codex' as const, instanceId: 'codex-0',
+    repo: 'owner/repo', mode: 'improve', backend: 'codex', backendInstance: 'work',
+    model: 'gpt-4.1', nodeId: 'worker', requestId: 'account-request' };
+  try {
+    let fleet = fresh();
+    for (const invalid of [{ nodeId: undefined }, { backend: 'auto' }, { backendInstance: '' }]) {
+      await assert.rejects(fleet.startSession({ ...options, ...invalid }), /exact account requires/);
+    }
+    snapshot.dispatch_backend_instances = false;
+    await assert.rejects(fleet.startSession(options), /Update worker/);
+    assert.equal(transports.size, 0, 'an old worker must not start its default account');
+    snapshot.dispatch_backend_instances = true;
+    snapshot.backend_instances[1]!.enabled = false;
+    await assert.rejects(fleet.startSession(options), /Account work.*unavailable/);
+    snapshot.backend_instances[1]!.enabled = true;
+    await assert.rejects(fleet.startSession({ ...options, model: 'unsupported' }), /Account work.*unavailable/);
+    const first = await fleet.startSession(options);
+    node.sessions = [first];
+    assert.equal(first.backendInstance, 'work');
+    assert.equal(first.nodeId, 'worker');
+    assert.equal(first.model, 'gpt-4.1');
+    assert.equal((await fleet.startSession(options)).id, first.id);
+    await assert.rejects(fleet.startSession({ ...options, backendInstance: 'personal' }), /receipt does not match/);
+    await assert.rejects(fleet.startSession({ ...options, nodeId: 'other-node' }), /receipt does not match/);
+    node.sessions = [first];
+    fleet = fresh();
+    await fleet.reconcileLeases('gah');
+    assert.equal((await fleet.startSession({ ...options, requestId: 'after-restart' })).id, first.id);
+    assert.equal(transports.get('worker')?.startCalls, 1);
+    snapshot.availability = [];
+    const second = await fleet.startSession({ ...options, requestId: 'other-account', backendInstance: 'personal' });
+    assert.notEqual(second.id, first.id, 'the same ticket on another account must not return the first account receipt');
+    assert.equal(second.backendInstance, 'personal');
+    assert.equal(transports.get('worker')?.startCalls, 2);
+  } finally { await node.close(); rmSync(dir, { recursive: true, force: true }); }
+});
 
 function createCoordinatorHarness(options: {
   leaseStorePath: string;
@@ -1172,15 +1233,16 @@ for (const protocol of ['http:', 'https:']) {
     const previousToken = process.env.GAH_FLEET_TEST_TOKEN;
     process.env.GAH_FLEET_TEST_TOKEN = 'node-test-secret';
     const authorizations: (string | undefined)[] = [];
+    const starts: Record<string, unknown>[] = [];
     const server = http.createServer();
     const wss = new WebSocketServer({ server, verifyClient: (info: { req: http.IncomingMessage }) => {
       authorizations.push(info.req.headers.authorization);
       return info.req.headers.authorization === 'Bearer node-test-secret';
     } });
-    const session: Session = { id: 'authenticated-session', providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve', status: 'running', startedAt: new Date().toISOString() };
+    const session: Session = { id: 'authenticated-session', providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve', backend: 'codex', backendInstance: 'work', model: 'chosen-model', status: 'running', startedAt: new Date().toISOString() };
     wss.on('connection', (socket) => socket.on('message', (raw) => {
       const message = JSON.parse(raw.toString()) as { type: string };
-      if (message.type === 'session.start') socket.send(JSON.stringify({ type: 'session.started', session }));
+      if (message.type === 'session.start') { starts.push(message); socket.send(JSON.stringify({ type: 'session.started', session })); }
       if (message.type === 'client.hello') socket.send(JSON.stringify({ type: 'server.welcome', sessions: [session] }));
     }));
     await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
@@ -1194,13 +1256,21 @@ for (const protocol of ['http:', 'https:']) {
     let registeredUrl = nodeUrl;
     const registryService = {
       getNode: () => ({ secret_ref: 'env:GAH_FLEET_TEST_TOKEN', advertised_url: registeredUrl }),
-      getNodeObservations: async () => [makeSnapshot('worker', nodeUrl, 0, 0, 0)]
+      getNodeObservations: async () => [makeSnapshot('worker', nodeUrl, 0, 0, 0, {
+        dispatch_backend_instances: true, backend_instances: [{ backend_instance: 'work', logical_backend: 'codex',
+          runner_kind: 'codex', account_label: 'work', auth_source_label: null, quota_pool: null,
+          supported_models: ['chosen-model'], enabled: true, executable_configured: true, isolated_state_configured: true }]
+      })]
     } as unknown as RegistryService;
     const coordinator = createFleetDispatchCoordinator({ registryService, pushBus: { publish() {} },
       coordinatorIdentity: { node_id: 'central', display_name: 'central', advertised_url: 'http://127.0.0.1:9999', version: '0.1.0', schema_digest: 'schema' },
       leaseStorePath: resolve(secretDir, 'leases.json') });
     try {
-      await coordinator.startSession({ requestId: 'auth-dispatch', nodeId: 'worker', profile: 'gah', providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve' });
+      await coordinator.startSession({ requestId: 'auth-dispatch', nodeId: 'worker', profile: 'gah', providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve', backend: 'codex', backendInstance: 'work', model: 'chosen-model' });
+      assert.equal(starts.length, 1);
+      assert.equal(starts[0]?.backendInstance, 'work');
+      assert.equal(starts[0]?.nodeId, 'worker');
+      assert.equal(starts[0]?.model, 'chosen-model');
       await coordinator.reconcileLeases('gah');
       assert.deepEqual(authorizations, ['Bearer node-test-secret', 'Bearer node-test-secret']);
       assert.equal(connections.mock.callCount(), 2, 'dispatch and reconciliation must both use the configured agent');

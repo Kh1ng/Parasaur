@@ -120,6 +120,8 @@ export type AvailabilityScopeKind = 'backend_wide' | 'model_specific' | 'quota_p
 
 export interface AvailabilityScope {
   backend: string;
+  /** Exact account when the observation is instance-scoped. */
+  backend_instance?: string | null;
   model: string | null;
   /** Present only when this scope is a quota-pool-level observation. */
   quota_pool?: string | null;
@@ -433,6 +435,11 @@ export interface RunningWorker {
 }
 
 export interface StatusSnapshot {
+  /** Server identity; absent from a standalone CLI status response. */
+  node_id?: string;
+  display_name?: string;
+  /** Server supports exact node-local factory account selection. Absent on older servers. */
+  dispatch_backend_instances?: boolean;
   /** Host role added in #938; absent on older CLIs. */
   node?: NodeRoleStatus;
   node_capacity?: NodeCapacitySettings;

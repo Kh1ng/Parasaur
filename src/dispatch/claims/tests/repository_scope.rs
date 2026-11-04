@@ -35,6 +35,7 @@ pub(super) fn claim_fixture(
         profile: "test".to_string(),
         mode: "improve".to_string(),
         backend: "codex".to_string(),
+        backend_instance: None,
         target: ticket_path.display().to_string(),
         branch: None,
         mr: None,

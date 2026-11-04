@@ -46,8 +46,10 @@ export function SessionCard({ session, onClick }: SessionCardProps) {
                 <span className="inline-flex items-center gap-1">
                   <Cpu size={12} aria-hidden="true" />
                   {session.backend}
+                  {session.backendInstance && ` / ${session.backendInstance}`}
                 </span>
               )}
+              {session.nodeId && <span className="break-all">{session.nodeId}</span>}
               {session.model && (
                 <span className="inline-flex items-center gap-1">
                   <Brain size={12} aria-hidden="true" />

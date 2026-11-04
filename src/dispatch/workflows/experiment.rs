@@ -38,6 +38,7 @@ pub(crate) fn experiment(
             last_failure_class: None,
             mode: "experiment",
             requested_backend: config::canonical_backend_name(&args.backend),
+            requested_instance: args.backend_instance.as_deref(),
             requested_model: args.model.as_deref(),
             recommended_backend: None,
             recommended_model: None,

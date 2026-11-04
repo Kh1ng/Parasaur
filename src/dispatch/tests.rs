@@ -231,6 +231,7 @@ fn dispatch_routing_notifies_before_fallback_and_preserves_the_approval_gate() {
     let request = RouteRequest {
         mode: "pm",
         requested_backend: "auto",
+        requested_instance: None,
         requested_model: None,
         recommended_backend: None,
         recommended_model: None,

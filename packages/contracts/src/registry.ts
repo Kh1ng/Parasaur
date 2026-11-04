@@ -153,6 +153,8 @@ export interface NodeObservationSnapshot {
   profiles: string[];
   backend_configured: Record<string, boolean>;
   backend_instances: BackendInstanceSummary[];
+  /** Only new servers advertise exact-account forwarding; absent means unsupported. */
+  dispatch_backend_instances?: boolean;
   availability: AvailabilityScope[];
   recent_ledger: RecentLedgerSummary | null;
   active_claims: ActiveClaim[];

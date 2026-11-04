@@ -425,10 +425,20 @@ pub(in crate::dispatch) fn review(
     // review fallback must not substitute a previously used reviewer when
     // that exact route needs approval or is unavailable.
     let exact_route_required = next_reviewer.is_some();
+    if args.backend_instance.is_some()
+        && (requested_backend != config::canonical_backend_name(&args.backend)
+            || args
+                .model
+                .as_deref()
+                .is_some_and(|model| requested_model != Some(model)))
+    {
+        anyhow::bail!("review history requires a different route; the explicitly selected account/model cannot be substituted");
+    }
     let route_request = RouteRequest {
         last_failure_class: None,
         mode: "review",
         requested_backend,
+        requested_instance: args.backend_instance.as_deref(),
         requested_model,
         recommended_backend: None,
         recommended_model: None,

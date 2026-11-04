@@ -1,5 +1,10 @@
 # Beta finishing pass: local validation
 
+Latest factory evidence: [exact account routing](factory-account-routing.md)
+adds node/account/model selection, preserves account identity through CLI retries
+and lease recovery, and replaces optimistic Sent feedback with acknowledged or
+explicitly uncertain submission state. This remains local and undeployed.
+
 Latest desktop evidence: [unfinished navigation recovery](desktop-navigation-timeout.md)
 adds bounded recovery and keeps connection controls usable during stalled status
 reads. MacBook work remains deferred.

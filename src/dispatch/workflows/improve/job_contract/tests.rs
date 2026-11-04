@@ -75,6 +75,7 @@ fn dispatch_args(target: &str, dispatch_reason: Option<&str>) -> crate::dispatch
         profile: "test".into(),
         mode: "fix".into(),
         backend: "codex".into(),
+        backend_instance: None,
         target: target.into(),
         branch: None,
         mr: None,

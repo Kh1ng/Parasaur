@@ -23,6 +23,7 @@ pub(crate) fn execute_action(
         profile: profile_name.to_string(),
         mode: "fix".to_string(),
         backend: "auto".to_string(),
+        backend_instance: None,
         target: String::new(),
         branch: None,
         mr: None,

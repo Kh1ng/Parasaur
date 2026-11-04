@@ -157,6 +157,7 @@ pub(super) fn execute(
             profile: profile_name.to_string(),
             mode: "pm".to_string(),
             backend: "auto".to_string(),
+            backend_instance: None,
             target: ticket_path.to_string(),
             branch: None,
             mr: None,

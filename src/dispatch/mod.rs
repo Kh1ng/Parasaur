@@ -94,6 +94,8 @@ pub struct DispatchArgs {
     pub profile: String,
     pub mode: String,
     pub backend: String,
+    /// Exact operator-selected account; retries must retain this binding.
+    pub backend_instance: Option<String>,
     pub target: String,
     pub branch: Option<String>,
     pub mr: Option<String>,

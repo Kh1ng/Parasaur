@@ -78,13 +78,13 @@ test('explicit manual workers launch alongside an active same-profile session an
 
 test('explicit review and improve routes reach dispatch unchanged and do not fall back on failure', async () => {
   for (const mode of ['review', 'improve']) {
-    const dispatched: Array<{ mode: string; backend?: string; model?: string }> = [];
+    const dispatched: Array<{ mode: string; backend?: string; backendInstance?: string; model?: string }> = [];
     const manager = createSessionManager({
       disableCleanupTimer: true,
       providerRegistry: { isProviderAvailable: () => true },
       pushBus: { publish() {} },
       dispatchRunner: (options) => {
-        dispatched.push({ mode: options.mode, backend: options.backend, model: options.model });
+        dispatched.push({ mode: options.mode, backend: options.backend, backendInstance: options.backendInstance, model: options.model });
         return {
           promise: Promise.resolve({
             exitCode: 1, stdout: '',
@@ -96,10 +96,12 @@ test('explicit review and improve routes reach dispatch unchanged and do not fal
     });
     const session = await manager.startSession({
       profile: 'gah', providerKind: 'github', instanceId: 'github-0',
-      repo: 'owner/repo', mode, backend: 'vibe', model: 'mistral-medium-3.5',
+      repo: 'owner/repo', mode, backend: 'vibe', backendInstance: 'work', model: 'mistral-medium-3.5', requestId: 'exact-route',
     });
     await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(dispatched, [{ mode, backend: 'vibe', model: 'mistral-medium-3.5' }]);
+    assert.deepEqual(dispatched, [{ mode, backend: 'vibe', backendInstance: 'work', model: 'mistral-medium-3.5' }]);
+    assert.equal(manager.getSession(session.id)?.backendInstance, 'work');
+    assert.equal(manager.getSession(session.id)?.requestId, 'exact-route');
     assert.equal(manager.getSession(session.id)?.status, 'error');
     assert.equal(manager.getSession(session.id)?.backend, 'vibe');
     assert.equal(manager.getSession(session.id)?.model, 'mistral-medium-3.5');

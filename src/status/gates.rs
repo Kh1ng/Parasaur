@@ -64,6 +64,7 @@ pub(super) fn policy_approval_still_required(
         let request = crate::routing::RouteRequest {
             mode,
             requested_backend: backend,
+            requested_instance: None,
             requested_model: model,
             recommended_backend: None,
             recommended_model: None,

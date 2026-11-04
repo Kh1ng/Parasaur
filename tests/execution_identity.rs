@@ -220,6 +220,7 @@ default_target_branch = "main"
     let request = || RouteRequest {
         mode: "improve",
         requested_backend: "auto",
+        requested_instance: None,
         requested_model: None,
         recommended_backend: None,
         recommended_model: None,

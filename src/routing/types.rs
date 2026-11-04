@@ -8,6 +8,8 @@ use crate::execution_identity::ExecutionIdentity;
 pub struct RouteRequest<'a> {
     pub mode: &'a str,
     pub requested_backend: &'a str,
+    /// Exact declared account; unavailable bindings never select a sibling.
+    pub requested_instance: Option<&'a str>,
     pub requested_model: Option<&'a str>,
     pub recommended_backend: Option<&'a str>,
     pub recommended_model: Option<&'a str>,

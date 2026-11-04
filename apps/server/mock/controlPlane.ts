@@ -249,6 +249,11 @@ const BACKENDS = [
 ] satisfies ManagerBackendInfo[];
 
 const MOCK_PROFILES = PROFILE_FIXTURE satisfies ProfileSummary[];
+const MOCK_FACTORY_ACCOUNTS = ['codex-work', 'codex-personal'].map(backend_instance => ({
+  backend_instance, logical_backend: 'codex', runner_kind: 'codex', account_label: backend_instance,
+  auth_source_label: null, quota_pool: backend_instance, supported_models: ['gpt-5.3-codex'],
+  enabled: true, executable_configured: true, isolated_state_configured: true,
+}));
 
 const MOCK_GATEWAY = {
   url: 'http://127.0.0.1:8420',
@@ -1036,6 +1041,34 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     switch (message.type) {
       case 'client.hello':
         return;
+      case 'session.start': {
+        const profile = state.profiles.find(item => item.name === message.profile);
+        const previous = state.workerSessions.find(item => item.requestId === message.requestId);
+        if (previous) {
+          if (previous.backendInstance !== message.backendInstance || previous.nodeId !== (message.nodeId ?? 'mock-central')) {
+            send(ws, { type: 'error', requestId: message.requestId, error: 'Dispatch receipt does not match the selected account and node.' });
+          } else send(ws, { type: 'session.started', requestId: message.requestId, session: previous });
+          return;
+        }
+        if (!profile || message.backendInstance && (message.nodeId !== 'mock-central' || message.backend !== 'codex'
+          || !MOCK_FACTORY_ACCOUNTS.some(item => item.backend_instance === message.backendInstance))) {
+          send(ws, { type: 'error', requestId: message.requestId, error: 'Choose an available sample project, execution node and account.' });
+          return;
+        }
+        const session: Session = { id: `mock-worker-${state.workerSessions.length + 1}`, requestId: message.requestId,
+          providerKind: message.providerKind, instanceId: message.instanceId, repo: profile.repo,
+          nodeId: message.nodeId ?? 'mock-central', backend: message.backend, backendInstance: message.backendInstance,
+          model: message.model, mode: message.mode, target: message.target, status: 'running', startedAt: new Date(FIXED_NOW).toISOString() };
+        state.workerSessions.push(session);
+        broadcast({ type: 'session.started', requestId: message.requestId, session });
+        return;
+      }
+      case 'session.stop': {
+        const session = state.workerSessions.find(item => item.id === message.sessionId);
+        if (session) { session.status = 'stopped'; session.endedAt = new Date(FIXED_NOW).toISOString(); broadcast({ type: 'session.stopped', session }); }
+        else send(ws, { type: 'error', requestId: message.requestId, error: 'Sample session not found.' });
+        return;
+      }
       case 'ping':
         send(ws, { type: 'server.ping', timestamp: message.timestamp } satisfies ServerMessage);
         return;
@@ -1627,7 +1660,10 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
   });
 
   app.get('/api/status', (_req, res) => {
-    if (state.scenario !== 'running-workers') return res.json(STATUS_FIXTURE);
+    const status = { ...STATUS_FIXTURE, node_id: 'mock-central', display_name: 'Mock central',
+      dispatch_backend_instances: true, backend_instances: MOCK_FACTORY_ACCOUNTS,
+      backend_configured: { ...STATUS_FIXTURE.backend_configured, codex: true } };
+    if (state.scenario !== 'running-workers') return res.json(status);
     const workers: RunningWorker[] = ['codex', 'claude'].map((backend, index) => ({
       run_id: String(1431 + index), work_id: `#${1431 + index}`, mode: 'improve',
       backend, runner: backend, backend_instance: `${backend}-account`,
@@ -1637,7 +1673,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       last_activity_at: new Date(Date.now() - (index ? 901_000 : 30_000)).toISOString(),
       stale_after_seconds: 900, state: index ? 'stale' : 'running'
     }));
-    return res.json({ ...STATUS_FIXTURE, running_workers: workers });
+    return res.json({ ...status, running_workers: workers });
   });
   app.get('/api/quota', (_req, res) => res.json(QUOTA_FIXTURE));
   app.get('/api/registry/quota', (req, res) => res.json({
