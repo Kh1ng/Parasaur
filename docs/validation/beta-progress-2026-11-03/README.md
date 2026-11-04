@@ -1,10 +1,11 @@
 # Beta finishing pass: local validation
 
-Latest enterprise evidence: the [inference-side consumer](enterprise-inference-consumer.md)
-now passes the combined private `0dc0142e` / public `16e9ecc6` build and a real
-Auth/PostgREST-to-fixture-provider flow, including active-request revocation.
-Compute-side consumption, aliases, identity/ledger integration, isolation and
-configuration migration remain unfinished.
+Latest enterprise evidence: the [compute process boundary](enterprise-compute-isolation.md)
+passes nine real WSL namespace/cgroup, denial, cancellation and controller-death
+checks. Private `bbbd9599` / public `16e9ecc6` passes the combined build and real
+Auth/PostgREST-to-fixture-provider checks. Compute queue consumption, production
+runtime/relay, aliases, identity/ledger integration, bounded workspace storage,
+shared local/cloud capacity and configuration migration remain unfinished.
 
 The preceding [durable inference retry receipts](enterprise-inference-receipts.md)
 fixes a reproduced duplicate-request path and records the clean private `14c16068`

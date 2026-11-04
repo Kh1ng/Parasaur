@@ -136,16 +136,19 @@ Both have focused Windows evidence and remain undeployed. The older `d86a59b4`
 recovery package predates them; the current `16e9ecc6` package below includes
 them. Local package checks do not replace live factory acceptance.
 
-The [current enterprise pair](validation/beta-progress-2026-11-03/enterprise-current-pair.md)
-passed a new combined build, disposable Auth/relay checks and Windows headless
-two-account invitation/removal workflow. The later [bridge shutdown repair](validation/beta-progress-2026-11-03/enterprise-bridge-stop.md)
+The [enterprise integration record](validation/beta-progress-2026-11-03/enterprise-current-pair.md)
+includes earlier Windows headless two-account invitation/removal checks.
+The later [bridge shutdown repair](validation/beta-progress-2026-11-03/enterprise-bridge-stop.md)
 was followed by [durable inference retry receipts](validation/beta-progress-2026-11-03/enterprise-inference-receipts.md).
 The [inference-side consumer](validation/beta-progress-2026-11-03/enterprise-inference-consumer.md)
-is now implemented at private `0dc0142e`, paired with public core `16e9ecc6`.
+is retained with the new [compute process boundary](validation/beta-progress-2026-11-03/enterprise-compute-isolation.md)
+at private `bbbd9599`, paired with public core `16e9ecc6`.
 Its clean combined build, SQL replay and real Auth/PostgREST-to-provider/relay
 checks passed, including active-request revocation and cleanup.
-A compute-side queue consumer, portable aliases, shared-hardware execution isolation,
-staged config migration, hosted rollout and a real provider-backed job remain
+Nine dedicated real WSL isolation checks and native Windows unsupported-host
+refusal passed. A compute-side queue consumer, production runtime/relay, portable
+aliases, complete shared-hardware integration, bounded workspace storage,
+shared local/cloud capacity, staged config migration, hosted rollout and a real provider-backed job remain
 unfinished.
 
 A [current public recovery candidate](validation/beta-progress-2026-11-03/current-public-release.md)
