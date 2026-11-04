@@ -607,8 +607,11 @@ export const gahApi: GahDataSource = {
       limit: params.limit === undefined ? undefined : String(params.limit)
     });
   },
-  getLoopDecision(profile) {
-    return getJson<LoopDecision | null>('/api/loop/last-decision', { profile });
+  async getLoopDecision(profile) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    try { return await getJson<LoopDecision | null>('/api/loop/last-decision', { profile }, controller.signal); }
+    finally { clearTimeout(timer); }
   },
   getControllerActivity(params = {}) {
     return getJson<ControllerActivity[]>('/api/controller-activity', {
@@ -640,8 +643,11 @@ export const gahApi: GahDataSource = {
   removeProfile(name, params = {}) {
     return deleteJson<{ success: boolean; message: string }>(`/api/profiles/${encodeURIComponent(name)}`, profileRemoveParamsToRecord(params));
   },
-  getLoopStatus(profile) {
-    return getJson<LoopStatus>('/api/loop/status', { profile });
+  async getLoopStatus(profile) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    try { return await getJson<LoopStatus>('/api/loop/status', { profile }, controller.signal); }
+    finally { clearTimeout(timer); }
   },
   async startLoop(profile) {
     // Unlike the other POSTs above, a non-2xx here (409) still carries a

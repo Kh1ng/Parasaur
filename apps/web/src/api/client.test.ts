@@ -40,6 +40,32 @@ function captureFetch(): { requested: () => URL; requests: { url: string; init?:
 
 const CONTEXT = { project: 'group/repo', kind: 'issue' as const, iid: 42, gitlab: 'https://gitlab.example.com', branch: 'main', limit: 10 };
 
+test.each(['status', 'decision'] as const)('factory %s reads time out a silent response body and permit a subsequent read', async kind => {
+  const original = globalThis.fetch;
+  jest.useFakeTimers();
+  const read = () => kind === 'status' ? gahApi.getLoopStatus('work') : gahApi.getLoopDecision('work');
+  globalThis.fetch = (async (_input, init) => ({
+    ok: true,
+    json: () => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new Error('read aborted')), { once: true });
+    })
+  })) as typeof fetch;
+  try {
+    await withInjectedBootstrap({ basePath: '/parasaur' }, async () => {
+      const pending = read().catch(error => error);
+      await jest.advanceTimersByTimeAsync(15_000);
+      expect(await pending).toEqual(new Error('read aborted'));
+      expect(jest.getTimerCount()).toBe(0);
+      globalThis.fetch = (async () => new Response('null')) as typeof fetch;
+      expect(await read()).toBeNull();
+      expect(jest.getTimerCount()).toBe(0);
+    });
+  } finally {
+    globalThis.fetch = original;
+    jest.useRealTimers();
+  }
+});
+
 test('model and account discovery forward cancellation without losing node, instance or deployment identity', async () => {
   const captured = captureFetch();
   const controller = new AbortController();

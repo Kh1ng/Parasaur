@@ -1,10 +1,10 @@
-import type { ControllerEvent, DoctorSnapshot, LedgerEntry, ProfileSummary, ReportData, ReportSeriesData, SettingsConfigProfileSummary } from '@git-agent-harness/contracts';
+import type { ControllerEvent, DoctorSnapshot, LedgerEntry, LoopDecision, ProfileSummary, ReportData, ReportSeriesData, SettingsConfigProfileSummary } from '@git-agent-harness/contracts';
 import { gahApi } from '../api/client.js';
 import type { LoopStatus, StartLoopResult, StopLoopResult } from '../api/client.js';
 import { useGahStore, workTimelineKey } from './gahStore.js';
 
 jest.mock('../api/client.js', () => ({
-  gahApi: { getReport: jest.fn(), getProfileConfig: jest.fn(), getWorkTimeline: jest.fn(), getEvents: jest.fn(), getDoctor: jest.fn(), getReportSeries: jest.fn(), getLoopStatus: jest.fn(), startLoop: jest.fn(), stopLoop: jest.fn(), getProfiles: jest.fn(), addProfile: jest.fn(), updateProfile: jest.fn(), removeProfile: jest.fn() },
+  gahApi: { getReport: jest.fn(), getProfileConfig: jest.fn(), getWorkTimeline: jest.fn(), getEvents: jest.fn(), getDoctor: jest.fn(), getReportSeries: jest.fn(), getLoopStatus: jest.fn(), getLoopDecision: jest.fn(), startLoop: jest.fn(), stopLoop: jest.fn(), getProfiles: jest.fn(), addProfile: jest.fn(), updateProfile: jest.fn(), removeProfile: jest.fn() },
   GahApiError: class GahApiError extends Error {},
 }));
 
@@ -71,15 +71,17 @@ test('a read started before a profile edit cannot restore the old list afterward
   expect(useGahStore.getState().profiles.data?.[0].name).toBe('updated');
 });
 
-describe.each(['readiness', 'usage trend', 'controller'] as const)('%s project isolation', (resource) => {
+describe.each(['readiness', 'usage trend', 'controller', 'decision'] as const)('%s project isolation', (resource) => {
   const fetchResource = (profile: string) => resource === 'readiness'
     ? useGahStore.getState().fetchDoctor(profile)
     : resource === 'controller' ? useGahStore.getState().fetchLoopStatus(profile)
+    : resource === 'decision' ? useGahStore.getState().fetchLoopDecision(profile)
     : useGahStore.getState().fetchReportSeries({ profile, since: '14d', bucket: 'daily' });
-  const readResource = () => resource === 'readiness' ? useGahStore.getState().doctor : resource === 'controller' ? useGahStore.getState().loopStatus : useGahStore.getState().reportSeries;
+  const readResource = () => resource === 'readiness' ? useGahStore.getState().doctor : resource === 'controller' ? useGahStore.getState().loopStatus : resource === 'decision' ? useGahStore.getState().loopDecision : useGahStore.getState().reportSeries;
   const mockRequest = (promise: Promise<unknown>) => {
     if (resource === 'readiness') jest.mocked(gahApi.getDoctor).mockReturnValueOnce(promise as Promise<DoctorSnapshot>);
     else if (resource === 'controller') jest.mocked(gahApi.getLoopStatus).mockReturnValueOnce(promise as Promise<LoopStatus>);
+    else if (resource === 'decision') jest.mocked(gahApi.getLoopDecision).mockReturnValueOnce(promise as Promise<LoopDecision>);
     else jest.mocked(gahApi.getReportSeries).mockReturnValueOnce(promise as Promise<ReportSeriesData>);
   };
 
@@ -94,6 +96,7 @@ describe.each(['readiness', 'usage trend', 'controller'] as const)('%s project i
     const beta = resource === 'readiness'
       ? { schema_version: 1, generated_at: '', overall_status: 'ok', checks: [] }
       : resource === 'controller' ? { running: true, pid: 42 }
+      : resource === 'decision' ? { timestamp: '', kind: 'wait', reason: 'beta needs review', work_id: '#42', reason_code: null }
       : { ledger_path: '/beta', profile: 'beta', since: '14d', bucket: 'daily', series: [] };
     latest.resolve(beta);
     await second;

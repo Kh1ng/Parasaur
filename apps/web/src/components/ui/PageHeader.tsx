@@ -31,7 +31,7 @@ export function PageHeader({
         {lastUpdated !== undefined && <LastUpdated at={lastUpdated} />}
         {actions}
         {onRefresh && (
-          <button onClick={onRefresh} disabled={refreshing} className="btn-secondary" aria-label="Refresh">
+          <button onClick={onRefresh} disabled={refreshing} className="btn-secondary max-sm:min-h-11 max-sm:min-w-11" aria-label="Refresh">
             <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} aria-hidden="true" />
             <span className="hidden sm:inline">Refresh</span>
           </button>

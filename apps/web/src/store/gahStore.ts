@@ -19,6 +19,7 @@ import type {
   ReportGroupBy,
   LedgerEntry,
   ControllerEvent,
+  LoopDecision,
   ProfileSummary,
   SettingsConfigProfileSummary,
   DoctorSnapshot
@@ -67,6 +68,7 @@ interface GahStoreState {
   config: Resource<ConfigSummary>;
   profileConfig: Resource<SettingsConfigProfileSummary>;
   loopStatus: Resource<LoopStatus>;
+  loopDecision: Resource<LoopDecision>;
   loopAction: { pending: boolean; error: string | null };
 
   fetchConfig: (opts?: { force?: boolean }) => Promise<void>;
@@ -86,6 +88,7 @@ interface GahStoreState {
   removeProfile: (name: string, params?: ProfileRemoveParams) => Promise<void>;
   clearProfileErrors: () => void;
   fetchLoopStatus: (profile: string, opts?: { force?: boolean }) => Promise<void>;
+  fetchLoopDecision: (profile: string, opts?: { force?: boolean }) => Promise<void>;
   startLoop: (profile: string) => Promise<void>;
   stopLoop: (profile: string) => Promise<void>;
 }
@@ -123,6 +126,7 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
   config: emptyResource(),
   profileConfig: emptyResource(),
   loopStatus: emptyResource(),
+  loopDecision: emptyResource(),
   loopAction: { pending: false, error: null },
   profileCrud: {
     adding: false,
@@ -410,6 +414,21 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
 
   clearConfigErrors() {
     set({ config: { ...get().config, error: null } });
+  },
+
+  async fetchLoopDecision(profile, opts) {
+    const current = get().loopDecision;
+    if ((current.loading && current.key === profile) || (!opts?.force && isFresh(current, profile))) return;
+    const pending = { ...(current.key === profile ? current : emptyResource<LoopDecision>()), loading: true, error: null, key: profile };
+    set({ loopDecision: pending });
+    try {
+      const data = await gahApi.getLoopDecision(profile);
+      if (get().loopDecision !== pending) return;
+      set({ loopDecision: { data, loading: false, error: null, fetchedAt: Date.now(), key: profile } });
+    } catch (error) {
+      if (get().loopDecision !== pending) return;
+      set({ loopDecision: { ...pending, loading: false, error: errorMessage(error) } });
+    }
   },
 
   async fetchLoopStatus(profile, opts) {

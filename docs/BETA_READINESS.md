@@ -119,3 +119,9 @@ The [2026-11-04 scope audit](validation/beta-progress-2026-11-03/readiness-audit
 maps every requested capability to evidence and remaining acceptance. It also
 records the later named-account catalog repair; the recovery ZIP at `d86a59b4`
 predates that repair.
+
+Later local changes resolve [execution-node account discovery](validation/beta-progress-2026-11-03/node-local-chat-accounts.md)
+and [factory diagnostic refresh/error states](validation/beta-progress-2026-11-03/factory-diagnostic-refresh.md).
+Both have focused Windows evidence and remain undeployed; the installed desktop
+and immutable recovery package predate them. They do not replace live factory
+acceptance.
