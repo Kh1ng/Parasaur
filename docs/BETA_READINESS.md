@@ -125,3 +125,9 @@ and [factory diagnostic refresh/error states](validation/beta-progress-2026-11-0
 Both have focused Windows evidence and remain undeployed; the installed desktop
 and immutable recovery package predate them. They do not replace live factory
 acceptance.
+
+The [current enterprise pair](validation/beta-progress-2026-11-03/enterprise-current-pair.md)
+passed a new combined build, disposable Auth/relay checks and Windows headless
+two-account invitation/removal workflow. The private pointer is `d46e6793`;
+hosted rollout, shared-hardware execution isolation and a real provider-backed
+job remain pending.
