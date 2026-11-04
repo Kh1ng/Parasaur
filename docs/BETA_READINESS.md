@@ -57,6 +57,13 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   live factory, real provider consent/billing and physical iOS acceptance remain
   required.
 
+- The finishing branch now includes its previously missing merged factory and
+  deployment-prefix fixes through `7848c117`. The combined 21-case real-CLI
+  factory fixture, 32 source-structure checks, focused web checks and production
+  asset-body smoke passed; see [merged factory checks](validation/beta-progress-2026-11-03/merged-factory-checks.md).
+  The hosted-runner hang in #1662 remains unresolved, and these server/web
+  outputs are not deployed to the live central.
+
 - Native Windows now shows recovery controls when a loaded dashboard document
   stays blank because the app never mounts. Browser tests, all 27 native tests
   and rendering in an isolated failed-asset webview passed. Native settings-link
