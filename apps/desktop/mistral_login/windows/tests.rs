@@ -21,7 +21,7 @@ fn windows_staging_preserves_connections_until_verification() {
             .expect("WSL distribution required"),
         ..Default::default()
     };
-    let setup = r#"import json,os,pathlib,sys,tempfile
+    let setup = r#"import json,os,pathlib,sys,tempfile,uuid
 os.umask(0o077)
 p=pathlib.Path(tempfile.mkdtemp(prefix='parasaur-mistral-windows-'))
 (p/'.cargo/bin').mkdir(parents=True); (p/'.config/gah').mkdir(parents=True)
@@ -29,6 +29,7 @@ p=pathlib.Path(tempfile.mkdtemp(prefix='parasaur-mistral-windows-'))
 (p/'mode').write_text('good'); (p/'saved.json').write_text(json.dumps({'work':'old-work','sibling':'old-sibling'}))
 (p/'.config/gah/mistral-dashboard.cookie').write_text('old-default')
 (p/'custom.cookie').write_text('old-custom')
+(p/'versions.json').write_text(json.dumps({'work':str(uuid.uuid4()),'':str(uuid.uuid4())}))
 print(p)
 "#;
     let mut prepare = crate::wsl_command(&settings);
@@ -88,6 +89,11 @@ print(p)
     assert_eq!(execute(&default, true, false), "ready");
     assert_eq!(execute(&default, true, true), "custom_source");
     assert_eq!(execute(&named, true, true), "ready");
+    control(
+        "import pathlib,sys; (pathlib.Path(sys.argv[1])/'mode').write_text('unsupported')",
+        &[],
+    );
+    assert_eq!(execute(&named, true, false), "unsupported");
     for (mode, expected) in [
         ("auth", "auth_required"),
         ("collector", "collector"),
@@ -109,6 +115,11 @@ print(p)
     );
     assert_eq!(execute(&named, false, false), "save");
     control("import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); assert json.loads((p/'saved.json').read_text())['work']=='old-work'; (p/'mode').write_text('good')", &[]);
+    for (target, selected) in [(&named, "work"), (&default, "")] {
+        control("import pathlib,sys; p=pathlib.Path(sys.argv[1]); (p/'mutation').write_text(sys.argv[2]); (p/'mode').write_text('changed')", &[selected]);
+        assert_eq!(execute(target, false, false), "changed");
+    }
+    control("import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); assert json.loads((p/'saved.json').read_text())=={'work':'session=newer-work','sibling':'old-sibling'}; assert (p/'.config/gah/mistral-dashboard.cookie').read_text()=='session=newer-default'; (p/'saved.json').write_text(json.dumps({'work':'old-work','sibling':'old-sibling'})); (p/'.config/gah/mistral-dashboard.cookie').write_text('old-default'); (p/'mode').write_text('good')", &[]);
     assert_eq!(execute(&named, false, true), "connected");
     control("import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); assert json.loads((p/'saved.json').read_text())=={'work':'session=synthetic-new','sibling':'old-sibling'}; assert (p/'.config/gah/mistral-dashboard.cookie').read_text()=='old-default'; assert (p/'custom.cookie').read_text()=='old-custom'; assert (p/'refreshed').read_text()=='work'", &[]);
     assert_eq!(execute(&default, false, false), "connected");
@@ -119,6 +130,16 @@ print(p)
         &[],
     );
     assert_eq!(execute(&default, false, false), "publish");
+    if let Ok(gah) = std::env::var("GAH_WINDOWS_WSL_TEST_GAH") {
+        control("import pathlib,sys; p=pathlib.Path(sys.argv[1]); (p/'real-cli').write_text(sys.argv[2]); (p/'mode').write_text('good')", &[&gah]);
+        assert_eq!(execute(&named, false, false), "connected");
+        assert_eq!(execute(&default, false, false), "connected");
+        for (target, selected) in [(&named, "work"), (&default, "")] {
+            control("import pathlib,sys; p=pathlib.Path(sys.argv[1]); (p/'mutation').write_text(sys.argv[2]); (p/'mode').write_text('changed')", &[selected]);
+            assert_eq!(execute(target, false, false), "changed");
+        }
+        control("import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); assert json.loads((p/'.config/gah/credentials/work.json').read_text())['secret']=='session=newer-work'; assert (p/'.config/gah/mistral-dashboard.cookie').read_text()=='session=newer-default'; (p/'real-cli').unlink()", &[]);
+    }
     control(
         "import pathlib,sys; (pathlib.Path(sys.argv[1])/'mode').write_text('hang')",
         &[],

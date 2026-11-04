@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import uuid
 
 
 def interrupted(_signal, _frame):
@@ -22,24 +23,39 @@ def check():
     configured = os.environ.get("MISTRAL_DASHBOARD_COOKIE_FILE")
     if not credential_id and configured is not None and Path(configured) != destination:
         return "custom_source"
-    if mode == "preflight":
-        return "ready"
-    cookie = sys.stdin.buffer.read(32769)
-    if not cookie or len(cookie) > 32768 or any(c < 32 or c >= 127 for c in cookie):
-        return "invalid_cookie"
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".mistral-check-", dir=root) as temporary:
         temporary = Path(temporary)
+        store = temporary / "quota.jsonl"
+
+        def run(args, stdin=None, env=None, stdout=subprocess.DEVNULL, timeout=95):
+            return subprocess.run([str(gah), *args], stdin=stdin if stdin is not None else subprocess.DEVNULL, env=env,
+                                  stdout=stdout, stderr=subprocess.DEVNULL,
+                                  timeout=timeout, check=False).returncode == 0
+
+        def exchange(args, stdin=None):
+            reply = temporary / "reply.json"
+            with reply.open("wb") as output:
+                if not run(args, stdin=stdin, stdout=output, timeout=10):
+                    return None
+            with reply.open("rb") as source:
+                data = source.read(4097)
+            return json.loads(data) if len(data) <= 4096 else None
+
+        target = ["--id", credential_id] if credential_id else []
+        snapshot = exchange(["credentials", "mistral-session-snapshot", *target])
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("change_token"), str):
+            return "unsupported"
+        change_token = str(uuid.UUID(snapshot["change_token"]))
+        if mode == "preflight":
+            return "ready"
+        cookie = sys.stdin.buffer.read(32769)
+        if not cookie or len(cookie) > 32768 or any(c < 32 or c >= 127 for c in cookie):
+            return "invalid_cookie"
         cookie_file = temporary / "cookie"
         with cookie_file.open("xb") as output:
             os.chmod(cookie_file, 0o600)
             output.write(cookie)
-        store = temporary / "quota.jsonl"
-
-        def run(args, stdin=None, env=None):
-            return subprocess.run([str(gah), *args], stdin=stdin, env=env,
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                  timeout=95, check=False).returncode == 0
 
         env = dict(os.environ, MISTRAL_DASHBOARD_COOKIE_FILE=str(cookie_file))
         collected = run(["quota", "refresh", "--backend", "mistral-dashboard",
@@ -57,13 +73,17 @@ def check():
                 or not isinstance(record.get("account_usage"), dict)
                 or record.get("check_error") is not None):
             return "invalid_observation"
+        save = ["credentials", "mistral-session-save", *target, "--change-token", change_token]
         if credential_id:
-            with cookie_file.open("rb") as source:
-                if not run(["credentials", "save", "--id", credential_id, "--provider", "mistral",
-                            "--kind", "mistral_dashboard", "--account-label", label, "--json"], stdin=source):
-                    return "save"
+            save.extend(["--account-label", label])
+        with cookie_file.open("rb") as source:
+            saved = exchange(save, stdin=source)
+        if isinstance(saved, dict) and saved.get("saved") is False:
+            return "changed"
+        if not isinstance(saved, dict) or saved.get("saved") is not True:
+            return "save"
+        if credential_id:
             return "connected" if run(["quota", "refresh", "--credential", credential_id]) else "usage"
-        os.replace(cookie_file, destination)
         with store.open("rb") as source:
             return "connected" if run(["quota", "record"], stdin=source) else "publish"
 

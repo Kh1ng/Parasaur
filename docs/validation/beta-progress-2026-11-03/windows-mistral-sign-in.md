@@ -59,3 +59,65 @@ This implements the Windows path but does not establish actual Mistral login,
 live allowance readings, automatic refresh over time, provider billing or other
 providers' OAuth workflows. A real owner-driven sign-in remains acceptance work.
 The live central and its asset delivery were not changed.
+
+## Installed Windows candidate
+
+The optimized NSIS/MSI build at `fa630df1` completed and the current-user NSIS
+upgrade returned zero. Its desktop-only artifacts are staged under ignored
+`artifacts/parasaur-desktop-fa630df1`. Installer SHA-256 is
+`97028b557c4dc483d7e0631d8a5cf0af143d9978c8cf57f5cbad8792b3d04a43`.
+Installed executable SHA-256 is
+`4fe26dc5dc3aeba642412b73fd28b6bd372c0fcb922cb2230f9d01c76660a4da`,
+matching the optimized build with only Tauri's expected NSIS bundle marker.
+Saved settings stayed identical through installation and launch. The previously
+installed WSL CLI at `b738b9d2` provides the existing commands used by this build;
+these different candidate manifests must not be combined into one bundle.
+
+The actual installed window returned to local Settings with the connection
+timeout notice. A later UI check was interrupted by the user's Escape stop;
+no real Mistral sign-in was attempted. Subsequent work is headless Windows-only
+at the owner's request; MacBook and further desktop interaction are deferred.
+
+## Connection-change guard (2026-11-04)
+
+The Windows verification path now uses a compare-and-save protocol.
+The helper snapshots an opaque connection token before making the provider
+request. The CLI checks that token under the existing source lock before
+publishing. Rotation, deletion, or another successful verification invalidates
+earlier checks. A stale result leaves the newer connection and quota history
+alone and tells the user to retry. The network request holds no credential lock.
+Default-cookie checks also detect file replacement or metadata changes; custom
+cookie sources remain protected. This requires the updated CLI and desktop
+together; preflight rejects an older CLI before opening the provider window.
+Unix native sign-in has not been migrated to this protocol.
+
+After recovery, all 24 focused `credentials::` library tests passed against
+the Windows working tree under Ubuntu-24.04, including all four publication
+tests, interrupted-marker recovery and unchanged quota history after rejection.
+All 35 default Windows native tests passed (six opt-in fixtures skipped).
+The expanded Windows-to-WSL staging fixture passed both with its synthetic CLI
+and with the newly built actual CLI for credential commands. It verified named
+and default saves and rejected concurrent rotations without replacing newer
+connections. No provider request or desktop window was involved.
+
+Commands used the root `cargo test --lib credentials:: --locked --offline`,
+root `cargo build --bin gah --locked --offline`, and the Windows opt-in staging
+filter listed above. Core outputs now use persistent
+`CARGO_TARGET_DIR=/home/khing/.cache/parasaur-beta-target`;
+`GAH_WINDOWS_WSL_TEST_GAH` pointed at its `debug/gah` for the actual-CLI phase.
+Windows desktop `cargo check --bin gah-desktop --tests --locked`, focused Rust
+formatting, and both Python scripts' syntax checks also passed.
+
+Runtime verification encountered a full C: drive (about 14 MB free) and a
+Windows linker PDB LIMIT failure. Package-scoped `cargo clean --package
+gah-desktop --profile dev` reclaimed 3.4 GiB of disposable development outputs;
+release artifacts were retained. Ubuntu-24.04 continued reporting filesystem
+I/O errors, with kernel write errors for its disk. Restarting the distro required
+owner approval because it had other running Linux clients. After approval,
+Ubuntu was terminated;
+its first boot failed. With the sole registered distro stopped, WSL VM shutdown
+and a second boot recovered execution and writable temporary storage. Windows
+reported about 245 GiB free afterward. The former temporary build checkout was
+gone. No new installation or desktop interaction was performed. The installed
+candidate remains `fa630df1`; this new guard still requires installation and
+real owner-driven provider acceptance.

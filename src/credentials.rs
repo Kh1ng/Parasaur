@@ -3,6 +3,7 @@
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+pub(crate) mod mistral_session;
 pub(crate) mod quota;
 
 #[cfg(test)]
@@ -242,9 +243,14 @@ fn read_at(_root: &Path, _id: &str) -> Result<StoredCredential> {
 
 #[cfg(unix)]
 fn source_lock(root: &Path, id: &str) -> Result<std::fs::File> {
+    validate_id(id)?;
+    source_lock_file(root, &format!(".{id}.lock"))
+}
+
+#[cfg(unix)]
+fn source_lock_file(root: &Path, filename: &str) -> Result<std::fs::File> {
     use fs2::FileExt;
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-    validate_id(id)?;
     private_directory(root, true)?;
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -253,7 +259,7 @@ fn source_lock(root: &Path, id: &str) -> Result<std::fs::File> {
         .truncate(false)
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW)
-        .open(root.join(format!(".{id}.lock")))
+        .open(root.join(filename))
         .context("credential publication lock unavailable")?;
     let metadata = file
         .metadata()
@@ -270,6 +276,10 @@ fn source_lock(root: &Path, id: &str) -> Result<std::fs::File> {
 }
 #[cfg(not(unix))]
 fn source_lock(_root: &Path, _id: &str) -> Result<std::fs::File> {
+    bail!("private named credential storage is unavailable on this platform")
+}
+#[cfg(not(unix))]
+fn source_lock_file(_root: &Path, _filename: &str) -> Result<std::fs::File> {
     bail!("private named credential storage is unavailable on this platform")
 }
 
@@ -343,10 +353,21 @@ fn save_at(root: &Path, info: CredentialInfo, secret: &str) -> Result<Credential
 
 fn save_with_quota_at(
     root: &Path,
-    mut info: CredentialInfo,
+    info: CredentialInfo,
     secret: &str,
     quota_path: Option<&Path>,
 ) -> Result<CredentialInfo> {
+    save_if_current_at(root, info, secret, quota_path, None)?
+        .context("cannot save private credential")
+}
+
+fn save_if_current_at(
+    root: &Path,
+    mut info: CredentialInfo,
+    secret: &str,
+    quota_path: Option<&Path>,
+    expected: Option<&str>,
+) -> Result<Option<CredentialInfo>> {
     info.provider = canonical_provider(&info.provider).into();
     if info.kind == CredentialKind::ApiKey && info.env_var.is_none() {
         info.env_var = default_env(&info.provider).map(str::to_owned);
@@ -365,7 +386,13 @@ fn save_with_quota_at(
             login_rejected: None,
         },
     )?;
-    let _guard = source_lock(root, &info.id)?;
+    let mut guard = source_lock(root, &info.id)?;
+    if let Some(expected) = expected {
+        if mistral_session::credential_token(root, &info.id, &mut guard)? != expected {
+            return Ok(None);
+        }
+    }
+    mistral_session::invalidate(&mut guard)?;
     let destination = root.join(format!("{}.json", info.id));
     if std::fs::symlink_metadata(&destination).is_ok() {
         if let Some(path) = quota_path {
@@ -374,7 +401,7 @@ fn save_with_quota_at(
     }
     file.persist(destination)
         .map_err(|_| anyhow::anyhow!("cannot save private credential"))?;
-    Ok(info)
+    Ok(Some(info))
 }
 
 /// Owner-only temp file holding `stored`, ready to persist over the record.
@@ -451,8 +478,9 @@ pub fn remove(id: &str) -> Result<()> {
     remove_at(&root()?, id, &crate::quota_store::store_path())
 }
 fn remove_at(root: &Path, id: &str, quota_path: &Path) -> Result<()> {
-    let _guard = source_lock(root, id)?;
+    let mut guard = source_lock(root, id)?;
     let info = read_at(root, id)?.info;
+    mistral_session::invalidate(&mut guard)?;
     quota::removed(&info, quota_path)?;
     std::fs::remove_file(root.join(format!("{id}.json"))).context("named credential unavailable")
 }

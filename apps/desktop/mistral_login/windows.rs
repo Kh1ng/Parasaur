@@ -25,6 +25,7 @@ pub(super) fn verify_and_save(cookie: &str, target: &LoginTarget) -> LoginStatus
         Some("connected") => status("connected", true, "Mistral is connected on this computer. Usage and allowance are refreshed automatically."),
         Some("not_installed") => status("unavailable", false, "Install Parasaur in the selected WSL distribution before connecting Mistral."),
         Some("custom_source") => super::custom_cookie_status(),
+        Some("changed") => status("unavailable", true, "This connection changed while Mistral was being checked. The newer connection was kept; connect again to retry."),
         Some("auth_required" | "invalid_cookie") => status("pending", true, "Mistral has not accepted this session. Finish signing in and check the connection."),
         Some("usage") => status("unavailable", true, "Mistral is saved, but its usage check failed. Check this connection again."),
         Some("publish") => status("unavailable", true, "Mistral is connected, but its usage could not be published. Check the connection again."),
@@ -43,7 +44,7 @@ pub(super) fn preflight(target: &LoginTarget) -> Result<(), LoginStatus> {
         _ => Err(status(
             "unavailable",
             false,
-            "Mistral sign-in requires Parasaur and Python in the selected WSL distribution.",
+            "Mistral sign-in requires an updated Parasaur CLI and Python in the selected WSL distribution.",
         )),
     }
 }

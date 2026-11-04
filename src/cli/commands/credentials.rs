@@ -5,6 +5,28 @@ use std::io::Read;
 
 pub fn run(command: CredentialCommands) -> Result<()> {
     match command {
+        CredentialCommands::MistralSessionSnapshot { id } => {
+            let change_token = credentials::mistral_session::snapshot(id.as_deref())?;
+            println!("{}", serde_json::json!({ "change_token": change_token }));
+        }
+        CredentialCommands::MistralSessionSave {
+            id,
+            account_label,
+            change_token,
+        } => {
+            let mut cookie = String::new();
+            std::io::stdin()
+                .take(32769)
+                .read_to_string(&mut cookie)
+                .map_err(|_| anyhow::anyhow!("cannot read Mistral session input"))?;
+            let saved = credentials::mistral_session::save(
+                id.as_deref(),
+                account_label.as_deref(),
+                &change_token,
+                &cookie,
+            )?;
+            println!("{}", serde_json::json!({ "saved": saved }));
+        }
         CredentialCommands::List { json } => {
             let records = credentials::list()?;
             if json {
