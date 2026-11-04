@@ -122,14 +122,15 @@ predates that repair.
 
 Later local changes resolve [execution-node account discovery](validation/beta-progress-2026-11-03/node-local-chat-accounts.md)
 and [factory diagnostic refresh/error states](validation/beta-progress-2026-11-03/factory-diagnostic-refresh.md).
-Both have focused Windows evidence and remain undeployed; the installed desktop
-and immutable recovery package predate them. They do not replace live factory
-acceptance.
+Both have focused Windows evidence and remain undeployed. The older `d86a59b4`
+recovery package predates them; the current `b0ea279f` package below includes
+them. Local package checks do not replace live factory acceptance.
 
 The [current enterprise pair](validation/beta-progress-2026-11-03/enterprise-current-pair.md)
 passed a new combined build, disposable Auth/relay checks and Windows headless
-two-account invitation/removal workflow. The private pointer is `d46e6793`;
-hosted rollout, shared-hardware execution isolation and a real provider-backed
+two-account invitation/removal workflow. The later [bridge shutdown repair](validation/beta-progress-2026-11-03/enterprise-bridge-stop.md)
+passed a fresh combined build and Auth/relay checks; the private pointer is `711f70bf`.
+Hosted rollout, shared-hardware execution isolation and a real provider-backed
 job remain pending.
 
 A [current public recovery candidate](validation/beta-progress-2026-11-03/current-public-release.md)
