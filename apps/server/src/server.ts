@@ -1,4 +1,5 @@
 import { notificationChannelFailure } from './notifyDelivery.js';
+import { requestFailure } from './requestFailure.js';
 import { gitLabEventsRouter, type GitLabRouteDeps } from './integrations/gitlab/route.js';
 import { gitLabQueueRouter } from './integrations/gitlab/queueRoute.js';
 import { gitLabRunsRouter } from './integrations/gitlab/runsRoute.js';
@@ -3062,7 +3063,7 @@ export function createServer(
         return res.status(415).json({ error: 'Unsupported Media Type', message: 'Unsupported request encoding' });
     }
     // Unexpected exceptions can also embed CLI output or request credentials.
-    console.error('Server error: an unexpected request failure occurred');
+    console.error('Server error: an unexpected request failure occurred', requestFailure(err, req.path));
     res.status(500).json({
       error: 'Internal Server Error',
       message: 'An unexpected error occurred'

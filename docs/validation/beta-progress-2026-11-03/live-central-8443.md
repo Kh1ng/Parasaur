@@ -45,3 +45,32 @@ The 500 responses above are the earlier successful network observations, not
 a claim that the current requests reached the service. The owner then deferred
 MacBook work; the new private SSH credential request was declined. No request
 remains pending and no host changes were made.
+
+## Windows recheck and diagnostic improvement, 2026-11-04
+
+Fresh read-only requests reached the service again: health and dashboard HTML
+returned 200, `/api/info` returned 401 without credentials, and both assets
+referenced by that HTML still returned 500 with the fixed generic error body.
+The live asset failure therefore persists; earlier timeout evidence did not
+establish recovery.
+
+The local server now logs an allowlisted system error code and operation plus
+a fixed request category (`dashboard_asset`, `api`, or `document_or_other`).
+It continues to omit raw messages, stacks, filenames, query strings and request
+contents. Unknown codes are recorded as `UNKNOWN`, not copied from the error.
+This makes an asset permission failure distinguishable from I/O, missing-file,
+disk-full or descriptor exhaustion without exposing private data.
+
+A Windows HTTP regression injects a stream-open failure after successful file
+metadata lookup. HEAD returns 200 without opening a stream, GET returns the
+unchanged generic 500, and the operational log records only `dashboard_asset`,
+`EACCES`, and `open`. This reproduces the failure shape, not its live cause.
+All four request-error tests, 14 document-router/web-root tests, and server
+typechecking passed. These tests use no provider executions or credentials.
+
+This change has not been deployed to the live service. On an updated host,
+inspect `journalctl -u gah-server` for the fixed request-failure record after a
+failed asset GET. `EACCES`/`EPERM` points to access checks, `ENOENT` to missing
+files, and `EIO`/`ENOSPC`/`EROFS` to storage errors; use the host's actual service
+configuration and filesystem evidence before changing ownership or rebuilding.
+No authenticated pipeline evidence or live repair is claimed.
