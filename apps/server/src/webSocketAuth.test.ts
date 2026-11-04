@@ -9,6 +9,10 @@ import { WebSocket } from 'ws';
 import { DeviceAccess, DEVICE_LIFETIME } from './deviceAccess.js';
 import { createAuthorizedWebSocketServer } from './webSocketAuth.js';
 
+// Device expiry uses mocked time; transport closure still needs real socket IO.
+const realSetTimeout = globalThis.setTimeout;
+const realClearTimeout = globalThis.clearTimeout;
+
 test('device expiry terminates its live socket without disconnecting an owner socket', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const directory = mkdtempSync(join(tmpdir(), 'gah-ws-expiry-'));
@@ -47,13 +51,13 @@ test('device expiry terminates its live socket without disconnecting an owner so
     t.mock.timers.tick(2_147_483_647);
     // Bounded wait: a regression must fail red, not hang the suite.
     await new Promise<void>((resolve, reject) => {
-      let turns = 0;
-      const step = () => {
-        if (device!.readyState === WebSocket.CLOSED) resolve();
-        else if (++turns > 500) reject(new Error('device socket did not close at expiry'));
-        else setImmediate(step);
-      };
-      setImmediate(step);
+      if (device!.readyState === WebSocket.CLOSED) { resolve(); return; }
+      const closed = () => { realClearTimeout(deadline); resolve(); };
+      const deadline = realSetTimeout(() => {
+        device!.removeListener('close', closed);
+        reject(new Error('device socket did not close at expiry'));
+      }, 2000);
+      device!.once('close', closed);
     });
 
     assert.equal(device.readyState, WebSocket.CLOSED);
