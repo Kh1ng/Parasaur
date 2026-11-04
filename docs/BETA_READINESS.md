@@ -46,7 +46,7 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 - Windows x64 desktop `c1a55cf0` completed an actual current-user upgrade.
   Installed bytes and preserved settings were verified; its NSIS/MSI and
   matched combined bundle are saved locally. The user WSL CLI was subsequently
-  updated to `d86a59b4` with a rollback copy. Installed-CLI
+  updated to `b0ea279f` with a rollback copy. Installed-CLI
   metadata and Mistral preflight passed. The app was left closed; current-build
   rendering and real sign-in remain unverified. No worker service was started.
   Do not mix candidate manifests. This is unsigned
@@ -131,3 +131,9 @@ passed a new combined build, disposable Auth/relay checks and Windows headless
 two-account invitation/removal workflow. The private pointer is `d46e6793`;
 hosted rollout, shared-hardware execution isolation and a real provider-backed
 job remain pending.
+
+A [current public recovery candidate](validation/beta-progress-2026-11-03/current-public-release.md)
+at `b0ea279f` now includes the later server/web fixes. Its optimized release
+install, full asset/range reads and Windows-to-WSL smoke checks passed. The user
+WSL CLI is updated; the unchanged native desktop remains installed and closed.
+The candidate requires glibc 2.39 and is unsigned, unpublished and undeployed.
