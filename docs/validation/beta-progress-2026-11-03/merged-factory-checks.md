@@ -51,3 +51,8 @@ not met. Do not close it from these results. The local production asset success
 also does not repair the live central's asset GET 500s or establish live factory
 progress. The installed native desktop/WSL CLI candidate remains `c1a55cf0`;
 these newly integrated server/web outputs are local and undeployed.
+
+A [later measured recheck](factory-hang-recheck.md) passed all 21 tests in
+114.28 seconds and inspected the original failed hosted attempt separately
+from its green rerun. It still does not identify the remaining intermittent
+hang or satisfy hosted acceptance.
