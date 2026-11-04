@@ -43,11 +43,12 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
-- A Windows x64 desktop candidate at `fa630df1` completed an actual current-user
-  upgrade and was launched. Installed bytes and preserved settings were verified;
-  NSIS/MSI artifacts are saved locally. The user CLI at `b738b9d2`
-  was installed in the saved WSL distribution and the production metadata read
-  passed; no worker service was started. Do not mix candidate manifests. This is unsigned
+- A matched Windows x64 desktop and WSL CLI candidate at `c1a55cf0` completed
+  an actual current-user upgrade. Installed bytes and preserved settings were
+  verified; NSIS/MSI and the combined bundle are saved locally. Installed-CLI
+  metadata and Mistral preflight passed. The app was left closed; current-build
+  rendering and real sign-in remain unverified. No worker service was started.
+  Do not mix candidate manifests. This is unsigned
   local setup evidence, not signed-update, fresh-OS or live-server acceptance.
 
 - Broad local shared-web checks passed at `0ee85993`: 160 Windows workflows,

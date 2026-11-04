@@ -118,6 +118,32 @@ Ubuntu was terminated;
 its first boot failed. With the sole registered distro stopped, WSL VM shutdown
 and a second boot recovered execution and writable temporary storage. Windows
 reported about 245 GiB free afterward. The former temporary build checkout was
-gone. No new installation or desktop interaction was performed. The installed
-candidate remains `fa630df1`; this new guard still requires installation and
-real owner-driven provider acceptance.
+gone. The new boot allowed the blocked checks to complete without desktop
+interaction. Real owner-driven provider acceptance remains required.
+
+## Matched installed update (2026-11-04)
+
+Source `c1a55cf01c8d8928c87e8974282d99b86408c13f` built the optimized Windows
+NSIS/MSI and Linux CLI. The combined ignored bundle
+`artifacts/parasaur-windows-beta-c1a55cf0.zip` passed the actual installer's
+manifest validation for all five routes, with matching revisions and hashes.
+ZIP SHA-256 is
+`ef74e043c1fb3c6de255a4e6022664dd5b88a8aa35525cd6fb4cf1bce828ed18`.
+NSIS SHA-256 is
+`fccb0d311346add7afed42f8d6f275a515d2449bf7109c8c668f6727603617d0`.
+
+The verified user CLI was atomically replaced in Ubuntu-24.04, with its previous
+binary retained in `~/.cache/parasaur-upgrade-backups/gah-before-c1a55cf0`.
+Installed CLI SHA-256 is
+`df7129070185a9f7399403a39d9f2e3a3d4963bd879a93def8ab476f4b344ba9`.
+The current-user silent desktop upgrade returned zero and preserved the saved
+settings hash. Installed desktop SHA-256 is
+`bd40bb336a7a04f19b467974a0e0ac20c12ffbf07cb9d314bb9fd8e063179f63`;
+the only difference from the raw build is Tauri's `UNK` to `NSS` bundle marker.
+The application was left closed. No GUI automation or sign-in was performed.
+
+Both opt-in read-only tests against the actual installed WSL CLI passed:
+account metadata and the new Mistral protocol preflight. The real-CLI two-account
+Windows-to-WSL save/isolation fixture also passed. No worker service was installed
+or started. This is an unsigned, unpublished local update, not signed-update,
+live provider, live factory, or current-build rendering acceptance.
