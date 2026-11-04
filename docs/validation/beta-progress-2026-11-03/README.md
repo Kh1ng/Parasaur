@@ -106,7 +106,12 @@ The full server fixture suite requires POSIX executables and now refuses native 
 
 Structure checks also require a real Git index and baseline history. The Linux snapshot now has its own shallow metadata copied from this branch and the existing `origin/main` ref; all tracked sources were restored through its independent Git index to canonical checkout line endings before the full Rust rerun. Normalizing executable fixtures alone left CRLF documentation and service templates in the initial copy and caused four invalid unit-test failures. It does not share writable Git metadata with the Windows workspace.
 
-The current Windows test application is the newly built v0.3.0 Tauri executable loading the current local UI and sample backend. A matching unsigned local NSIS installer has been produced; it has not been installed or published. The CLI was built and tested inside WSL. Neither build establishes that the deployed factory is running these changes.
+The earlier Windows rendering checks used the local sample backend. The current
+installed native executable is `c1a55cf0` and is closed; its unchanged source did
+not require another native install. The WSL user CLI and matched CLI/server/web
+recovery package are now `16e9ecc6`; see [current release evidence](current-public-release.md).
+The existing WSL worker continues using its separate release. These local
+checks do not establish that the deployed factory is running the new code.
 
 Named-account browser sign-in currently operates on the connected central node's configured accounts. Fleet login-health rows still retain their existing manual named-instance guidance. Real provider account consent, saved-credential replacement, and remote-worker named login remain acceptance work. The local sample backend was deliberately restarted to load its new explicit sign-in response and was checked through the same port-38000 Vite proxy used by the native test shell.
 

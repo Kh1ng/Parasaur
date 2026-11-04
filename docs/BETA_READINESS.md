@@ -48,14 +48,17 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   refuses older workers that cannot preserve it, and acknowledges submission
   with safe identical retries. Local CLI, fleet, server and Windows browser
   checks passed. Real-provider execution and live central/worker deployment
-  remain unverified; installed artifacts still predate this feature.
+  remain unverified. The matched recovery ZIP and WSL user CLI now contain the
+  feature; the live central and existing worker release were not upgraded.
 
 - Windows x64 desktop `c1a55cf0` completed an actual current-user upgrade.
   Installed bytes and preserved settings were verified; its NSIS/MSI and
   matched combined bundle are saved locally. The user WSL CLI was subsequently
-  updated to `b0ea279f` with a rollback copy. Installed-CLI
+  updated to `16e9ecc6` with a rollback copy. Installed-CLI
   metadata and Mistral preflight passed. The app was left closed; current-build
-  rendering and real sign-in remain unverified. No worker service was started.
+  rendering and real sign-in remain unverified. The update started no worker
+  service; an existing WSL worker resumed after the authorized distro restart
+  and continues using its own separate release binary.
   Do not mix candidate manifests. This is unsigned
   local setup evidence, not signed-update, fresh-OS or live-server acceptance.
 
@@ -130,7 +133,7 @@ predates that repair.
 Later local changes resolve [execution-node account discovery](validation/beta-progress-2026-11-03/node-local-chat-accounts.md)
 and [factory diagnostic refresh/error states](validation/beta-progress-2026-11-03/factory-diagnostic-refresh.md).
 Both have focused Windows evidence and remain undeployed. The older `d86a59b4`
-recovery package predates them; the current `b0ea279f` package below includes
+recovery package predates them; the current `16e9ecc6` package below includes
 them. Local package checks do not replace live factory acceptance.
 
 The [current enterprise pair](validation/beta-progress-2026-11-03/enterprise-current-pair.md)
@@ -141,7 +144,8 @@ Hosted rollout, shared-hardware execution isolation and a real provider-backed
 job remain pending.
 
 A [current public recovery candidate](validation/beta-progress-2026-11-03/current-public-release.md)
-at `b0ea279f` now includes the later server/web fixes. Its optimized release
+at `16e9ecc6` now includes the later server/web fixes and exact factory account
+routing. Its optimized release
 install, full asset/range reads and Windows-to-WSL smoke checks passed. The user
 WSL CLI is updated; the unchanged native desktop remains installed and closed.
 The candidate requires glibc 2.39 and is unsigned, unpublished and undeployed.

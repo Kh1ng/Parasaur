@@ -74,8 +74,9 @@ does not launch a provider or demonstrate a real factory lifecycle.
 
 This is local implementation and fixture evidence. It does not prove real
 provider consent, billing, remote credential isolation or a live issue lifecycle.
-The installed Windows desktop and WSL CLI were not upgraded by this change.
-The immutable recovery ZIP at b0ea279f predates it. Central and workers must be
-updated together before this named-account factory workflow is available live.
+The implementation commit was followed by a [matched recovery package and WSL
+CLI update](current-public-release.md). The unchanged native desktop was retained.
+The older immutable recovery ZIP at b0ea279f predates this feature. Central and
+workers still need deployment before named factory accounts are available live.
 Enterprise workspace aliases/isolation/migration, signed updates and physical
 iPhone acceptance remain separate unfinished requirements in BETA_READINESS.md.
