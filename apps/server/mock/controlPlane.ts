@@ -1492,6 +1492,9 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     }]
   });
   app.get('/api/backend-instances', (req, res) => res.json(backendInstanceFixture(bodyString(req.query.profile) ?? 'fixture')));
+  app.get('/api/manager-chat/accounts', (req, res) => res.json({ accounts: backendInstanceFixture(bodyString(req.query.profile) ?? 'fixture').backend_instances
+    .filter(instance => instance.logical_backend === req.query.backend)
+    .map(instance => ({ instance: instance.backend_instance, backend: instance.logical_backend, label: instance.account_label, enabled: instance.enabled, executableReady: true, authReady: null })) }));
   app.post('/api/backend-instances/add', (req, res) => res.json(backendInstanceFixture(bodyString(req.body?.profile) ?? 'fixture')));
   app.post('/api/backend-instances/label', (req, res) => res.json(backendInstanceFixture(bodyString(req.body?.profile) ?? 'fixture')));
   app.post('/api/backend-instances/authenticate', (_req, res) => res.status(201).json({

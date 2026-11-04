@@ -419,6 +419,16 @@ export interface ChatReclaimResult {
  * including a `standalone` host -- is reported as `central`, so this wire
  * surface never carries the host-local `standalone` role and every consumer
  * (old or new) sees the same values. */
+/** Safe node-local account metadata for a chat runner; never credentials or paths. */
+export interface ChatAccountInfo {
+  instance: string;
+  backend: string;
+  label: string;
+  enabled: boolean;
+  executableReady: boolean | null;
+  authReady: boolean | null;
+}
+
 export interface ChatNodeInfo {
   nodeId: string;
   displayName: string;

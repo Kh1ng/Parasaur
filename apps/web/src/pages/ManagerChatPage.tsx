@@ -561,7 +561,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork, gitlab
   useEffect(() => updateNavigation({ profile, chat: sessionId }), [profile, sessionId]);
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
   const [sessionsError, setSessionsError] = useState(false);
-  const [backendInstanceLabels, setBackendInstanceLabels] = useState<Record<string, string>>({});
+  const [accountLabels, setAccountLabels] = useState<{ scope: string; labels: Record<string, string> } | null>(null);
   /** A new chat created for another project lands in the same render batch
    * as the profile switch; the [profile] effect restores its session id. */
   const pendingSessionRef = useRef<string | null>(null);
@@ -585,15 +585,6 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork, gitlab
     () => sessions.find((s) => s.id === sessionId) ?? null,
     [sessions, sessionId]
   );
-  useEffect(() => {
-    let cancelled = false;
-    gahApi.getProfileConfig(profile)
-      .then(({ backend_instances: instances }) => {
-        if (!cancelled) setBackendInstanceLabels(Object.fromEntries(instances.map((instance) => [instance.backend_instance, instance.account_label ?? instance.backend_instance])));
-      })
-      .catch(() => { if (!cancelled) setBackendInstanceLabels({}); });
-    return () => { cancelled = true; };
-  }, [profile, reconnectSeq]);
   useEffect(() => { setNodeChoice(null); }, [profile, sessionId]);
   const skillBackend = activeSession?.backend ?? activeBackendId;
   const skillSessionId = sessionId && sessionId !== 'default' ? sessionId : undefined;
@@ -603,6 +594,22 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork, gitlab
     : activeSession?.nodeId ?? currentProfileInfo?.node_id ?? centralNodeId ?? '';
   const selectedNode = nodeSnapshot.nodes.find(node => node.nodeId === chosenNode);
   const nodeReady = !nodeSnapshot.loading && !nodeSnapshot.error && !!(selectedNode?.eligible ?? selectedNode?.chatCapable);
+  const accountLabelScope = JSON.stringify([profile, skillBackend, chosenNode]);
+  const backendInstanceLabels = accountLabels?.scope === accountLabelScope ? accountLabels.labels : {};
+  useEffect(() => {
+    if (!activeSession?.backendInstance || !skillBackend || !chosenNode || !nodeReady) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    setAccountLabels(null);
+    gahApi.getChatAccounts(profile, skillBackend, chosenNode, controller.signal)
+      .then(({ accounts }) => {
+        if (!cancelled) setAccountLabels({ scope: accountLabelScope, labels: Object.fromEntries(accounts.map(account => [account.instance, account.label])) });
+      })
+      .catch(() => { if (!cancelled) setAccountLabels(null); })
+      .finally(() => clearTimeout(timer));
+    return () => { cancelled = true; clearTimeout(timer); controller.abort(); };
+  }, [profile, skillBackend, chosenNode, nodeReady, accountLabelScope, activeSession?.backendInstance, reconnectSeq]);
   const remoteSession = !!activeSession && (!!currentProfileInfo?.remote || (!!activeSession.nodeId && activeSession.nodeId !== centralNodeId));
   const [skillBinding, setSkillBinding] = useState<SkillBindingSummary | null>(null);
   const [skillBindingChanging, setSkillBindingChanging] = useState(false);

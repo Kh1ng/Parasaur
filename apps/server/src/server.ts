@@ -1,5 +1,6 @@
 import { notificationChannelFailure } from './notifyDelivery.js';
 import { requestFailure } from './requestFailure.js';
+import { chatAccounts } from './chatAccounts.js';
 import { gitLabEventsRouter, type GitLabRouteDeps } from './integrations/gitlab/route.js';
 import { gitLabQueueRouter } from './integrations/gitlab/queueRoute.js';
 import { gitLabRunsRouter } from './integrations/gitlab/runsRoute.js';
@@ -2328,6 +2329,18 @@ export function createServer(
     try {
       res.json({ nodes: await chatNodes(typeof req.query.profile === 'string' ? req.query.profile : undefined, typeof req.query.backend === 'string' ? req.query.backend : undefined) });
     } catch { res.status(502).json({ error: 'Unable to read worker availability for this project.' }); }
+  });
+
+  app.get('/api/manager-chat/accounts', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const { profile, backend, nodeId } = req.query;
+    if (typeof profile !== 'string' || !profile || profile.length > 256
+      || typeof backend !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(backend)
+      || !(nodeId === undefined || (typeof nodeId === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(nodeId)))) {
+      return void res.status(400).json({ error: 'Choose a project, runner and execution node.' });
+    }
+    try { res.json({ accounts: await chatAccounts(profile, backend, nodeId) }); }
+    catch { res.status(502).json({ error: 'chat_accounts_unavailable', message: 'Cannot read accounts on this execution node. Check its connection and Parasaur version, then retry.' }); }
   });
 
   // WP2 chat sessions: a session is one conversation bound to one worktree.

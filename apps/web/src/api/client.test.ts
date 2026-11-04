@@ -40,7 +40,7 @@ function captureFetch(): { requested: () => URL; requests: { url: string; init?:
 
 const CONTEXT = { project: 'group/repo', kind: 'issue' as const, iid: 42, gitlab: 'https://gitlab.example.com', branch: 'main', limit: 10 };
 
-test('model discovery forwards cancellation without losing node, instance or deployment identity', async () => {
+test('model and account discovery forward cancellation without losing node, instance or deployment identity', async () => {
   const captured = captureFetch();
   const controller = new AbortController();
   try {
@@ -51,6 +51,12 @@ test('model discovery forwards cancellation without losing node, instance or dep
       expect(captured.requested().searchParams.get('nodeId')).toBe('worker-one');
       expect(captured.requested().searchParams.get('backendInstance')).toBe('work-account');
       expect(captured.requests[0].init?.signal).toBe(controller.signal);
+      await gahApi.getChatAccounts('work', 'codex', 'worker-two', controller.signal);
+      expect(captured.requested().pathname).toBe('/parasaur/api/manager-chat/accounts');
+      expect(captured.requested().searchParams.get('profile')).toBe('work');
+      expect(captured.requested().searchParams.get('backend')).toBe('codex');
+      expect(captured.requested().searchParams.get('nodeId')).toBe('worker-two');
+      expect(captured.requests[1].init?.signal).toBe(controller.signal);
     });
   } finally { captured.restore(); }
 });

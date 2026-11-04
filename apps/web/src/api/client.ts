@@ -417,6 +417,7 @@ export interface GahDataSource {
   getChatStorage(profile: string): Promise<ChatReclaimResult>;
   reclaimChatSessions(profile: string, dryRun: boolean): Promise<ChatReclaimResult>;
   getChatNodes(profile?: string, backend?: string): Promise<{ nodes: ChatNodeInfo[] }>;
+  getChatAccounts(profile: string, backend: string, nodeId: string, signal?: AbortSignal): Promise<{ accounts: import('@git-agent-harness/contracts').ChatAccountInfo[] }>;
   getManagerChatModelsForBackend(profile: string, backend: string, nodeId?: string, backendInstance?: string | null, signal?: AbortSignal): Promise<ManagerModelsSummary>;
   getChatPreview(profile: string, sessionId: string): Promise<{ preview: ChatPreviewInfo | null }>;
   setChatPreview(profile: string, sessionId: string, port: number | null): Promise<{ preview: ChatPreviewInfo | null }>;
@@ -867,6 +868,9 @@ export const gahApi: GahDataSource = {
   },
   getChatNodes(profile, backend) {
     return getJson<{ nodes: ChatNodeInfo[] }>('/api/manager-chat/nodes', { profile, backend });
+  },
+  getChatAccounts(profile, backend, nodeId, signal) {
+    return getJson<{ accounts: import('@git-agent-harness/contracts').ChatAccountInfo[] }>('/api/manager-chat/accounts', { profile, backend, nodeId }, signal);
   },
   getManagerChatModelsForBackend(profile, backend, nodeId, backendInstance, signal) {
     return getJson<ManagerModelsSummary>('/api/manager-chat/models', { profile, backend, nodeId, backendInstance: backendInstance ?? undefined }, signal);

@@ -14,6 +14,7 @@ import type { WorkerChatEvent } from './workerChatProtocol.js';
 import { chatTitleInput, commitMessageInput, linkedIssueNumbers, prSummaryInput, runHelperTask } from './managerChat/helperTasks.js';
 import { fetchLinkedChatIssues } from './managerChat/issueChats.js';
 import { validHelperRoute } from './managerChat/settingsStore.js';
+import { localChatAccounts } from './chatAccounts.js';
 
 interface ActiveExecution {
   key: string;
@@ -29,6 +30,7 @@ export function createWorkerChatRouter(deps: {
   profiles?: () => Promise<ProfileSummary[]>;
   adapter?: (backend: string, profile?: string, instance?: string | null) => ManagerAdapter | Promise<ManagerAdapter>;
   sessions?: ChatSessionStoreOptions;
+  accounts?: typeof localChatAccounts;
 }) {
   const router = Router();
   const active = new Map<string, ActiveExecution>();
@@ -42,7 +44,7 @@ export function createWorkerChatRouter(deps: {
     if (!body || typeof body.profile !== 'string' || !body.profile || typeof body.action !== 'string') {
       return void res.status(400).json({ error: 'A profile and worker chat action are required.' });
     }
-    const actions = ['quota-routes', 'quota-failure', 'create', 'prepare', 'handoff', 'archive', 'restore', 'models', 'set-model', 'set-effort', 'commands', 'run', 'cancel', 'steer', 'permission', 'git-status', 'git-review', 'git-commit', 'git-publish', 'git-update', 'helper-task'];
+    const actions = ['accounts', 'quota-routes', 'quota-failure', 'create', 'prepare', 'handoff', 'archive', 'restore', 'models', 'set-model', 'set-effort', 'commands', 'run', 'cancel', 'steer', 'permission', 'git-status', 'git-review', 'git-commit', 'git-publish', 'git-update', 'helper-task'];
     if (!actions.includes(body.action)) return void res.status(400).json({ error: 'Unknown worker chat action.' });
     const sessionId = body.sessionId;
     if (sessionId !== undefined && (typeof sessionId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(sessionId))) {
@@ -53,6 +55,10 @@ export function createWorkerChatRouter(deps: {
       const profile = (await profiles()).find(candidate => candidate.name === body.profile);
       if (!profile) return void res.status(404).json({ error: 'This worker does not have that profile.' });
       if (!profile.web_url || body.repo !== profile.repo || body.provider !== profile.provider || body.origin !== new URL(profile.web_url).origin) return void res.status(409).json({ error: 'The worker profile refers to a different repository or provider host.' });
+      if (body.action === 'accounts') {
+        if (typeof body.backend !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(body.backend)) return void res.status(400).json({ error: 'Invalid account runner.' });
+        return void res.json({ accounts: await (deps.accounts ?? localChatAccounts)(body.profile, body.backend) });
+      }
       if (body.action === 'quota-routes' || body.action === 'quota-failure') {
         if (!(body.model == null || (typeof body.model === 'string' && body.model.length <= 256))) return void res.status(400).json({ error: 'Invalid quota model.' });
         if (body.action === 'quota-routes') return void res.json(await runSubscriptionRoutes(body.profile, body.model));

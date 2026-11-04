@@ -837,6 +837,52 @@ paths:
               schema: { type: object }
         "502": { $ref: "#/components/responses/GahError" }
 
+  /api/manager-chat/accounts:
+    get:
+      tags: [manager-chat]
+      summary: Read account metadata from the selected chat execution node
+      description: |
+        Uses the registered authenticated worker chat transport for remote nodes.
+        Does not start a provider or login, expose credentials/paths, or fall back
+        to central accounts when a worker cannot answer. Older workers must be
+        updated to support the accounts action. Null readiness is unknown.
+      parameters:
+        - name: profile
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: backend
+          in: query
+          required: true
+          schema: { type: string, pattern: "^[a-zA-Z0-9_-]{1,128}$" }
+        - name: nodeId
+          in: query
+          schema: { type: string, pattern: "^[a-zA-Z0-9_-]{1,128}$" }
+      responses:
+        "200":
+          description: Safe account choices for this profile, runner and node
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accounts]
+                properties:
+                  accounts:
+                    type: array
+                    maxItems: 128
+                    items:
+                      type: object
+                      required: [instance, backend, label, enabled, executableReady, authReady]
+                      properties:
+                        instance: { type: string }
+                        backend: { type: string }
+                        label: { type: string }
+                        enabled: { type: boolean }
+                        executableReady: { type: [boolean, "null"] }
+                        authReady: { type: [boolean, "null"] }
+        "400": { description: Invalid project, runner or node selector }
+        "502": { $ref: "#/components/responses/GahError" }
+
   /api/manager-chat/models:
     get:
       tags: [manager-chat]

@@ -82,7 +82,7 @@ export function ModelBrowser({
   const catalogBackends = useMemo(() => backends.map(backend => backend.id === source.instance?.backendId
     ? { ...backend, displayName: `${backend.displayName} · ${source.instance.label ?? source.instance.id}` }
     : backend), [backends, source.instance?.backendId, source.instance?.id, source.instance?.label]);
-  const implemented = useMemo(() => catalogBackends.filter((backend) => backend.implemented), [catalogBackends]);
+  const implemented = useMemo(() => backends.filter((backend) => backend.implemented), [backends]);
 
   useEffect(() => {
     if (!open) return;
