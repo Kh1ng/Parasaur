@@ -1,5 +1,10 @@
 # Compute process boundary — 2026-11-04
 
+Follow-up: the [startup crash repair](enterprise-startup-authorization.md)
+supersedes the descriptor-based authorization gate below. These earlier checks
+did not cover controller death before authorization; that case exposed an
+actual unauthorized execution and is now repaired at private `5046d2c0`.
+
 Verified private revision `bbbd95996cb03520232ae305d6bc159b402a2a1e` against
 public core `16e9ecc6f5ca8bd5a0db16c64574d1b6bde8dc17`. This implements and
 tests the process boundary for compute execution. The cloud compute queue

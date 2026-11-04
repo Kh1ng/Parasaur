@@ -1,14 +1,18 @@
 # Current enterprise integration — 2026-11-04
 
-The current verified pair is private `841fc124` with public core `f7294e34`.
+The current verified pair is private `5046d2c0` with public core `f7294e34`.
 It retains the earlier fixes, [durable inference retry receipts](enterprise-inference-receipts.md),
 the [inference-side consumer](enterprise-inference-consumer.md), and the
 [compute process boundary](enterprise-compute-isolation.md), now connected to a
-[claim-bound inference socket](enterprise-inference-relay.md).
-A fresh combined build passed 1,027 server tests (12 skips), 13 mock tests,
+[claim-bound inference socket](enterprise-inference-relay.md). The later
+[startup authorization repair](enterprise-startup-authorization.md) closes two
+newly reproduced controller-crash failures; the earlier descriptor gate was
+insufficient before authorization.
+A fresh combined build passed 1,027 server tests (14 skips), 13 mock tests,
 artifact guards and transformed transport checks. Final-source disposable SQL,
 real Auth/PostgREST-to-HTTP-provider, concurrent retry, revocation and relay checks passed.
-Ten dedicated real WSL isolation checks passed. An actual sandboxed client also
+Twelve dedicated real WSL isolation checks and a seven-point startup crash matrix
+passed. An actual sandboxed client also
 passed the real Auth/PostgREST-to-inference-worker flow with repeated receipt
 reads producing one new provider attempt. Native Windows platform/inference
 checks and WebSocket authentication checks passed during this pass.

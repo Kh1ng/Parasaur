@@ -1,5 +1,10 @@
 # Isolated inference connection — 2026-11-04
 
+Follow-up: use the [startup authorization repair](enterprise-startup-authorization.md)
+at private `5046d2c0` for the compute boundary. The earlier gate did not safely
+handle controller death before authorization. Node startup still does not enable
+automatic compute execution.
+
 Verified private `841fc124fb7b4817674cebc7bef5d9e90270f638` with public core
 `f7294e34f5684a9b4f7ac2cee43234062b98b24d`. An isolated process can now use a
 claim/model-bound inference socket without gaining host network access or the

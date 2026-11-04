@@ -1,9 +1,11 @@
 # Beta finishing pass: local validation
 
-Latest enterprise evidence: the [isolated inference connection](enterprise-inference-relay.md)
-binds a job-only socket to its exact cloud claim/model and durable request key.
-Private `841fc124` / public `f7294e34` passes the combined build, ten real WSL
-isolation checks and a sandboxed Auth/PostgREST-to-inference-worker fixture flow.
+Latest enterprise evidence: the [startup authorization repair](enterprise-startup-authorization.md)
+fixes unapproved execution and orphaned startup scopes after controller death.
+It retains the [isolated inference connection](enterprise-inference-relay.md).
+Private `5046d2c0` / public `f7294e34` passes the combined build, twelve real WSL
+isolation checks, a seven-point startup crash matrix and a sandboxed
+Auth/PostgREST-to-inference-worker fixture flow.
 Compute queue consumption, production runtime/client and forge access, aliases, identity/ledger integration, bounded workspace storage,
 shared local/cloud capacity and configuration migration remain unfinished.
 
