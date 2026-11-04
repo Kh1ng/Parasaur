@@ -1,5 +1,11 @@
 # Beta finishing pass: local validation
 
+Latest enterprise evidence: [durable inference retry receipts](enterprise-inference-receipts.md)
+fixes a reproduced duplicate-request path and records the clean private `14c16068`
+build against public core `16e9ecc6`. Real Auth/PostgREST concurrent retry and
+relay checks passed. The queue consumer, aliases, isolation and migration are
+still implementation work.
+
 Latest factory evidence: [exact account routing](factory-account-routing.md)
 adds node/account/model selection, preserves account identity through CLI retries
 and lease recovery, and replaces optimistic Sent feedback with acknowledged or

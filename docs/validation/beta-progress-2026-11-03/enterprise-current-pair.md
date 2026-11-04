@@ -1,11 +1,21 @@
 # Current enterprise integration — 2026-11-04
 
+The current verified pair is private `14c16068` with public core `16e9ecc6`.
+It retains the earlier fixes below and adds [durable inference retry receipts](enterprise-inference-receipts.md).
+A fresh combined build passed 1,005 server tests (one opt-in skip), 13 mock tests,
+artifact guards and transformed transport checks. Final-source disposable SQL,
+real Auth/PostgREST concurrent retry and HTTP/WebSocket relay checks passed.
+Portable aliases, a cloud queue consumer, execution isolation and configuration
+migration remain unfinished; these local results are not hosted beta acceptance.
+
+## Earlier integration record
+
 The private workspace build was pinned behind the finishing branch and its API
 client conflicted with current account/cancellation changes. The private source
-now targets public core `bd377e21`, retains the current model/account/factory
+then targeted public core `bd377e21`, retained the model/account/factory
 recovery work, and incorporates the deployment-prefix WebSocket URL helper.
-Final overlay preflight found no conflicts. The public submodule pointer now
-selects validated private revision `d46e6793`.
+That overlay preflight found no conflicts. The public submodule pointer at that
+point selected validated private revision `d46e6793`.
 
 The integration work also reproduced and corrected cloud request cancellation
 before admission and preservation of caller abort signals. Late replies cannot

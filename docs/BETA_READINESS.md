@@ -139,9 +139,12 @@ them. Local package checks do not replace live factory acceptance.
 The [current enterprise pair](validation/beta-progress-2026-11-03/enterprise-current-pair.md)
 passed a new combined build, disposable Auth/relay checks and Windows headless
 two-account invitation/removal workflow. The later [bridge shutdown repair](validation/beta-progress-2026-11-03/enterprise-bridge-stop.md)
-passed a fresh combined build and Auth/relay checks; the private pointer is `711f70bf`.
-Hosted rollout, shared-hardware execution isolation and a real provider-backed
-job remain pending.
+was followed by [durable inference retry receipts](validation/beta-progress-2026-11-03/enterprise-inference-receipts.md).
+The current private pointer is `14c16068`, paired with public core `16e9ecc6`.
+Its clean combined build, SQL replay and real Auth/PostgREST/relay checks passed.
+A cloud queue consumer, portable aliases, shared-hardware execution isolation,
+staged config migration, hosted rollout and a real provider-backed job remain
+unfinished.
 
 A [current public recovery candidate](validation/beta-progress-2026-11-03/current-public-release.md)
 at `16e9ecc6` now includes the later server/web fixes and exact factory account
