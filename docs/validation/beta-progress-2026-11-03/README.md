@@ -1,9 +1,15 @@
 # Beta finishing pass: local validation
 
-Latest enterprise evidence: [durable inference retry receipts](enterprise-inference-receipts.md)
+Latest enterprise evidence: the [inference-side consumer](enterprise-inference-consumer.md)
+now passes the combined private `0dc0142e` / public `16e9ecc6` build and a real
+Auth/PostgREST-to-fixture-provider flow, including active-request revocation.
+Compute-side consumption, aliases, identity/ledger integration, isolation and
+configuration migration remain unfinished.
+
+The preceding [durable inference retry receipts](enterprise-inference-receipts.md)
 fixes a reproduced duplicate-request path and records the clean private `14c16068`
 build against public core `16e9ecc6`. Real Auth/PostgREST concurrent retry and
-relay checks passed. The queue consumer, aliases, isolation and migration are
+relay checks passed. The compute-side queue consumer, aliases, isolation and migration are
 still implementation work.
 
 Latest factory evidence: [exact account routing](factory-account-routing.md)

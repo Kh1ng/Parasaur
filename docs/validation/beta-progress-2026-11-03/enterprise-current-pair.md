@@ -1,11 +1,12 @@
 # Current enterprise integration — 2026-11-04
 
-The current verified pair is private `14c16068` with public core `16e9ecc6`.
-It retains the earlier fixes below and adds [durable inference retry receipts](enterprise-inference-receipts.md).
-A fresh combined build passed 1,005 server tests (one opt-in skip), 13 mock tests,
+The current verified pair is private `0dc0142e` with public core `16e9ecc6`.
+It retains the earlier fixes, [durable inference retry receipts](enterprise-inference-receipts.md),
+and the [inference-side consumer](enterprise-inference-consumer.md).
+A fresh combined build passed 1,017 server tests (one opt-in skip), 13 mock tests,
 artifact guards and transformed transport checks. Final-source disposable SQL,
-real Auth/PostgREST concurrent retry and HTTP/WebSocket relay checks passed.
-Portable aliases, a cloud queue consumer, execution isolation and configuration
+real Auth/PostgREST-to-HTTP-provider, concurrent retry, revocation and relay checks passed.
+Portable aliases, a compute-side queue consumer, execution isolation and configuration
 migration remain unfinished; these local results are not hosted beta acceptance.
 
 ## Earlier integration record

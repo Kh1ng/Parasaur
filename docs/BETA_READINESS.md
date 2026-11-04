@@ -140,9 +140,11 @@ The [current enterprise pair](validation/beta-progress-2026-11-03/enterprise-cur
 passed a new combined build, disposable Auth/relay checks and Windows headless
 two-account invitation/removal workflow. The later [bridge shutdown repair](validation/beta-progress-2026-11-03/enterprise-bridge-stop.md)
 was followed by [durable inference retry receipts](validation/beta-progress-2026-11-03/enterprise-inference-receipts.md).
-The current private pointer is `14c16068`, paired with public core `16e9ecc6`.
-Its clean combined build, SQL replay and real Auth/PostgREST/relay checks passed.
-A cloud queue consumer, portable aliases, shared-hardware execution isolation,
+The [inference-side consumer](validation/beta-progress-2026-11-03/enterprise-inference-consumer.md)
+is now implemented at private `0dc0142e`, paired with public core `16e9ecc6`.
+Its clean combined build, SQL replay and real Auth/PostgREST-to-provider/relay
+checks passed, including active-request revocation and cleanup.
+A compute-side queue consumer, portable aliases, shared-hardware execution isolation,
 staged config migration, hosted rollout and a real provider-backed job remain
 unfinished.
 
