@@ -142,11 +142,13 @@ The later [bridge shutdown repair](validation/beta-progress-2026-11-03/enterpris
 was followed by [durable inference retry receipts](validation/beta-progress-2026-11-03/enterprise-inference-receipts.md).
 The [inference-side consumer](validation/beta-progress-2026-11-03/enterprise-inference-consumer.md)
 is retained with the new [compute process boundary](validation/beta-progress-2026-11-03/enterprise-compute-isolation.md)
-at private `bbbd9599`, paired with public core `16e9ecc6`.
+and [claim-bound inference socket](validation/beta-progress-2026-11-03/enterprise-inference-relay.md)
+at private `841fc124`, paired with public core `f7294e34`.
 Its clean combined build, SQL replay and real Auth/PostgREST-to-provider/relay
 checks passed, including active-request revocation and cleanup.
-Nine dedicated real WSL isolation checks and native Windows unsupported-host
-refusal passed. A compute-side queue consumer, production runtime/relay, portable
+Ten dedicated real WSL isolation checks and a sandboxed real Auth/PostgREST
+inference flow passed. Native Windows platform/inference and WebSocket auth
+checks passed during the pass. A compute-side queue consumer, production runtime/client and forge access, portable
 aliases, complete shared-hardware integration, bounded workspace storage,
 shared local/cloud capacity, staged config migration, hosted rollout and a real provider-backed job remain
 unfinished.

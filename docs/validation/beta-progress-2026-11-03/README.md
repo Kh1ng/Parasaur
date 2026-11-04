@@ -1,10 +1,10 @@
 # Beta finishing pass: local validation
 
-Latest enterprise evidence: the [compute process boundary](enterprise-compute-isolation.md)
-passes nine real WSL namespace/cgroup, denial, cancellation and controller-death
-checks. Private `bbbd9599` / public `16e9ecc6` passes the combined build and real
-Auth/PostgREST-to-fixture-provider checks. Compute queue consumption, production
-runtime/relay, aliases, identity/ledger integration, bounded workspace storage,
+Latest enterprise evidence: the [isolated inference connection](enterprise-inference-relay.md)
+binds a job-only socket to its exact cloud claim/model and durable request key.
+Private `841fc124` / public `f7294e34` passes the combined build, ten real WSL
+isolation checks and a sandboxed Auth/PostgREST-to-inference-worker fixture flow.
+Compute queue consumption, production runtime/client and forge access, aliases, identity/ledger integration, bounded workspace storage,
 shared local/cloud capacity and configuration migration remain unfinished.
 
 The preceding [durable inference retry receipts](enterprise-inference-receipts.md)
