@@ -16,6 +16,7 @@ use std::process::Command;
 
 mod installation;
 mod launch_agent;
+mod npm;
 mod ownership;
 mod reexec;
 mod release;
@@ -909,7 +910,12 @@ fn ensure_lockfile_current(repo: &Path) -> Result<()> {
 
 fn run_command(repo: &Path, program: &str, args: &[&str]) -> Result<()> {
     println!("> {} {}", program, args.join(" "));
-    let status = Command::new(program)
+    let mut command = if program == "npm" {
+        npm::command()?
+    } else {
+        Command::new(program)
+    };
+    let status = command
         .args(args)
         .current_dir(repo)
         .status()
