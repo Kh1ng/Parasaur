@@ -634,6 +634,13 @@ fn deploy_web_dist(repo: &Path, dist: &Path, root_path: PathBuf) -> Result<Optio
             "sudo",
             &["cp", "-r", "--", dist_assets, &format!("{root}/")],
         )?;
+        // Build/archive umasks must not make public assets unreadable to the
+        // unprivileged server after this root-owned deployment.
+        run_command(
+            repo,
+            "sudo",
+            &["chmod", "-R", "a+rX", "--", &format!("{root}/assets")],
+        )?;
     }
 
     // 2. index.html last: the browser-facing swap is a single-file replace.
@@ -641,7 +648,23 @@ fn deploy_web_dist(repo: &Path, dist: &Path, root_path: PathBuf) -> Result<Optio
     let dist_index = dist_index
         .to_str()
         .context("web dist index path is not UTF-8")?;
-    run_command(repo, "sudo", &["cp", "--", dist_index, root])?;
+    let staged_index = format!("{root}/.gah-index.html.new");
+    run_command(
+        repo,
+        "sudo",
+        &["install", "-m", "0644", "--", dist_index, &staged_index],
+    )?;
+    run_command(
+        repo,
+        "sudo",
+        &[
+            "mv",
+            "-f",
+            "--",
+            &staged_index,
+            &format!("{root}/index.html"),
+        ],
+    )?;
 
     // 3. Prune stale hashed assets. Best-effort: a prune hiccup must not
     //    fail the whole update after the new page is already live.
@@ -1318,6 +1341,81 @@ mod tests {
     fn web_build_targets_workspace_directly_not_root_build_web_script() {
         assert_eq!(WEB_BUILD_ARGS, &["run", "--workspace=apps/web", "build"]);
         assert!(!WEB_BUILD_ARGS.contains(&"build:web"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn web_deploy_makes_restrictive_build_assets_readable_to_the_service() {
+        use std::os::unix::fs::PermissionsExt;
+        let _exec_guard = ExecGuard::new();
+        let tmp = TempDir::new().unwrap();
+        let dist = tmp.path().join("build output");
+        let root = tmp.path().join("public web");
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir_all(dist.join("assets/nested")).unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        for name in ["index.html", "assets/app.js", "assets/nested/app.css"] {
+            let path = dist.join(name);
+            std::fs::write(&path, name).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        }
+        std::fs::set_permissions(
+            dist.join("assets/nested"),
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        let operator_file = root.join("robots.txt");
+        std::fs::write(&operator_file, "operator content").unwrap();
+        std::fs::set_permissions(&operator_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        // Execute real copy/install/chmod under a restrictive subprocess umask.
+        // Only privileged directory ownership is simulated inside this fixture.
+        shim(
+            &bin,
+            "sudo",
+            r#"umask 077
+if [ "$1" = install ] && [ "$2" = -d ]; then
+  for last in "$@"; do :; done
+  exec /usr/bin/install -d -m 0755 "$last"
+fi
+exec "$@"
+"#,
+        );
+        let _path = PathGuard::set(format!("{}:/usr/bin:/bin", bin.display()));
+        super::deploy_web_dist(tmp.path(), &dist, root.clone()).unwrap();
+        for name in ["index.html", "assets/app.js", "assets/nested/app.css"] {
+            let path = root.join(name);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), name);
+            assert_eq!(
+                std::fs::metadata(path).unwrap().permissions().mode() & 0o444,
+                0o444,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            std::fs::metadata(root.join("assets/nested"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o111,
+            0o111
+        );
+        assert_eq!(
+            std::fs::metadata(operator_file)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::metadata(dist.join("assets/app.js"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o640
+        );
     }
 
     /// Issue #896 review: the deploy prunes stale hashed assets. Vite
