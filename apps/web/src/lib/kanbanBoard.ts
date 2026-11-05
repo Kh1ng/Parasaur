@@ -645,6 +645,9 @@ export function whyNotRunning(board: KanbanBoard, card: KanbanCard): KanbanVerdi
 
 export interface WorkingJob {
   runId: string;
+  state: 'running' | 'stale';
+  lastActivity: string;
+  nodeId: string | null;
   /** `#1367 (fix)` */
   label: string;
   workId: string | null;
@@ -659,7 +662,7 @@ export function workingNow(input: KanbanInput): { jobs: WorkingJob[]; agents: Ka
   const jobs = (input.status?.running_workers ?? []).map((worker) => {
     const workId = worker.work_id ? workKey(worker.work_id) : null;
     const label = `${workId ?? worker.branch ?? worker.run_id} (${worker.mode})${worker.state === 'stale' ? ' · stale' : ''}`;
-    return { runId: `${worker.node_id}:${worker.run_id}:${worker.attempt}`, label, workId, agent: agentLabel(worker.backend, worker.model), since: worker.started_at };
+    return { runId: `${worker.node_id}:${worker.run_id}:${worker.attempt}`, state: worker.state, lastActivity: worker.last_activity_at, nodeId: worker.node_id, label, workId, agent: agentLabel(worker.backend, worker.model), since: worker.started_at };
   });
   return { jobs, agents: board.agents };
 }

@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 test('failed and pending status refreshes retain context without claiming live execution', async ({ page }, testInfo) => {
   let failing = false;
+  let stale = false;
   let holdRetry = false;
   let releaseRetry: (() => void) | undefined;
   let assignments = 0;
@@ -18,6 +19,7 @@ test('failed and pending status refreshes retain context without claiming live e
     snapshot.active_claims = [];
     snapshot.blocked_work_items = [];
     snapshot.running_workers = [{ work_id: '#116', run_id: 'fixture-run', mode: 'improve', backend: 'codex', runner: 'codex', backend_instance: 'codex-work', requested_model: 'fixture-model', model: 'fixture-model', actual_model: null, node_id: 'fixture-node', branch: 'gah/116', started_at: new Date().toISOString(), last_activity_at: new Date().toISOString(), attempt: 1, stale_after_seconds: 900, state: 'running' }];
+    if (stale) snapshot.running_workers[0].state = 'stale';
     await route.fulfill({ json: snapshot });
   });
   await page.goto('/?page=kanban&profile=fixture');
@@ -56,5 +58,13 @@ test('failed and pending status refreshes retain context without claiming live e
   releaseRetry!();
   await expect(warning).toHaveCount(0);
   await expect(main.getByRole('region', { name: /^Running, / })).toContainText('#116');
+  await page.setViewportSize({ width: 1280, height: 900 });
+  stale = true;
+  await refresh.click();
+  await expect(page.getByRole('button', { name: 'Worker activity unconfirmed', exact: true })).toBeVisible();
+  await expect(main.getByRole('region', { name: /^Waiting, / })).toContainText('Worker activity is stale');
+  stale = false;
+  await refresh.click();
+  await expect(page.getByRole('button', { name: /^Working on #116/ })).toBeVisible();
   expect(assignments).toBe(0);
 });

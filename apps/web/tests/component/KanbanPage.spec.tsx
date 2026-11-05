@@ -155,6 +155,34 @@ test('before the status snapshot loads, the navbar does not infer workers from c
   expect(agents.find((agent) => agent.backend === 'agy')?.reason).toBe('Idle');
 });
 
+test('stale-only worker observations do not advertise running or idle execution', async ({ mount, page }, testInfo) => {
+  const observed = workingNow({ ...input, status: { ...status, running_workers: status.running_workers!.map(worker => ({ ...worker, state: 'stale' })) } });
+  const component = await mount(<WorkingNowMenu {...observed} onOpenBoard={() => {}} />);
+  const chip = component.getByRole('button', { name: 'Worker activity unconfirmed', exact: true });
+  await expect(chip).toBeVisible();
+  await expect(chip.locator('.animate-pulse')).toHaveCount(0);
+  await chip.click();
+  const menu = component.getByRole('dialog');
+  await expect(menu).toContainText('#4 (fix) · stale');
+  await expect(menu).toContainText('Last activity: 2026-10-05T18:30:00Z');
+  await expect(menu).toContainText('Node: node');
+  await expect(menu).toContainText('does not prove a process stopped');
+  await expect(menu).not.toContainText('Nothing is running.');
+  await page.screenshot({ path: testInfo.outputPath('stale-worker-menu.png') });
+});
+
+test('mixed observations name and count only confirmed running work regardless of roster order', async ({ mount }) => {
+  const old = { ...status.running_workers![0], state: 'stale' as const };
+  const current = { ...old, work_id: '#8', run_id: 'current', state: 'running' as const };
+  const observed = workingNow({ ...input, status: { ...status, running_workers: [old, current] } });
+  const component = await mount(<WorkingNowMenu {...observed} onOpenBoard={() => {}} />);
+  const chip = component.getByRole('button', { name: 'Working on #8 · 1 stale: 1 job running', exact: true });
+  await expect(chip).toBeVisible();
+  await chip.click();
+  await expect(component.getByRole('dialog')).toContainText('#4 (fix) · stale');
+  await expect(component.getByRole('dialog')).toContainText('#8 (fix)');
+});
+
 test('navbar jobs and capacity use the roster despite conflicting claims and controller events', () => {
   const snapshot = { ...status, running_workers: [] };
   expect(workingNow({ ...input, status: snapshot }).jobs).toEqual([]);
