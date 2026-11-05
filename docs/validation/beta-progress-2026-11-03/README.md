@@ -3,13 +3,17 @@
 Latest activity repair: [account execution evidence](account-activity-evidence.md)
 uses exact session/worker account identity, node ownership and worker freshness.
 Claims, provider transport IDs and the first sibling account no longer imply
-working. Windows unit and full browser workflows pass; this later source change
-still needs matched integration/packaging.
+working. The matched `6b101b98` public package / `8ec34f7` private assembly pass
+builds, actual isolated installation and assembled Windows UI workflows. Live
+acceptance remains.
 
 Latest memory trial: [48 passes in one controller](long-controller-memory.md)
 completed 192 synthetic starts and graceful shutdown. RSS rose overall with
 late drops; this does not resolve allocation attribution or prove a plateau.
 Partial event-size observations are retained separately from paused RSS samples.
+A later 12-pass allocator diagnostic separates allocator free space from a small
+in-use proxy; one optimized single-pass check also passed. Neither establishes
+production leak attribution or long-running stability.
 
 Latest quota recovery: [failed reads and pending retries](quota-refresh-recovery.md)
 retain recorded costs/allowances while page and navbar make current usage and

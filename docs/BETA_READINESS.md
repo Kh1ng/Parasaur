@@ -46,12 +46,15 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 - [Account activity evidence](validation/beta-progress-2026-11-03/account-activity-evidence.md)
   now uses exact running-session/worker account identity with node and freshness
   checks. Claims, transport IDs and sibling fallback no longer claim execution.
-  Windows unit/browser checks pass; matched integration/packaging and live
-  acceptance remain required.
+  Windows unit/browser checks, matched `6b101b98` package / `8ec34f7` assembly,
+  isolated installation and assembled Windows UI checks pass. Live acceptance
+  remains required.
 
 - [Longer controller memory trial](validation/beta-progress-2026-11-03/long-controller-memory.md)
   completed 48 passes and 192 synthetic starts in one Debug process with normal
-  allocator settings. RSS rose overall with late drops. Allocator/live-heap
+  allocator settings. RSS rose overall with late drops. A 12-pass allocator
+  diagnostic now identifies substantial allocator free space at active-worker
+  boundaries; one optimized single-pass diagnostic passed. Exact live-heap
   attribution, repeated trials and an optimized multi-hour soak remain required.
 
 - [Quota refresh recovery](validation/beta-progress-2026-11-03/quota-refresh-recovery.md)
@@ -64,15 +67,15 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   now use canonical ledger identity and avoid repeated candidate totals or
   cross-account backend totals. Actual, estimated, unknown and measured zero
   stay distinct. Rust, real-CLI, Windows UI and worker-relay checks pass. The
-  matched `cd67c949` package and `9d67290` private assembly are verified and the
-  WSL user CLI is updated with rollback. Live billing/usage reconciliation and
+  matched `6b101b98` package and `8ec34f7` private assembly are verified. The
+  installed WSL CLI already matches the candidate byte-for-byte, with rollback. Live billing/usage reconciliation and
   complete admission-limit acceptance remain open.
 
 - [Server update recovery](validation/beta-progress-2026-11-03/server-update-recovery.md)
   resumes persisted running updates, cancels polling on unmount and labels
   interrupted status reads as unavailable. Six Windows browser checks,
-  typechecking and production build pass. The matched `cd67c949` package and
-  `9d67290` private assembly include the fix; six assembled private cases also
+  typechecking and production build pass. The matched `6b101b98` package and
+  `8ec34f7` private assembly include the fix; six assembled private cases also
   pass. Signed updates and authenticated live acceptance remain open.
 
 - [Streaming ledger reads](validation/beta-progress-2026-11-03/streamed-ledger-memory.md)

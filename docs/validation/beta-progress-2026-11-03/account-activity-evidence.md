@@ -42,6 +42,15 @@ and held retry; subscription popover/cards. The other two cases cover window
 formatting and account/pool aggregation. The production cost and quota behavior
 remains unchanged. Logs are retained at `artifacts/account-activity-*.log`.
 
-This source change follows the `cd67c949` public package and `9d67290` private
-assembly. It needs matched integration/packaging and live acceptance. No
-installed app, real account session or live factory was mutated by these checks.
+The matched `6b101b98` public package and `8ec34f7` private assembly now include
+this change. The private build passed 1,106 server cases (38 skips), 16 mock
+cases and artifact/transport guards. Its exact assembled UI passed 20 Windows
+component and five browser cases, including the activity transitions above.
+The public build passed 1,011 server cases (two skips), 16 mock cases and
+isolated release installation; all 29 JavaScript chunks served byte-for-byte.
+The existing WSL user CLI is byte-identical to the new candidate and both native
+Windows read-only integration checks passed again. No replacement was needed.
+Native desktop/settings and all six worker-release hashes remain unchanged.
+Logs: `artifacts/account-activity-private-*.log`; package/install records are in
+`artifacts/parasaur-central-6b101b98/`. Authenticated live acceptance remains.
+No real account session or live factory was mutated by these checks.

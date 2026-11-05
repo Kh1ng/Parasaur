@@ -1,12 +1,14 @@
 # Current enterprise integration — 2026-11-05
 
-The current assembled pair is private `9d67290` with public core `cd67c949`.
+The current assembled pair is private `8ec34f7` with public core `6b101b98`.
+It includes [exact account activity](account-activity-evidence.md), requiring
+local running execution identity and fresh worker observations.
 It includes [recorded account costs](account-cost-attribution.md), using
 canonical ledger identity instead of repeated routing totals, and
 [quota refresh recovery](quota-refresh-recovery.md), retaining unavailable state
 through retries and labeling historical allowance/capacity readings. Twenty
-assembled Windows component cases and four Playwright cases passed, including
-the full account UI and failed/held-retry/success workflows. These used the
+assembled Windows component cases and five Playwright cases passed, including
+exact account activity, the full account UI and failed/held-retry/success workflows. These used the
 private transport's local mode, not a hosted dashboard session.
 It includes [server update recovery](server-update-recovery.md): persisted
 running updates resume observation, interrupted reads stay unconfirmed and
@@ -68,12 +70,16 @@ earlier eleven Windows Nodes/panel cases and complete sample Nodes browser
 flow retain their desktop/mobile evidence; they were not rerun for this banner
 change. The release manifest and emitted dashboard bundle were checked for the
 intended revision and updater recovery copy.
-The current browser transport guards passed. The refreshed matching native host,
+The current browser transport guards passed. The complete build log is at
+`/home/khing/.cache/parasaur-enterprise-current.1g9684x3/build.log`.
+The preceding `9d67290` / `cd67c949` matching native host,
 SHA-256 `f7a4f687e4cbb3c1478b9495064deed3e637ad8c50a52e16a394bebe8c28712f`,
-passed all 100 dedicated WSL isolation cases (one platform skip). Fresh SQL
+passed all 100 dedicated WSL isolation cases (one platform skip). Its fresh SQL
 replay and real local Auth/PostgREST/HTTP/WebSocket relay checks passed,
 including durable receipts, crash recovery, recipient isolation and
-authorization. The exact pair and source-match manifest are retained beside
+authorization. Rust runtime/tests, SQL and private relay sources are unchanged by the later
+account-activity UI/core-pin change; these native/Auth checks were not rerun.
+The preceding pair and source-match manifest are retained beside
 `/home/khing/.cache/parasaur-enterprise-current.c5dg3ln7/source`; sibling
 `build.log`, `isolation-verification.log` and `auth-verification.log` record results.
 The earlier `fd4d761` / `7db57658` pair retains its 35 assembled Kanban/store checks.

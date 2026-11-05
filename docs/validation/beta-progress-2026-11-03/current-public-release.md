@@ -4,10 +4,10 @@ The native desktop remains [source 018f6603](windows-updater-config.md), with
 the repaired Windows updater lookup. Its separate Windows installer and
 local test installation are unchanged by this CLI/server package update.
 
-Source: `cd67c9498f88043d748fadc1570b28b949b2b316`, version 0.3.0.
-Package: `artifacts/parasaur-central-cd67c949.zip` (24,260,317 bytes).
-SHA-256: `8c3825715d5282a54921e9bf325389c10f161e6e847d9e15f5f1a13a65c49210`.
-This supersedes retained candidates `fdc9567f`, `5e261e0e`, `43d73448`, `819937bf`,
+Source: `6b101b983ed7db6ac6f96a0de323fc0fa255d656`, version 0.3.0.
+Package: `artifacts/parasaur-central-6b101b98.zip` (24,245,141 bytes).
+SHA-256: `e14d5a255e741c1d3d733617de0cac3ea814dec7389098406ef219b54d6a8ba8`.
+This supersedes retained candidates `cd67c949`, `fdc9567f`, `5e261e0e`, `43d73448`, `819937bf`,
 `77209892` and historical `16e9ecc6`. It adds [claim evidence](kanban-claim-evidence.md),
 [failed-refresh recovery and stale-worker activity](kanban-refresh-recovery.md)
 plus [worker factory observations](worker-factory-observations.md) and
@@ -22,6 +22,12 @@ It now includes [recorded account costs](account-cost-attribution.md) and
 also passed the packaged HTTP quota check: exact account attribution,
 unattributed history, actual/estimated/unknown/zero costs and profile/period
 filtering. Bundle guards confirm the intended cost and unavailable-state copy.
+
+It also includes [exact account activity](account-activity-evidence.md): claims,
+provider transport identity, sibling accounts and foreign/stale workers no longer
+credit an account as working. Matching private `8ec34f7` / public `6b101b98`
+passed 20 Windows component cases and five browser cases (three full UI flows).
+These use fixture services and the private transport’s local mode.
 
 The package contains matched optimized Linux CLI/MCP binaries, the public
 server/web bundle, tracked source, manifest, build/install records, checksums
@@ -49,14 +55,15 @@ checksums, ZIP CRC and archived-file byte comparisons passed.
 
 Both binaries require **glibc 2.39**; current Ubuntu-24.04 WSL meets that floor.
 Live central compatibility remains unverified. Source/log:
-`/home/khing/.cache/parasaur-public-release.cpybq54i`.
+`/home/khing/.cache/parasaur-public-release.z1mosrpc`.
 
-The idle WSL user CLI at `~/.cargo/bin/gah` was atomically replaced with the
-candidate and its bytes verified, SHA-256
+The WSL user CLI at `~/.cargo/bin/gah` already matched this candidate byte for
+byte from the preceding `cd67c949` installation. Rust source is unchanged; no
+replacement was needed for this UI change. Its verified SHA-256 is
 `1834e100d031bc0ade4c95cf614b79faaae6be9e121f20b8c08de63a686f6942`.
 Rollback: `~/.cache/parasaur-upgrade-backups/gah-before-cd67c949`.
-The actual installed CLI passed the memory regression. Both native Windows
-integration reads passed again: account metadata and Mistral preflight.
+The freshly built, byte-identical optimized CLI passed the memory regression.
+Both native Windows integration reads passed again: account metadata and Mistral preflight.
 `USER_INSTALL.json` and `windows-installed-cli.log` record these checks.
 No provider sign-in, billing call or GUI interaction occurred.
 
