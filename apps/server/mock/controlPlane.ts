@@ -198,6 +198,8 @@ function mockCliRouter(): CliRouterSnapshot {
 interface MockState {
   outputDiscarded: boolean;
   outputKeys: Set<string>;
+  journalCleaned: boolean;
+  journalKeys: Set<string>;
   pairingRequests: PairingAccessRequest[];
   pairedDevices: PairedDevice[];
   cliRouter: CliRouterSnapshot;
@@ -631,6 +633,8 @@ function createState(scenario: MockScenarioName, reset: number, previewOrigin?: 
   return {
     outputDiscarded: false,
     outputKeys: new Set(),
+    journalCleaned: false,
+    journalKeys: new Set(),
     environmentSources: new Map(),
     profileChecks: new Map(),
     pairingRequests: [{ schema_version: 1, id: 'mock-pairing-request-1', name: 'Mock Linux', matching_code: 'ABCD1234',
@@ -1335,7 +1339,19 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     workId: '00000000-0000-0000-0000-000000000001', archiveBytes: outputBytes.length,
     incomplete: true, discardable: true, state: 'retained' });
   app.get('/api/owner/compute-output', (_req, res) => res.json({ maxJobs: 10, maxArchiveBytes: 1073741824,
-    entries: state.outputDiscarded ? [] : [outputEntry()], admissionBlocked: false } satisfies ComputeOutputCatalog));
+    entries: state.outputDiscarded ? [] : [outputEntry()], admissionBlocked: false,
+    journal: { entries: state.journalCleaned ? 3 : 4, limit: 10, cleanupAvailable: true } } satisfies ComputeOutputCatalog));
+  const journalRevision = () => createHash('sha256').update(`mock-journal-${state.reset}-${state.journalCleaned}`).digest('hex');
+  app.get('/api/owner/compute-journal/review', (_req, res) => res.json({ entries: state.journalCleaned ? 3 : 4,
+    limit: 10, storageVerified: true, revision: journalRevision(), candidates: state.journalCleaned ? [] : [{
+      id: createHash('sha256').update('mock-receipt').digest('hex'), revision: journalRevision(), workId: '00000000-0000-0000-0000-000000000002' }] }));
+  app.post('/api/owner/compute-journal/cleanup', (req, res) => {
+    const key = req.get('Idempotency-Key');
+    if (!key || !/^[A-Za-z0-9_-]{16,128}$/.test(key) || req.body?.confirm !== true) return jsonError(res, 400, 'Review required', 'Confirm removal of simulated receipts.');
+    if (state.journalKeys.has(key) || req.body?.revision !== journalRevision()) return jsonError(res, 409, 'Review changed', 'Review simulated receipts again.');
+    state.journalKeys.add(key); const removed = state.journalCleaned ? 0 : 1; state.journalCleaned = true;
+    res.json({ removed, retained: 0, unconfirmed: 0, interrupted: false });
+  });
   const selectedOutput = (id: string, revision: unknown) => !state.outputDiscarded && id === 'job-0000' && revision === outputEntry().revision;
   app.get('/api/owner/compute-output/:id/download', (req, res) => {
     if (!selectedOutput(req.params.id, req.query.revision)) return jsonError(res, 409, 'Output changed', 'Refresh simulated output.');

@@ -8,7 +8,25 @@ import ts from 'typescript';
 import { WebSocket } from 'ws';
 import type { ClientMessage, ProjectImportResult, ServerMessage, PairingAccessRequest, PairedDevice } from '@git-agent-harness/contracts';
 import { createMockControlPlane, MOCK_SCENARIOS } from './controlPlane.js';
-import type { ComputeOutputCatalog, ComputeOutputDownload } from '@git-agent-harness/contracts';
+import type { ComputeOutputCatalog, ComputeOutputDownload, ComputeJournalReview } from '@git-agent-harness/contracts';
+
+test('sample receipt cleanup is reviewed, replay-safe and independent of saved output', async () => {
+  const running = await createMockControlPlane().listen(0);
+  try {
+    const base = `${running.baseUrl}/api/owner/compute-journal`;
+    const review = await (await fetch(`${base}/review`)).json() as ComputeJournalReview;
+    assert.equal(review.candidates.length, 1);
+    const cleanup = (key: string, confirm: boolean) => fetch(`${base}/cleanup`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ revision: review.revision, confirm }) });
+    assert.equal((await cleanup('sample-receipt-rejected', false)).status, 400);
+    assert.equal((await cleanup('sample-receipt-reviewed', true)).status, 200);
+    assert.equal((await cleanup('sample-receipt-reviewed', true)).status, 409);
+    const catalog = await (await fetch(`${running.baseUrl}/api/owner/compute-output`)).json() as ComputeOutputCatalog;
+    assert.equal(catalog.journal?.entries, 3); assert.equal(catalog.entries.length, 1, 'receipt cleanup cannot discard saved output');
+    await post(running.baseUrl, '/api/mock/reset');
+    assert.equal((await cleanup('sample-receipt-stale-key', true)).status, 409);
+  } finally { await running.close(); }
+});
 
 test('sample output review removes only simulated bytes and reset invalidates a stale selection', async () => {
   const running = await createMockControlPlane().listen(0);

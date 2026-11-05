@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 
 type Operation =
   | 'compute_output.discard'
+  | 'compute_journal.cleanup'
   | 'gitlab.dead_letter.retry'
   | 'gitlab.dead_letter.discard'
   | 'agents.update'
@@ -95,6 +96,7 @@ export function mutationSafety(nodeId: string, directory = process.env.GAH_MUTAT
       operation === 'agents.update' ||
       operation === 'ledger.clear_attempts' ||
       operation === 'compute_output.discard' ||
+      operation === 'compute_journal.cleanup' ||
       operation.startsWith('gitlab.dead_letter.') ||
       operation.startsWith('route_approval.') ||
       operation.startsWith('external_approval.') ||
