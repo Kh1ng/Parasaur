@@ -627,3 +627,30 @@ fn admission_excludes_skipped_claims_and_initial_capacity_deferrals() {
     assert!(super::action_admitted_work(&action,
         "Deferred dispatch_ticket fallback because node capacity is busy after 1 backend attempt(s); prior backend outcome preserved"));
 }
+
+#[test]
+fn blocked_review_keeps_other_work_eligible_without_reselecting_the_hold() {
+    let action = NextAction::ReviewMr {
+        branch: "gah/exhausted".into(),
+        work_id: Some("#1605".into()),
+        mr_url: None,
+        reason: "review required".into(),
+    };
+    let outcome = "Blocked review: review budget exhausted for #1605: 22/3 review cycles used";
+    assert!(!super::action_admitted_work(&action, outcome));
+    assert!(!super::has_follow_up_in_batch(&action, outcome));
+    assert!(!super::parallel_outcome_is_failure(outcome));
+    let mut remaining = 0;
+    let mut suppressed = false;
+    assert!(!super::update_parallel_refill_budget(
+        outcome,
+        8,
+        &mut remaining,
+        &mut suppressed
+    ));
+    assert_eq!(remaining, 8);
+    assert!(!suppressed);
+    assert!(super::parallel_outcome_is_failure(
+        "Error: backend transport failed"
+    ));
+}

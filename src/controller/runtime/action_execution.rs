@@ -71,7 +71,15 @@ pub(crate) fn execute_action(
                 dispatch_reason: Some("review".to_string()),
                 ..base_args()
             };
-            let deferred = run_dispatch_and_record(cfg, "review", action.work_id(), &args)?;
+            let deferred = match run_dispatch_and_record(cfg, "review", action.work_id(), &args) {
+                // A durable work-item hold must not put unrelated work into
+                // the daemon's infrastructure-error backoff. Direct dispatch
+                // retains its typed error and terminal event.
+                Err(error) if crate::dispatch::review_budget_exhausted_error(&error).is_some() => {
+                    return Ok(format!("Blocked review: {error:#}"));
+                }
+                result => result?,
+            };
             Ok(deferred.unwrap_or_else(|| format!("Dispatched review for branch '{branch}'")))
         }
         NextAction::MarkReadyForReview { branch, .. } => {

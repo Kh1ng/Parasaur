@@ -1206,6 +1206,7 @@ fn run_parallel_once(
 /// initial deferral or a lost claim does not.
 fn action_admitted_work(action: &NextAction, outcome: &str) -> bool {
     selects_work(action)
+        && !outcome.starts_with("Blocked ")
         && !outcome_held_elsewhere(outcome)
         && (!outcome.starts_with("Deferred ") || !outcome.contains("no backend launched"))
 }
@@ -1246,6 +1247,7 @@ fn has_follow_up_in_batch(action: &NextAction, outcome: &str) -> bool {
             | NextAction::Escalate { .. }
             | NextAction::ReviewMr { .. }
     ) && !outcome.starts_with("Error:")
+        && !outcome.starts_with("Blocked ")
         && !outcome.starts_with("Deferred ")
         && !outcome_held_elsewhere(outcome)
 }
@@ -1323,22 +1325,26 @@ pub(crate) fn run_dispatch_and_record(
             } else {
                 crate::events::EventType::DispatchFinished
             };
-            let reason_code = if crate::policy::policy_blocked(&e).is_some()
-                || (matches!(event_type, crate::events::EventType::DispatchFinished)
-                    && e.chain().any(|cause| {
-                        cause
-                            .downcast_ref::<crate::routing::RouteError>()
-                            .is_some_and(|route_error| {
-                                matches!(
-                                    route_error,
-                                    crate::routing::RouteError::ApprovalRequired { .. }
-                                )
-                            })
-                    })) {
-                Some(HumanRequiredReason::PolicyApproval.as_str())
-            } else {
-                None
-            };
+            let reason_code =
+                if matches!(event_type, crate::events::EventType::ReviewBudgetExhausted) {
+                    Some(HumanRequiredReason::RetryBudgetExhausted.as_str())
+                } else if crate::policy::policy_blocked(&e).is_some()
+                    || (matches!(event_type, crate::events::EventType::DispatchFinished)
+                        && e.chain().any(|cause| {
+                            cause
+                                .downcast_ref::<crate::routing::RouteError>()
+                                .is_some_and(|route_error| {
+                                    matches!(
+                                        route_error,
+                                        crate::routing::RouteError::ApprovalRequired { .. }
+                                    )
+                                })
+                        }))
+                {
+                    Some(HumanRequiredReason::PolicyApproval.as_str())
+                } else {
+                    None
+                };
             crate::events::record_dispatch_error(
                 cfg,
                 event_type,
