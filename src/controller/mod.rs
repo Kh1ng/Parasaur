@@ -25,7 +25,6 @@ mod recovery;
 pub(crate) use self::recovery::{import_requested_changes, reconcile_abandoned_dispatches};
 
 mod runtime;
-pub(crate) use self::runtime::execute_action;
 #[allow(unused_imports)]
 pub(crate) use self::runtime::loop_parallel_argument;
 #[cfg(test)]
@@ -33,6 +32,7 @@ pub(crate) use self::runtime::test_node_lease;
 pub use self::runtime::RouteNodeAdmission;
 #[cfg(target_os = "linux")]
 pub(crate) use self::runtime::{acquire_node_capacity, NodeCapacityAdmission};
+pub(crate) use self::runtime::{action_prior_context, execute_action};
 pub(crate) use self::runtime::{NodeAdmissionDeferred, WorkerNodeLease};
 // The CLI facade is the only production caller of this crate-private path.
 // Keep the explicit allowance because library reachability analysis otherwise

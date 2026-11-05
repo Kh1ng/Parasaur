@@ -389,11 +389,9 @@ fn stop_event_for_capped_pr_persists_reason_code_and_dedupes_across_ticks() {
         reason_code: Some("fix_retry_cap_exceeded".into()),
     };
     for tick in 0..3 {
-        let history = crate::events::read_events(&cfg).unwrap();
         let newly_reported = super::record_stop_event(
             &cfg,
             "real",
-            &history,
             &action,
             crate::events::EventType::HumanRequired,
             "Human required: fix cap exceeded (branch-A) [code=fix_retry_cap_exceeded]",
@@ -575,12 +573,10 @@ fn blocker_and_terminal_reporting_share_identity_in_the_same_tick() {
         reason_code: Some("fix_retry_cap_exceeded".into()),
     };
     for _ in 0..3 {
-        let stale_history = crate::events::read_events(&cfg).unwrap();
         super::report_blocked_work_items_once(&cfg, "real", &snapshot).unwrap();
         assert!(!super::record_stop_event(
             &cfg,
             "real",
-            &stale_history,
             &action,
             crate::events::EventType::HumanRequired,
             "Human required: fix cap exceeded",

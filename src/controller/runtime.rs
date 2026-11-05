@@ -28,7 +28,7 @@ use route_state::{record_capacity_deferral, route_state_fingerprint};
 mod action_execution;
 #[path = "runtime/dispatch_policy.rs"]
 mod dispatch_policy;
-pub(crate) use action_execution::execute_action;
+pub(crate) use action_execution::{action_prior_context, execute_action};
 #[path = "runtime/dispatch_state.rs"]
 mod dispatch_state;
 use dispatch_state::{
@@ -354,11 +354,14 @@ fn run_pass(
 
     // For parallel > 1, we need to decide multiple actions
     if parallel > 1 {
+        // Parallel admission rebuilds fresh evidence for each slot. Its
+        // initial observations need not remain resident while workers run.
+        drop(ledger_entries);
+        drop(history);
         run_parallel_once(
             cfg,
             profile_name,
             &snapshot,
-            &ledger_entries,
             json,
             parallel,
             skip_validation_gate,
@@ -366,16 +369,24 @@ fn run_pass(
     } else {
         // Original single action behavior, moving past work another worker
         // or loop holds (issue #1430).
+        let mut initial_evidence = Some((history, ledger_entries));
         let (action, outcome) =
             run_moving_past_held_work(&snapshot, &capacity_deferred_work_ids, |view, excluded| {
+                let (history, entries) = match initial_evidence.take() {
+                    Some(evidence) => evidence,
+                    None => (
+                        crate::events::read_events(cfg)?,
+                        crate::ledger::read_entries(cfg)?,
+                    ),
+                };
                 run_selected_action(
                     cfg,
                     profile_name,
                     &claim_scope,
                     view,
                     excluded,
-                    &history,
-                    &ledger_entries,
+                    history,
+                    entries,
                     skip_validation_gate,
                 )
             })?;
@@ -396,14 +407,8 @@ fn run_pass(
                 .flatten();
             no_admission_diagnostics(&snapshot, 0, 1, node_deferral)
         });
-        let newly_reported = record_stop_event(
-            cfg,
-            profile_name,
-            &history,
-            &action,
-            stop_event_type,
-            &outcome,
-        )?;
+        let newly_reported =
+            record_stop_event(cfg, profile_name, &action, stop_event_type, &outcome)?;
 
         if json {
             println!(
@@ -480,8 +485,8 @@ fn run_selected_action(
     claim_scope: &str,
     snapshot: &crate::status::StatusSnapshot,
     excluded_work_ids: &HashSet<String>,
-    history: &[crate::events::ControllerEvent],
-    ledger_entries: &[crate::ledger::LedgerEntry],
+    history: Vec<crate::events::ControllerEvent>,
+    ledger_entries: Vec<crate::ledger::LedgerEntry>,
     skip_validation_gate: bool,
 ) -> Result<(NextAction, String)> {
     let original_action = decide_next_action(snapshot);
@@ -489,14 +494,14 @@ fn run_selected_action(
     let mut action = original_action.clone();
     let reset_after = original_action.work_id().and_then(|work_id| {
         latest_clear_attempts_timestamp(
-            ledger_entries,
+            &ledger_entries,
             profile_name,
             &crate::config::get_profile(cfg, profile_name).ok()?.repo_id,
             work_id,
         )
     });
     if let Some(reason) = detect_stuck_loop(
-        history,
+        &history,
         profile_name,
         &original_action,
         reset_after,
@@ -529,7 +534,7 @@ fn run_selected_action(
             cfg,
             profile_name,
             crate::clock::now_utc(),
-            ledger_entries,
+            &ledger_entries,
         )?;
         let mut scoped = fresh;
         let mut excluded_work_ids = excluded_work_ids.clone();
@@ -565,6 +570,9 @@ fn run_selected_action(
         original_review_generation.as_deref(),
     )?;
 
+    let prior_attempt_context = action_prior_context(cfg, profile_name, &action, &ledger_entries)?;
+    drop(ledger_entries);
+    drop(history);
     let outcome = if let Some(work_id) = action
         .work_id()
         .map(crate::work_claim::normalize_work_identity)
@@ -583,7 +591,7 @@ fn run_selected_action(
                 cfg,
                 profile_name,
                 &action,
-                ledger_entries,
+                prior_attempt_context,
                 skip_validation_gate,
                 Some(RouteNodeAdmission::single_worker(
                     action.clone(),
@@ -605,7 +613,7 @@ fn run_selected_action(
             cfg,
             profile_name,
             &action,
-            ledger_entries,
+            prior_attempt_context,
             skip_validation_gate,
             Some(RouteNodeAdmission::single_worker(
                 action.clone(),
@@ -624,7 +632,6 @@ fn run_selected_action(
 fn record_stop_event(
     cfg: &crate::config::GahConfig,
     profile_name: &str,
-    _history: &[crate::events::ControllerEvent],
     action: &NextAction,
     stop_event_type: crate::events::EventType,
     outcome: &str,
@@ -675,7 +682,6 @@ fn run_parallel_once(
     cfg: &crate::config::GahConfig,
     profile_name: &str,
     _snapshot: &crate::status::StatusSnapshot,
-    ledger_entries: &[crate::ledger::LedgerEntry],
     json: bool,
     max_parallel: usize,
     skip_validation_gate: bool,
@@ -955,7 +961,9 @@ fn run_parallel_once(
                             admission_coordinator.register_lifecycle_worker(sequence);
                         }
                         let done_tx = done_tx.clone();
-                        let ledger_entries_for_thread = ledger_entries;
+                        let prior_attempt_context =
+                            action_prior_context(cfg, profile_name, &action, &ledger_entries)?;
+                        drop(ledger_entries);
                         active += 1;
                         scope.spawn(move || {
                             let _node_capacity_lease = node_capacity_lease;
@@ -977,7 +985,7 @@ fn run_parallel_once(
                                         cfg,
                                         &profile_for_thread,
                                         &action_for_thread,
-                                        &ledger_entries_for_thread,
+                                        prior_attempt_context,
                                         skip_validation_gate,
                                         route_admission,
                                     )
@@ -1037,7 +1045,7 @@ fn run_parallel_once(
                             cfg,
                             profile_name,
                             &action,
-                            ledger_entries,
+                            None,
                             skip_validation_gate,
                             None,
                         )?;
@@ -1050,11 +1058,9 @@ fn run_parallel_once(
                             NextAction::NoOp { .. } => crate::events::EventType::LoopStopped,
                             _ => unreachable!(),
                         };
-                        let history = crate::events::read_events(cfg)?;
                         if !record_stop_event(
                             cfg,
                             profile_name,
-                            &history,
                             &action,
                             stop_event_type,
                             &outcome,

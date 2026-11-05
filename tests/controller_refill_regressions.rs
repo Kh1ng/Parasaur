@@ -1,3 +1,6 @@
+#[path = "controller_refill_regressions/ledger_retention.rs"]
+#[cfg(target_os = "linux")]
+mod ledger_retention;
 #[path = "controller_refill_regressions/node_recovery.rs"]
 mod node_recovery;
 #[path = "controller_refill_regressions/pass_turnover.rs"]
