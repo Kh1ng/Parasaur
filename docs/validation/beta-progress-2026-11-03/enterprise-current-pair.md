@@ -1,6 +1,9 @@
 # Current enterprise integration — 2026-11-05
 
-The current assembled pair is private `b7c96bc` with public core `819937bf`.
+The current assembled pair is private `3bfc79b` with public core `819937bf`.
+It includes [bounded delivery and enrollment repair](compute-delivery-authorization.md):
+fair result replay with a shared network deadline, fixed recovery guidance and
+same-origin credential reload without rerunning completed programs.
 It includes [worker ledger release](worker-ledger-retention.md), retaining only
 bounded prior context while actions execute, with lower controlled resident memory.
 It includes [native Windows memory diagnostics](windows-memory-diagnostics.md),
@@ -33,11 +36,14 @@ streaming, corruption and cancellation evidence without a new production bridge.
 Protocol 2 blocks launch until broker registration is durable. Full kernel
 slice-path checks and bounded housekeeping close the reproduced cleanup gaps.
 
-The diagnostics integration passed 1,095 server cases (38 explicit skips), 15 mock
-cases, typechecks, production builds and artifact/transport guards. The preceding
+The current integration passed 1,099 server cases (38 explicit skips), 15 mock
+cases, typechecks, production builds and artifact/transport guards. It also passed
+100 dedicated native WSL isolation cases (one platform skip), SQL replay and real
+local Auth/PostgREST/HTTP/WebSocket relay checks. The preceding
 receipt-recovery pair retains 19 shared-output browser cases, a full sample
-Settings workflow and inspected desktop/mobile layouts. Private web/SQL and
-compute/authorization runtime source is unchanged from those checks. Later
+Settings workflow and inspected desktop/mobile layouts. Private web/SQL source
+is unchanged from those checks; the compute/relay runtime changes are covered
+by the current focused and integration checks above. Later
 public core changes cover runner retention, event reads, pass turnover and
 server diagnostics, with their own focused evidence. The admission-view pair
 retains its five cloud Settings
@@ -57,7 +63,8 @@ The preceding `e7d088c` / `2f8c9cf5` pair and `fe07bdd2` host passed 96 dedicate
 WSL isolation cases (one platform skip) after the Ubuntu-24.04 restart. The
 complete log is retained alongside the assembly described in the memory record.
 
-Live Linux OOM attribution/soak, legacy/unknown state resolution, unavailable/revoked delivery authorization,
+Live Linux OOM attribution/soak, legacy/unknown state resolution, hosted delivery
+authorization and per-receipt recovery UI,
 capability-metadata maintenance,
 installed Tauri large-file saving, production dispatch/client and forge runtime,
 portable aliases, ledger integration, configuration migration and complete

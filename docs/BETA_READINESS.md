@@ -235,7 +235,13 @@ requires fresh proof. Private `9b4ae6d` has production sources identical to the
 cases (one platform skip), 19 browser cases and a full sample Settings workflow.
 The corrected Auth driver passed real local/cloud result preservation,
 retired-claim denial, reviewed cleanup and retained queue/recovery/relay checks.
-Hosted reporting, legacy/unknown state, unavailable/revoked delivery authorization and capability-metadata
+[Bounded result replay and enrollment repair](validation/beta-progress-2026-11-03/compute-delivery-authorization.md)
+now bound stalled delivery RPCs and reload same-origin credential repairs without
+rerunning completed work. Private `3bfc79b` / public `819937bf` passed 1,099 server,
+15 mock and 100 dedicated WSL cases (one platform skip), typechecks/builds and
+real local SQL/Auth/PostgREST/relay checks. Hosted authorization and per-receipt
+recovery UI remain open.
+Hosted reporting, legacy/unknown state, capability-metadata
 maintenance, installed desktop/hosted artifact acceptance, production runtime/client and
 forge access, portable aliases, identity/ledger integration,
 artifact publication, full shared-hardware acceptance, staged migration,

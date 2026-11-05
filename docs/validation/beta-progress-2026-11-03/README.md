@@ -1,5 +1,12 @@
 # Beta finishing pass: local validation
 
+Latest compute progress: [bounded delivery and enrollment repair](compute-delivery-authorization.md)
+keeps slow or denied result replay within a shared network budget and allows
+same-origin credential repair without rerunning completed work. Private `3bfc79b`
+with public `819937bf` passed 1,099 server, 15 mock and 100 dedicated WSL cases
+(one platform skip), plus typechecks/builds and real local Auth/PostgREST/relay
+checks. Per-receipt UI and hosted authorization acceptance remain open.
+
 Latest worker progress: [ledger ownership](worker-ledger-retention.md) releases
 full history before serial, parallel and TUI execution, retaining bounded retry
 context. Controlled real-CLI probes confirm lower retained memory; controller,
