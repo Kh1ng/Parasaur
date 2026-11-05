@@ -137,6 +137,31 @@ export interface NodeObservationError {
   message: string;
 }
 
+/** Independent reads: an unavailable source never becomes an empty/idle result. */
+export type NodeFactoryRead<T> = { state: 'available'; value: T } | {
+  state: 'unavailable'; reason: 'authorization' | 'unsupported' | 'timeout' | 'transport' | 'invalid_response';
+};
+export interface NodeFactoryBlocker {
+  work_id: string | null;
+  reason_code: string | null;
+  message: string | null;
+  next_steps: string[];
+}
+export interface NodeFactorySnapshot {
+  node_id: string;
+  profile: string;
+  checked_at: string;
+  status: NodeFactoryRead<{
+    generated_at: string;
+    profile_blockers: NodeFactoryBlocker[];
+    profile_blocker_count: number;
+    work_blockers: NodeFactoryBlocker[];
+    work_blocker_count: number;
+  }>;
+  loop: NodeFactoryRead<{ running: boolean }>;
+  decision: NodeFactoryRead<import('./gah.js').LoopDecision | null>;
+}
+
 export interface NodeObservationSnapshot {
   node_id: string;
   display_name: string;

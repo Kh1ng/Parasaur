@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { parseNodeAuthHealth } from './authHealth.js';
 import { parseNodeCentralClaims } from './centralClaimObservation.js';
+import { NodeFactoryError, readNodeFactory } from './nodeFactory.js';
 import { resolve, dirname, sep } from 'node:path';
 import { hostname, networkInterfaces } from 'node:os';
 import type {
@@ -1024,6 +1025,19 @@ export class RegistryService {
     this.observationRequests.delete(nodeId);
     this.save();
     this.changed();
+  }
+
+  /** Read one registered worker's factory evidence without changing fleet health or routing. */
+  async checkNodeFactory(nodeId: string, profile: string) {
+    const node = this.nodes.get(nodeId);
+    if (!node) throw new NodeFactoryError(404, 'Node is not registered.');
+    if (!profile || !node.profiles?.includes(profile)) throw new NodeFactoryError(400, 'Select a profile declared by this worker.');
+    let headers: Record<string, string>;
+    try { headers = nodeHeaders(node); }
+    catch { throw new NodeFactoryError(502, 'Cannot resolve the configured worker credential on central.'); }
+    const snapshot = await readNodeFactory(node, profile, headers);
+    if (this.nodes.get(nodeId) !== node) throw new NodeFactoryError(409, 'Worker registration changed during the check. Read factory state again.');
+    return snapshot;
   }
 
   /** Run readiness on one declared worker profile, without changing fleet health or routing eligibility. */

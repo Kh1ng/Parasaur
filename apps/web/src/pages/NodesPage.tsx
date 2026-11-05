@@ -4,6 +4,7 @@ import { authHealthApi, gahApi, pairingApi, type CoordinatorInfo } from '../api/
 import { PageHeader } from '../components/ui/PageHeader.js';
 import { LoginRepairPanel } from '../components/LoginRepairPanel.js';
 import { NodeReadinessCard } from '../components/NodeReadinessCard.js';
+import { NodeFactoryDetails } from '../components/NodeFactoryDetails.js';
 import { AddNodeSection } from './SettingsPage.js';
 import { useWebSocket } from '../ws/WebSocketContext.js';
 import { formatUpdatedAge } from '../lib/format.js';
@@ -361,6 +362,7 @@ export function NodesPage() {
         <Resources observation={health.snapshot ?? undefined} />
       </div>}
       <NodeReadiness key={`${selected.node_id}:${selected.advertised_url}:${selected.profiles?.join(',')}`} nodeId={selected.node_id} profiles={selected.profiles ?? []} />
+      <NodeFactoryDetails key={`factory:${selected.node_id}:${selected.advertised_url}:${selected.profiles?.join(',')}`} nodeId={selected.node_id} profiles={selected.profiles ?? []} />
       <h4 className="font-medium text-primary">Observed running workers</h4>
       <p className="text-sm text-secondary">{observationLabel(observation)} · observed {age(observation?.observed_at)}</p>
       <a href={`?page=work${observation?.profile ? `&profile=${encodeURIComponent(observation.profile)}` : ''}#running-workers`} className="text-accent">Open worker roster</a>

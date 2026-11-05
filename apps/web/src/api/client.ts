@@ -26,6 +26,7 @@ import type {
   FleetSnapshot,
   FleetQuotaSnapshot,
   NodeHealthCheckResult,
+  NodeFactorySnapshot,
   StatusSnapshot,
   QuotaSnapshot,
   UsageRollupSummary,
@@ -334,6 +335,7 @@ export interface GahDataSource {
   getFleetQuota(params?: { profile?: string; since?: string }): Promise<FleetQuotaSnapshot>;
   checkNodeHealth(nodeId: string): Promise<NodeHealthCheckResult>;
   getNodeDoctor(nodeId: string, profile: string): Promise<DoctorSnapshot>;
+  getNodeFactory(nodeId: string, profile: string): Promise<NodeFactorySnapshot>;
   getStatus(profile?: string): Promise<StatusSnapshot>;
   getQuota(params?: { profile?: string; since?: string }): Promise<QuotaSnapshot>;
   getUsageRollup(profile?: string, days?: number): Promise<UsageRollupSummary>;
@@ -547,6 +549,9 @@ export const gahApi: GahDataSource = {
   },
   getNodeDoctor(nodeId, profile) {
     return getJson<DoctorSnapshot>(`/api/registry/nodes/${encodeURIComponent(nodeId)}/doctor`, { profile });
+  },
+  getNodeFactory(nodeId, profile) {
+    return getJson<NodeFactorySnapshot>(`/api/registry/nodes/${encodeURIComponent(nodeId)}/factory`, { profile });
   },
   getFleetSnapshot() {
     return getJson<FleetSnapshot>('/api/registry/fleet/snapshot');

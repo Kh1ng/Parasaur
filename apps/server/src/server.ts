@@ -66,6 +66,7 @@ import {
   runPlanningMap,
 } from './gahCli.js';
 import { COORDINATOR_VERSION, REPORT_GROUP_BY_VALUES } from '@git-agent-harness/contracts';
+import { NodeFactoryError } from './nodeFactory.js';
 import type {
   ReportGroupBy,
   ReportSeriesData,
@@ -941,6 +942,16 @@ export function createServer(
       res.status(error instanceof NodeDoctorError ? error.status : 502).json({
         error: 'Worker readiness unavailable', message: error instanceof Error ? error.message : String(error)
       });
+    }
+  });
+
+  app.get('/api/registry/nodes/:nodeId/factory', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      const profile = typeof req.query.profile === 'string' ? req.query.profile : '';
+      res.json(await registryService.checkNodeFactory(req.params.nodeId, profile));
+    } catch (error) {
+      res.status(error instanceof NodeFactoryError ? error.status : 502).json({ error: 'Worker factory check failed', message: error instanceof NodeFactoryError ? error.message : 'Cannot read worker factory state.' });
     }
   });
 
