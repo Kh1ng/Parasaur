@@ -32,6 +32,16 @@ test('worker runtime evidence governs running cards and stale observations prese
   expect(board(status({ running_workers: [worker] })).cards[0]).toMatchObject({ workId: '#7', working: true });
 });
 
+test('retained worker and capacity records are not live evidence after a failed read', () => {
+  const input = { status: status({ available_tickets: [ticket('#8')], running_workers: [worker] }), quota: null, controllerRuns: [], factoryAgents: [], loopRunning: true, now: Date.now() };
+  const historical = buildKanban({ ...input, statusUnavailable: true });
+  expect(historical.cards.find(card => card.workId === '#7')).toMatchObject({ working: false, column: 'waiting', reason: 'Factory state could not refresh; execution is not confirmed' });
+  expect(historical.cards.find(card => card.workId === '#8')?.reason).toContain('Last recorded as ready');
+  expect(historical.cards.every(card => card.assignHeldBy !== null)).toBe(true);
+  expect(historical.gates.every(gate => gate.ok === null)).toBe(true);
+  expect(buildKanban(input).cards.find(card => card.workId === '#7')?.working).toBe(true);
+});
+
 test('controller intent and a matching local tool do not override an empty worker roster', () => {
   const run: ControllerActivity = { run_id: 'run-7', profile: 'gah', work_id: '#7', started_at: worker.started_at, finished_at: null, action: 'fix_existing: gah/7', status: 'running', outcome: null };
   const result = buildKanban({ status: status({ active_claims: [claim] }), quota: null, controllerRuns: [run], factoryAgents: [{ pid: 99, tool: 'codex', cwd: '/worktrees/gah-7', started_at: worker.started_at }], loopRunning: true, now: Date.now() });

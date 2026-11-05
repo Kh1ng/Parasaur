@@ -10,7 +10,7 @@ const STATE_LABEL: Record<KanbanAgent['state'], string> = { working: 'Working', 
  * now. Hovering or clicking it lists every running job with its agent, and
  * each agent with what it is doing or why it is idle.
  */
-export function WorkingNowMenu({ jobs, agents, onOpenBoard }: { jobs: WorkingJob[]; agents: KanbanAgent[]; onOpenBoard: () => void }) {
+export function WorkingNowMenu({ jobs, agents, unavailable = false, onOpenBoard }: { jobs: WorkingJob[]; agents: KanbanAgent[]; unavailable?: boolean; onOpenBoard: () => void }) {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -27,29 +27,30 @@ export function WorkingNowMenu({ jobs, agents, onOpenBoard }: { jobs: WorkingJob
     return () => { window.clearInterval(timer); document.removeEventListener('mousedown', close); document.removeEventListener('keydown', close); };
   }, [open]);
 
-  if (jobs.length === 0 && agents.length === 0) return null;
+  if (!unavailable && jobs.length === 0 && agents.length === 0) return null;
   const first = jobs[0];
-  const summary = !first ? 'Idle' : `Working on ${first.workId ?? first.label}${jobs.length > 1 ? ` +${jobs.length - 1}` : ''}`;
+  const summary = unavailable ? 'Factory activity unavailable' : !first ? 'Idle' : `Working on ${first.workId ?? first.label}${jobs.length > 1 ? ` +${jobs.length - 1}` : ''}`;
   return (
     <div className="relative hidden items-center sm:flex" ref={menu} onMouseLeave={() => { if (!pinned) setOpen(false); }}>
       <button type="button" aria-expanded={open} aria-haspopup="true"
-        aria-label={first ? `${summary}: ${jobs.length} ${jobs.length === 1 ? 'job' : 'jobs'} running` : 'No job is running'}
+        aria-label={unavailable ? summary : first ? `${summary}: ${jobs.length} ${jobs.length === 1 ? 'job' : 'jobs'} running` : 'No job is running'}
         onMouseEnter={() => { if (!pinned) { setOpen(true); setNow(Date.now()); } }}
         onClick={() => { setPinned(!open || !pinned); setOpen(true); setNow(Date.now()); }}
         className={`flex h-9 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs hover:bg-overlay/5 ${open ? 'bg-overlay/5' : ''} ${first ? 'text-primary' : 'text-muted'}`}>
-        <span className={`h-2 w-2 shrink-0 rounded-full ${first ? 'animate-pulse bg-good' : 'bg-muted'}`} aria-hidden="true" />
+        <span className={`h-2 w-2 shrink-0 rounded-full ${unavailable ? 'bg-warning' : first ? 'animate-pulse bg-good' : 'bg-muted'}`} aria-hidden="true" />
         {summary}
       </button>
       {open && (
         <div className="absolute right-0 top-full z-40 mt-1 w-80 max-w-[calc(100vw-1.5rem)] rounded-lg border border-subtle bg-raised shadow-xl" role="dialog" aria-label="What the factory is doing now">
           <div className="px-3 py-2">
-            <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted">Running now</h2>
-            {jobs.length === 0 && <p className="mt-1 text-xs text-secondary">Nothing is running.</p>}
+            <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted">{unavailable ? 'Last recorded jobs' : 'Running now'}</h2>
+            {unavailable && <p className="mt-1 text-xs text-warning">Factory state could not refresh. Open the board to retry; current execution is unconfirmed.</p>}
+            {jobs.length === 0 && <p className="mt-1 text-xs text-secondary">{unavailable ? 'No retained job observations.' : 'Nothing is running.'}</p>}
             <ul className="mt-1 space-y-1.5">
               {jobs.map((job) => (
                 <li key={job.runId} className="text-xs">
                   <span className="font-medium text-primary">{job.label}</span>
-                  <span className="block text-[11px] text-muted">{job.agent ?? 'Agent not visible yet'} · {formatDuration(Math.max(0, (now - Date.parse(job.since)) / 1000))}</span>
+                  <span className="block text-[11px] text-muted">{job.agent ?? 'Agent not visible yet'} · {unavailable ? `Recorded start: ${job.since}` : formatDuration(Math.max(0, (now - Date.parse(job.since)) / 1000))}</span>
                 </li>
               ))}
             </ul>

@@ -263,21 +263,23 @@ export function KanbanPage({ deviceAgents, onOpenWork }: KanbanPageProps) {
   useWsReconnectRefresh(refresh);
 
   const snapshot = status.key === (profile ?? '') ? status.data : null;
+  const statusUnavailable = Boolean(status.error);
   const board = useMemo(() => buildKanban({
     status: snapshot,
+    statusUnavailable,
     quota: quota.data,
     controllerRuns: controllerActivity.filter((run) => !profile || !run.profile || run.profile === profile),
     factoryAgents: deviceAgents.data?.factory_agents ?? [],
-    loopRunning: loopStatus.data?.running ?? null,
+    loopRunning: loopStatus.key === profile && !loopStatus.error ? loopStatus.data?.running ?? null : null,
     now
-  }), [snapshot, quota.data, controllerActivity, deviceAgents.data, loopStatus.data, profile, now]);
+  }), [snapshot, statusUnavailable, quota.data, controllerActivity, deviceAgents.data, loopStatus, profile, now]);
 
   const repo = profiles.data?.find((item) => item.name === profile)?.repo ?? null;
   // The same socket message the Factory page's dispatch form and the work drawer's Re-dispatch send.
   const assign: KanbanAssign = {
-    unavailable: !isConnected ? 'Disconnected from the server' : !profile || !repo ? 'Repository details are not available yet' : null,
+    unavailable: statusUnavailable ? 'Refresh factory state successfully before assigning work' : !isConnected ? 'Disconnected from the server' : !profile || !repo ? 'Repository details are not available yet' : null,
     send: (card, agent) => {
-      if (!profile || !repo || !card.workId) return;
+      if (statusUnavailable || !profile || !repo || !card.workId) return;
       const backend = agent.backend as ProviderKind;
       sendMessage({ type: 'session.start', requestId: `kanban_assign_${Date.now()}`, profile, providerKind: backend, instanceId: generateProviderInstanceId(backend, 0), repo, mode: 'fix', backend, target: card.workId });
       window.setTimeout(() => refresh(), 3000);
@@ -287,6 +289,7 @@ export function KanbanPage({ deviceAgents, onOpenWork }: KanbanPageProps) {
   return (
     <div>
       <PageHeader title="Kanban" description="What is running, what is not, and why." onRefresh={() => refresh()} refreshing={status.loading} lastUpdated={status.fetchedAt} />
+      {snapshot && status.error && <p role="alert" className="mb-4 text-sm text-warning">Factory state could not refresh: {status.error}. This board shows last recorded observations. Execution and available capacity are unconfirmed. Refresh to check again.</p>}
       {!snapshot && status.error ? <ErrorState message={status.error} endpoint="/api/status" onRetry={() => refresh()} />
         : !snapshot ? <LoadingState label="Loading the board…" />
           : board.cards.length === 0 ? <EmptyState icon={KanbanSquare} title="No jobs yet" description="Issues the factory accepts show up here as soon as it sees them." />

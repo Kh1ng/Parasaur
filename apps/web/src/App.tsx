@@ -101,7 +101,9 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
     return () => window.clearInterval(timer);
   }, [activeProfile, fetchQuota, reconnectSeq]);
   const subscriptions = useMemo(() => subscriptionUsage(quota.data), [quota.data]);
-  const statusSnapshot = useGahStore((state) => state.status.data);
+  const statusResource = useGahStore((state) => state.status);
+  const statusSnapshot = statusResource.key === (activeProfile ?? '') ? statusResource.data : null;
+  const statusUnavailable = statusResource.key !== (activeProfile ?? '') || Boolean(statusResource.error);
   const fetchStatus = useGahStore(state => state.fetchStatus);
   useEffect(() => {
     void fetchStatus(activeProfile, { force: true });
@@ -126,8 +128,8 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
 
   // The navbar uses the same worker roster as the page counters.
   const loopRunning = useGahStore((state) => state.loopStatus.data?.running ?? null);
-  const working = useMemo(() => workingNow({ status: statusSnapshot, quota: quota.data, controllerRuns: controllerActivity, factoryAgents: deviceAgents.data?.factory_agents ?? [], loopRunning, now: Date.now() }),
-    [statusSnapshot, quota.data, controllerActivity, deviceAgents.data, loopRunning]);
+  const working = useMemo(() => workingNow({ status: statusSnapshot, statusUnavailable, quota: quota.data, controllerRuns: controllerActivity, factoryAgents: deviceAgents.data?.factory_agents ?? [], loopRunning, now: Date.now() }),
+    [statusSnapshot, statusUnavailable, quota.data, controllerActivity, deviceAgents.data, loopRunning]);
 
   /** Pages link to each other by name; a sidebar view opens in the sidebar.
    * Any page navigation leaves the GitLab context view first. */
@@ -222,7 +224,7 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
       <Navbar currentPage={currentPage} sideView={sideView} onPageChange={navigate} activityUnreadCount={activityUnreadCount}
         chatOpen={isChatPage || chatDocked} onChatToggle={toggleChat}
         onImportProject={() => { requestAction('import'); expandChat(true); }} onCreateProject={() => { requestAction('create'); setSideView('profile'); }}
-        actions={<><WorkingNowMenu jobs={working.jobs} agents={working.agents} onOpenBoard={() => navigate('kanban')} /><SubscriptionUsageMenu subscriptions={subscriptions} busy={busySubscriptions} onOpenQuota={() => navigate('quota')} /><NotificationsMenu liveActivity={liveActivity} muted={sideView === 'events'} unreadCount={activityUnreadCount} revision={activityRevision} autoPopup={notificationPopups} /></>} />
+        actions={<><WorkingNowMenu jobs={working.jobs} agents={working.agents} unavailable={statusUnavailable} onOpenBoard={() => navigate('kanban')} /><SubscriptionUsageMenu subscriptions={subscriptions} busy={busySubscriptions} onOpenQuota={() => navigate('quota')} /><NotificationsMenu liveActivity={liveActivity} muted={sideView === 'events'} unreadCount={activityUnreadCount} revision={activityRevision} autoPopup={notificationPopups} /></>} />
 
       {/* Left to right: icon strip, sidebar view, main panel, chat sidebar. */}
       <div className="flex min-h-0 flex-1">

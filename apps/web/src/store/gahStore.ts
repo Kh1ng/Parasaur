@@ -144,7 +144,8 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
     const key = profile ?? '';
     const current = get().status;
     if ((current.loading && current.key === key) || (!opts?.force && isFresh(current, key))) return;
-    const pending = { ...(current.key === key ? current : emptyResource<StatusSnapshot>()), loading: true, error: null, key };
+    // A retry is not recovery: retain the failed-read warning until success.
+    const pending = { ...(current.key === key ? current : emptyResource<StatusSnapshot>()), loading: true, key };
     const requestId = ++statusRequestId;
     set({ status: pending });
     try {

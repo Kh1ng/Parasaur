@@ -1,10 +1,10 @@
-import type { ControllerEvent, DoctorSnapshot, LedgerEntry, LoopDecision, ProfileSummary, ReportData, ReportSeriesData, SettingsConfigProfileSummary } from '@git-agent-harness/contracts';
+import type { ControllerEvent, DoctorSnapshot, LedgerEntry, LoopDecision, ProfileSummary, ReportData, ReportSeriesData, SettingsConfigProfileSummary, StatusSnapshot } from '@git-agent-harness/contracts';
 import { gahApi } from '../api/client.js';
 import type { LoopStatus, StartLoopResult, StopLoopResult } from '../api/client.js';
 import { useGahStore, workTimelineKey } from './gahStore.js';
 
 jest.mock('../api/client.js', () => ({
-  gahApi: { getReport: jest.fn(), getProfileConfig: jest.fn(), getWorkTimeline: jest.fn(), getEvents: jest.fn(), getDoctor: jest.fn(), getReportSeries: jest.fn(), getLoopStatus: jest.fn(), getLoopDecision: jest.fn(), startLoop: jest.fn(), stopLoop: jest.fn(), getProfiles: jest.fn(), addProfile: jest.fn(), updateProfile: jest.fn(), removeProfile: jest.fn() },
+  gahApi: { getStatus: jest.fn(), getReport: jest.fn(), getProfileConfig: jest.fn(), getWorkTimeline: jest.fn(), getEvents: jest.fn(), getDoctor: jest.fn(), getReportSeries: jest.fn(), getLoopStatus: jest.fn(), getLoopDecision: jest.fn(), startLoop: jest.fn(), stopLoop: jest.fn(), getProfiles: jest.fn(), addProfile: jest.fn(), updateProfile: jest.fn(), removeProfile: jest.fn() },
   GahApiError: class GahApiError extends Error {},
 }));
 
@@ -39,6 +39,21 @@ beforeEach(() => {
 afterEach(() => jest.useRealTimers());
 
 const config = (profile: string) => ({ profile, backend_instances: [] }) as unknown as SettingsConfigProfileSummary;
+
+test('a failed factory read remains unavailable through retry and clears only on success', async () => {
+  const snapshot = { running_workers: [] } as unknown as StatusSnapshot;
+  useGahStore.setState({ status: { data: snapshot, key: 'alpha', loading: false, error: null, fetchedAt: Date.now() } });
+  jest.mocked(gahApi.getStatus).mockRejectedValueOnce(new Error('node unavailable'));
+  await useGahStore.getState().fetchStatus('alpha', { force: true });
+  expect(useGahStore.getState().status).toMatchObject({ data: snapshot, error: 'node unavailable', loading: false });
+  const retry = deferred<StatusSnapshot>();
+  jest.mocked(gahApi.getStatus).mockReturnValueOnce(retry.promise);
+  const pending = useGahStore.getState().fetchStatus('alpha', { force: true });
+  expect(useGahStore.getState().status).toMatchObject({ data: snapshot, error: 'node unavailable', loading: true });
+  retry.resolve(snapshot);
+  await pending;
+  expect(useGahStore.getState().status).toMatchObject({ error: null, loading: false });
+});
 
 test('a forced configuration refresh after a save supersedes an older in-flight read', async () => {
   const old = deferred<SettingsConfigProfileSummary>();

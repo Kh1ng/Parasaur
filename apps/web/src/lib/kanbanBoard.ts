@@ -100,6 +100,8 @@ export interface KanbanBoard {
 
 export interface KanbanInput {
   status: StatusSnapshot | null;
+  /** Retained status is historical after a failed read, including during retry. */
+  statusUnavailable?: boolean;
   quota: Pick<QuotaSnapshot, 'candidates'> | null;
   controllerRuns: ControllerActivity[];
   factoryAgents: DeviceAgent[];
@@ -243,7 +245,7 @@ function buildGates(input: KanbanInput, busyWorkers: number): KanbanGate[] {
     detail: `${status.open_managed_mr_count} of ${cap} allowed${status.implementation_intake_paused ? ': new work is paused until some merge' : ''}`
   });
   for (const blocker of status.blockers) gates.push({ label: 'Profile blocked', ok: false, detail: blocker.message ?? blocker.reason ?? humanize(blocker.kind) });
-  return gates;
+  return input.statusUnavailable ? gates.map(gate => ({ ...gate, ok: null, detail: `Last recorded: ${gate.detail}` })) : gates;
 }
 
 function readyReason(gates: KanbanGate[], anyAgentFree: boolean): { reason: string; tone: KanbanTone } {
@@ -343,12 +345,13 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
     const lastOutcome = lastRun?.status === 'failed' ? plainOutcome(lastRun) : null;
     // Lock ownership and controller intent are not dispatch-runtime evidence.
     // Use the same worker roster as the navbar, including its explicit staleness.
-    const working = !mergeRequest?.merged && worker?.state === 'running';
+    const working = !input.statusUnavailable && !mergeRequest?.merged && worker?.state === 'running';
     const blocks: string[] = [];
     const gateCode = blocker?.reason_code ?? blocker?.reason ?? ticket?.human_required_reason_code ?? null;
     const managed = managedByKey.get(key) ?? null;
     const reviewWait = reviewWaitReason(mergeRequest);
     if (managed) blocks.push(managed);
+    if (input.statusUnavailable) blocks.push('Factory state could not refresh. These are last recorded observations; refresh successfully before assigning work or assuming a worker stopped.');
     if (claim && !mergeRequest?.merged) blocks.push(`Claimed by ${claim.hostname || 'an unknown machine'} at ${claim.claimed_at}. Inspect this machine's worker activity and recovery state before retrying; claim ownership alone does not confirm execution.`);
     if (worker?.state === 'stale' && !mergeRequest?.merged) blocks.push(`Worker activity last reported at ${worker.last_activity_at}${worker.node_id ? ` on ${worker.node_id}` : ''}. Check the worker connection and recovery state; stale activity does not prove the process stopped.`);
 
@@ -379,9 +382,10 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
       reason = reviewWait;
       tone = 'warning';
       blocks.push(reason);
-    } else if (claim || worker?.state === 'stale') {
+    } else if (claim || worker) {
       column = 'waiting';
-      reason = worker?.state === 'stale' ? 'Worker activity is stale; execution is not confirmed'
+      reason = input.statusUnavailable ? 'Factory state could not refresh; execution is not confirmed'
+        : worker?.state === 'stale' ? 'Worker activity is stale; execution is not confirmed'
         : `Claimed by ${claim!.hostname || 'an unknown machine'}; execution is not confirmed`;
       tone = 'warning';
     } else if (mergeRequest) {
@@ -461,7 +465,9 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
         tone = 'warning';
       } else {
         column = 'ready';
-        ({ reason, tone } = readyReason(gates, anyAgentFree));
+        ({ reason, tone } = input.statusUnavailable
+          ? { reason: 'Last recorded as ready; factory state is unavailable', tone: 'unknown' }
+          : readyReason(gates, anyAgentFree));
       }
       if (column === 'waiting') blocks.push(reason);
     }
@@ -492,7 +498,8 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
       job,
       blocks,
       skipped,
-      assignHeldBy: claim && column !== 'done' ? 'Assign is off: this work already has a claim; inspect its worker before retrying'
+      assignHeldBy: input.statusUnavailable ? 'Assign is off: refresh factory state successfully before assigning work'
+        : claim && column !== 'done' ? 'Assign is off: this work already has a claim; inspect its worker before retrying'
         : worker && column !== 'done' ? 'Assign is off: an existing worker must be reconciled before retrying'
           : managed ? ASSIGN_HELD_BY_MANAGER : column === 'needs_you' && gateCode ? ASSIGN_HELD_BY[gateCode] ?? null : null,
       managed
