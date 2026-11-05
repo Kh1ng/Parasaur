@@ -183,7 +183,15 @@ guidance visible to hardware members without dashboard access. The `4bca434` /
 platform skip), plus typechecks/builds and five cloud Settings browser cases.
 Real SQL/Auth/PostgREST passed admission reporting/expiry and the retained
 queue, recovery, maintenance, authorization and relay checks.
-Hosted reporting, legacy/unknown state, pending-delivery reconciliation and capability-metadata
+[Retired-claim delivery reconciliation](validation/beta-progress-2026-11-03/compute-delivery-retirement.md)
+now ends a reproduced endless retry with exact retirement proof, preserving local
+and cloud outcomes and displaying delivery as unconfirmed. Owner cleanup still
+requires fresh proof. Private `9b4ae6d` has production sources identical to the
+`c013752` / `b0cd55e1` build, which passed 1,093 server, 15 mock, 96 dedicated WSL
+cases (one platform skip), 19 browser cases and a full sample Settings workflow.
+The corrected Auth driver passed real local/cloud result preservation,
+retired-claim denial, reviewed cleanup and retained queue/recovery/relay checks.
+Hosted reporting, legacy/unknown state, unavailable/revoked delivery authorization and capability-metadata
 maintenance, installed desktop/hosted artifact acceptance, production runtime/client and
 forge access, portable aliases, identity/ledger integration,
 artifact publication, full shared-hardware acceptance, staged migration,

@@ -1,6 +1,15 @@
 # Beta finishing pass: local validation
 
-Latest compute progress: [workspace admission visibility](compute-admission-visibility.md)
+Latest compute progress: [retired-claim delivery reconciliation](compute-delivery-retirement.md)
+fixes a reproduced endless retry without overwriting either the local result or
+cloud outcome. Explicit retired/unconfirmed receipts can be reviewed for cleanup
+with fresh proof. Private `9b4ae6d` has production sources identical to the
+`c013752` / public `b0cd55e1` build: 1,093 server, 15 mock and 96 dedicated WSL
+passes (one platform skip), 19 browser cases and the full sample Settings flow.
+Real Auth/PostgREST also passed unchanged local/cloud outcomes, retired-claim
+execution denial, reviewed cleanup and retained queue/recovery/relay checks.
+
+The preceding [workspace admission visibility](compute-admission-visibility.md)
 shows pause reasons and recovery guidance separately from worker liveness, with
 independent expiry and hardware-member visibility. Private `4bca434` / public
 `f11b53c3` passes 1,087 server, 15 mock and 90 dedicated WSL cases (one platform

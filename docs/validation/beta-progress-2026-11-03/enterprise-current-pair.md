@@ -1,6 +1,8 @@
-# Current enterprise integration — 2026-11-04
+# Current enterprise integration — 2026-11-05
 
-The current assembled pair is private `4bca434` with public core `f11b53c3`.
+The current source pair is private `9b4ae6d` with public core `b0cd55e1`.
+Its production build input is private `c013752`; the revision difference is one
+Auth acceptance counter assertion, with identical production sources/artifacts.
 It retains automatic queued compute, bounded archives and durable delivery,
 with [owner/scope reconciliation](enterprise-compute-reconciliation.md) and
 [saved-output review controls](saved-output-controls.md) in shared Settings,
@@ -10,28 +12,33 @@ liveness from disabled, paused, capacity-limited and polling compute. Hardware
 members can see fixed recovery guidance without private dashboard access; stale
 compute observations expire independently of liveness.
 Owners can inspect the independent journal limit and confirm a bounded cleanup
-of delivered, unreferenced receipts with fresh cloud retirement proof. Partial
+of settled, unreferenced receipts with fresh cloud retirement proof. Partial
 removal preserves durable lookup evidence and can resume after a new review.
+The [retired-claim delivery repair](compute-delivery-retirement.md) also settles
+otherwise endless pending delivery using independent exact-claim proof, while
+keeping local results and cloud outcomes distinct. Retired receipts stay visibly
+delivery-unconfirmed and require fresh proof again for owner-reviewed cleanup.
 The [Windows native output check](windows-native-output.md) adds real filesystem
 streaming, corruption and cancellation evidence without a new production bridge.
 Protocol 2 blocks launch until broker registration is durable. Full kernel
 slice-path checks and bounded housekeeping close the reproduced cleanup gaps.
 
-The exact pair passed 1,087 server cases (37 explicit skips), 15 mock cases,
+The production pair passed 1,093 server cases (37 explicit skips), 15 mock cases,
 typechecks, production builds and artifact/transport guards. Dedicated WSL
-isolation passed 90 cases with one platform-only skip. Five new cloud Settings
-browser cases passed on identical committed sources, including late-workspace
-replies and older-service fallback; desktop/mobile layouts were inspected.
-Final-pair real SQL/Auth/PostgREST checks passed admission reporting and its
-independent expiry, queue/crash recovery, receipt maintenance and retired-claim
-denial, authorization and HTTP/WebSocket relay boundaries.
-The preceding receipt-control pair retains its 18 browser cases, full sample
-Settings workflow and real Auth/PostgREST maintenance/retired-claim denial checks.
+isolation passed 96 cases with one platform-only skip. Nineteen shared-output
+browser cases and a full sample Settings workflow passed; desktop/mobile layouts
+were inspected. The preceding admission-view pair retains its five cloud Settings
+browser cases, real SQL/Auth/PostgREST admission reporting/expiry, queue/crash
+recovery, maintenance, authorization and HTTP/WebSocket relay evidence.
+The corrected current Auth driver passed SQL replay and real Auth/PostgREST,
+preserving local 125 and cloud completed/0 during retired-claim denial with no
+extra provider attempt. Reviewed cleanup kept the other job's archive and receipt.
+Queue, crash/recovery, retry-receipt and authorization/relay checks passed.
 Earlier Windows desktop checks passed 35 ordinary cases and the separate hidden
 native output fixture. The unchanged retained native binary also has the earlier
 pair's seven startup offsets and twelve clean repetitions of the failing window.
 
-Legacy/unknown state resolution, pending-delivery reconciliation,
+Legacy/unknown state resolution, unavailable/revoked delivery authorization,
 capability-metadata maintenance,
 installed Tauri large-file saving, production dispatch/client and forge runtime,
 portable aliases, ledger integration, configuration migration and complete
