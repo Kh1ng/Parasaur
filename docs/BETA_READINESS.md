@@ -143,17 +143,20 @@ was followed by [durable inference retry receipts](validation/beta-progress-2026
 The [inference-side consumer](validation/beta-progress-2026-11-03/enterprise-inference-consumer.md)
 is retained with the new [compute process boundary](validation/beta-progress-2026-11-03/enterprise-compute-isolation.md)
 and [claim-bound inference socket](validation/beta-progress-2026-11-03/enterprise-inference-relay.md)
-at private `637f088f`, paired with public core `8963ebb5`, including the
+at private `afd4cee4`, paired with public core `8963ebb5`, including the
 [startup authorization repair](validation/beta-progress-2026-11-03/enterprise-startup-authorization.md),
 [shared capacity/native watchdog](validation/beta-progress-2026-11-03/enterprise-host-supervision.md),
 [durable compute start/result delivery](validation/beta-progress-2026-11-03/enterprise-compute-recovery.md),
-and [bounded workspace/archive](validation/beta-progress-2026-11-03/enterprise-bounded-workspace.md).
+[bounded workspace/archive](validation/beta-progress-2026-11-03/enterprise-bounded-workspace.md),
+and [opt-in automatic queued compute](validation/beta-progress-2026-11-03/enterprise-compute-queue.md).
 The exact combined build, SQL replay and real Auth/PostgREST/HTTP fixture-provider
-checks passed. Fifty dedicated WSL checks, seven supplemental startup crash timings and
+checks passed. Sixty-two dedicated WSL checks, seven supplemental startup crash timings and
 sandboxed inference passed, including Node freeze, uncertain cleanup and lost
 committed start/completion replies with preserved host input and bounded output.
-The automatic compute queue consumer, post-crash scope reconciliation, journal
-retention and node-wide artifact budget, production runtime/client and forge access, portable aliases, identity/ledger integration,
+Two queued fixture jobs now complete the sandbox/inference/archive transaction
+with one provider attempt each. Post-crash scope/slot reconciliation,
+journal/archive maintenance and review controls, production runtime/client and
+forge access, portable aliases, identity/ledger integration,
 safe artifact review/publication, full shared-hardware acceptance, staged migration,
 hosted rollout and a real provider-backed job remain unfinished.
 
