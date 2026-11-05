@@ -73,6 +73,22 @@ manifest with a SHA-256 per artifact. When the `TAURI_SIGNING_PRIVATE_KEY`
 secret is configured, the same release carries a signed Tauri updater feed
 (`latest.json`) for the desktop app.
 
+Desktop clients also need the publisher's Tauri updater public key. Provision
+`desktop-updater.json` alongside desktop settings: `%USERPROFILE%\.config\gah`
+on Windows, or `$HOME/.config/gah` elsewhere. `XDG_CONFIG_HOME` overrides this
+with `$XDG_CONFIG_HOME/gah`. The file can contain:
+
+```json
+{"pubkey": "<publisher Tauri updater public key>"}
+```
+
+The default endpoint is the edge release's `latest.json` above; an `endpoint`
+field can select a managed feed. `GAH_DESKTOP_UPDATER_CONFIG` selects an explicit
+config file. With no config file, `GAH_DESKTOP_UPDATER_PUBKEY` and optional
+`GAH_DESKTOP_UPDATER_ENDPOINT` configure the client through its environment.
+Provisioning the key, publishing signed platform artifacts and completing a
+download/install/restart check are separate release steps.
+
 The server bundle embeds compiled `contracts` and `shared` workspace packages
 inside `apps/server/dist/node_modules`, so installation does not depend on
 ignored workspace build outputs. The bundle builder stages service-readable

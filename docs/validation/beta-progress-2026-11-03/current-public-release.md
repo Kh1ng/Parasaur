@@ -1,5 +1,11 @@
 # Current public release candidate — Windows/WSL, 2026-11-05
 
+Native desktop follow-up: [source 018f6603](windows-updater-config.md) fixes the
+Windows updater lookup and updates the closed local test installation with
+rollback. The desktop hashes below describe the earlier runtime-package checks;
+the linked native record has the newly installed hash. CLI/server/web package
+bytes and their checks below remain unchanged.
+
 Source: `77209892c6df0799be5ffeeac701fb11477a7b95`, version 0.3.0.
 Package: `artifacts/parasaur-central-77209892.zip` (24,144,675 bytes).
 SHA-256: `173a7ef02ecad29212f10572b6247a3e409cf042a413692062a11ae6a025d3c7`.

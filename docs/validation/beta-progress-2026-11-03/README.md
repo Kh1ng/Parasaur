@@ -1,5 +1,11 @@
 # Beta finishing pass: local validation
 
+Latest native progress: [Windows updater configuration](windows-updater-config.md)
+fixes key discovery when HOME is unset, preserving XDG/file/environment overrides.
+All 36 ordinary Windows desktop tests and the NSIS build pass. The closed local
+desktop test installation is updated with rollback and unchanged settings.
+Publisher key/feed provisioning and signed update acceptance remain open.
+
 Latest installed-runtime progress: the [current public candidate](current-public-release.md)
 at `77209892` packages optimized memory/scheduler repairs and passes isolated
 release installation, public server/mock checks and cold asset reads. The WSL

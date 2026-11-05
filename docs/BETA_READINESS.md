@@ -43,6 +43,12 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Windows updater key discovery](validation/beta-progress-2026-11-03/windows-updater-config.md)
+  now uses the desktop profile when HOME is unset. Native tests and installer
+  build pass; the closed local desktop test installation is updated with rollback.
+  Trusted key/feed provisioning, signed update/restart and fresh-host acceptance
+  are still required.
+
 - The [current public recovery candidate](validation/beta-progress-2026-11-03/current-public-release.md)
   includes optimized memory/scheduler repairs and is installed as the WSL user
   CLI, with rollback and passing Windows integration reads. Isolated release
