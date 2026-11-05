@@ -1118,7 +1118,7 @@ pub(super) fn routing_runtime_state(
     cfg: &GahConfig,
     current: &LedgerEntry,
 ) -> Result<RoutingRuntimeState> {
-    let entries = ledger::read_entries(cfg)?;
+    let entries = read_routing_history(cfg, &current.profile)?;
     let mut state = routing_runtime_state_from_entries(&entries, current);
     let reconciliations = ledger::reconcile::read_reconciliation_entries(cfg).unwrap_or_default();
     state.reviewer_outcomes = crate::routing::reviewer_outcome_metrics(
@@ -1128,6 +1128,26 @@ pub(super) fn routing_runtime_state(
         &current.repo_id,
     );
     Ok(state)
+}
+
+/// Route statistics need execution receipts, approvals and repair correlations.
+/// Empty review refusals contribute to none of those; validating them without
+/// retaining their payload prevents repeated admission failures from making
+/// every worker allocate another complete ledger snapshot.
+fn read_routing_history(cfg: &GahConfig, profile: &str) -> Result<Vec<LedgerEntry>> {
+    ledger::read_matching_entries(cfg, |entry| {
+        entry.profile == profile
+            && !(entry.mode == "review"
+                && matches!(
+                    entry.validation_result.as_deref(),
+                    Some("deferred_capacity" | "review_budget_exhausted")
+                )
+                && entry.attempts.is_empty()
+                && entry.attempts_completed.unwrap_or(0) == 0
+                && entry.backend_exit_code.is_none()
+                && entry.review_verdict.is_none()
+                && entry.dispatch_reason.as_deref() != Some("post_review_repair"))
+    })
 }
 
 pub(crate) fn routing_runtime_state_from_entries(
