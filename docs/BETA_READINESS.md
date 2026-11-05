@@ -43,6 +43,11 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Quota refresh recovery](validation/beta-progress-2026-11-03/quota-refresh-recovery.md)
+  keeps unavailable state through retries and qualifies retained page/navbar
+  usage and eligibility until a successful read. Windows unit and full browser
+  recovery checks pass. Matched integration/packaging and live acceptance remain.
+
 - [Recorded account costs](validation/beta-progress-2026-11-03/account-cost-attribution.md)
   now use canonical ledger identity and avoid repeated candidate totals or
   cross-account backend totals. Actual, estimated, unknown and measured zero

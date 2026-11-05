@@ -1,10 +1,10 @@
-import type { ControllerEvent, DoctorSnapshot, LedgerEntry, LoopDecision, ProfileSummary, ReportData, ReportSeriesData, SettingsConfigProfileSummary, StatusSnapshot } from '@git-agent-harness/contracts';
+import type { ControllerEvent, DoctorSnapshot, LedgerEntry, LoopDecision, ProfileSummary, QuotaSnapshot, ReportData, ReportSeriesData, SettingsConfigProfileSummary, StatusSnapshot } from '@git-agent-harness/contracts';
 import { gahApi } from '../api/client.js';
 import type { LoopStatus, StartLoopResult, StopLoopResult } from '../api/client.js';
 import { useGahStore, workTimelineKey } from './gahStore.js';
 
 jest.mock('../api/client.js', () => ({
-  gahApi: { getStatus: jest.fn(), getReport: jest.fn(), getProfileConfig: jest.fn(), getWorkTimeline: jest.fn(), getEvents: jest.fn(), getDoctor: jest.fn(), getReportSeries: jest.fn(), getLoopStatus: jest.fn(), getLoopDecision: jest.fn(), startLoop: jest.fn(), stopLoop: jest.fn(), getProfiles: jest.fn(), addProfile: jest.fn(), updateProfile: jest.fn(), removeProfile: jest.fn() },
+  gahApi: { getStatus: jest.fn(), getQuota: jest.fn(), getReport: jest.fn(), getProfileConfig: jest.fn(), getWorkTimeline: jest.fn(), getEvents: jest.fn(), getDoctor: jest.fn(), getReportSeries: jest.fn(), getLoopStatus: jest.fn(), getLoopDecision: jest.fn(), startLoop: jest.fn(), stopLoop: jest.fn(), getProfiles: jest.fn(), addProfile: jest.fn(), updateProfile: jest.fn(), removeProfile: jest.fn() },
   GahApiError: class GahApiError extends Error {},
 }));
 
@@ -39,6 +39,21 @@ beforeEach(() => {
 afterEach(() => jest.useRealTimers());
 
 const config = (profile: string) => ({ profile, backend_instances: [] }) as unknown as SettingsConfigProfileSummary;
+
+test('a quota retry retains the failed-read warning and recorded costs until success', async () => {
+  const params = { profile: 'alpha', since: '7d' };
+  const snapshot = { account_spend: [{ backend_instance: 'work', actual_cost_usd: 2 }] } as unknown as QuotaSnapshot;
+  useGahStore.setState({ quota: { data: snapshot, key: JSON.stringify(params), loading: false, error: null, fetchedAt: Date.now() } });
+  jest.mocked(gahApi.getQuota).mockRejectedValueOnce(new Error('quota unavailable'));
+  await useGahStore.getState().fetchQuota(params, { force: true });
+  const retry = deferred<QuotaSnapshot>();
+  jest.mocked(gahApi.getQuota).mockReturnValueOnce(retry.promise);
+  const pending = useGahStore.getState().fetchQuota(params, { force: true });
+  expect(useGahStore.getState().quota).toMatchObject({ data: snapshot, loading: true, error: 'quota unavailable' });
+  retry.resolve(snapshot);
+  await pending;
+  expect(useGahStore.getState().quota).toMatchObject({ data: snapshot, loading: false, error: null });
+});
 
 test('a failed factory read remains unavailable through retry and clears only on success', async () => {
   const snapshot = { running_workers: [] } as unknown as StatusSnapshot;

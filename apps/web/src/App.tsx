@@ -224,7 +224,7 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
       <Navbar currentPage={currentPage} sideView={sideView} onPageChange={navigate} activityUnreadCount={activityUnreadCount}
         chatOpen={isChatPage || chatDocked} onChatToggle={toggleChat}
         onImportProject={() => { requestAction('import'); expandChat(true); }} onCreateProject={() => { requestAction('create'); setSideView('profile'); }}
-        actions={<><WorkingNowMenu jobs={working.jobs} agents={working.agents} unavailable={statusUnavailable} onOpenBoard={() => navigate('kanban')} /><SubscriptionUsageMenu subscriptions={subscriptions} busy={busySubscriptions} onOpenQuota={() => navigate('quota')} /><NotificationsMenu liveActivity={liveActivity} muted={sideView === 'events'} unreadCount={activityUnreadCount} revision={activityRevision} autoPopup={notificationPopups} /></>} />
+        actions={<><WorkingNowMenu jobs={working.jobs} agents={working.agents} unavailable={statusUnavailable} onOpenBoard={() => navigate('kanban')} /><SubscriptionUsageMenu subscriptions={subscriptions} busy={busySubscriptions} unavailable={Boolean(quota.error)} onOpenQuota={() => navigate('quota')} /><NotificationsMenu liveActivity={liveActivity} muted={sideView === 'events'} unreadCount={activityUnreadCount} revision={activityRevision} autoPopup={notificationPopups} /></>} />
 
       {/* Left to right: icon strip, sidebar view, main panel, chat sidebar. */}
       <div className="flex min-h-0 flex-1">

@@ -1,5 +1,11 @@
 # Beta finishing pass: local validation
 
+Latest quota recovery: [failed reads and pending retries](quota-refresh-recovery.md)
+retain recorded costs/allowances while page and navbar make current usage and
+eligibility unconfirmed. Successful reads restore the fresh view. Windows unit,
+full browser recovery and typechecking pass, with inspected desktop/mobile
+layouts. This joins the account-cost repair for matched integration/packaging.
+
 Latest usage repair: [recorded account costs](account-cost-attribution.md) now
 come from canonical ledger execution identity, rather than summing overlapping
 candidate totals. Named accounts, unattributed history, estimates, unknowns and

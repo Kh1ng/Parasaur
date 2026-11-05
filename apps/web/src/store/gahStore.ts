@@ -169,7 +169,8 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
     if ((current.loading && current.key === key) || (!opts?.force && isFresh(current, key))) return;
     // A profile switch must start its own request and hide the old profile.
     // Object identity also rejects a late response from an earlier selection.
-    const pending = { ...(current.key === key ? current : emptyResource<QuotaSnapshot>()), loading: true, error: null, key };
+    // Starting a retry does not confirm the retained allowance readings.
+    const pending = { ...(current.key === key ? current : emptyResource<QuotaSnapshot>()), loading: true, key };
     set({ quota: pending });
     try {
       const data = await gahApi.getQuota(params);

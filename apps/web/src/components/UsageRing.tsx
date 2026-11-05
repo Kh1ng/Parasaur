@@ -23,16 +23,17 @@ function Arc({ r, percent, className }: { r: number; percent: number | null; cla
  * (the session), the inner ring the next one (the week), with the provider's
  * initial in the middle. Colour follows how close the tightest window is.
  */
-export function UsageRing({ usage, size = 26, working = false }: { usage: SubscriptionUsage; size?: number; /** A job is running on this subscription: green letter, glowing halo. */ working?: boolean }) {
+export function UsageRing({ usage, size = 26, working = false, unconfirmed = false }: { usage: SubscriptionUsage; size?: number; /** A job is running on this subscription: green letter, glowing halo. */ working?: boolean; unconfirmed?: boolean }) {
   const [outer, inner] = usage.windows.filter((window) => window.usedPercent !== null);
-  const tone = usageTone(usage.tightest?.usedPercent ?? null);
+  const tone = unconfirmed ? 'unknown' : usageTone(usage.tightest?.usedPercent ?? null);
+  const active = working && !unconfirmed;
   return (
-    <span className={`relative inline-flex shrink-0 items-center justify-center ${working ? 'usage-chip-working' : ''}`} style={{ width: size, height: size }} aria-hidden="true">
+    <span className={`relative inline-flex shrink-0 items-center justify-center ${active ? 'usage-chip-working' : ''}`} style={{ width: size, height: size }} aria-hidden="true">
       <svg className="absolute inset-0" width={size} height={size} viewBox="0 0 24 24">
         <Arc r={11} percent={outer?.usedPercent ?? null} className={TONE_CLASS[tone]} />
-        <Arc r={7.5} percent={inner?.usedPercent ?? null} className={TONE_CLASS[usageTone(inner?.usedPercent ?? null)]} />
+        <Arc r={7.5} percent={inner?.usedPercent ?? null} className={TONE_CLASS[unconfirmed ? 'unknown' : usageTone(inner?.usedPercent ?? null)]} />
       </svg>
-      <span className={`text-[9px] font-semibold uppercase leading-none ${working ? 'usage-letter-working' : 'text-muted'}`} data-working={working || undefined}>{usage.providerLabel.charAt(0)}</span>
+      <span className={`text-[9px] font-semibold uppercase leading-none ${active ? 'usage-letter-working' : 'text-muted'}`} data-working={active || undefined}>{unconfirmed ? '?' : usage.providerLabel.charAt(0)}</span>
     </span>
   );
 }

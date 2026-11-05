@@ -187,7 +187,7 @@ export function QuotaPage() {
   // the content area swaps to loading/error, so a total data-fetch failure
   // never leaves the user looking at a page with no identity and no way
   // to retry.
-  if (quota.loading && !quota.data) {
+  if (quota.loading && !quota.data && !quota.error) {
     return (
       <div className="quota-page space-y-6">
         {header}
@@ -219,9 +219,15 @@ export function QuotaPage() {
     <div className="quota-page space-y-6">
       {header}
 
-      <SubscriptionCards subscriptions={subscriptionUsage(snapshot)} />
+      {quota.error && <div role="alert" className="rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-primary">
+        <p className="font-medium">Quota snapshot unavailable</p>
+        <p className="mt-1">Showing the last recorded snapshot. Current allowances and route eligibility are unconfirmed.</p>
+        <button type="button" className="btn-secondary mt-2" disabled={quota.loading} onClick={refresh}>Retry quota</button>
+      </div>}
 
-      <QuotaCandidateLedger candidates={candidates} quotaChecks={snapshot?.quota_checks ?? []} />
+      <SubscriptionCards subscriptions={subscriptionUsage(snapshot)} unavailable={Boolean(quota.error)} />
+
+      <QuotaCandidateLedger candidates={candidates} quotaChecks={snapshot?.quota_checks ?? []} unavailable={Boolean(quota.error)} />
 
       <MistralConnectionPanel />
 
@@ -256,7 +262,7 @@ export function QuotaPage() {
               label="Candidates"
               value={String(candidates.length)}
               icon={Timer}
-              hint={candidates.length > 0 ? `${candidates.filter((c) => c.eligible_now).length} not blocked` : undefined}
+              hint={quota.error ? 'Current eligibility unconfirmed' : candidates.length > 0 ? `${candidates.filter((c) => c.eligible_now).length} not blocked` : undefined}
             />
           </section>
 
@@ -372,7 +378,7 @@ function AccountUsageDetails({ usage }: { usage: AccountUsageObservation }) {
   </div>;
 }
 
-function QuotaCandidateLedger({ candidates: configuredCandidates, quotaChecks }: { candidates: QuotaCandidateStatus[]; quotaChecks: QuotaCheck[] }) {
+function QuotaCandidateLedger({ candidates: configuredCandidates, quotaChecks, unavailable = false }: { candidates: QuotaCandidateStatus[]; quotaChecks: QuotaCheck[]; unavailable?: boolean }) {
   // An account observation is not permission to schedule work on that account.
   const observedAccounts: QuotaLedgerRow[] = quotaChecks.filter(check =>
     check.backend_instance && (check.credential_id || (check.quota_observations?.length ?? 0) > 0 || check.status === 'failed') && !configuredCandidates.some(candidate =>
@@ -425,7 +431,7 @@ function QuotaCandidateLedger({ candidates: configuredCandidates, quotaChecks }:
               return (
                 <section key={provider} className="quota-provider-summary">
                   <div className="flex items-center justify-between gap-3 mb-3"><h4 className="text-sm font-semibold text-primary">{providerLabel(provider)}</h4><span className="text-xs text-muted">{routingScopes.length} {routingScopes.length === 1 ? 'candidate' : 'candidates'}{scopes.length > routingScopes.length ? ` · ${scopes.length - routingScopes.length} observed accounts` : ''}</span></div>
-                  {routingScopes.length > 0 ? <p className="text-2xl font-semibold text-primary tabular-nums">{routingScopes.filter(candidate => candidate.eligible_now).length}<span className="text-sm font-normal text-muted"> / {routingScopes.length} not blocked</span></p> : <p className="text-sm text-muted">No routing candidate</p>}
+                  {unavailable ? <p className="text-sm text-muted">Current route eligibility unconfirmed</p> : routingScopes.length > 0 ? <p className="text-2xl font-semibold text-primary tabular-nums">{routingScopes.filter(candidate => candidate.eligible_now).length}<span className="text-sm font-normal text-muted"> / {routingScopes.length} not blocked</span></p> : <p className="text-sm text-muted">No routing candidate</p>}
                   <p className="text-xs text-muted mt-2">{observations.length} account {observations.length === 1 ? 'observation' : 'observations'} · {observations.filter(observation => quotaPercentages(observation) !== null).length} with quota percentages</p>
                 </section>
               );
@@ -441,7 +447,7 @@ function QuotaCandidateLedger({ candidates: configuredCandidates, quotaChecks }:
                       <p className="text-sm font-medium text-primary break-words">{scopeIdentity(candidate)}</p>
                       <p className="text-xs text-muted mt-1">{candidate.observationOnly ? 'Observed account · not a routing candidate' : candidate.modes.length > 0 ? candidate.modes.join(', ') : 'candidate'}{candidate.backend === 'opencode' && ' · OpenCode runner'}{!candidate.observationOnly && !candidate.configured && ' · no profile runner override'}</p>
                       <div className="mt-2 flex flex-wrap gap-2">
-                        <StatusBadge tone={candidate.observationOnly ? 'unknown' : !candidate.eligible_now ? 'critical' : candidate.observed_at ? 'good' : 'unknown'} label={candidate.observationOnly ? 'Availability unverified' : !candidate.eligible_now ? 'Unavailable' : candidate.observed_at ? 'Eligible' : 'Availability unverified'} />
+                        <StatusBadge tone={unavailable || candidate.observationOnly ? 'unknown' : !candidate.eligible_now ? 'critical' : candidate.observed_at ? 'good' : 'unknown'} label={unavailable ? 'Eligibility unconfirmed' : candidate.observationOnly ? 'Availability unverified' : !candidate.eligible_now ? 'Unavailable' : candidate.observed_at ? 'Eligible' : 'Availability unverified'} />
                         {!(candidate.quota_observations ?? []).some(observation => quotaPercentages(observation) !== null) && <StatusBadge tone="unknown" label="Quota unknown" />}
                         {isStale(candidate.observed_at) && <StatusBadge tone="serious" label="Stale" />}
                       </div>
