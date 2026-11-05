@@ -1,5 +1,7 @@
 #[path = "controller_refill_regressions/node_recovery.rs"]
 mod node_recovery;
+#[path = "controller_refill_regressions/pass_turnover.rs"]
+mod pass_turnover;
 mod support;
 #[path = "controller_refill_regressions/watchdog.rs"]
 mod watchdog;

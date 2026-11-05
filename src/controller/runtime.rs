@@ -656,7 +656,21 @@ fn record_stop_event(
     }
 }
 
-/// TICKET-096: Parallel execution for multiple actions
+/// A busy queue must eventually release pass-local results/exclusions and let
+/// the recurring loop reload configuration. Always allow one complete wave.
+fn parallel_pass_action_limit(parallel: usize) -> usize {
+    const LIMIT: usize = 128;
+    #[cfg(debug_assertions)]
+    if let Some(limit) = std::env::var_os("GAH_TEST_PARALLEL_PASS_ACTION_LIMIT")
+        .and_then(|value| value.to_str().and_then(|value| value.parse::<usize>().ok()))
+    {
+        return limit.clamp(1, LIMIT).max(parallel);
+    }
+    LIMIT.max(parallel)
+}
+
+/// TICKET-096: Parallel execution for multiple actions. A pass admits a bounded
+/// number of actions, drains its active workers, then releases its results.
 fn run_parallel_once(
     cfg: &crate::config::GahConfig,
     profile_name: &str,
@@ -680,6 +694,7 @@ fn run_parallel_once(
     // that list is sparse and only contains observed scopes, not every
     // configured backend.
     let effective_parallel_limit = max_parallel;
+    let action_limit = parallel_pass_action_limit(effective_parallel_limit);
 
     let mut results: Vec<(usize, LoopOnceResult)> = Vec::new();
     // Issue #1381: why the most recent fill attempt admitted nothing.
@@ -724,7 +739,10 @@ fn run_parallel_once(
                 continue;
             }
 
-            while active < effective_parallel_limit && fill_attempts_remaining > 0 {
+            while active < effective_parallel_limit
+                && fill_attempts_remaining > 0
+                && next_sequence < action_limit
+            {
                 if crate::runner::shutdown_requested() {
                     break;
                 }
@@ -1050,29 +1068,32 @@ fn run_parallel_once(
                 break;
             }
 
-            let (sequence, result) = if node_capacity_reprobe.is_scheduled() {
-                match node_capacity_reprobe.wait(
-                    &done_rx,
-                    admission_coordinator.active_node_workers(),
-                    effective_parallel_limit,
-                    cfg.defaults.node_capacity,
-                )? {
-                    ReprobeWaitOutcome::WorkerCompleted(result) => result,
-                    ReprobeWaitOutcome::RetryFill => {
-                        node_capacity_reprobe.readmit(&mut executed_work_ids);
-                        fill_attempts_remaining = 1;
-                        continue;
+            // Once the pass is full, wait only for existing workers. A ready
+            // node re-probe cannot reopen admission or spin while draining.
+            let (sequence, result) =
+                if next_sequence < action_limit && node_capacity_reprobe.is_scheduled() {
+                    match node_capacity_reprobe.wait(
+                        &done_rx,
+                        admission_coordinator.active_node_workers(),
+                        effective_parallel_limit,
+                        cfg.defaults.node_capacity,
+                    )? {
+                        ReprobeWaitOutcome::WorkerCompleted(result) => result,
+                        ReprobeWaitOutcome::RetryFill => {
+                            node_capacity_reprobe.readmit(&mut executed_work_ids);
+                            fill_attempts_remaining = 1;
+                            continue;
+                        }
+                        ReprobeWaitOutcome::KeepWaiting => continue,
+                        ReprobeWaitOutcome::Shutdown => break,
                     }
-                    ReprobeWaitOutcome::KeepWaiting => continue,
-                    ReprobeWaitOutcome::Shutdown => break,
-                }
-            } else {
-                match admission::recv_worker_done(&done_rx)? {
-                    Some(result) => result,
-                    None if crate::runner::shutdown_requested() => break,
-                    None => continue,
-                }
-            };
+                } else {
+                    match admission::recv_worker_done(&done_rx)? {
+                        Some(result) => result,
+                        None if crate::runner::shutdown_requested() => break,
+                        None => continue,
+                    }
+                };
             admission_coordinator.complete_worker(sequence);
             active -= 1;
             if active == 0 {
@@ -1105,6 +1126,11 @@ fn run_parallel_once(
                 );
             }
             results.push((sequence, result));
+        }
+        if next_sequence >= action_limit {
+            eprintln!(
+                "gah loop: parallel pass reached its {action_limit}-action limit; active workers drained; remaining work is eligible for another pass"
+            );
         }
         Ok(())
     })?;
