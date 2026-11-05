@@ -1,5 +1,12 @@
 # Beta finishing pass: local validation
 
+Latest update recovery: the [server update banner](server-update-recovery.md)
+resumes observation after reopening, stops polling on unmount, preserves
+uncertainty through interrupted reads and identifies the server component.
+Six Windows browser checks, typechecking and the production build pass.
+This source change follows the current package and private assembly; it is
+not yet packaged or deployed.
+
 Latest memory repair: [streaming ledger reads](streamed-ledger-memory.md) removes
 an extra whole-file text allocation while preserving complete decoded history.
 119 ledger and 198 controller tests, formatting and Clippy pass. The twelve-pass

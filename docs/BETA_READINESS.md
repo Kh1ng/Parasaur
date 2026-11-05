@@ -43,6 +43,12 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Server update recovery](validation/beta-progress-2026-11-03/server-update-recovery.md)
+  resumes persisted running updates, cancels polling on unmount and labels
+  interrupted status reads as unavailable. Six Windows browser checks,
+  typechecking and production build pass. This later source change still
+  needs a matched package/private assembly and live acceptance.
+
 - [Streaming ledger reads](validation/beta-progress-2026-11-03/streamed-ledger-memory.md)
   removes the extra whole-file text copy without truncating decoded history.
   119 ledger and 198 controller tests, formatting and Clippy pass. A controlled
