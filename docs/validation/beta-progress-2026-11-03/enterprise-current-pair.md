@@ -1,28 +1,33 @@
 # Current enterprise integration — 2026-11-04
 
-The current assembled pair is private `d531a72f` with public core `f322996b`.
+The current assembled pair is private `5ef4458` with public core `189f01e3`.
 It retains automatic queued compute, bounded archives and durable delivery,
 with [owner/scope reconciliation](enterprise-compute-reconciliation.md) and
-[saved-output review controls](saved-output-controls.md) in shared Settings.
+[saved-output review controls](saved-output-controls.md) in shared Settings,
+now extended with [receipt retention controls](journal-retention-controls.md).
+Owners can inspect the independent journal limit and confirm a bounded cleanup
+of delivered, unreferenced receipts with fresh cloud retirement proof. Partial
+removal preserves durable lookup evidence and can resume after a new review.
 The [Windows native output check](windows-native-output.md) adds real filesystem
 streaming, corruption and cancellation evidence without a new production bridge.
 Protocol 2 blocks launch until broker registration is durable. Full kernel
 slice-path checks and bounded housekeeping close the reproduced cleanup gaps.
 
-The exact pair passed 1,072 server cases (37 explicit skips), 14 mock cases,
-typechecks, production builds and artifact/transport guards. Windows desktop
-checks passed 35 ordinary cases and the separate hidden native fixture. Public
-CLI/server/web and private production sources match the preceding `360ff0c6` /
-`252d4b05` pair. On that preceding pair, dedicated WSL
-checks passed 77 cases with one platform-only skip. Eleven browser behavior
-cases and a full sample Settings workflow passed. Real disposable
-Auth/PostgREST killed and restarted a consumer after its fixture-provider call,
-then verified one attempt, an unknown-exit interrupted receipt and recovered
-empty storage. Normal queued jobs and retained retry/revocation/relay checks
-passed. The unchanged retained native binary also has the preceding pair's
-seven startup offsets and twelve clean repetitions of the formerly failing window.
+The exact pair passed 1,084 server cases (37 explicit skips), 15 mock cases,
+typechecks, production builds and artifact/transport guards. Its production
+sources match private `a6566fc` / public `189f01e3`, on which 89 dedicated WSL
+cases passed with one platform-only skip, along with 18 browser cases and a full
+sample Settings workflow. The private revision difference fixes a missing import
+in the new Auth acceptance driver only. Earlier Windows desktop checks passed
+35 ordinary cases and the separate hidden native output fixture. On the final
+pair, disposable SQL replay and real Auth/PostgREST proved receipt maintenance,
+retired-claim execution denial with no repeated provider call, queued execution,
+consumer crash recovery, retry receipts and authorization/relay boundaries.
+The unchanged retained native binary also has the earlier pair's seven startup offsets and
+twelve clean repetitions of the formerly failing window.
 
-Legacy/unknown state resolution, journal/capability-metadata maintenance,
+Legacy/unknown state resolution, pending-delivery reconciliation, fleet admission
+visibility, capability-metadata maintenance,
 installed Tauri large-file saving, production dispatch/client and forge runtime,
 portable aliases, ledger integration, configuration migration and complete
 shared-hardware acceptance remain unfinished. Installed releases and live

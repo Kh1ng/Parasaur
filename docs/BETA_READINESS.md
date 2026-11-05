@@ -166,7 +166,17 @@ committed start/completion replies with preserved host input and bounded output.
 Two queued fixture jobs now complete the sandbox/inference/archive transaction
 with one provider attempt each. A real disposable consumer kill/restart now
 recovers stopped work and empty storage without another provider attempt or an
-invented backend exit. Legacy/unknown state, journal/capability-metadata
+invented backend exit.
+[Receipt retention controls](validation/beta-progress-2026-11-03/journal-retention-controls.md)
+now show the journal admission limit and require reviewed, owner-confirmed
+cleanup with fresh exact-claim retirement proof. Interrupted removal preserves
+durable evidence and can resume. The `5ef4458` / `189f01e3` pair passes 1,084
+server and 15 mock cases plus typechecks, production builds and artifact guards;
+unchanged production sources passed 89 dedicated WSL cases (one platform skip),
+18 browser cases and a full Settings workflow. Final-pair real Auth/PostgREST
+passed maintenance, retired-claim execution denial, queue/crash recovery and
+authorization/relay checks. Legacy/unknown state,
+pending-delivery reconciliation, fleet admission visibility and capability-metadata
 maintenance, installed desktop/hosted artifact acceptance, production runtime/client and
 forge access, portable aliases, identity/ledger integration,
 artifact publication, full shared-hardware acceptance, staged migration,

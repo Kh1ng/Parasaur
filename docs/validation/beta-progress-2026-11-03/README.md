@@ -1,18 +1,28 @@
 # Beta finishing pass: local validation
 
+Latest compute progress: [receipt retention controls](journal-retention-controls.md)
+expose the separate journal admission limit and owner-confirmed cleanup in shared
+Settings. Unverified receipts remain held; interrupted removal is resumable.
+Private `5ef4458` / public `189f01e3` passes the combined production build.
+The unchanged production sources passed 89 dedicated WSL cases, 18 browser
+cases and a full Settings workflow. Fleet admission visibility, uncertain/legacy
+state and orphan capability metadata remain unfinished. Final-pair real
+Auth/PostgREST also passed maintenance and retired-claim execution denial,
+queue/crash recovery and retained authorization/relay checks.
+
 Latest Windows evidence: [native output acceptance](windows-native-output.md)
 verifies a 20 MiB streaming save, corrupt-block rejection and cancellation with
 real hidden WebView2 filesystem objects. The existing shared implementation
 passes without a new native bridge. The committed `d531a72f` / `f322996b` pair
-also passes the combined production build. Interactive picker, installed-release
-and journal-maintenance acceptance remain unfinished.
+also passes the combined production build. Interactive picker and installed-release
+acceptance remain unfinished.
 
 The [saved-output review controls](saved-output-controls.md)
 connect owner-authenticated downloads and explicit retention actions to shared
 Settings. Private `360ff0c6` / public `252d4b05` passes 1,072 server cases,
 14 sample cases, 11 browser behavior cases, a full Settings workflow and 77
 dedicated WSL cases, plus disposable real Auth/PostgREST checks. Installed Tauri
-large-file saving, hosted use and journal/capability-metadata maintenance remain
+large-file saving, hosted use and legacy/capability-metadata maintenance remain
 unfinished or unverified.
 
 Earlier enterprise evidence: [verified crash reconciliation](enterprise-compute-reconciliation.md)
