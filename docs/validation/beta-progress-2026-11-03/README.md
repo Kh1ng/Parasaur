@@ -4,8 +4,11 @@ Latest recovery progress: [failed factory refreshes](kanban-refresh-recovery.md)
 retain recorded jobs while marking execution/capacity unconfirmed, disable
 assignment and keep the warning through retries until success. Windows unit,
 component and full-browser checks pass; desktop/mobile captures were inspected.
-Private `e630a95` / public `191168dc` passes the combined build and 35 assembled
-board/store checks. Installed apps and live services remain unchanged.
+Stale-only worker rosters also show unconfirmed activity; mixed rosters count
+only confirmed running work and retain stale observations. Private `fd4d761` /
+public `7db57658` passes the combined build and 35 assembled board/store checks.
+All 15 Windows Kanban component checks pass. Installed apps and live services
+remain unchanged.
 
 Latest pipeline UI progress: [claim and execution evidence](kanban-claim-evidence.md)
 keeps claimed issues visible while separating ownership from confirmed running

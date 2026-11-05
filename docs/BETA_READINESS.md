@@ -46,8 +46,10 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 - [Factory refresh recovery](validation/beta-progress-2026-11-03/kanban-refresh-recovery.md)
   now labels retained board/navbar observations as unavailable, blocks assignment
   and preserves uncertainty through retries until success. Windows unit,
-  component and browser recovery checks pass; private `e630a95` / public
-  `191168dc` passes the combined build and 35 assembled board/store checks.
+  component and browser recovery checks pass. Stale-only worker rosters show
+  unconfirmed activity; mixed rosters count only confirmed running work while
+  retaining stale details. Private `fd4d761` / public `7db57658` passes the combined
+  build and 35 assembled board/store checks, plus 15 Windows component checks.
   Installed-app and live node recovery remain unverified.
 
 - [Kanban claim evidence](validation/beta-progress-2026-11-03/kanban-claim-evidence.md)

@@ -1,9 +1,11 @@
 # Current enterprise integration — 2026-11-05
 
-The current assembled pair is private `e630a95` with public core `191168dc`.
+The current assembled pair is private `fd4d761` with public core `7db57658`.
 It includes [failed-refresh recovery](kanban-refresh-recovery.md), retaining
 recorded context while execution and capacity remain explicitly unconfirmed
 through failed and pending status reads. The navbar also labels retained jobs.
+Stale-only rosters show unconfirmed activity, and mixed rosters count only
+confirmed running jobs while keeping last-activity and node details inspectable.
 It includes [claim and execution evidence](kanban-claim-evidence.md), so the
 shared board no longer presents claim ownership as confirmed running work.
 It includes [bounded delivery and enrollment repair](compute-delivery-authorization.md):

@@ -44,19 +44,41 @@ Screenshots remain under `apps/web/test-results/e2e/` in the
 directory. This verifies controlled read failure, not live worker recovery,
 real provider execution or installed desktop acceptance.
 
+## Stale roster observations
+
+A successful status read can itself contain stale worker observations. The
+activity menu previously included those entries in its live "Working on" summary
+even though the board correctly kept their execution unconfirmed.
+
+The projection now retains each job's explicit runtime state, last activity and
+node. Stale-only rosters show "Worker activity unconfirmed" without the running
+animation or an idle claim. Mixed rosters choose a confirmed running job for the
+summary and count only those jobs as running; stale entries remain visible with
+their last activity and node. No client-side heartbeat threshold is invented.
+Separate device-process observations are explained: a visible process is not
+proof of job progress. Neither claims nor worker capacity are released here.
+
+All 15 Windows Kanban component checks passed, including stale-only observations
+and a mixed roster whose stale entry comes first. The full-browser recovery test
+also passed running-to-stale-to-running transitions through the real app/store
+wiring. The desktop menu screenshot was inspected; the menu is intentionally
+hidden on the existing mobile navbar. The screenshot is under
+`apps/web/test-results/component/KanbanPage-stale-only-work-51c05-e-running-or-idle-execution/stale-worker-menu.png`.
+
 ## Assembled integration
 
-Private `e630a95597b316ea1798dc671fc9fffe87897217` pins public
-`191168dcefa07f554456aeede1b438ffc9d0cc9d`. The full combined build passed
+Private `fd4d76196ad7d960a714090239a38a6721ba59b7` pins public
+`7db576587e0f6a4f6c6db4b0c331ab7588d22a75`. The full combined build passed
 1,099 server cases (38 explicit skips), 15 mock cases, typechecks, production
 builds and private artifact/input/transport guards. All 35 focused board/store
 checks also passed in the actual assembled source. The private App retains
 the profile-scoped failure wiring; the built dashboard contains the unavailable
 activity, last-recorded job and assignment guidance. The release manifest binds
-the exact pair.
+the exact pair. The emitted bundle also contains the stale-worker summary,
+last-activity details and process-versus-progress explanation.
 
 Evidence is retained under
-`/home/khing/.cache/parasaur-enterprise-current.t791nclq/`: `build.log`,
+`/home/khing/.cache/parasaur-enterprise-current.l60832hm/`: `build.log`,
 `board-store-verification.log`, and `source/.build/release.json`.
 This increment changes only public UI/store code and the private core pin.
 Native isolation and real Auth evidence belong to their earlier verified pair;
