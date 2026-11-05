@@ -1,5 +1,16 @@
 # Beta finishing pass: local validation
 
+Latest activity repair: [account execution evidence](account-activity-evidence.md)
+uses exact session/worker account identity, node ownership and worker freshness.
+Claims, provider transport IDs and the first sibling account no longer imply
+working. Windows unit and full browser workflows pass; this later source change
+still needs matched integration/packaging.
+
+Latest memory trial: [48 passes in one controller](long-controller-memory.md)
+completed 192 synthetic starts and graceful shutdown. RSS rose overall with
+late drops; this does not resolve allocation attribution or prove a plateau.
+Partial event-size observations are retained separately from paused RSS samples.
+
 Latest quota recovery: [failed reads and pending retries](quota-refresh-recovery.md)
 retain recorded costs/allowances while page and navbar make current usage and
 eligibility unconfirmed. Successful reads restore the fresh view. Windows unit,

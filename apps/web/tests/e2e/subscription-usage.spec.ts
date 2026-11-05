@@ -46,22 +46,11 @@ test('windows are named and sized from the provider names, and projected to rese
   expect(formatUntil('2026-10-07T13:00:00Z', NOW)).toBe('2d 14h');
   expect(formatUntil('2026-10-04T22:00:00Z', NOW)).toBe('now');
 
-  // A running session names its backend; a loop job is credited through the latest dispatch.
+  // Only exact executing accounts can light a ring; a transport name cannot.
   const subscriptions = [claude, codex, vibe];
-  expect([...busySubscriptionIds({ subscriptions, sessions: [{ id: 's', providerKind: 'github', instanceId: 'claude', status: 'running', backend: 'claude' }] as never, controllerRuns: [], claims: [], recentLedger: null })]).toEqual(['claude']);
-  expect([...busySubscriptionIds({ subscriptions, sessions: [], controllerRuns: [{ run_id: 'r', profile: 'gah', work_id: '#1', started_at: '', finished_at: null, action: 'fix', status: 'running', outcome: null }],
-    claims: [], recentLedger: { most_recent_work_id: '#1', most_recent_effective_backend: 'codex' } as never })]).toEqual(['codex']);
-  expect(busySubscriptionIds({ subscriptions, sessions: [], controllerRuns: [], claims: [], recentLedger: { most_recent_work_id: '#1', most_recent_effective_backend: 'codex' } as never }).size).toBe(0);
-  // A factory agent process is a subscription at work, whatever the ledger says.
-  expect([...busySubscriptionIds({ subscriptions, sessions: [], controllerRuns: [], claims: [], recentLedger: null, factoryAgents: [{ pid: 1, tool: 'codex', cwd: '/w', started_at: null }] })]).toEqual(['codex']);
-  // Two subscriptions behind one CLI: the model the process runs picks the one that is busy.
-  const pools = [
-    { ...subscriptions[0], id: 'agy:google-native', backend: 'agy', model: 'Gemini Pro' },
-    { ...subscriptions[0], id: 'agy:external', backend: 'agy', model: 'Claude Sonnet' }
-  ];
-  const agyAgent = (model?: string) => ({ pid: 1, tool: 'agy', cwd: '/w', started_at: null, ...(model ? { model } : {}) });
-  expect([...busySubscriptionIds({ subscriptions: pools, sessions: [], controllerRuns: [], claims: [], recentLedger: null, factoryAgents: [agyAgent('Claude Sonnet')] })]).toEqual(['agy:external']);
-  expect([...busySubscriptionIds({ subscriptions: pools, sessions: [], controllerRuns: [], claims: [], recentLedger: null, factoryAgents: [agyAgent()] })]).toEqual(['agy:google-native']);
+  expect([...busySubscriptionIds({ subscriptions, sessions: [{ id: 's', providerKind: 'github', instanceId: 'transport', backendInstance: 'claude', status: 'running', backend: 'claude' }] as never })]).toEqual(['claude']);
+  expect(busySubscriptionIds({ subscriptions, sessions: [{ id: 's', providerKind: 'github', instanceId: 'codex', status: 'running', backend: 'codex' }] as never }).size).toBe(0);
+
 });
 
 test('one ring per account: pools are windows of it, router aliases are not accounts (#1411)', () => {
@@ -97,7 +86,7 @@ test('the navbar shows a ring per subscription and opens its windows; Quota list
   await page.routeWebSocket('**/ws**', (ws) => {
     ws.send(JSON.stringify({
       type: 'server.welcome', serverVersion: '0.0.0-test', serverProviderCatalog: { providers: [] }, providers: {},
-      sessions: [{ id: 's1', providerKind: 'github', instanceId: 'codex', status: 'running', backend: 'codex', target: '#946', mode: 'improve', startedAt: new Date().toISOString() }]
+      sessions: [{ id: 's1', providerKind: 'github', instanceId: 'transport', backendInstance: 'codex', status: 'running', backend: 'codex', target: '#946', mode: 'improve', startedAt: new Date().toISOString() }]
     }));
     ws.send(JSON.stringify({ type: 'activity.replay', events: [] }));
   });

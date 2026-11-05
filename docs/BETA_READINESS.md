@@ -43,6 +43,17 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Account activity evidence](validation/beta-progress-2026-11-03/account-activity-evidence.md)
+  now uses exact running-session/worker account identity with node and freshness
+  checks. Claims, transport IDs and sibling fallback no longer claim execution.
+  Windows unit/browser checks pass; matched integration/packaging and live
+  acceptance remain required.
+
+- [Longer controller memory trial](validation/beta-progress-2026-11-03/long-controller-memory.md)
+  completed 48 passes and 192 synthetic starts in one Debug process with normal
+  allocator settings. RSS rose overall with late drops. Allocator/live-heap
+  attribution, repeated trials and an optimized multi-hour soak remain required.
+
 - [Quota refresh recovery](validation/beta-progress-2026-11-03/quota-refresh-recovery.md)
   keeps unavailable state through retries and qualifies retained page/navbar
   usage and eligibility until a successful read. Windows unit and full browser

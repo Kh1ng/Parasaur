@@ -123,8 +123,8 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
     const timer = window.setInterval(load, agentsVisible ? DEVICE_AGENTS_REFRESH_MS : QUOTA_REFRESH_MS);
     return () => { current = false; window.clearInterval(timer); };
   }, [reconnectSeq, agentsVisible]);
-  const busySubscriptions = useMemo(() => busySubscriptionIds({ subscriptions, sessions, controllerRuns: controllerActivity, claims: statusSnapshot?.active_claims ?? [], recentLedger: statusSnapshot?.recent_ledger, factoryAgents: deviceAgents.data?.factory_agents }),
-    [subscriptions, sessions, controllerActivity, statusSnapshot, deviceAgents.data]);
+  const busySubscriptions = busySubscriptionIds({ subscriptions, sessions: isConnected ? sessions : [],
+    runningWorkers: statusUnavailable ? [] : statusSnapshot?.running_workers ?? [], nodeId: statusSnapshot?.node_id });
 
   // The navbar uses the same worker roster as the page counters.
   const loopRunning = useGahStore((state) => state.loopStatus.data?.running ?? null);

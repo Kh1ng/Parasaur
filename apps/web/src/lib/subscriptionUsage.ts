@@ -1,4 +1,4 @@
-import type { ActiveClaim, ControllerActivity, DeviceAgent, QuotaCandidateStatus, QuotaCheck, QuotaObservation, QuotaSnapshot, RecentLedgerSummary, Session } from '@git-agent-harness/contracts';
+import type { QuotaCandidateStatus, QuotaCheck, QuotaObservation, QuotaSnapshot, RunningWorker, Session } from '@git-agent-harness/contracts';
 import { formatCost } from './format.js';
 
 /** One rate-limit window of a subscription, as the provider reports it. */
@@ -22,6 +22,8 @@ export interface SubscriptionUsage {
   /** The account: its named credential, or the backend instance without its pool suffix. */
   id: string;
   backend: string;
+  /** Exact node-local execution scopes represented by this account. */
+  executionScopes: Array<{ backend: string; backendInstance: string }>;
   /** Subscription provider: openai, anthropic, antigravity, z-ai… */
   provider: string | null;
   providerLabel: string;
@@ -165,6 +167,7 @@ export function subscriptionUsage(snapshot: Partial<Pick<QuotaSnapshot, 'candida
     return {
       id,
       backend: first.backend,
+      executionScopes: account.scopes.flatMap(scope => scope.backend_instance ? [{ backend: scope.backend, backendInstance: scope.backend_instance }] : []),
       provider,
       providerLabel: providerLabel(provider, first.backend),
       model: null,
@@ -191,41 +194,37 @@ export function recordedCostLabel(usage: SubscriptionUsage): string {
   return actual + estimate + (usage.costUnknownObservations ? ' · Some recorded costs are unknown.' : '');
 }
 
-/**
- * The subscriptions with a job running now: a live dashboard session names
- * its backend; a running controller run or an active claim is credited to
- * the backend of the most recent dispatch when it is that same work item.
+/** Confirmed account activity from live sessions and fresh dispatch-runtime
+ * observations. Claims, controller intent, process names and transport IDs do
+ * not identify an executing account. Tagged observations belong to their node.
  */
 export function busySubscriptionIds(input: {
   subscriptions: SubscriptionUsage[];
   sessions: Session[];
-  controllerRuns: ControllerActivity[];
-  claims: ActiveClaim[];
-  recentLedger: RecentLedgerSummary | null | undefined;
-  /** Agent processes in factory worktrees: each is a subscription at work. */
-  factoryAgents?: DeviceAgent[];
+  runningWorkers?: RunningWorker[];
+  nodeId?: string | null;
+  now?: number;
 }): Set<string> {
-  const byBackend = (backend: string | null | undefined, instance?: string | null) =>
-    input.subscriptions.find((usage) => instance && usage.id === accountId({ backend: backend ?? '', backend_instance: instance }))
-      ?? input.subscriptions.find((usage) => usage.backend === backend);
+  const now = input.now ?? Date.now();
+  const local = (nodeId: string | null | undefined) => !nodeId || nodeId === input.nodeId;
+  const account = (backend: string | undefined, instance: string | undefined) => {
+    if (!backend || !instance) return undefined;
+    const matches = input.subscriptions.filter(usage => usage.executionScopes.some(scope =>
+      scope.backend === backend && scope.backendInstance === instance));
+    return matches.length === 1 ? matches[0] : undefined;
+  };
   const busy = new Set<string>();
   for (const session of input.sessions) {
-    if (!['starting', 'running', 'stopping'].includes(session.status)) continue;
-    const match = byBackend(session.backend ?? session.providerKind, session.instanceId);
+    if (session.status !== 'running' || !local(session.nodeId)) continue;
+    const match = account(session.backend, session.backendInstance);
     if (match) busy.add(match.id);
   }
-  for (const agent of input.factoryAgents ?? []) {
-    // One CLI can draw on several subscriptions: Antigravity bills Gemini and Claude
-    // models to separate allowances. The model the process was started with says which.
-    const match = input.subscriptions.find((usage) => usage.backend === agent.tool && !!agent.model && usage.model === agent.model)
-      ?? byBackend(agent.tool);
-    if (match) busy.add(match.id);
-  }
-  const recent = input.recentLedger;
-  if (recent?.most_recent_work_id) {
-    const inFlight = input.controllerRuns.some((run) => run.status === 'running' && run.work_id === recent.most_recent_work_id)
-      || input.claims.some((claim) => claim.work_id === recent.most_recent_work_id);
-    const match = inFlight ? byBackend(recent.most_recent_effective_backend) : null;
+  for (const worker of input.runningWorkers ?? []) {
+    const age = now - Date.parse(worker.last_activity_at);
+    if (worker.state !== 'running' || !local(worker.node_id) || !Number.isFinite(age)
+      || age < 0 || !Number.isFinite(worker.stale_after_seconds) || worker.stale_after_seconds <= 0
+      || age > worker.stale_after_seconds * 1000) continue;
+    const match = account(worker.backend, worker.backend_instance);
     if (match) busy.add(match.id);
   }
   return busy;

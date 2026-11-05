@@ -1,4 +1,4 @@
-import { recordedCostLabel, subscriptionUsage } from './subscriptionUsage.js';
+import { busySubscriptionIds, recordedCostLabel, subscriptionUsage } from './subscriptionUsage.js';
 
 const candidate = (instance: string, model: string, cost: number) => ({
   backend: 'codex', backend_instance: instance, provider: 'openai', model,
@@ -33,4 +33,45 @@ test('pool windows share an account but each canonical cost row contributes once
   expect(accounts[0].costUsd).toBe(2);
   expect(accounts[0].costUnknownObservations).toBe(1);
   expect(recordedCostLabel(accounts[0])).toContain('Some recorded costs are unknown.');
+});
+
+test('claim ownership and a controller run cannot mark an account as working', () => {
+  const subscriptions = subscriptionUsage({ candidates: [candidate('work', 'a', 0)] } as never);
+  const busy = busySubscriptionIds({ subscriptions, sessions: [], controllerRuns: [{ status: 'running', work_id: '#1' }], claims: [{ work_id: '#1' }], recentLedger: { most_recent_work_id: '#1', most_recent_effective_backend: 'codex' } } as never);
+  expect(busy.size).toBe(0);
+});
+
+test('session account identity wins over its provider transport and other same-provider accounts', () => {
+  const subscriptions = subscriptionUsage({ candidates: [candidate('personal', 'a', 0), candidate('work', 'a', 0)] } as never);
+  const session = { id: 's', providerKind: 'github', instanceId: 'personal', backend: 'codex', backendInstance: 'work', status: 'running' };
+  expect([...busySubscriptionIds({ subscriptions, sessions: [session] } as never)]).toEqual(['work']);
+  expect(busySubscriptionIds({ subscriptions, sessions: [{ ...session, backendInstance: undefined }] } as never).size).toBe(0);
+  expect(busySubscriptionIds({ subscriptions, sessions: [{ ...session, status: 'starting' }] } as never).size).toBe(0);
+});
+
+test('another node cannot mark a local account with the same name as working', () => {
+  const subscriptions = subscriptionUsage({ candidates: [candidate('work', 'a', 0)] } as never);
+  const session = { id: 's', providerKind: 'github', instanceId: 'transport', backend: 'codex', backendInstance: 'work', nodeId: 'remote', status: 'running' };
+  expect(busySubscriptionIds({ subscriptions, sessions: [session], nodeId: 'local' } as never).size).toBe(0);
+  expect(busySubscriptionIds({ subscriptions, sessions: [session] } as never).size).toBe(0);
+  expect([...busySubscriptionIds({ subscriptions, sessions: [session], nodeId: 'remote' } as never)]).toEqual(['work']);
+});
+
+test('pool identities credit their account once and ambiguous account mappings stay unconfirmed', () => {
+  const subscriptions = subscriptionUsage({ candidates: [candidate('work:external', 'a', 0), candidate('work:google-native', 'b', 0)] } as never);
+  const session = { id: 's', providerKind: 'github', instanceId: 'transport', backend: 'codex', backendInstance: 'work:external', status: 'running' };
+  expect([...busySubscriptionIds({ subscriptions, sessions: [session] } as never)]).toEqual(['work']);
+  const ambiguous = subscriptionUsage({ candidates: [{ ...candidate('work:external', 'a', 0), credential_id: 'one' }, { ...candidate('work:external', 'a', 0), credential_id: 'two' }] } as never);
+  expect(busySubscriptionIds({ subscriptions: ambiguous, sessions: [session] } as never).size).toBe(0);
+});
+
+test('only fresh running worker observations identify factory account activity', () => {
+  const subscriptions = subscriptionUsage({ candidates: [candidate('personal', 'a', 0), candidate('work', 'a', 0)] } as never);
+  const now = Date.parse('2026-11-05T12:00:00Z');
+  const worker = { backend: 'codex', backend_instance: 'work', state: 'running', node_id: 'local', last_activity_at: new Date(now).toISOString(), stale_after_seconds: 30 };
+  const input = { subscriptions, sessions: [], runningWorkers: [worker], nodeId: 'local', now };
+  expect([...busySubscriptionIds(input as never)]).toEqual(['work']);
+  for (const patch of [{ state: 'stale' }, { node_id: 'remote' }, { last_activity_at: 'invalid' }, { last_activity_at: new Date(now - 31_000).toISOString() }, { backend_instance: 'missing' }]) {
+    expect(busySubscriptionIds({ ...input, runningWorkers: [{ ...worker, ...patch }] } as never).size).toBe(0);
+  }
 });
