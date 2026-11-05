@@ -7,6 +7,11 @@ controller passed a 15-minute live trial under its unchanged limit. Native
 Windows Overview/Factory load with saved owner access. Worker connectivity,
 Git transport, UI clarity and long-soak acceptance remain open.
 
+Windows follow-up: [worker recovery](windows-worker-recovery.md) updates the
+old worker, corrects its central origin, resumes its logon keepalive and verifies
+reachability from central. The tested launcher retry fix is awaiting administrator
+approval for the installed Program Files script.
+
 Latest Mac work: [native client update and temporary central test](mac-client-update.md)
 installed and launched 0.3.0, fixed local app-bundle sealing, passed native and
 central HTTP/WebSocket/asset/cost checks, and removed the owned build tree.
