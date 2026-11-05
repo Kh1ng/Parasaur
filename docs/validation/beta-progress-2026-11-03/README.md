@@ -1,5 +1,11 @@
 # Beta finishing pass: local validation
 
+The [saved-output storage increment](compute-output-storage.md) adds bounded
+download verification and explicit content-checked discard primitives. Nineteen
+focused cases pass, with four explicit isolation skips. Owner routes and the
+desktop/shared-web Settings controls remain pending; this is not a new full
+assembly or installed-app acceptance result.
+
 Latest enterprise evidence: [verified crash reconciliation](enterprise-compute-reconciliation.md)
 retains automatic queued compute and bounded archives. Private `ac04a1a4` /
 public `2cc5e3fd` passes the combined build, 68 dedicated WSL checks (one platform
