@@ -143,16 +143,16 @@ was followed by [durable inference retry receipts](validation/beta-progress-2026
 The [inference-side consumer](validation/beta-progress-2026-11-03/enterprise-inference-consumer.md)
 is retained with the new [compute process boundary](validation/beta-progress-2026-11-03/enterprise-compute-isolation.md)
 and [claim-bound inference socket](validation/beta-progress-2026-11-03/enterprise-inference-relay.md)
-at private `5046d2c0`, paired with public core `f7294e34`, including the
-[startup authorization repair](validation/beta-progress-2026-11-03/enterprise-startup-authorization.md).
-Its clean combined build, SQL replay and real Auth/PostgREST-to-provider/relay
-checks passed, including active-request revocation and cleanup.
-Twelve dedicated real WSL isolation checks, seven startup crash timings and a
-sandboxed real Auth/PostgREST inference flow passed. Native Windows platform/inference and WebSocket auth
-checks passed during the pass. A compute-side queue consumer, production runtime/client and forge access, portable
-aliases, complete shared-hardware integration, bounded workspace storage,
-shared local/cloud capacity, staged config migration, hosted rollout and a real provider-backed job remain
-unfinished.
+at private `d28710ba`, paired with public core `8963ebb5`, including the
+[startup authorization repair](validation/beta-progress-2026-11-03/enterprise-startup-authorization.md)
+and [shared capacity/native watchdog](validation/beta-progress-2026-11-03/enterprise-host-supervision.md).
+The exact combined build, SQL replay and real Auth/PostgREST/HTTP fixture-provider
+checks passed. Eighteen dedicated WSL checks, seven startup crash timings and
+sandboxed inference passed, including Node freeze and uncertain-cleanup handling.
+The compute-side queue consumer, durable execution journal, production
+runtime/client and forge access, portable aliases, identity/ledger integration,
+bounded workspace storage, full shared-hardware acceptance, staged migration,
+hosted rollout and a real provider-backed job remain unfinished.
 
 A [current public recovery candidate](validation/beta-progress-2026-11-03/current-public-release.md)
 at `16e9ecc6` now includes the later server/web fixes and exact factory account

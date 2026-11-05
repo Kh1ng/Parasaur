@@ -51,6 +51,11 @@ uses the kernel `cgroup.kill` path as well as killing its launcher, independentl
 of Node or D-Bus responsiveness. If cleanup cannot be verified, it retains the
 lease and keeps trying instead of dropping capacity or returning success.
 
+Connector cancellation closes the control pipe before attempting scope cleanup.
+It may kill a stuck guardian only after independent proof that the owned scope
+is empty. If that proof remains unavailable, the caller receives a bounded
+cleanup error while the guardian keeps its reservation and continues cleanup.
+
 The native host protocol bypasses normal CLI alias repair and provider refresh.
 It does not open a provider login, infer an account, or fall back to an unsandboxed
 command. The command requires Linux, a working user systemd manager and delegated

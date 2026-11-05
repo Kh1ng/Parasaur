@@ -1,24 +1,24 @@
 # Current enterprise integration — 2026-11-04
 
-The current verified pair is private `5046d2c0` with public core `f7294e34`.
-It retains the earlier fixes, [durable inference retry receipts](enterprise-inference-receipts.md),
-the [inference-side consumer](enterprise-inference-consumer.md), and the
-[compute process boundary](enterprise-compute-isolation.md), now connected to a
-[claim-bound inference socket](enterprise-inference-relay.md). The later
-[startup authorization repair](enterprise-startup-authorization.md) closes two
-newly reproduced controller-crash failures; the earlier descriptor gate was
-insufficient before authorization.
-A fresh combined build passed 1,027 server tests (14 skips), 13 mock tests,
-artifact guards and transformed transport checks. Final-source disposable SQL,
-real Auth/PostgREST-to-HTTP-provider, concurrent retry, revocation and relay checks passed.
-Twelve dedicated real WSL isolation checks and a seven-point startup crash matrix
-passed. An actual sandboxed client also
-passed the real Auth/PostgREST-to-inference-worker flow with repeated receipt
-reads producing one new provider attempt. Native Windows platform/inference
-checks and WebSocket authentication checks passed during this pass.
-Portable aliases, a compute-side queue consumer, complete shared-hardware
-integration and configuration migration remain unfinished; these local results
-are not hosted beta acceptance.
+The current verified pair is private `d28710ba` with public core `8963ebb5`.
+It retains the earlier authorization and inference repairs and adds
+[shared host capacity and independent native supervision](enterprise-host-supervision.md).
+A frozen Node controller cannot renew the native heartbeat; cancellation keeps
+capacity reserved until cleanup is proved, including bounded error handoff when
+cleanup remains uncertain.
+
+The exact pair passed 1,027 server cases (20 explicit skips), 13 mock cases,
+typechecks, production builds and artifact/transport guards. Dedicated WSL
+isolation checks passed 18 cases with one platform-only skip, including an
+intentionally unresponsive guardian fixture. Seven startup crash timings and
+real disposable Auth/PostgREST-to-HTTP-provider, retry, revocation and relay
+checks passed. See the supervision record for fixture limits and Rust results.
+
+The compute queue consumer, durable execution journal, production runtime/client,
+forge access, portable aliases, bounded workspace storage, execution identity,
+configuration migration and complete shared-hardware acceptance remain unfinished.
+These results are local development evidence; installed releases and live services
+were not upgraded.
 
 ## Earlier integration record
 

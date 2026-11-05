@@ -1,13 +1,14 @@
 # Beta finishing pass: local validation
 
-Latest enterprise evidence: the [startup authorization repair](enterprise-startup-authorization.md)
-fixes unapproved execution and orphaned startup scopes after controller death.
-It retains the [isolated inference connection](enterprise-inference-relay.md).
-Private `5046d2c0` / public `f7294e34` passes the combined build, twelve real WSL
-isolation checks, a seven-point startup crash matrix and a sandboxed
-Auth/PostgREST-to-inference-worker fixture flow.
-Compute queue consumption, production runtime/client and forge access, aliases, identity/ledger integration, bounded workspace storage,
-shared local/cloud capacity and configuration migration remain unfinished.
+Latest enterprise evidence: [shared host capacity and native supervision](enterprise-host-supervision.md)
+retains the startup authorization and isolated inference repairs. Private
+`d28710ba` / public `8963ebb5` passes the combined build, 18 dedicated WSL
+checks (one additional platform skip), seven startup crash timings and real
+Auth/PostgREST/HTTP fixture-provider checks. Node freeze, renewal failure and
+uncertain cleanup now have verified behavior.
+Compute queue consumption, durable execution recovery, production runtime/client
+and forge access, aliases, identity/ledger integration, bounded workspace storage,
+complete shared-hardware acceptance and configuration migration remain unfinished.
 
 The preceding [durable inference retry receipts](enterprise-inference-receipts.md)
 fixes a reproduced duplicate-request path and records the clean private `14c16068`
