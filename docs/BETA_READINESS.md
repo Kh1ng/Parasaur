@@ -143,14 +143,16 @@ was followed by [durable inference retry receipts](validation/beta-progress-2026
 The [inference-side consumer](validation/beta-progress-2026-11-03/enterprise-inference-consumer.md)
 is retained with the new [compute process boundary](validation/beta-progress-2026-11-03/enterprise-compute-isolation.md)
 and [claim-bound inference socket](validation/beta-progress-2026-11-03/enterprise-inference-relay.md)
-at private `d28710ba`, paired with public core `8963ebb5`, including the
-[startup authorization repair](validation/beta-progress-2026-11-03/enterprise-startup-authorization.md)
-and [shared capacity/native watchdog](validation/beta-progress-2026-11-03/enterprise-host-supervision.md).
+at private `a58ce10d`, paired with public core `8963ebb5`, including the
+[startup authorization repair](validation/beta-progress-2026-11-03/enterprise-startup-authorization.md),
+[shared capacity/native watchdog](validation/beta-progress-2026-11-03/enterprise-host-supervision.md)
+and [durable compute start/result delivery](validation/beta-progress-2026-11-03/enterprise-compute-recovery.md).
 The exact combined build, SQL replay and real Auth/PostgREST/HTTP fixture-provider
-checks passed. Eighteen dedicated WSL checks, seven startup crash timings and
-sandboxed inference passed, including Node freeze and uncertain-cleanup handling.
-The compute-side queue consumer, durable execution journal, production
-runtime/client and forge access, portable aliases, identity/ledger integration,
+checks passed. Thirty-eight dedicated WSL checks, seven startup crash timings and
+sandboxed inference passed, including Node freeze, uncertain cleanup and lost
+committed start/completion replies.
+The automatic compute queue consumer, post-crash scope reconciliation, journal
+retention, production runtime/client and forge access, portable aliases, identity/ledger integration,
 bounded workspace storage, full shared-hardware acceptance, staged migration,
 hosted rollout and a real provider-backed job remain unfinished.
 

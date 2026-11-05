@@ -1,14 +1,14 @@
 # Beta finishing pass: local validation
 
-Latest enterprise evidence: [shared host capacity and native supervision](enterprise-host-supervision.md)
-retains the startup authorization and isolated inference repairs. Private
-`d28710ba` / public `8963ebb5` passes the combined build, 18 dedicated WSL
-checks (one additional platform skip), seven startup crash timings and real
-Auth/PostgREST/HTTP fixture-provider checks. Node freeze, renewal failure and
-uncertain cleanup now have verified behavior.
-Compute queue consumption, durable execution recovery, production runtime/client
-and forge access, aliases, identity/ledger integration, bounded workspace storage,
-complete shared-hardware acceptance and configuration migration remain unfinished.
+Latest enterprise evidence: [durable compute recovery](enterprise-compute-recovery.md)
+retains shared host capacity, native supervision and the earlier authorization
+and inference repairs. Private `a58ce10d` / public `8963ebb5` passes the combined
+build, 38 dedicated WSL checks (one platform skip), seven startup crash timings
+and real Auth/PostgREST lost committed start/completion reply checks.
+Automatic queue consumption, post-crash scope reconciliation, journal retention,
+production runtime/client and forge access, aliases, identity/ledger integration,
+bounded workspace storage, complete shared-hardware acceptance and migration
+remain unfinished.
 
 The preceding [durable inference retry receipts](enterprise-inference-receipts.md)
 fixes a reproduced duplicate-request path and records the clean private `14c16068`
