@@ -33,12 +33,16 @@ function nextMessage<T extends ServerMessage['type']>(
 async function connect(url: string, profile: string): Promise<WebSocket> {
   const ws = new WebSocket(`${url}?profile=${profile}`);
   await once(ws, 'open');
+  // Socket open does not prove another connection's hello was processed.
+  // Replay is sent after subscription, before this fixture starts a turn.
+  const subscribed = nextMessage(ws, 'activity.replay');
   ws.send(JSON.stringify({
     type: 'client.hello',
     clientVersion: 'integration-test',
     profile,
     capabilities: { supportsTerminal: false, supportsNotifications: false, version: '1' }
   } satisfies ClientMessage));
+  await subscribed;
   return ws;
 }
 
