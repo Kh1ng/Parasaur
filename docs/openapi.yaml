@@ -282,7 +282,12 @@ paths:
           schema: { type: string, default: 7d }
       responses:
         "200":
-          description: QuotaSnapshot
+          description: >-
+            QuotaSnapshot for the selected profile and period. New snapshots
+            include account_spend with canonical recorded actual and estimated
+            costs grouped by exact backend/instance identity. A null instance
+            remains unattributed. These are ledger observations, not provider
+            invoices; older workers may omit account_spend.
           content:
             application/json:
               schema: { type: object }

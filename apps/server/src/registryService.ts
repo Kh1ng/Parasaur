@@ -291,6 +291,27 @@ function isQuotaSnapshot(value: unknown, profile: string, since: string): value 
   if (!value || typeof value !== 'object') return false;
   const snapshot = value as Partial<QuotaSnapshot>;
   const optionalText = (value: unknown) => value == null || typeof value === 'string';
+  const accountSpendValid = (value: unknown): boolean => {
+    if (value === undefined) return true;
+    if (!Array.isArray(value)) return false;
+    const identities = new Set<string>();
+    const label = (value: unknown) => typeof value === 'string' && /^[a-zA-Z0-9_.:-]{1,128}$/.test(value);
+    const cost = (value: unknown) => value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+    return value.every(row => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)
+        || !Object.keys(row).every(key => ['backend', 'backend_instance', 'observations', 'actual_cost_usd', 'estimated_cost_usd', 'actual_cost_unknown_observations'].includes(key))
+        || !label(row.backend) || !(row.backend_instance === null || label(row.backend_instance))
+        || !Number.isSafeInteger(row.observations) || row.observations < 1
+        || !Number.isSafeInteger(row.actual_cost_unknown_observations) || row.actual_cost_unknown_observations < 0
+        || row.actual_cost_unknown_observations > row.observations
+        || !cost(row.actual_cost_usd) || !cost(row.estimated_cost_usd)
+        || (row.actual_cost_usd === null) !== (row.actual_cost_unknown_observations === row.observations)) return false;
+      const identity = JSON.stringify([row.backend, row.backend_instance]);
+      if (identities.has(identity)) return false;
+      identities.add(identity);
+      return true;
+    });
+  };
   const observationsValid = (value: unknown): boolean => value === undefined || (Array.isArray(value)
     && value.every(observation => observation && typeof observation.backend === 'string'
       && [observation.credential_id, observation.backend_instance, observation.model, observation.quota_pool, observation.quota_window,
@@ -303,6 +324,7 @@ function isQuotaSnapshot(value: unknown, profile: string, since: string): value 
   return (snapshot.schema_version === 2 || snapshot.schema_version === 3) && typeof snapshot.generated_at === 'string'
     && Number.isFinite(Date.parse(snapshot.generated_at)) && snapshot.profile?.profile === profile
     && snapshot.since === since && !!snapshot.freshness && typeof snapshot.freshness === 'object'
+    && accountSpendValid(snapshot.account_spend)
     && !!snapshot.usage && typeof snapshot.usage === 'object' && Array.isArray(snapshot.quota_checks)
     && snapshot.quota_checks.every(check => check && typeof check.backend === 'string'
       && (check.checked_at == null || (typeof check.checked_at === 'string' && Number.isFinite(Date.parse(check.checked_at))))

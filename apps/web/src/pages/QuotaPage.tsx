@@ -475,10 +475,12 @@ function QuotaCandidateLedger({ candidates: configuredCandidates, quotaChecks }:
                     </div>
                     {candidate.usage && <details className="quota-row-feedback text-xs text-muted">
                       <summary className="cursor-pointer">Usage details</summary>
+                      <p className="mt-2">These backend/model totals may include other accounts or models. See Subscriptions for account costs.</p>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
                         <span>{formatCount(candidate.usage.entries)} entries · {formatPercent(candidate.usage.success_rate)} success</span>
                         <span>{formatTokens(candidate.usage.total_tokens)} tokens · {formatCount(candidate.usage.requests_count)} requests</span>
-                        {(candidate.usage.actual_cost_usd !== null || candidate.usage.estimated_cost_usd !== null) && <span>Cost: {formatCost(candidate.usage.actual_cost_usd ?? candidate.usage.estimated_cost_usd)}</span>}
+                        <span>Recorded actual cost: {formatCost(candidate.usage.actual_cost_usd)}</span>
+                        <span>Estimated cost: {formatCost(candidate.usage.estimated_cost_usd)}</span>
                         {candidate.source && <span>Source: {candidate.source}</span>}
                       </div>
                     </details>}

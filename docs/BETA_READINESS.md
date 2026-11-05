@@ -43,6 +43,13 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Recorded account costs](validation/beta-progress-2026-11-03/account-cost-attribution.md)
+  now use canonical ledger identity and avoid repeated candidate totals or
+  cross-account backend totals. Actual, estimated, unknown and measured zero
+  stay distinct. Rust, real-CLI, Windows UI and worker-relay checks pass. Matched
+  packaging/private integration, live billing/usage reconciliation, refresh
+  recovery and complete admission-limit acceptance remain open.
+
 - [Server update recovery](validation/beta-progress-2026-11-03/server-update-recovery.md)
   resumes persisted running updates, cancels polling on unmount and labels
   interrupted status reads as unavailable. Six Windows browser checks,

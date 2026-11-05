@@ -10,6 +10,24 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/registry/quota**', route => route.fulfill({ json: { profile: 'test-profile', since: '7d', nodes: [] } }));
 });
 
+test('routing usage details qualify backend totals and keep actual costs separate from estimates', async ({ mount, page }, testInfo) => {
+  const quota = JSON.parse(readFileSync(new URL('../../../server/tests/fixtures/gah/responses/quota.json', import.meta.url), 'utf8')) as QuotaSnapshot;
+  quota.quota_checks = [];
+  quota.candidates = [{ ...quota.candidates[0], backend_instance: 'work', usage: { ...quota.candidates[0].usage, actual_cost_usd: null, estimated_cost_usd: 3 } }];
+  await page.route('**/api/cli-router', route => route.fulfill({ json: { settings: { url: null, hasApiKey: false, hasManagementKey: false }, status: 'unconfigured', strategy: 'round-robin', sessionAffinity: false, accounts: [], models: [] } }));
+  const component = await mount(<MockStoreProvider statusData={null} quotaData={quota}><WebSocketProvider><QuotaPage /></WebSocketProvider></MockStoreProvider>);
+  const row = component.getByTestId(`quota-candidate-${quota.candidates[0].backend}-0`);
+  await row.getByText('Usage details', { exact: true }).click();
+  await expect(row).toContainText('These backend/model totals may include other accounts or models.');
+  await expect(row).toContainText('Recorded actual cost: Unknown');
+  await expect(row).toContainText('Estimated cost: $3.00');
+  for (const width of [1100, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await row.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await row.screenshot({ path: testInfo.outputPath(`routing-cost-${width}.png`) });
+  }
+});
+
 test('named API connections remain visible when their provider has no usage reading', async ({ mount, page }) => {
   const quota = JSON.parse(readFileSync(new URL('../../../server/tests/fixtures/gah/responses/quota.json', import.meta.url), 'utf8')) as QuotaSnapshot;
   quota.candidates = [];

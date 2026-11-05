@@ -24,6 +24,32 @@ async function listen(server: http.Server): Promise<string> {
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
+test('account cost relay preserves exact and unknown identities and rejects duplicated or invalid rows', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'gah-quota-account-cost-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const row = { backend: 'codex', backend_instance: 'work', observations: 2, actual_cost_usd: 4, estimated_cost_usd: null, actual_cost_unknown_observations: 1 };
+  let rows: unknown = [row, { ...row, backend_instance: null, actual_cost_usd: null, actual_cost_unknown_observations: 2 }];
+  const worker = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ...quota(), account_spend: rows }));
+  });
+  t.after(() => { worker.closeAllConnections(); worker.close(); });
+  const origin = await listen(worker);
+  const read = async () => {
+    const registry = new RegistryService(join(directory, `registry-${Math.random()}.json`));
+    registry.registerNode({ node_id: 'worker', display_name: 'Worker', advertised_url: origin, version: '0.3.0', schema_digest: COORDINATOR_SCHEMA_DIGEST, transport_mode: 'loopback', secret_ref: 'env:UNUSED', profiles: ['gah'] });
+    return (await registry.getNodeQuotas('gah', '7d')).nodes[0];
+  };
+  assert.deepEqual((await read()).quota?.account_spend, rows);
+  for (const invalid of [null, {}, [row, row], [{ ...row, actual_cost_usd: -1 }], [{ ...row, observations: 0.5 }], [{ ...row, actual_cost_unknown_observations: 3 }], [{ ...row, actual_cost_usd: null }], [{ ...row, actual_cost_unknown_observations: 2 }], [{ ...row, token: 'private-upstream-token' }]]) {
+    rows = invalid;
+    const result = await read();
+    assert.equal(result.state, 'unavailable');
+    assert.equal(result.quota, null);
+    assert.ok(!JSON.stringify(result).includes('private-upstream-token'));
+  }
+});
+
 test('relay accepts v2/v3 snapshots and rejects unsupported schema versions', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'gah-quota-schema-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));

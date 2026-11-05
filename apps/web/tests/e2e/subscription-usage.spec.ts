@@ -17,6 +17,7 @@ const candidates = [
     quota_observations: [{ backend: 'codex', quota_window: '10080m', quota_remaining_percent: 94, quota_reset_at: '2026-10-11T08:06:15Z' }] },
   { backend: 'vibe', backend_instance: 'vibe', provider: 'z-ai', model: 'glm-5-3', modes: ['improve'], configured: false, eligible_now: false, reason: 'quota exhausted', unavailable_until: '2026-10-05T01:00:00Z', usage: {} }
 ];
+const accountSpend = [{ backend: 'codex', backend_instance: 'codex', actual_cost_usd: 8.1, estimated_cost_usd: null, observations: 1, actual_cost_unknown_observations: 0 }];
 
 // Routes that fetch from the fixture server must not outlive the test.
 test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: 'ignoreErrors' }); });
@@ -28,7 +29,7 @@ test('windows are named and sized from the provider names, and projected to rese
   expect(parseWindow('weekly').label).toBe('Weekly');
   expect(parseWindow('AGY individual quota')).toEqual({ label: 'AGY individual quota', windowMs: null });
 
-  const [claude, codex, vibe] = subscriptionUsage({ candidates } as never);
+  const [claude, codex, vibe] = subscriptionUsage({ candidates, account_spend: accountSpend } as never);
   expect(claude.providerLabel).toBe('Anthropic');
   expect(claude.windows.map((window) => [window.label, window.usedPercent])).toEqual([['Session (5h)', 66], ['Weekly', 14]]);
   expect(claude.tightest?.label).toBe('Session (5h)');
@@ -88,7 +89,9 @@ test('the navbar shows a ring per subscription and opens its windows; Quota list
   await page.route('**/api/quota?*', async (route) => {
     const snapshot = await (await route.fetch()).json();
     snapshot.quota_checks = [];
-    snapshot.candidates = candidates.map((candidate) => ({ ...candidate, quota_observations: candidate.quota_observations?.map((o) => ({ ...o, quota_reset_at: o.quota_window === '5-hour' ? soon : week })) }));
+    snapshot.since = '7d';
+    snapshot.account_spend = accountSpend;
+    snapshot.candidates = [...candidates, { ...candidates[1], model: 'another-codex-model' }].map((candidate) => ({ ...candidate, quota_observations: candidate.quota_observations?.map((o) => ({ ...o, quota_reset_at: o.quota_window === '5-hour' ? soon : week })) }));
     await route.fulfill({ json: snapshot });
   });
   await page.routeWebSocket('**/ws**', (ws) => {
@@ -121,6 +124,6 @@ test('the navbar shows a ring per subscription and opens its windows; Quota list
   await expect(codex).toContainText('Weekly6%');
   await codex.getByRole('button', { name: /OpenAI/ }).click();
   await expect(codex.getByRole('progressbar', { name: 'Weekly' })).toHaveAttribute('aria-valuenow', '6');
-  await expect(codex).toContainText('spend $8.10 this period');
+  await expect(codex).toContainText('Recorded actual cost (7d): $8.10');
   await expect(cards.getByRole('article', { name: 'Z.ai subscription' })).toContainText('quota exhausted');
 });

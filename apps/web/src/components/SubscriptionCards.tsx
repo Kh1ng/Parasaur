@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
-import { formatUntil, projectedPercent, usageTone, type SubscriptionUsage } from '../lib/subscriptionUsage.js';
+import { formatUntil, projectedPercent, recordedCostLabel, usageTone, type SubscriptionUsage } from '../lib/subscriptionUsage.js';
 import { formatAge } from '../lib/format.js';
 import { UsageRing } from './UsageRing.js';
 import { agentDisplayName } from './LiveAgentsCard.js';
@@ -48,9 +48,9 @@ function SubscriptionCard({ usage, now, open, onToggle }: { usage: SubscriptionU
           {usage.windows.map((window) => <UsageWindowRow key={window.key} window={window} now={now} />)}
           <p className="text-[11px] text-muted">
             {usage.observedAt ? `Observed ${formatAge(usage.observedAt) ?? usage.observedAt}` : 'Not observed yet'}
-            {usage.costUsd !== null && ` · spend $${usage.costUsd.toFixed(2)} this period`}
             {!usage.eligible && usage.reason && ` · ${usage.reason}`}
           </p>
+          <p className="text-xs tabular-nums text-muted">{recordedCostLabel(usage)}</p>
         </div>
       )}
     </article>
@@ -77,6 +77,7 @@ export function SubscriptionCards({ subscriptions }: { subscriptions: Subscripti
   return (
     <section aria-labelledby="subscriptions-title" className="space-y-2">
       <h3 id="subscriptions-title" className="text-base font-semibold text-primary">Subscriptions</h3>
+      <p className="text-xs text-muted">Costs cover recorded executions in this profile; provider billing may differ.</p>
       {subscriptions.map((usage) => <SubscriptionCard key={usage.id} usage={usage} now={now} open={open.has(usage.id)} onToggle={() => toggle(usage.id)} />)}
     </section>
   );

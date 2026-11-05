@@ -1,5 +1,12 @@
 # Beta finishing pass: local validation
 
+Latest usage repair: [recorded account costs](account-cost-attribution.md) now
+come from canonical ledger execution identity, rather than summing overlapping
+candidate totals. Named accounts, unattributed history, estimates, unknowns and
+measured zero remain distinct. Rust, real-CLI, Windows unit/component/browser
+and worker-relay checks pass. This later source change still needs a matched
+package/private assembly and real provider acceptance.
+
 Latest update recovery: the [server update banner](server-update-recovery.md)
 resumes observation after reopening, stops polling on unmount, preserves
 uncertainty through interrupted reads and identifies the server component.

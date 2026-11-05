@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { formatUntil, projectedPercent, usageTone, type SubscriptionUsage, type UsageWindow } from '../lib/subscriptionUsage.js';
+import { formatUntil, projectedPercent, recordedCostLabel, usageTone, type SubscriptionUsage, type UsageWindow } from '../lib/subscriptionUsage.js';
 import { formatLocalTime } from '../lib/format.js';
 import { UsageRing } from './UsageRing.js';
 
@@ -59,7 +59,8 @@ export function SubscriptionDetail({ usage, now }: { usage: SubscriptionUsage; n
       )}
       {!usage.eligible && usage.reason && tight && <p className="text-xs text-warning">{usage.reason}</p>}
       {usage.windows.map((window) => <UsageWindowRow key={window.key} window={window} now={now} />)}
-      {usage.costUsd !== null && <p className="text-[11px] tabular-nums text-muted">Spend this period ${usage.costUsd.toFixed(2)}</p>}
+      <p className="text-xs tabular-nums text-muted">{recordedCostLabel(usage)}</p>
+      <p className="text-xs text-muted">Recorded executions in this profile; provider billing may differ.</p>
     </div>
   );
 }

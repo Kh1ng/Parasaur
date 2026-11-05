@@ -1076,7 +1076,7 @@ fn usage_has_observation(usage: &LedgerUsage) -> bool {
         || usage.actual_cost_usd.is_some()
 }
 
-fn canonical_usage_observations(entry: &LedgerEntry) -> Vec<UsageObservation<'_>> {
+pub(crate) fn canonical_usage_observations(entry: &LedgerEntry) -> Vec<UsageObservation<'_>> {
     let attempt_usage: Vec<_> = entry
         .attempts
         .iter()

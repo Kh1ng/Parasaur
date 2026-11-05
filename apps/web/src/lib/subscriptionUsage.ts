@@ -1,4 +1,5 @@
 import type { ActiveClaim, ControllerActivity, DeviceAgent, QuotaCandidateStatus, QuotaCheck, QuotaObservation, QuotaSnapshot, RecentLedgerSummary, Session } from '@git-agent-harness/contracts';
+import { formatCost } from './format.js';
 
 /** One rate-limit window of a subscription, as the provider reports it. */
 export interface UsageWindow {
@@ -31,8 +32,11 @@ export interface SubscriptionUsage {
   eligible: boolean;
   reason: string | null;
   unavailableUntil: string | null;
-  /** Spend this period when the provider reports dollars rather than percent. */
+  /** Recorded ledger costs, scoped to exact execution identities, not provider billing. */
   costUsd: number | null;
+  estimatedCostUsd?: number | null;
+  costPeriod?: string | null;
+  costUnknownObservations?: number;
   observedAt: string | null;
 }
 
@@ -117,7 +121,7 @@ type Scope = Pick<QuotaCheck, 'backend' | 'provider' | 'backend_instance' | 'cre
  * API and Vibe pools) are windows of the same ring. Router aliases
  * (`cli-router…`) route onto those accounts and are not accounts themselves.
  */
-export function subscriptionUsage(snapshot: Partial<Pick<QuotaSnapshot, 'candidates' | 'quota_checks'>> | null | undefined): SubscriptionUsage[] {
+export function subscriptionUsage(snapshot: Partial<Pick<QuotaSnapshot, 'candidates' | 'quota_checks' | 'account_spend' | 'since'>> | null | undefined): SubscriptionUsage[] {
   const candidates = snapshot?.candidates ?? [];
   const scopes: Scope[] = [...candidates, ...(snapshot?.quota_checks ?? [])];
   const accounts = new Map<string, { scopes: Scope[]; candidates: QuotaCandidateStatus[] }>();
@@ -150,7 +154,14 @@ export function subscriptionUsage(snapshot: Partial<Pick<QuotaSnapshot, 'candida
     const blocked = routed.length > 0 && routed.every((candidate) => !candidate.eligible_now) ? routed[0] : null;
     const first = account.scopes[0];
     const provider = account.scopes.map((scope) => scope.provider).find(Boolean) ?? null;
-    const costs = routed.map((candidate) => candidate.usage?.actual_cost_usd).filter((cost): cost is number => typeof cost === 'number');
+    // Candidate totals may overlap across models/pools and include other accounts.
+    // Only the producer's canonical, exact-instance rows can supply account costs.
+    const spend = (snapshot?.account_spend ?? []).filter(row => row.backend_instance !== null
+      && account.scopes.some(scope => scope.backend === row.backend && scope.backend_instance === row.backend_instance));
+    const total = (field: 'actual_cost_usd' | 'estimated_cost_usd') => {
+      const costs = spend.map(row => row[field]).filter((cost): cost is number => typeof cost === 'number' && Number.isFinite(cost));
+      return costs.length ? costs.reduce((sum, cost) => sum + cost, 0) : null;
+    };
     return {
       id,
       backend: first.backend,
@@ -162,11 +173,22 @@ export function subscriptionUsage(snapshot: Partial<Pick<QuotaSnapshot, 'candida
       eligible: !blocked,
       reason: blocked?.reason ?? null,
       unavailableUntil: blocked?.unavailable_until ?? null,
-      costUsd: costs.length ? costs.reduce((sum, cost) => sum + cost, 0) : null,
+      costUsd: total('actual_cost_usd'),
+      estimatedCostUsd: total('estimated_cost_usd'),
+      costPeriod: snapshot?.since ?? null,
+      costUnknownObservations: spend.reduce((sum, row) => sum + row.actual_cost_unknown_observations, 0),
       observedAt: windows.map((window) => window.observedAt).filter((value): value is string => !!value).sort().at(-1)
         ?? routed.map((candidate) => candidate.observed_at).filter((value): value is string => !!value).sort().at(-1) ?? null
     };
   }).sort((a, b) => a.providerLabel.localeCompare(b.providerLabel) || a.id.localeCompare(b.id));
+}
+
+/** The same qualified ledger-cost label in the navbar and account cards. */
+export function recordedCostLabel(usage: SubscriptionUsage): string {
+  const period = usage.costPeriod ? ` (${usage.costPeriod})` : '';
+  const actual = `Recorded actual cost${period}: ${formatCost(usage.costUsd)}`;
+  const estimate = usage.estimatedCostUsd != null ? ` · Estimated cost: ${formatCost(usage.estimatedCostUsd)}` : '';
+  return actual + estimate + (usage.costUnknownObservations ? ' · Some recorded costs are unknown.' : '');
 }
 
 /**

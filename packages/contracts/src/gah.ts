@@ -582,6 +582,18 @@ export interface QuotaCheck {
   failing_since?: string | null;
 }
 
+/** Canonical ledger costs for one exact execution instance, not provider billing. */
+export interface QuotaAccountSpend {
+  backend: string;
+  /** Null history remains unattributed rather than assigned to a default account. */
+  backend_instance: string | null;
+  observations: number;
+  actual_cost_usd: number | null;
+  estimated_cost_usd: number | null;
+  /** Recorded usage observations without actual cost; not all attempted executions. */
+  actual_cost_unknown_observations: number;
+}
+
 export interface QuotaSnapshot {
   /** v3 adds auth_required/not_configured checks and optional checked_at;
    * central also accepts legacy v2 worker snapshots. */
@@ -597,6 +609,8 @@ export interface QuotaSnapshot {
   profile: ProfileIdentity;
   since: string;
   usage: QuotaUsageSummary;
+  /** Optional for older workers. Candidate summaries are not account totals. */
+  account_spend?: QuotaAccountSpend[];
   candidates: QuotaCandidateStatus[];
 }
 
