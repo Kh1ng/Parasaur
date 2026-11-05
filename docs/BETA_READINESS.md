@@ -48,8 +48,9 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   work outside intake visible, and explains the claiming machine and recovery
   condition. Stale worker observations remain uncertain and duplicate assignment
   is disabled. Seven unit and thirteen component checks, typechecking and the
-  build pass; desktop/mobile layouts were inspected. Updated assembled/installed
-  artifacts and authenticated live factory acceptance remain required.
+  build pass; desktop/mobile layouts were inspected. The private `233947f` /
+  public `9f39774e` assembled app also passes the combined build and guards.
+  Installed artifacts and authenticated live factory acceptance remain required.
 
 - [Worker ledger ownership](validation/beta-progress-2026-11-03/worker-ledger-retention.md)
   now releases full history before backend execution while retaining bounded

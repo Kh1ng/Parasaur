@@ -46,7 +46,23 @@ Screenshots are retained under `apps/web/test-results/component/` in the
 `KanbanPage-a-claim-without-a67e3-dance-on-desktop-and-mobile` result directory.
 These are isolated component checks, not a live factory or installed desktop run.
 
-This public UI change is not in the earlier assembled enterprise source pair,
-installed native executable, or public recovery ZIP. No private pin, installed
-binary, provider session, live claim or remote service changed. Live node
-recovery, failed central assets and authenticated pipeline acceptance remain open.
+## Assembled integration
+
+Private `233947fee6ef72e4a99fbde821c1dfd2ff3962c2` now pins public core
+`9f39774e77bdf7e4a107f592bbd4b8d9dda3f889`. The full combined build passed
+1,099 server cases (38 explicit skips), 15 mock cases, server/web typechecks,
+production builds and private artifact/input/transport guards. The seven focused
+Kanban checks also passed inside the actual assembled source. Source comparison
+and emitted-bundle checks confirm the overlay retains the claim/stale/duplicate
+assignment behavior. The release manifest identifies this exact pair.
+
+Evidence is retained under
+`/home/khing/.cache/parasaur-enterprise-current.robf882r/`: `build.log`,
+`board-verification.log`, and `source/.build/release.json`. Server, Rust,
+contracts/shared sources, SQL and the Auth driver were byte-compared with the
+preceding verified assembly and are unchanged. Earlier native/Auth results remain
+historical evidence; no fresh native or real Auth run is claimed here.
+
+The installed native executable and public recovery ZIP are unchanged. No
+provider session, live claim or remote service changed. Live node recovery,
+failed central assets and authenticated pipeline acceptance remain open.
