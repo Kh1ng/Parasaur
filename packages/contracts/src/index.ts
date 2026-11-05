@@ -13,3 +13,4 @@ export * from './cli-capabilities.js';
 export * from './cli-router.js';
 
 export * from './agent-versions.js';
+export * from './compute-output.js';

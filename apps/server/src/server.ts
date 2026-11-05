@@ -214,6 +214,9 @@ type CreateServerOptions = Partial<ConfigEffectiveDeps> & {
   gitLabEvents?: GitLabRouteDeps;
   /** Trusted server-side extension only; never selected by request headers. */
   gitLabIdentityProvider?: GitLabIdentityProvider;
+  /** Trusted node extensions share the API's authentication and owner boundary.
+   * Mounted before role filtering so a worker can expose its own output. */
+  ownerRoutes?: (mutation: ReturnType<typeof mutationSafety>) => express.Router;
 };
 
 const activityKinds = new Set<ActivityKind>([
@@ -445,6 +448,7 @@ export function createServer(
   // expose neither.
   if (node.role === 'central') app.use('/api/integrations/gitlab', gitLabRunsRouter());
   const mutation = mutationSafety(getCoordinatorIdentity(undefined, coordinatorPort).node_id);
+  if (configDeps.ownerRoutes) app.use('/api/owner', requireOwner, configDeps.ownerRoutes(mutation));
   app.use(workerRouteGuard(node));
   if (node.role === 'central') app.use('/api/integrations/gitlab',
     gitLabQueueRouter(app.locals.gitLabEventsStore, app.locals.gitLabEventsQueue, mutation));
