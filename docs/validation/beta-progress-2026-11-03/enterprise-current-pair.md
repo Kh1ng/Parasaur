@@ -1,22 +1,24 @@
 # Current enterprise integration — 2026-11-04
 
-The current verified pair is private `ac04a1a4` with public core `2cc5e3fd`.
+The current verified pair is private `360ff0c6` with public core `252d4b05`.
 It retains automatic queued compute, bounded archives and durable delivery,
-and adds [verified owner/scope reconciliation](enterprise-compute-reconciliation.md).
+with [owner/scope reconciliation](enterprise-compute-reconciliation.md) and
+[saved-output review controls](saved-output-controls.md) in shared Settings.
 Protocol 2 blocks launch until broker registration is durable. Full kernel
 slice-path checks and bounded housekeeping close the reproduced cleanup gaps.
 
-The exact pair passed 1,060 server cases (37 explicit skips), 13 mock cases,
+The exact pair passed 1,072 server cases (37 explicit skips), 14 mock cases,
 typechecks, production builds and artifact/transport guards. Dedicated WSL
-checks passed 68 cases with one platform-only skip. Real disposable
+checks passed 77 cases with one platform-only skip. Eleven browser behavior
+cases and a full sample Settings workflow passed. Real disposable
 Auth/PostgREST killed and restarted a consumer after its fixture-provider call,
 then verified one attempt, an unknown-exit interrupted receipt and recovered
 empty storage. Normal queued jobs and retained retry/revocation/relay checks
-passed. Seven startup offsets and twelve repetitions of the formerly failing
-window were clean on the retained final binary.
+passed. The unchanged retained native binary also has the preceding pair's
+seven startup offsets and twelve clean repetitions of the formerly failing window.
 
-Legacy/unknown state reconciliation, archive review/retention and journal/
-capability-metadata maintenance, production dispatch/client and forge runtime,
+Legacy/unknown state resolution, journal/capability-metadata maintenance,
+installed Tauri large-file saving, production dispatch/client and forge runtime,
 portable aliases, ledger integration, configuration migration and complete
 shared-hardware acceptance remain unfinished. Installed releases and live
 services were not upgraded or enabled for cloud compute.

@@ -1,26 +1,28 @@
 # Beta finishing pass: local validation
 
-The [saved-output storage increment](compute-output-storage.md) adds bounded
-download verification and explicit content-checked discard primitives. Nineteen
-focused cases pass, with four explicit isolation skips. Owner routes and the
-desktop/shared-web Settings controls remain pending; this is not a new full
-assembly or installed-app acceptance result.
+Latest enterprise evidence: [saved-output review controls](saved-output-controls.md)
+connect owner-authenticated downloads and explicit retention actions to shared
+Settings. Private `360ff0c6` / public `252d4b05` passes 1,072 server cases,
+14 sample cases, 11 browser behavior cases, a full Settings workflow and 77
+dedicated WSL cases, plus disposable real Auth/PostgREST checks. Installed Tauri
+large-file saving, hosted use and journal/capability-metadata maintenance remain
+unfinished or unverified.
 
-Latest enterprise evidence: [verified crash reconciliation](enterprise-compute-reconciliation.md)
+Earlier enterprise evidence: [verified crash reconciliation](enterprise-compute-reconciliation.md)
 retains automatic queued compute and bounded archives. Private `ac04a1a4` /
 public `2cc5e3fd` passes the combined build, 68 dedicated WSL checks (one platform
 skip), real Auth/PostgREST consumer kill/restart and normal queued workflows.
 The launch handshake, systemd slice path and empty-scope retirement repairs
 passed seven startup offsets and twelve repeated formerly failing timings.
-Legacy/unknown state, archive review/retention and metadata maintenance,
+Legacy/unknown state and metadata maintenance,
 production runtime/client and forge access, aliases, ledger integration,
 full shared-hardware acceptance and migration remain unfinished.
 
 The preceding [durable inference retry receipts](enterprise-inference-receipts.md)
 fixes a reproduced duplicate-request path and records the clean private `14c16068`
 build against public core `16e9ecc6`. Real Auth/PostgREST concurrent retry and
-relay checks passed. The compute-side queue consumer, aliases, isolation and migration are
-still implementation work.
+relay checks passed. That verification preceded the queued-compute and isolation
+work linked above; aliases and migration remain unfinished.
 
 Latest factory evidence: [exact account routing](factory-account-routing.md)
 adds node/account/model selection, preserves account identity through CLI retries

@@ -143,24 +143,28 @@ was followed by [durable inference retry receipts](validation/beta-progress-2026
 The [inference-side consumer](validation/beta-progress-2026-11-03/enterprise-inference-consumer.md)
 is retained with the new [compute process boundary](validation/beta-progress-2026-11-03/enterprise-compute-isolation.md)
 and [claim-bound inference socket](validation/beta-progress-2026-11-03/enterprise-inference-relay.md)
-at private `ac04a1a4`, paired with public core `2cc5e3fd`, including the
+at private `360ff0c6`, paired with public core `252d4b05`, including the
 [startup authorization repair](validation/beta-progress-2026-11-03/enterprise-startup-authorization.md),
 [shared capacity/native watchdog](validation/beta-progress-2026-11-03/enterprise-host-supervision.md),
 [durable compute start/result delivery](validation/beta-progress-2026-11-03/enterprise-compute-recovery.md),
 [bounded workspace/archive](validation/beta-progress-2026-11-03/enterprise-bounded-workspace.md),
 [opt-in automatic queued compute](validation/beta-progress-2026-11-03/enterprise-compute-queue.md),
 and [verified crash reconciliation](validation/beta-progress-2026-11-03/enterprise-compute-reconciliation.md).
+[Saved-output controls](validation/beta-progress-2026-11-03/saved-output-controls.md)
+now connect owner-only listing, bounded downloads and explicit reviewed discard
+to shared Settings. Browser behavior and a full sample Settings workflow passed;
+large-file saving in the installed Tauri app remains unverified.
 The exact combined build, SQL replay and real Auth/PostgREST/HTTP fixture-provider
-checks passed. Sixty-eight dedicated WSL checks, seven supplemental startup crash timings and
-sandboxed inference passed, including Node freeze, uncertain cleanup and lost
+checks passed. Seventy-seven dedicated WSL checks and sandboxed inference passed,
+retaining the unchanged native host's earlier startup-crash evidence, including Node freeze, uncertain cleanup and lost
 committed start/completion replies with preserved host input and bounded output.
 Two queued fixture jobs now complete the sandbox/inference/archive transaction
 with one provider attempt each. A real disposable consumer kill/restart now
 recovers stopped work and empty storage without another provider attempt or an
-invented backend exit. Legacy/unknown state, journal/archive/capability-metadata
-maintenance and review controls, production runtime/client and
+invented backend exit. Legacy/unknown state, journal/capability-metadata
+maintenance, installed desktop/hosted artifact acceptance, production runtime/client and
 forge access, portable aliases, identity/ledger integration,
-safe artifact review/publication, full shared-hardware acceptance, staged migration,
+artifact publication, full shared-hardware acceptance, staged migration,
 hosted rollout and a real provider-backed job remain unfinished.
 
 A [current public recovery candidate](validation/beta-progress-2026-11-03/current-public-release.md)
