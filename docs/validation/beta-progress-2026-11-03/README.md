@@ -1,5 +1,12 @@
 # Beta finishing pass: local validation
 
+Latest worker progress: [ledger ownership](worker-ledger-retention.md) releases
+full history before serial, parallel and TUI execution, retaining bounded retry
+context. Controlled real-CLI probes confirm lower retained memory; controller,
+prior-context and scheduler checks pass. The optimized `819937bf` recovery package
+is verified and installed as the WSL user CLI with rollback. Live memory
+attribution and a long soak remain required.
+
 Latest observability progress: [native Windows memory diagnostics](windows-memory-diagnostics.md)
 now collect process working sets and mark unavailable CPU/load/collection data
 explicitly. Six native tests and typechecking pass. The [live recheck](live-central-8443.md)

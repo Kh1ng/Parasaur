@@ -1,6 +1,8 @@
 # Current enterprise integration — 2026-11-05
 
-The current assembled pair is private `bc7d050` with public core `8ed53733`.
+The current assembled pair is private `b7c96bc` with public core `819937bf`.
+It includes [worker ledger release](worker-ledger-retention.md), retaining only
+bounded prior context while actions execute, with lower controlled resident memory.
 It includes [native Windows memory diagnostics](windows-memory-diagnostics.md),
 retaining real process working sets and explicit unknown CPU/load readings.
 It includes [bounded controller passes](controller-pass-turnover.md), so a busy
@@ -48,7 +50,7 @@ Queue, crash/recovery, retry-receipt and authorization/relay checks passed.
 Earlier Windows desktop checks passed 35 ordinary cases and the separate hidden
 native output fixture. The older `ac62e3` native binary has the seven startup
 offsets and twelve repeated startup-window checks. The refreshed debug host is
-`3ddf89d9`; its isolation-host sources are unchanged. That earlier timing-stress
+`f6028d54`; its isolation-host sources are unchanged. That earlier timing-stress
 record is historical, not a claim of a new repetition on this binary.
 
 The preceding `e7d088c` / `2f8c9cf5` pair and `fe07bdd2` host passed 96 dedicated

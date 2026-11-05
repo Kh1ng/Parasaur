@@ -43,6 +43,12 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Worker ledger ownership](validation/beta-progress-2026-11-03/worker-ledger-retention.md)
+  now releases full history before backend execution while retaining bounded
+  retry context. Native probes and scheduler checks pass; the optimized local
+  package is verified and installed as the WSL user CLI with rollback. Transient
+  history reads, live allocation attribution and a long soak remain open.
+
 - [Native Windows diagnostics](validation/beta-progress-2026-11-03/windows-memory-diagnostics.md)
   now include process working sets and preserve unknown CPU/load/collection
   readings. Native tests and typechecking pass. The [live central recheck](validation/beta-progress-2026-11-03/live-central-8443.md)

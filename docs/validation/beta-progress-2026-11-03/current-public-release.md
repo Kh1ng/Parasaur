@@ -1,25 +1,25 @@
 # Current public release candidate — Windows/WSL, 2026-11-05
 
-Native desktop follow-up: [source 018f6603](windows-updater-config.md) fixes the
-Windows updater lookup and updates the closed local test installation with
-rollback. The desktop hashes below describe the earlier runtime-package checks;
-the linked native record has the newly installed hash. CLI/server/web package
-bytes and their checks below remain unchanged.
+The native desktop remains [source 018f6603](windows-updater-config.md), with
+the repaired Windows updater lookup. Its separate Windows installer and closed
+local test installation are unchanged by this CLI/server package update.
 
-Source: `77209892c6df0799be5ffeeac701fb11477a7b95`, version 0.3.0.
-Package: `artifacts/parasaur-central-77209892.zip` (24,144,675 bytes).
-SHA-256: `173a7ef02ecad29212f10572b6247a3e409cf042a413692062a11ae6a025d3c7`.
-This supersedes the retained `16e9ecc6` candidate below.
+Source: `819937bf8c7e2b5530bf195cdd1e1015bf755726`, version 0.3.0.
+Package: `artifacts/parasaur-central-819937bf.zip` (24,175,156 bytes).
+SHA-256: `4fc018b7d0ab149c82eb0879bf31f0b04c8a05bd27d7263bf2c163982d668248`.
+This supersedes the retained `77209892` and historical `16e9ecc6` candidates.
 
 The package contains matched optimized Linux CLI/MCP binaries, the public
 server/web bundle, tracked source, manifest, build/install records, checksums
 and verification scripts/logs. It includes prior account/model/factory repairs
 plus [bounded capture](rust-output-memory.md), [streaming event reads](event-reader-memory.md)
-and [bounded controller passes](controller-pass-turnover.md). Private source
+and [bounded controller passes](controller-pass-turnover.md), plus
+[worker ledger release](worker-ledger-retention.md) and
+[native Windows diagnostics](windows-memory-diagnostics.md). Private source
 and overlays are excluded; enterprise remains a separate private build.
 
-The fresh locked/offline optimized build passed **1,002 public server cases**
-(one explicit skip) and **15 mock cases**, with no failures. The optimized CLI
+The fresh locked/offline optimized build passed **1,004 public server cases**
+(two explicit skips) and **15 mock cases**, with no failures. The optimized CLI
 passed the 128 MiB journal memory-limit check and all four review-format cases,
 including oversized approval rejection. Debug scheduler-budget and pressure
 hooks are absent from the release binary. These are local checks, not a daemon
@@ -35,11 +35,11 @@ checksums, ZIP CRC and archived-file byte comparisons passed.
 
 Both binaries require **glibc 2.39**; current Ubuntu-24.04 WSL meets that floor.
 Live central compatibility remains unverified. Source/log:
-`/home/khing/.cache/parasaur-public-release.0352chor`.
+`/home/khing/.cache/parasaur-public-release.2zslln7_`.
 
 The idle WSL user CLI at `~/.cargo/bin/gah` was atomically updated to SHA-256
-`3dd8d65a9ff40c8fae37a76a8bee9c7a6dd988583b827f786817a8b4393f0cf9`.
-Rollback: `~/.cache/parasaur-upgrade-backups/gah-before-77209892`.
+`e3a3c6fc0ee2f266cac63d360321e4002a3ecff06ab8a55f045e74c98533c552`.
+Rollback: `~/.cache/parasaur-upgrade-backups/gah-before-819937bf`.
 Version/help and the memory regression pass against the installed executable.
 Both Windows desktop read-only installed-WSL checks pass: account metadata and
 Mistral protocol preflight. Their log is included as `windows-installed-cli.log`.
@@ -47,9 +47,10 @@ No provider sign-in, billing call or GUI interaction occurred.
 
 All six separate worker-release binary hashes remain unchanged. No worker
 service was started, stopped or upgraded; no new user MCP installation was made.
-The installed Windows desktop already matches current production desktop code;
-its newer source changes are test-only. Its executable and saved settings hashes
-remain the values recorded below. The desktop remains closed.
+The installed desktop remains SHA-256
+`e768b6f72461a817f7c30f2ae101d4eb77ebd8d932314706de79d095cd27ad67`;
+saved settings remain `4a773444c2dead36341accc15750b5eac2235b018d69b6bde345d08b81ac9caa`.
+The desktop remains closed. Earlier hashes below belong to the historical package.
 
 `BUILDINFO.json`, `INSTALL_CHECK.json` and `USER_INSTALL.json` retain exact checks
 and hashes. This is an unsigned, unpublished local candidate and local CLI
