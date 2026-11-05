@@ -1,5 +1,10 @@
 # Beta finishing pass: local validation
 
+Latest Mac work: [native client update and temporary central test](mac-client-update.md)
+installed and launched 0.3.0, fixed local app-bundle sealing, passed native and
+central HTTP/WebSocket/asset/cost checks, and removed the owned build tree.
+The live central still fails its dashboard assets; live acceptance remains open.
+
 Latest activity repair: [account execution evidence](account-activity-evidence.md)
 uses exact session/worker account identity, node ownership and worker freshness.
 Claims, provider transport IDs and the first sibling account no longer imply

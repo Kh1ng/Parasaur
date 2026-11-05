@@ -43,6 +43,13 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [MacBook client update](validation/beta-progress-2026-11-03/mac-client-update.md)
+  installed and launched native desktop/CLI 0.3.0. Native tests and a temporary
+  central build/runtime passed; the central was stopped and its build files
+  removed. Local bundle signing is repaired and regression-tested. The live
+  central still serves failing assets, so its dashboard/factory acceptance,
+  real provider use, distribution signing and a client-memory soak remain open.
+
 - [Account activity evidence](validation/beta-progress-2026-11-03/account-activity-evidence.md)
   now uses exact running-session/worker account identity with node and freshness
   checks. Claims, transport IDs and sibling fallback no longer claim execution.
