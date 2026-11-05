@@ -682,8 +682,8 @@ pub(super) fn report_blocked_work_items_once(
     cfg: &crate::config::GahConfig,
     profile_name: &str,
     snapshot: &crate::status::StatusSnapshot,
+    history: &[crate::events::ControllerEvent],
 ) -> Result<()> {
-    let history = crate::events::read_events(cfg)?;
     for blocker in snapshot
         .blocked_work_items
         .iter()
@@ -705,7 +705,7 @@ pub(super) fn report_blocked_work_items_once(
             .unwrap_or(reference);
         let reason_code = blocker.reason_code.as_deref().or(blocker.reason.as_deref());
         let already_reported =
-            matching_human_required_report(&history, profile_name, Some(identity), reason_code);
+            matching_human_required_report(history, profile_name, Some(identity), reason_code);
         if already_reported {
             continue;
         }

@@ -350,7 +350,7 @@ fn run_pass(
 
     // Issue #1381: blocked items are reported once even when other work is
     // dispatched this tick.
-    report_blocked_work_items_once(cfg, profile_name, &snapshot)?;
+    report_blocked_work_items_once(cfg, profile_name, &snapshot, &history)?;
 
     // For parallel > 1, we need to decide multiple actions
     if parallel > 1 {

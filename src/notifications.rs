@@ -861,34 +861,26 @@ fn cache_terminal_failure_record(
     cache.insert(key, failure);
 }
 
-fn latest_unresolved_terminal_failure_from_events(
-    events: &[events::ControllerEvent],
-    profile: &str,
-    work_id: &str,
-) -> Option<TerminalFailureRecord> {
-    for event in events.iter().rev() {
-        let Some(failure) = terminal_failure_from_event(event) else {
-            continue;
-        };
-        if failure.profile != profile || failure.work_id != work_id {
-            continue;
-        }
-        match event.event_type.as_str() {
-            t if t == events::EventType::TerminalFailureResolved.as_str() => return None,
-            t if t == events::EventType::TerminalFailure.as_str() => return Some(failure),
-            _ => continue,
-        }
-    }
-    None
-}
-
 fn latest_unresolved_terminal_failure_record(
     cfg: &GahConfig,
     profile: &str,
     work_id: &str,
 ) -> Option<TerminalFailureRecord> {
-    let events = match events::read_events(cfg) {
-        Ok(events) => events,
+    let mut latest = None;
+    match events::visit_events(cfg, |event| {
+        let Some(failure) = terminal_failure_from_event(&event) else {
+            return;
+        };
+        if failure.profile != profile || failure.work_id != work_id {
+            return;
+        }
+        match event.event_type.as_str() {
+            t if t == events::EventType::TerminalFailureResolved.as_str() => latest = None,
+            t if t == events::EventType::TerminalFailure.as_str() => latest = Some(failure),
+            _ => {}
+        }
+    }) {
+        Ok(()) => {}
         Err(error) => {
             eprintln!(
                 "[gah] terminal failure dedupe fallback for profile={profile}, work_id={work_id}: {error:#}"
@@ -900,9 +892,8 @@ fn latest_unresolved_terminal_failure_record(
                 .get(&key)
                 .and_then(Clone::clone);
         }
-    };
+    }
 
-    let latest = latest_unresolved_terminal_failure_from_events(&events, profile, work_id);
     cache_terminal_failure_record(cfg, profile, work_id, latest.clone());
     latest
 }

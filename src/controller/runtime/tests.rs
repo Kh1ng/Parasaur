@@ -416,7 +416,13 @@ fn blocked_pr_notification_is_reported_once() {
     let mut snapshot = empty_snapshot();
     snapshot.blocked_work_items.push(capped_pr_blocker());
     for _ in 0..3 {
-        super::report_blocked_work_items_once(&cfg, "real", &snapshot).unwrap();
+        super::report_blocked_work_items_once(
+            &cfg,
+            "real",
+            &snapshot,
+            &crate::events::read_events(&cfg).unwrap(),
+        )
+        .unwrap();
     }
     let events = crate::events::read_events(&cfg).unwrap();
     assert_eq!(events.len(), 1, "{events:?}");
@@ -573,7 +579,13 @@ fn blocker_and_terminal_reporting_share_identity_in_the_same_tick() {
         reason_code: Some("fix_retry_cap_exceeded".into()),
     };
     for _ in 0..3 {
-        super::report_blocked_work_items_once(&cfg, "real", &snapshot).unwrap();
+        super::report_blocked_work_items_once(
+            &cfg,
+            "real",
+            &snapshot,
+            &crate::events::read_events(&cfg).unwrap(),
+        )
+        .unwrap();
         assert!(!super::record_stop_event(
             &cfg,
             "real",

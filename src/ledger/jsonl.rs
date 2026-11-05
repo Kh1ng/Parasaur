@@ -391,11 +391,24 @@ pub(super) fn parse_jsonl_entries(
 /// Preserve full records and physical byte offsets without retaining a second
 /// whole-journal text allocation. One reusable line buffer handles framing.
 fn parse_jsonl_reader(
-    mut reader: impl BufRead,
+    reader: impl BufRead,
     path: &Path,
     starting_line: usize,
 ) -> Result<LedgerSnapshot> {
     let mut entries = vec![];
+    let byte_len = visit_jsonl_reader(reader, path, starting_line, |entry| {
+        entries.push(entry);
+        Ok(())
+    })?;
+    Ok(LedgerSnapshot { entries, byte_len })
+}
+
+fn visit_jsonl_reader(
+    mut reader: impl BufRead,
+    path: &Path,
+    starting_line: usize,
+    mut visit: impl FnMut(LedgerEntry) -> Result<()>,
+) -> Result<u64> {
     let mut line = String::new();
     let mut byte_len = 0;
     let mut line_number = starting_line;
@@ -421,9 +434,9 @@ fn parse_jsonl_reader(
                 path.display()
             )
         })?;
-        entries.push(entry);
+        visit(entry)?;
     }
-    Ok(LedgerSnapshot { entries, byte_len })
+    Ok(byte_len)
 }
 
 pub(super) struct LedgerSnapshot {
@@ -457,6 +470,46 @@ fn read_snapshot_unlocked(path: &Path) -> Result<LedgerSnapshot> {
         Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
     };
     parse_jsonl_reader(BufReader::new(file), path, 0)
+}
+
+/// Visit every validated record under the ledger read lock without retaining history.
+/// Callbacks must not write the ledger; stage external effects until this succeeds.
+pub(crate) fn visit_entries(
+    cfg: &GahConfig,
+    visit: impl FnMut(LedgerEntry) -> Result<()>,
+) -> Result<()> {
+    let path = cfg.defaults.ledger_path();
+    #[cfg(test)]
+    {
+        *READ_ENTRIES_CALLS
+            .lock()
+            .expect("ledger read counter lock poisoned")
+            .entry(path.clone())
+            .or_default() += 1;
+    }
+    let _lock = locking::shared(&path)?;
+    let file = match fs::File::open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
+    };
+    visit_jsonl_reader(BufReader::new(file), &path, 0, visit)?;
+    Ok(())
+}
+
+/// Retain matching records in append order, still validating discarded history.
+pub(crate) fn read_matching_entries(
+    cfg: &GahConfig,
+    mut retain: impl FnMut(&LedgerEntry) -> bool,
+) -> Result<Vec<LedgerEntry>> {
+    let mut entries = Vec::new();
+    visit_entries(cfg, |entry| {
+        if retain(&entry) {
+            entries.push(entry);
+        }
+        Ok(())
+    })?;
+    Ok(entries)
 }
 
 pub fn read_entries(cfg: &GahConfig) -> Result<Vec<LedgerEntry>> {
@@ -600,14 +653,11 @@ fn rewrite_locked(path: &Path, write: impl FnOnce(&mut dyn Write) -> Result<()>)
 /// entries that dispatched it. No new sync-side structure required.
 pub fn entries_for_work_id(cfg: &GahConfig, work_id: &str) -> Result<Vec<LedgerEntry>> {
     let aliases = work_id_aliases(work_id);
-    Ok(read_entries(cfg)?
-        .into_iter()
-        .filter(|e| {
-            e.work_id
-                .as_deref()
-                .is_some_and(|entry_id| aliases.iter().any(|alias| alias == entry_id))
-        })
-        .collect())
+    read_matching_entries(cfg, |e| {
+        e.work_id
+            .as_deref()
+            .is_some_and(|entry_id| aliases.iter().any(|alias| alias == entry_id))
+    })
 }
 
 /// True only when this profile/repository's exact work item and immutable
@@ -625,7 +675,14 @@ pub fn review_already_exists(
 ) -> Result<bool> {
     let aliases = work_id_aliases(work_id);
     let generation = super::review_generation(Some(source_sha), Some(metadata_fingerprint));
-    let entries = read_entries(cfg)?;
+    let entries = read_matching_entries(cfg, |entry| {
+        entry.profile == profile_name
+            && entry.repo_id == repo_id
+            && entry
+                .work_id
+                .as_deref()
+                .is_some_and(|id| aliases.iter().any(|alias| alias == id))
+    })?;
     let reset_index = entries.iter().rposition(|entry| {
         entry.profile == profile_name
             && entry.repo_id == repo_id
@@ -691,6 +748,40 @@ mod tests {
     use std::fs;
     use time::format_description::well_known::Rfc3339;
     use time::OffsetDateTime;
+
+    #[test]
+    fn matching_scan_preserves_order_aliases_and_rejects_discarded_corruption() {
+        let (_tmp, cfg) = ledger_tests::test_config();
+        let mut entry = super::LedgerEntry::new(
+            "test",
+            &ledger_tests::profile(),
+            "codex",
+            "fix",
+            "fixture",
+            None,
+            None,
+        );
+        let mut text = String::new();
+        for id in ["#42", "other", "TICKET-42"] {
+            entry.work_id = Some(id.into());
+            entry.error_summary = Some("x".repeat(1024 * 1024));
+            text.push_str(&serde_json::to_string(&entry).unwrap());
+            text.push('\n');
+        }
+        fs::write(cfg.defaults.ledger_path(), &text).unwrap();
+        let selected = entries_for_work_id(&cfg, "#42").unwrap();
+        assert_eq!(
+            selected
+                .iter()
+                .map(|entry| entry.work_id.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            ["#42", "TICKET-42"]
+        );
+        text.push_str("{broken discarded record\n");
+        fs::write(cfg.defaults.ledger_path(), text).unwrap();
+        assert!(super::read_matching_entries(&cfg, |_| false).is_err());
+        assert!(entries_for_work_id(&cfg, "#42").is_err());
+    }
 
     #[test]
     fn streamed_snapshot_preserves_records_and_physical_bytes() {

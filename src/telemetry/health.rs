@@ -313,8 +313,6 @@ pub(crate) fn export_snapshot(
     repo_path: &Path,
     quota: &[crate::quota_store::QuotaObservationRecord],
 ) -> Result<(usize, Option<String>)> {
-    let entries = crate::ledger::read_entries(cfg)?;
-    let watermark = entries.iter().map(|entry| entry.timestamp.clone()).max();
     let mut exporter = super::exporter::TelemetryExporter::new(super::exporter::TelemetryConfig {
         telemetry_repo_path: repo_path.to_path_buf(),
         format: super::exporter::ExportFormat::Jsonl,
@@ -322,7 +320,7 @@ pub(crate) fn export_snapshot(
         commit_batch_size: None,
     })?;
     exporter.load_exported_ids()?;
-    exporter.export_from_entries(&entries)?;
+    let watermark = exporter.export_from_ledger(cfg)?;
     exporter.export_store_quota_observations(quota)?;
     Ok((exporter.records_exported(), watermark))
 }

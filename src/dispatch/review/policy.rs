@@ -212,7 +212,7 @@ pub(in crate::dispatch) fn review_escalation_reason(
         .effective_routing(&cfg.defaults)
         .max_fix_attempts_per_mr() as usize;
 
-    let entries = ledger::read_entries(cfg).ok()?;
+    let entries = read_branch_history(cfg, profile_name, branch).ok()?;
     let active_entries = active_branch_review_entries(&entries, profile, profile_name, branch);
     let recent: Vec<&LedgerEntry> = active_entries
         .iter()
@@ -353,7 +353,7 @@ pub(in crate::dispatch) fn next_review_candidate(
     review_generation: Option<&str>,
     state_path: &std::path::Path,
 ) -> Option<CandidateConfig> {
-    let entries = ledger::read_entries(cfg).ok()?;
+    let entries = read_branch_history(cfg, profile_name, branch).ok()?;
     let active_entries = active_branch_review_entries(&entries, profile, profile_name, branch);
     let mut attempted: HashSet<(String, Option<String>)> = active_entries
         .iter()
@@ -406,7 +406,7 @@ pub(in crate::dispatch) fn next_escalatory_reviewer(
     review_generation: Option<&str>,
     state_path: &std::path::Path,
 ) -> Option<CandidateConfig> {
-    let entries = ledger::read_entries(cfg).ok()?;
+    let entries = read_branch_history(cfg, profile_name, branch).ok()?;
     let active_entries = active_branch_review_entries(&entries, profile, profile_name, branch);
     let mut attempted: HashSet<(String, Option<String>)> = active_entries
         .iter()
@@ -451,6 +451,22 @@ pub(in crate::dispatch) fn next_escalatory_reviewer(
         .filter(|c| routing.allows_candidate("review", c))
         .collect();
     pick_next_untried(state_path, candidates, profile, &attempted)
+}
+
+/// Retain branch reviews and branchless reset tombstones in append order.
+/// Repository attribution and reset aliases remain the responsibility of
+/// `active_branch_review_entries`, including legacy cross-repository history.
+fn read_branch_history(
+    cfg: &GahConfig,
+    profile_name: &str,
+    branch: &str,
+) -> Result<Vec<LedgerEntry>> {
+    ledger::read_matching_entries(cfg, |entry| {
+        entry.profile == profile_name
+            && (entry.mode == "clear_attempts"
+                || (JobKind::parse(&entry.mode) == Ok(JobKind::Review)
+                    && entry.branch.as_deref() == Some(branch)))
+    })
 }
 
 /// Return the append-only branch history after the latest operator reset for

@@ -13,6 +13,56 @@ pub(crate) mod telemetry_tests {
     use super::*;
 
     #[test]
+    fn streamed_ledger_export_matches_bulk_dedup_and_rejects_partial_export() {
+        let (_tmp, cfg) = crate::ledger::test_util::test_config();
+        let dir = tempdir().unwrap();
+        let config = |name: &str| TelemetryConfig {
+            telemetry_repo_path: dir.path().join(name),
+            format: ExportFormat::Jsonl,
+            generate_manifests: false,
+            commit_batch_size: None,
+        };
+        let mut newer = create_test_ledger_entry();
+        newer.timestamp = "2026-11-05T12:00:00Z".into();
+        let mut older = newer.clone();
+        older.timestamp = "2026-11-04T12:00:00Z".into();
+        let entries = [newer, older];
+        let journal = entries
+            .iter()
+            .map(|entry| serde_json::to_string(entry).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(cfg.defaults.ledger_path(), &journal).unwrap();
+        let mut bulk = TelemetryExporter::new(config("bulk")).unwrap();
+        bulk.export_from_entries(&entries).unwrap();
+        let mut streamed = TelemetryExporter::new(config("streamed")).unwrap();
+        assert_eq!(
+            streamed.export_from_ledger(&cfg).unwrap().as_deref(),
+            Some(entries[0].timestamp.as_str())
+        );
+        assert!(bulk.records_exported() > 0);
+        assert_eq!(bulk.records_exported(), streamed.records_exported());
+        // Persisted IDs must match as well as counts; reloading also exercises
+        // the streamed partition reader and prevents duplicate exports.
+        let mut bulk_reloaded = TelemetryExporter::new(config("bulk")).unwrap();
+        bulk_reloaded.load_exported_ids().unwrap();
+        bulk_reloaded.export_from_ledger(&cfg).unwrap();
+        assert_eq!(bulk_reloaded.records_exported(), 0);
+        let mut reloaded = TelemetryExporter::new(config("streamed")).unwrap();
+        reloaded.load_exported_ids().unwrap();
+        reloaded.export_from_entries(&entries).unwrap();
+        assert_eq!(reloaded.records_exported(), 0);
+        std::fs::write(cfg.defaults.ledger_path(), format!("{journal}\n{{broken\n")).unwrap();
+        let mut invalid = TelemetryExporter::new(config("invalid")).unwrap();
+        assert!(invalid.export_from_ledger(&cfg).is_err());
+        assert_eq!(invalid.records_exported(), 0);
+        let mut after_failure = TelemetryExporter::new(config("invalid")).unwrap();
+        after_failure.load_exported_ids().unwrap();
+        after_failure.export_from_entries(&entries).unwrap();
+        assert_eq!(after_failure.records_exported(), bulk.records_exported());
+    }
+
+    #[test]
     fn test_partition_key_parsing() {
         let key = PartitionKey::from_date_str("2026-07-10T12:34:56Z").unwrap();
         assert_eq!(key.year, 2026);

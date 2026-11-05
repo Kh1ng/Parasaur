@@ -69,3 +69,5 @@ pub use self::summary::{is_strong_model, usage_summary_for_backend, BackendUsage
 
 #[cfg(test)]
 pub(crate) mod test_util;
+
+pub(crate) use jsonl::{read_matching_entries, visit_entries};

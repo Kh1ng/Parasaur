@@ -320,7 +320,7 @@ pub fn read_events(cfg: &GahConfig) -> Result<Vec<ControllerEvent>> {
 
 /// Decode one record at a time without retaining a second copy of the entire
 /// journal. Validate every record, including those a consumer does not retain.
-fn visit_events(cfg: &GahConfig, mut visit: impl FnMut(ControllerEvent)) -> Result<()> {
+pub(crate) fn visit_events(cfg: &GahConfig, mut visit: impl FnMut(ControllerEvent)) -> Result<()> {
     let path = cfg.defaults.events_path();
     let file = match fs::File::open(&path) {
         Ok(file) => file,
