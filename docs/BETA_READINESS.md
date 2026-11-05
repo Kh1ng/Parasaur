@@ -43,6 +43,12 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Streaming event reads](validation/beta-progress-2026-11-03/event-reader-memory.md)
+  remove an additional whole-journal allocation and bound limited feed queries.
+  A child-memory regression fails before the repair and passes afterward;
+  controller recovery/history semantics and the combined build pass. The full
+  daemon's live allocation source and multi-hour stability remain unverified.
+
 - [Bounded Rust output capture](validation/beta-progress-2026-11-03/rust-output-memory.md)
   now limits a reproduced unbounded live line buffer and coalesces progress.
   Incomplete reviewer output cannot supply approval. Native runner/workflow/CLI

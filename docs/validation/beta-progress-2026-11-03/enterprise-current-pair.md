@@ -1,6 +1,8 @@
 # Current enterprise integration — 2026-11-05
 
-The current assembled pair is private `e7d088c` with public core `2f8c9cf5`.
+The current assembled pair is private `3679931` with public core `a6a38c4d`.
+It also includes [streaming event history](event-reader-memory.md), preserving
+full controller recovery history while bounding limited event-query retention.
 It includes the [bounded Rust capture repair](rust-output-memory.md): fixed-size
 live output retention, coalesced progress and rejection of incomplete reviewer
 evidence. This closes a reproduced path; #1681's actual Linux OOM allocation
@@ -40,10 +42,10 @@ Queue, crash/recovery, retry-receipt and authorization/relay checks passed.
 Earlier Windows desktop checks passed 35 ordinary cases and the separate hidden
 native output fixture. The older `ac62e3` native binary has the seven startup
 offsets and twelve repeated startup-window checks. The refreshed debug host is
-`fe07bdd2`; its isolation-host sources are unchanged. That earlier timing-stress
+`20368c67`; its isolation-host sources are unchanged. That earlier timing-stress
 record is historical, not a claim of a new repetition on this binary.
 
-The final assembled pair and retained `fe07bdd2` host also passed 96 dedicated
+The preceding `e7d088c` / `2f8c9cf5` pair and `fe07bdd2` host passed 96 dedicated
 WSL isolation cases (one platform skip) after the Ubuntu-24.04 restart. The
 complete log is retained alongside the assembly described in the memory record.
 

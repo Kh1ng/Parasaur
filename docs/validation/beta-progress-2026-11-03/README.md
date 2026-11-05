@@ -1,5 +1,11 @@
 # Beta finishing pass: local validation
 
+Latest history progress: [streaming event reads](event-reader-memory.md) remove
+the extra whole-journal text allocation and bound limited event-query retention.
+The memory-limit regression fails on the previous CLI and passes on the new one.
+Private `3679931` / public `a6a38c4d` passed the combined production build;
+12 event, 197 controller and two CLI checks passed. Live OOM attribution remains open.
+
 Latest factory progress: [bounded Rust output capture](rust-output-memory.md)
 closes a reproduced growing-buffer/progress-queue path and rejects incomplete
 reviewer evidence. Native runner, review-workflow, CLI and refill checks passed;
