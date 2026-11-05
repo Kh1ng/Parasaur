@@ -1127,7 +1127,7 @@ fn run_parallel_once(
             }
             results.push((sequence, result));
         }
-        if next_sequence >= action_limit {
+        if next_sequence >= action_limit && active == 0 {
             eprintln!(
                 "gah loop: parallel pass reached its {action_limit}-action limit; active workers drained; remaining work is eligible for another pass"
             );
