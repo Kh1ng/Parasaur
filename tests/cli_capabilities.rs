@@ -24,6 +24,8 @@ fn isolated_host_parser_rejects_unbounded_resources_and_invalid_identity() {
     let arguments = vec![
         "gah",
         "isolation-host",
+        "--protocol-version",
+        "2",
         "--execution-id",
         "10000000-0000-0000-0000-000000000001",
         "--config",
@@ -42,6 +44,7 @@ fn isolated_host_parser_rejects_unbounded_resources_and_invalid_identity() {
     assert!(Cli::try_parse_from(&arguments).is_ok());
     for (flag, invalid) in [
         ("--execution-id", "unknown"),
+        ("--protocol-version", "1"),
         ("--memory-mib", "63"),
         ("--max-processes", "7"),
         ("--timeout-seconds", "0"),

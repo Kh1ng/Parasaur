@@ -5,6 +5,8 @@ use std::path::PathBuf;
 
 #[derive(clap::Args)]
 pub struct Args {
+    #[arg(long, value_parser = clap::value_parser!(u8).range(2..=2))]
+    pub protocol_version: u8,
     #[arg(long)]
     pub execution_id: uuid::Uuid,
     #[arg(long, value_parser = clap::value_parser!(u64).range(64..=1048576))]

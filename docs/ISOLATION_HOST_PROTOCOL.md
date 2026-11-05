@@ -27,19 +27,26 @@ killed abruptly. Normal broker cleanup retains its own lease until the launched
 process is reaped and the owned cgroup is empty. Unknown cgroup state is not
 treated as empty.
 
-## Descriptor contract, version 1
+## Descriptor contract, version 2
+
+Callers must pass `--protocol-version 2`. Older binaries reject that flag
+before launch. The host emits `ready`, then waits for literal `g` before
+reserving capacity or creating a scope. The connector first flushes the host's
+process identity into its private journal, then sends `g`. EOF, a wrong byte or
+the bounded startup timeout returns without launching. Job approval remains a
+separate later `1` after namespace setup and exact cloud claim authorization.
 
 | FD | Purpose |
 | --- | --- |
-| 0 | Connector commands: `h` confirms a freshly verified lease; `1` approves execution once; EOF or any other byte stops execution. |
+| 0 | Initial `g` unlocks host launch after durable registration. Then `h` confirms a freshly verified lease and `1` approves the job once; EOF or any other byte stops execution. |
 | 1/2 | Bounded by the connector as job stdout/stderr diagnostics. |
 | 3 | Private Bubblewrap options, NUL separated. |
 | 4 | Bubblewrap's dedicated namespace/status stream. |
-| 5 | Trusted `gah.isolation-host.v1` JSON-line receipts; never inherited by the job. |
+| 5 | Trusted `gah.isolation-host.v2` JSON-line receipts; never inherited by the job. |
 | 6 | Host-owned locked lease passed to the outer monitor. |
 | 7 | Private job environment data; mounted read-only and applied only after approval. |
 
-The host reports `admitted`, `deferred`, `renewed` and `stopped` with the exact
+The host reports `ready`, `admitted`, `deferred`, `renewed` and `stopped` with the exact
 scope unit. Stopped receipts carry the observed launcher exit code/signal and
 stop reason. Capacity denial is a deferral, not successful execution. No backend
 outcome or usage measurement can be inferred from admission alone.
@@ -61,6 +68,8 @@ It does not open a provider login, infer an account, or fall back to an unsandbo
 command. The command requires Linux, a working user systemd manager and delegated
 cgroup v2. The caller supplies a matching host binary and trusted Bubblewrap.
 
-The automatic cloud consumer, durable execution journal and production
-dispatch/client runtime remain separate integration work. This protocol does not
-make a queued cloud work item execute by itself.
+The connector owns cloud consumption, durable execution and recovery. A matching
+consumer uses machine/boot/PID-namespace/start-time identities and direct scope
+cleanup proof before settling interrupted work; unknown backend exit remains
+unknown. Older records without ownership proof stay reserved. This native
+primitive does not supply the production dispatch/client or Git runtime.

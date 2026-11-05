@@ -86,7 +86,7 @@ fn receipt(
     writeln!(
         channel,
         "{}",
-        serde_json::json!({"schema":"gah.isolation-host.v1","state":state,"unit":unit,"reason":reason})
+        serde_json::json!({"schema":"gah.isolation-host.v2","state":state,"unit":unit,"reason":reason})
     )?;
     channel.flush()
 }
@@ -140,6 +140,29 @@ pub(super) fn run(args: Args) -> Result<()> {
     // SAFETY: fd 5 is the caller-owned private receipt channel in this protocol,
     // validated above before taking ownership of it.
     let mut channel = unsafe { File::from_raw_fd(5) };
+    let (send, receive) = sync_channel(1);
+    std::thread::spawn(move || {
+        let mut stdin = std::io::stdin().lock();
+        loop {
+            let mut byte = [0];
+            if stdin.read_exact(&mut byte).is_err() {
+                let _ = send.send(None);
+                break;
+            }
+            if send.send(Some(byte[0])).is_err() {
+                break;
+            }
+        }
+    });
+    // The connector flushes this process's identity before sending 'g'. Until
+    // then, owner death or timeout cannot leave a late scope/lease creation.
+    receipt(&mut channel, "ready", &unit, None)?;
+    if !matches!(
+        receive.recv_timeout(Duration::from_secs(args.heartbeat_seconds)),
+        Ok(Some(b'g'))
+    ) {
+        return Ok(());
+    }
     let lease = match acquire_node_capacity(
         &NextAction::DispatchTicket {
             ticket_path: String::new(),
@@ -208,20 +231,6 @@ pub(super) fn run(args: Args) -> Result<()> {
         .stdin
         .take()
         .expect("piped child stdin is owned by the host");
-    let (send, receive) = sync_channel(1);
-    std::thread::spawn(move || {
-        let mut stdin = std::io::stdin().lock();
-        loop {
-            let mut byte = [0];
-            if stdin.read_exact(&mut byte).is_err() {
-                let _ = send.send(None);
-                break;
-            }
-            if send.send(Some(byte[0])).is_err() {
-                break;
-            }
-        }
-    });
     let mut deadline = Instant::now() + Duration::from_secs(args.heartbeat_seconds);
     let hard_deadline = Instant::now() + Duration::from_secs(args.timeout_seconds);
     let mut approved = false;
@@ -308,7 +317,7 @@ pub(super) fn run(args: Args) -> Result<()> {
     let _ = writeln!(
         channel,
         "{}",
-        serde_json::json!({"schema":"gah.isolation-host.v1","state":"stopped","unit":unit,
+        serde_json::json!({"schema":"gah.isolation-host.v2","state":"stopped","unit":unit,
         "exitCode":child_status.and_then(|status| status.code()),"signal":child_status.and_then(|status| status.signal()),"reason":stop_reason})
     );
     if code != 0 {
