@@ -159,6 +159,24 @@ test('navbar jobs and capacity use the roster despite conflicting claims and con
   const snapshot = { ...status, running_workers: [] };
   expect(workingNow({ ...input, status: snapshot }).jobs).toEqual([]);
   expect(buildKanban({ ...input, status: snapshot }).gates.some(gate => gate.detail === '0 of 4 busy')).toBe(true);
+  expect(buildKanban({ ...input, status: snapshot }).cards.find(card => card.workId === '#4')).toMatchObject({ working: false, column: 'waiting' });
+});
+
+test('a claim without execution evidence shows its machine and recovery guidance on desktop and mobile', async ({ mount, page }, testInfo) => {
+  const claimed = buildKanban({ ...input, controllerRuns: [], factoryAgents: [], status: { ...status, running_workers: [] } });
+  const component = await mount(<KanbanView board={claimed} now={NOW} onOpenWork={() => {}} />);
+  const waiting = component.getByRole('region', { name: /^Waiting, / });
+  await expect(waiting).toContainText('Claimed by host; execution is not confirmed');
+  await waiting.getByRole('button', { name: /Issue #4/ }).click();
+  const why = component.getByRole('region', { name: "Why isn't #4 running?" });
+  await expect(why).toContainText('Claimed by host at 2026-10-05T18:13:00Z');
+  await expect(why).toContainText('claim ownership alone does not confirm execution');
+  await expect(component.getByRole('img', { name: 'Running now' })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('claimed-work-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(why).toBeVisible();
+  expect(await why.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('claimed-work-mobile.png') });
 });
 
 test('the board has no agents panel: nothing sits beside it until a card is selected', async ({ mount }) => {
@@ -216,7 +234,7 @@ test('approved PRs follow controller lifecycle gates rather than always needing 
     status: {
       ...status,
       profile: { ...status.profile, merge_policy: 'squash' },
-      available_tickets: [], active_claims: [], blocked_work_items: [],
+      available_tickets: [], active_claims: [], running_workers: [], blocked_work_items: [],
       publishing_allow_pr: true,
       merge_requests: [mergeRequest('#8', 'READY_FOR_HUMAN', fields)],
       ...snapshot

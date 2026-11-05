@@ -274,6 +274,11 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
     if (key) runsByKey.set(key, [...(runsByKey.get(key) ?? []), run]);
   }
   const claimByKey = new Map<string, ActiveClaim>(claims.map((claim) => [workKey(claim.work_id), claim]));
+  const workersByKey = new Map<string, NonNullable<StatusSnapshot['running_workers']>>();
+  for (const worker of status?.running_workers ?? []) {
+    const key = worker.work_id ? workKey(worker.work_id) : worker.branch ? resolveKey(worker.branch) : null;
+    if (key) workersByKey.set(key, [...(workersByKey.get(key) ?? []), worker]);
+  }
   const blockerByKey = new Map<string, Blocker>();
   for (const blocker of status?.blocked_work_items ?? []) {
     const reference = blocker.remediation_plan?.work_id ?? blocker.source_reference;
@@ -304,12 +309,6 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
   const strayProcesses = factoryAgents.filter((agent) => !keyOfProcess.has(agent.pid));
   const strayKeys = [...runningByKey.keys()].filter((key) => ![...keyOfProcess.values()].includes(key));
   if (strayProcesses.length === 1 && strayKeys.length === 1) keyOfProcess.set(strayProcesses[0].pid, strayKeys[0]);
-  const agentsOnCard = new Map<string, DeviceAgent[]>();
-  for (const agent of factoryAgents) {
-    const key = keyOfProcess.get(agent.pid);
-    if (key) agentsOnCard.set(key, [...(agentsOnCard.get(key) ?? []), agent]);
-  }
-
   const busyWorkers = status?.running_workers?.length ?? 0;
   const gates = buildGates(input, busyWorkers);
   const candidates = input.quota?.candidates ?? [];
@@ -324,6 +323,11 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
     if (existing?.mergeRequest && !existing.mergeRequest.merged) continue;
     items.set(key, { ticket: existing?.ticket ?? null, mergeRequest });
   }
+  // A claimed or executing issue can disappear from intake while it is owned.
+  // Keep its card visible even when neither a ticket nor a PR is returned.
+  for (const key of new Set([...claimByKey.keys(), ...workersByKey.keys()])) {
+    if (!items.has(key)) items.set(key, { ticket: null, mergeRequest: undefined });
+  }
 
   const cards: KanbanCard[] = [];
   for (const [key, { ticket, mergeRequest }] of items) {
@@ -331,17 +335,22 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
     const runningRun = cardRuns.find((run) => run.status === 'running');
     const lastRun = cardRuns.find((run) => run.status !== 'running');
     const claim = claimByKey.get(key);
+    const workers = workersByKey.get(key) ?? [];
+    const worker = workers.find((item) => item.state === 'running') ?? workers[0];
     const blocker = blockerByKey.get(key);
     const fixUsed = mergeRequest ? status?.fix_attempt_counts?.[mergeRequest.branch] ?? 0 : 0;
-    const processes = agentsOnCard.get(key) ?? [];
     const skipped = lastRun?.status === 'failed' ? runSkipped(lastRun) : [];
     const lastOutcome = lastRun?.status === 'failed' ? plainOutcome(lastRun) : null;
-    const working = !mergeRequest?.merged && (runningRun !== undefined || claim !== undefined);
+    // Lock ownership and controller intent are not dispatch-runtime evidence.
+    // Use the same worker roster as the navbar, including its explicit staleness.
+    const working = !mergeRequest?.merged && worker?.state === 'running';
     const blocks: string[] = [];
     const gateCode = blocker?.reason_code ?? blocker?.reason ?? ticket?.human_required_reason_code ?? null;
     const managed = managedByKey.get(key) ?? null;
     const reviewWait = reviewWaitReason(mergeRequest);
     if (managed) blocks.push(managed);
+    if (claim && !mergeRequest?.merged) blocks.push(`Claimed by ${claim.hostname || 'an unknown machine'} at ${claim.claimed_at}. Inspect this machine's worker activity and recovery state before retrying; claim ownership alone does not confirm execution.`);
+    if (worker?.state === 'stale' && !mergeRequest?.merged) blocks.push(`Worker activity last reported at ${worker.last_activity_at}${worker.node_id ? ` on ${worker.node_id}` : ''}. Check the worker connection and recovery state; stale activity does not prove the process stopped.`);
 
     let column: KanbanColumnKey;
     let reason: string;
@@ -353,7 +362,8 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
       reason = 'Merged';
       tone = 'good';
     } else if (working) {
-      job = (runningRun && runJob(runningRun)) ?? (mergeRequest ? (mergeRequest.classification === 'NEEDS_REVIEW' ? 'review' : 'fix') : 'build');
+      job = worker?.mode === 'review' ? 'review' : worker?.mode === 'fix' ? 'fix'
+        : worker?.mode === 'improve' ? 'build' : (runningRun && runJob(runningRun)) ?? (mergeRequest ? (mergeRequest.classification === 'NEEDS_REVIEW' ? 'review' : 'fix') : 'build');
       column = job === 'build' ? 'running' : job === 'fix' ? 'fixing' : 'review';
       reason = job === 'build' ? 'An agent is building it now' : job === 'fix' ? 'An agent is fixing what review or CI flagged' : job === 'merge' ? 'Merging now' : 'Under review now';
       tone = 'good';
@@ -369,6 +379,11 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
       reason = reviewWait;
       tone = 'warning';
       blocks.push(reason);
+    } else if (claim || worker?.state === 'stale') {
+      column = 'waiting';
+      reason = worker?.state === 'stale' ? 'Worker activity is stale; execution is not confirmed'
+        : `Claimed by ${claim!.hostname || 'an unknown machine'}; execution is not confirmed`;
+      tone = 'warning';
     } else if (mergeRequest) {
       const waitingOn = skipped.length ? `: ${skippedSummary(skipped)}` : '';
       switch (mergeRequest.classification) {
@@ -452,15 +467,14 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
     }
     if (held.has(key) && column !== 'done') blocks.push('A review hold is on: it will not merge automatically until the hold is released');
 
-    const process = processes[0];
     const agent = working
-      ? process ? agentLabel(process.tool, process.model) : null
+      ? agentLabel(worker!.backend, worker!.model)
       : mergeRequest?.effective_backend ? agentLabel(mergeRequest.effective_backend, mergeRequest.effective_model) : null;
     const evidence = status?.work_waypoint_evidence?.[ticket?.work_id ?? mergeRequest?.work_id ?? ''];
     cards.push({
       key,
-      workId: ticket?.work_id ?? mergeRequest?.work_id ?? null,
-      title: ticket?.title ?? mergeRequest?.title ?? ticket?.work_id ?? mergeRequest?.branch ?? key,
+      workId: ticket?.work_id ?? mergeRequest?.work_id ?? claim?.work_id ?? worker?.work_id ?? null,
+      title: ticket?.title ?? mergeRequest?.title ?? ticket?.work_id ?? mergeRequest?.branch ?? claim?.work_id ?? worker?.work_id ?? key,
       column,
       reason,
       tone,
@@ -470,15 +484,17 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
       attempts: ticket?.prior_attempt_count ?? 0,
       fix: mergeRequest && !mergeRequest.merged && fixMax > 0 ? { used: fixUsed, max: fixMax } : null,
       since: working
-        ? latest(runningRun?.started_at, claim?.claimed_at)
+        ? worker!.started_at
         : mergeRequest?.merged ? mergeRequest.merged_at ?? null
-          : latest(lastRun?.finished_at, lastRun?.started_at) ?? latest(evidence?.first_pull_request_at, evidence?.first_validation_at, evidence?.first_commit_at, evidence?.first_dispatch_at),
+          : latest(worker?.last_activity_at, claim?.claimed_at, lastRun?.finished_at, lastRun?.started_at) ?? latest(evidence?.first_pull_request_at, evidence?.first_validation_at, evidence?.first_commit_at, evidence?.first_dispatch_at),
       pullRequest: mergeRequest ? { id: mergeRequest.id, url: mergeRequest.url, draft: mergeRequest.draft } : null,
       held: held.has(key) && column !== 'done',
       job,
       blocks,
       skipped,
-      assignHeldBy: managed ? ASSIGN_HELD_BY_MANAGER : column === 'needs_you' && gateCode ? ASSIGN_HELD_BY[gateCode] ?? null : null,
+      assignHeldBy: claim && column !== 'done' ? 'Assign is off: this work already has a claim; inspect its worker before retrying'
+        : worker && column !== 'done' ? 'Assign is off: an existing worker must be reconciled before retrying'
+          : managed ? ASSIGN_HELD_BY_MANAGER : column === 'needs_you' && gateCode ? ASSIGN_HELD_BY[gateCode] ?? null : null,
       managed
     });
   }

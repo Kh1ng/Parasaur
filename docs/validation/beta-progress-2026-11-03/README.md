@@ -1,5 +1,12 @@
 # Beta finishing pass: local validation
 
+Latest pipeline UI progress: [claim and execution evidence](kanban-claim-evidence.md)
+keeps claimed issues visible while separating ownership from confirmed running
+work. Stale workers remain uncertain, existing gates remain visible, and claimed
+work cannot be assigned twice. Seven unit and thirteen Windows component checks,
+typechecking and the web build pass; desktop/mobile captures were inspected.
+This UI change is not yet in the earlier assembled or installed artifacts.
+
 Latest compute progress: [bounded delivery and enrollment repair](compute-delivery-authorization.md)
 keeps slow or denied result replay within a shared network budget and allows
 same-origin credential repair without rerunning completed work. Private `3bfc79b`

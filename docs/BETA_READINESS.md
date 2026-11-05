@@ -43,6 +43,14 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Kanban claim evidence](validation/beta-progress-2026-11-03/kanban-claim-evidence.md)
+  now separates claim ownership from dispatch-runtime execution, keeps claimed
+  work outside intake visible, and explains the claiming machine and recovery
+  condition. Stale worker observations remain uncertain and duplicate assignment
+  is disabled. Seven unit and thirteen component checks, typechecking and the
+  build pass; desktop/mobile layouts were inspected. Updated assembled/installed
+  artifacts and authenticated live factory acceptance remain required.
+
 - [Worker ledger ownership](validation/beta-progress-2026-11-03/worker-ledger-retention.md)
   now releases full history before backend execution while retaining bounded
   retry context. Native probes and scheduler checks pass; the optimized local
