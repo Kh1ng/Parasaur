@@ -43,6 +43,13 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Repeated controller memory](validation/beta-progress-2026-11-03/repeated-controller-memory.md)
+  now has same-process measurements across twelve passes with four synthetic
+  workers. Both default and process-local allocator diagnostic runs completed
+  normally but showed RSS growth. Formatting/build/Clippy passed. Live heap and
+  event-history attribution, repeated trials and a long soak remain required;
+  no production memory workaround was applied.
+
 - [Worker factory state](validation/beta-progress-2026-11-03/worker-factory-observations.md)
   now exposes a registered worker's profile-scoped controller status, last
   decision and reported gates through a read-only Nodes check. Six HTTP checks,

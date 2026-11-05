@@ -96,3 +96,21 @@ failed asset GET. `EACCES`/`EPERM` points to access checks, `ENOENT` to missing
 files, and `EIO`/`ENOSPC`/`EROFS` to storage errors; use the host's actual service
 configuration and filesystem evidence before changing ownership or rebuilding.
 No authenticated pipeline evidence or live repair is claimed.
+
+## Fresh Windows check — 2026-11-05
+
+Read-only requests again returned health/HTML 200, `/api/info` 401, and HTTP 500
+for both assets referenced by the returned HTML (`index-oGMXkd18.js` and
+`index-DwFxA1zN.css`). Health still reports central version 0.2.0. Evidence is
+retained in `artifacts/live-central-1793876478295/`; no authenticated data was read.
+
+The host is online in Tailscale, but does not advertise Tailscale SSH host keys
+in the Windows peer observation. A strict-host-key, noninteractive Windows SSH
+check as `khing` was denied by public-key authentication. The new private card
+for a central read-only token timed out. No credential was received and no card
+remains pending. No live claim, gate, policy, service or routing was changed.
+
+The local recovery package's successful asset reads do not establish recovery
+of this deployed service. Local implementation and controlled memory testing
+can continue on Windows/WSL; live factory attribution still requires authorized
+central or host access. MacBook work remains deferred.

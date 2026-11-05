@@ -1,5 +1,11 @@
 # Beta finishing pass: local validation
 
+Latest memory evidence: the [repeated controller probe](repeated-controller-memory.md)
+now samples one daemon across real pass boundaries. The one-wave control and
+two 12-pass/four-worker runs completed normally. Both traces show RSS growth;
+an allocator comparison changes footprint but does not resolve attribution.
+The test is opt-in, and no production allocator or installed runtime changed.
+
 Latest worker observability: [worker factory state](worker-factory-observations.md)
 now reads a registered worker's controller, last decision and gates for a chosen
 declared profile, without shell access or remote mutations. Six HTTP checks,
