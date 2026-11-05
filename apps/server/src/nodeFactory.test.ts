@@ -4,7 +4,7 @@ import http from 'node:http';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { RegisteredNode } from '@git-agent-harness/contracts';
+import type { NodeFactorySnapshot, RegisteredNode } from '@git-agent-harness/contracts';
 import { readNodeFactory, NodeFactoryError } from './nodeFactory.js';
 import { RegistryService } from './registryService.js';
 import { COORDINATOR_SCHEMA_DIGEST } from './coordinatorIdentity.js';
@@ -121,7 +121,7 @@ test('the central HTTP boundary exposes only the requested registered worker che
   assert.equal(denied.status, 403); assert.equal(reads, 0);
   const result = await fetch(url);
   assert.equal(result.status, 200); assert.equal(result.headers.get('cache-control'), 'no-store');
-  const body = await result.json();
+  const body = await result.json() as NodeFactorySnapshot;
   assert.equal(body.node_id, 'worker-one'); assert.equal(body.profile, 'project-a');
   assert.deepEqual(body.loop, { state: 'available', value: { running: false } });
   assert.equal(reads, 3);
