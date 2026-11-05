@@ -7,6 +7,8 @@
  * mutable data is the in-memory MockState below.
  */
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import type { ComputeOutputCatalog, ComputeOutputEntry } from '@git-agent-harness/contracts';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { dirname, resolve } from 'node:path';
@@ -194,6 +196,8 @@ function mockCliRouter(): CliRouterSnapshot {
 }
 
 interface MockState {
+  outputDiscarded: boolean;
+  outputKeys: Set<string>;
   pairingRequests: PairingAccessRequest[];
   pairedDevices: PairedDevice[];
   cliRouter: CliRouterSnapshot;
@@ -625,6 +629,8 @@ function createState(scenario: MockScenarioName, reset: number, previewOrigin?: 
   }
 
   return {
+    outputDiscarded: false,
+    outputKeys: new Set(),
     environmentSources: new Map(),
     profileChecks: new Map(),
     pairingRequests: [{ schema_version: 1, id: 'mock-pairing-request-1', name: 'Mock Linux', matching_code: 'ABCD1234',
@@ -1319,6 +1325,31 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       return;
     }
     next();
+  });
+
+  // This opaque partial is simulated output, never a live job or host archive.
+  const outputBytes = Buffer.from('Simulated partial job output. No live job ran.\n');
+  const outputHash = createHash('sha256').update(outputBytes).digest('hex');
+  const outputEntry = (): ComputeOutputEntry => ({ id: 'job-0000',
+    revision: createHash('sha256').update(`mock-output-${state.reset}`).digest('hex'),
+    workId: '00000000-0000-0000-0000-000000000001', archiveBytes: outputBytes.length,
+    incomplete: true, discardable: true, state: 'retained' });
+  app.get('/api/owner/compute-output', (_req, res) => res.json({ maxJobs: 10, maxArchiveBytes: 1073741824,
+    entries: state.outputDiscarded ? [] : [outputEntry()], admissionBlocked: false } satisfies ComputeOutputCatalog));
+  const selectedOutput = (id: string, revision: unknown) => !state.outputDiscarded && id === 'job-0000' && revision === outputEntry().revision;
+  app.get('/api/owner/compute-output/:id/download', (req, res) => {
+    if (!selectedOutput(req.params.id, req.query.revision)) return jsonError(res, 409, 'Output changed', 'Refresh simulated output.');
+    res.json({ bytes: outputBytes.length, blockBytes: 1048576, sha256: outputHash, blocks: [outputHash], filename: 'simulated-output.partial.bin', incomplete: true });
+  });
+  app.get('/api/owner/compute-output/:id/block', (req, res) => {
+    if (!selectedOutput(req.params.id, req.query.revision) || req.query.index !== '0') return jsonError(res, 409, 'Output changed', 'Refresh simulated output.');
+    res.type('application/octet-stream').send(outputBytes);
+  });
+  app.post('/api/owner/compute-output/:id/discard', (req, res) => {
+    const key = req.get('Idempotency-Key');
+    if (!key || !/^[A-Za-z0-9_-]{16,128}$/.test(key) || req.body?.confirm !== true || req.body?.sha256 !== outputHash) return jsonError(res, 400, 'Review required', 'Confirm removal of simulated output.');
+    if (state.outputKeys.has(key) || !selectedOutput(req.params.id, req.body?.revision)) return jsonError(res, 409, 'Output changed', 'Refresh simulated output.');
+    state.outputKeys.add(key); state.outputDiscarded = true; res.json({ discarded: true });
   });
 
   // Pairing: the mock browser is always the paired owner. Deterministic

@@ -8,6 +8,30 @@ import ts from 'typescript';
 import { WebSocket } from 'ws';
 import type { ClientMessage, ProjectImportResult, ServerMessage, PairingAccessRequest, PairedDevice } from '@git-agent-harness/contracts';
 import { createMockControlPlane, MOCK_SCENARIOS } from './controlPlane.js';
+import type { ComputeOutputCatalog, ComputeOutputDownload } from '@git-agent-harness/contracts';
+
+test('sample output review removes only simulated bytes and reset invalidates a stale selection', async () => {
+  const running = await createMockControlPlane().listen(0);
+  try {
+    const base = `${running.baseUrl}/api/owner/compute-output`;
+    const catalog = await (await fetch(base)).json() as ComputeOutputCatalog, entry = catalog.entries[0]!;
+    assert.equal(entry.incomplete, true); assert.equal(catalog.admissionBlocked, false);
+    const query = `revision=${entry.revision}`;
+    const plan = await (await fetch(`${base}/${entry.id}/download?${query}`)).json() as ComputeOutputDownload;
+    const bytes = await (await fetch(`${base}/${entry.id}/block?${query}&index=0`)).text();
+    assert.match(bytes, /Simulated partial job output/); assert.equal(plan.bytes, Buffer.byteLength(bytes));
+    const body = { revision: entry.revision, sha256: plan.sha256, confirm: true };
+    const remove = (key: string, value = body) => fetch(`${base}/${entry.id}/discard`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify(value) });
+    assert.equal((await remove('sample-invalid-key', { ...body, confirm: false })).status, 400);
+    assert.equal((await remove('sample-reviewed-key')).status, 200);
+    assert.equal((await remove('sample-reviewed-key')).status, 409);
+    assert.deepEqual((await (await fetch(base)).json() as ComputeOutputCatalog).entries, []);
+    await post(running.baseUrl, '/api/mock/reset');
+    assert.equal((await remove('sample-new-action-key')).status, 409);
+    assert.equal((await (await fetch(base)).json() as ComputeOutputCatalog).entries.length, 1);
+  } finally { await running.close(); }
+});
 
 test('sample factory dispatch acknowledges and retains exact account identity across a retry', async () => {
   const running = await createMockControlPlane().listen(0);
