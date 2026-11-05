@@ -92,6 +92,9 @@ fn receipt(
 }
 
 fn cgroup_empty(group: &Path) -> bool {
+    if !Path::new("/sys/fs/cgroup/cgroup.controllers").is_file() {
+        return false;
+    }
     match std::fs::read_to_string(group.join("cgroup.events")) {
         Ok(text) => text.lines().any(|line| line == "populated 0"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -106,6 +109,10 @@ fn cgroup_empty(group: &Path) -> bool {
 /// so an abrupt broker death cannot strand a live job without its reservation.
 pub(super) fn run(args: Args) -> Result<()> {
     crate::runner::process::install_shutdown_handler()?;
+    ensure!(
+        Path::new("/sys/fs/cgroup/cgroup.controllers").is_file(),
+        "Isolated host admission requires cgroup v2."
+    );
     trusted_executable(&args.bubblewrap)?;
     trusted_executable(Path::new("/usr/bin/systemd-run"))?;
     ensure!(
@@ -277,7 +284,14 @@ pub(super) fn run(args: Args) -> Result<()> {
                 }
             }
             if child_status.is_some() && cgroup_empty(&group) {
-                break;
+                // A scope created while its launcher is dying can miss the
+                // empty notification and remain active with no processes.
+                // Housekeeping is bounded; kernel emptiness remains the
+                // independent execution proof if D-Bus is unavailable.
+                let _ = systemctl(&["stop", &unit]);
+                if cgroup_empty(&group) {
+                    break;
+                }
             }
             std::thread::sleep(Duration::from_millis(50));
             continue;

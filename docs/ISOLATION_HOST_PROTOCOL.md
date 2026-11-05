@@ -30,6 +30,9 @@ The same locked open file description stays with the monitor if the broker is
 killed abruptly. Normal broker cleanup retains its own lease until the launched
 process is reaped and the owned cgroup is empty. Unknown cgroup state is not
 treated as empty.
+After kernel cleanup, a bounded manager stop also retires scopes whose empty
+notification raced with startup. Manager responsiveness does not replace the
+kernel proof. A missing unified controller filesystem is unknown, not empty.
 
 ## Descriptor contract, version 2
 
