@@ -59,7 +59,11 @@ test('a late response from the previous profile cannot restore its gate evidence
   await component.getByRole('button', { name: 'Read factory state', exact: true }).click();
   await expect(component.getByRole('button', { name: 'Reading factory state…' })).toBeDisabled();
   await component.getByRole('combobox', { name: 'Worker profile' }).selectOption('project-b');
+  const oldResponse = page.waitForResponse(response => response.url().includes('/factory?profile=project-a'));
   release();
+  await (await oldResponse).finished();
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
   await expect(component.getByRole('button', { name: 'Read factory state', exact: true })).toBeEnabled();
   await expect(component).not.toContainText('The review gate repeated without progress.');
+  await expect(component.getByRole('alert')).toHaveCount(0);
 });
