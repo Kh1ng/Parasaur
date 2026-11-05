@@ -57,8 +57,8 @@ change was added.
 - Fourteen Windows component cases passed, covering existing account/allowance
   behavior plus the shared cost cards/navbar and qualified routing history. Desktop and 390 px captures were
   inspected; the labels wrap without horizontal overflow.
-- All three subscription browser cases passed through the stateful sample
-  server, including duplicate model candidates without duplicate account spend.
+- All three subscription cases passed; the full navbar/Quota workflow used the
+  stateful sample server, including duplicate models without duplicate spend.
 - All seven worker-quota relay cases passed, including scoped cost preservation
   and malformed/duplicate row rejection without echoing an upstream token.
 - Contracts build, server/web typechecks and web production build passed. The
@@ -72,8 +72,27 @@ repository-structure suite is claimed. The initial compile identified a missing
 Windows logs are retained under `artifacts/account-cost-*.log` and the evidence
 copy under `artifacts/account-cost/`.
 
-This source change follows the current `fdc9567f` package and `dec85e7` private
-assembly. It is not yet included in those artifacts or the installed WSL CLI.
-Matched packaging/private integration, real provider billing/usage ingestion,
-quota-refresh recovery and complete admission-limit reconciliation remain open.
-No provider login, billing call, live worker or hosted mutation occurred.
+The matched `cd67c949` public package and private `9d67290` assembly now include
+this change and quota-refresh recovery. The full private build passed 1,106
+server cases (38 skips), 16 mock cases, typechecks and artifact/transport guards.
+Twenty assembled private component cases and four Playwright cases passed,
+including the account UI and failed/held-retry/success quota workflows. These
+browser checks used local mode; hosted browser acceptance remains open.
+The refreshed native host passed 100 isolation cases (one platform skip), plus
+fresh SQL replay and real local Auth/PostgREST/HTTP/WebSocket relay checks.
+
+The optimized public build passed 1,011 server cases (two skips), 16 mock cases,
+actual isolated release installation and all 29 JavaScript chunk body reads.
+An additional actual installed CLI-to-HTTP quota check covered exact accounts,
+unattributed history, actual/estimated/unknown/zero costs and profile/period
+filtering. The test fixture initially used the wrong Rust config environment
+variable and omitted the required profile artifact root; both fixture errors
+were corrected before the final passing installer run. App source was unchanged.
+
+The idle WSL user CLI is updated with exact candidate bytes and rollback at
+`~/.cache/parasaur-upgrade-backups/gah-before-cd67c949`. Its memory regression
+and both Windows metadata/preflight reads passed. Native desktop/settings and
+six worker release binaries retain their hashes. No live service was updated.
+Real provider billing/usage ingestion and complete admission-limit acceptance
+remain open. The [current package record](current-public-release.md) includes
+hashes, source pair, glibc requirement and deployment limits.

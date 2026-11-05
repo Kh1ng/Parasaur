@@ -46,20 +46,22 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 - [Quota refresh recovery](validation/beta-progress-2026-11-03/quota-refresh-recovery.md)
   keeps unavailable state through retries and qualifies retained page/navbar
   usage and eligibility until a successful read. Windows unit and full browser
-  recovery checks pass. Matched integration/packaging and live acceptance remain.
+  recovery checks pass. The current package/private assembly include the fix;
+  assembled UI and local native/Auth checks pass. Live acceptance remains.
 
 - [Recorded account costs](validation/beta-progress-2026-11-03/account-cost-attribution.md)
   now use canonical ledger identity and avoid repeated candidate totals or
   cross-account backend totals. Actual, estimated, unknown and measured zero
-  stay distinct. Rust, real-CLI, Windows UI and worker-relay checks pass. Matched
-  packaging/private integration, live billing/usage reconciliation, refresh
-  recovery and complete admission-limit acceptance remain open.
+  stay distinct. Rust, real-CLI, Windows UI and worker-relay checks pass. The
+  matched `cd67c949` package and `9d67290` private assembly are verified and the
+  WSL user CLI is updated with rollback. Live billing/usage reconciliation and
+  complete admission-limit acceptance remain open.
 
 - [Server update recovery](validation/beta-progress-2026-11-03/server-update-recovery.md)
   resumes persisted running updates, cancels polling on unmount and labels
   interrupted status reads as unavailable. Six Windows browser checks,
-  typechecking and production build pass. The matched `fdc9567f` package and
-  `dec85e7` private assembly include the fix; six assembled private cases also
+  typechecking and production build pass. The matched `cd67c949` package and
+  `9d67290` private assembly include the fix; six assembled private cases also
   pass. Signed updates and authenticated live acceptance remain open.
 
 - [Streaming ledger reads](validation/beta-progress-2026-11-03/streamed-ledger-memory.md)
@@ -80,9 +82,9 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   now exposes a registered worker's profile-scoped controller status, last
   decision and reported gates through a read-only Nodes check. Six HTTP checks,
   eleven Windows component checks and the sample Nodes browser flow pass.
-  Private `dec85e7` / public `fdc9567f` passes the combined build and browser
-  transport checks; the prior pair retains 100 native isolation checks and real
-  local Auth/relay evidence. Real worker access and hosted/installed acceptance
+  Private `9d67290` / public `cd67c949` passes the combined build and browser
+  transport checks, 100 native isolation cases and fresh real local Auth/relay
+  evidence. Real worker access and hosted/installed acceptance
   remain required; the current public recovery ZIP includes this feature.
 
 - [Factory refresh recovery](validation/beta-progress-2026-11-03/kanban-refresh-recovery.md)
@@ -122,8 +124,8 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   are still required.
 
 - The [current public recovery candidate](validation/beta-progress-2026-11-03/current-public-release.md)
-  at `fdc9567f` includes worker factory reads, streaming ledger reads and updater
-  recovery.
+  at `cd67c949` includes factory reads, streaming ledger reads, updater recovery
+  and account-cost/quota recovery.
   Its optimized CLI is installed in WSL with rollback and fresh Windows
   integration reads. Actual isolated release installation
   and all 29 cold dashboard JavaScript chunks pass. The central remains undeployed;

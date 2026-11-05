@@ -4,14 +4,15 @@ Latest quota recovery: [failed reads and pending retries](quota-refresh-recovery
 retain recorded costs/allowances while page and navbar make current usage and
 eligibility unconfirmed. Successful reads restore the fresh view. Windows unit,
 full browser recovery and typechecking pass, with inspected desktop/mobile
-layouts. This joins the account-cost repair for matched integration/packaging.
+layouts. The matched `cd67c949` package and private `9d67290` assembly include
+both usage repairs; assembled UI, native isolation and local Auth/relay pass.
 
 Latest usage repair: [recorded account costs](account-cost-attribution.md) now
 come from canonical ledger execution identity, rather than summing overlapping
 candidate totals. Named accounts, unattributed history, estimates, unknowns and
 measured zero remain distinct. Rust, real-CLI, Windows unit/component/browser
-and worker-relay checks pass. This later source change still needs a matched
-package/private assembly and real provider acceptance.
+and worker-relay checks pass. The current package/private assembly include it
+and the WSL user CLI is updated with rollback. Real provider acceptance remains.
 
 Latest update recovery: the [server update banner](server-update-recovery.md)
 resumes observation after reopening, stops polling on unmount, preserves
@@ -32,12 +33,12 @@ Latest worker observability: [worker factory state](worker-factory-observations.
 now reads a registered worker's controller, last decision and gates for a chosen
 declared profile, without shell access or remote mutations. Six HTTP checks,
 eleven component checks and the full sample Nodes browser flow pass. Private
-`dec85e7` / public `fdc9567f` passes 1,105 server and 16 mock cases, build guards
-and current browser transport checks. The prior pair retains its real local
-Auth/relay evidence. Live acceptance remains open.
+`9d67290` / public `cd67c949` passes 1,106 server and 16 mock cases, build guards
+and current browser transport checks. Fresh native isolation and real local
+Auth/relay evidence also pass. Live acceptance remains open.
 
 Latest delivery progress: the [current public recovery package](current-public-release.md)
-at `fdc9567f` includes pipeline observation, streaming-ledger and updater fixes.
+at `cd67c949` includes pipeline, memory, updater and account-cost/quota repairs.
 It passes actual isolated release installation with Windows npm first on PATH
 and byte-for-byte HTTP reads of all 29 JavaScript chunks. The installed WSL CLI
 matches the candidate; native desktop/settings and worker binaries retain their

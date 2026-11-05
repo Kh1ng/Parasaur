@@ -28,7 +28,18 @@ The first test harness attempt lacked the mocked `getQuota` function; after
 adding it, the old store reproduced the error-clearing failure. The corrected
 production code passed the final checks.
 
-This source repair follows the [recorded account cost fix](account-cost-attribution.md).
-Matched private assembly, packaging and live/provider acceptance are still
-required. No production read was used to assert these fixture results and no
-service or installed application was changed by these tests.
+This repair joins the [recorded account cost fix](account-cost-attribution.md)
+in the matched `cd67c949` public package and `9d67290` private assembly. The
+private production build, twenty assembled component cases and four Playwright
+cases pass, including both account UI and held-retry recovery workflows. Its
+fresh native isolation and real local Auth/relay checks also pass. Browser
+checks used private transport local mode, not a real hosted session. The first
+private component attempt began before copying the fixture completed, so no
+cases ran; the completed fixture passed without changing app source.
+
+The actual isolated release installer and all 29 JavaScript chunk body reads
+passed, with bundle guards for the cost and unavailable-state copy. The idle
+WSL user CLI is updated with rollback and both Windows integration reads pass.
+The native desktop, settings and separate worker binaries retain their hashes.
+The server/web changes are not deployed. Live/provider acceptance, signed
+updates and complete admission-limit reconciliation remain required.

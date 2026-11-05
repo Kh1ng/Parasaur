@@ -1,6 +1,13 @@
 # Current enterprise integration — 2026-11-05
 
-The current assembled pair is private `dec85e7` with public core `fdc9567f`.
+The current assembled pair is private `9d67290` with public core `cd67c949`.
+It includes [recorded account costs](account-cost-attribution.md), using
+canonical ledger identity instead of repeated routing totals, and
+[quota refresh recovery](quota-refresh-recovery.md), retaining unavailable state
+through retries and labeling historical allowance/capacity readings. Twenty
+assembled Windows component cases and four Playwright cases passed, including
+the full account UI and failed/held-retry/success workflows. These used the
+private transport's local mode, not a hosted dashboard session.
 It includes [server update recovery](server-update-recovery.md): persisted
 running updates resume observation, interrupted reads stay unconfirmed and
 unmounting stops further polling. All six recovery cases passed against this
@@ -54,21 +61,21 @@ streaming, corruption and cancellation evidence without a new production bridge.
 Protocol 2 blocks launch until broker registration is durable. Full kernel
 slice-path checks and bounded housekeeping close the reproduced cleanup gaps.
 
-The current integration passed 1,105 server cases (38 explicit skips), 16 mock
+The current integration passed 1,106 server cases (38 explicit skips), 16 mock
 cases, typechecks, production builds and artifact/transport guards. Six new
 controlled HTTP cases cover worker reads and the central auth boundary. The
 earlier eleven Windows Nodes/panel cases and complete sample Nodes browser
 flow retain their desktop/mobile evidence; they were not rerun for this banner
 change. The release manifest and emitted dashboard bundle were checked for the
 intended revision and updater recovery copy.
-The current browser transport guards passed. The preceding `a10a5f2` /
-`5e261e0e` pair passed 100 dedicated native WSL isolation cases (one platform
-skip), SQL replay and real local Auth/PostgREST/HTTP/WebSocket relay checks,
+The current browser transport guards passed. The refreshed matching native host,
+SHA-256 `f7a4f687e4cbb3c1478b9495064deed3e637ad8c50a52e16a394bebe8c28712f`,
+passed all 100 dedicated WSL isolation cases (one platform skip). Fresh SQL
+replay and real local Auth/PostgREST/HTTP/WebSocket relay checks passed,
 including durable receipts, crash recovery, recipient isolation and
-authorization. Those native/Auth results are retained evidence, not fresh runs
-for this pair. Public Rust sources/tests and private server/SQL overlay sources are
-unchanged; this update changes the shared banner and core pin. The refreshed
-native host remains `84126766` in that preceding validation cache.
+authorization. The exact pair and source-match manifest are retained beside
+`/home/khing/.cache/parasaur-enterprise-current.c5dg3ln7/source`; sibling
+`build.log`, `isolation-verification.log` and `auth-verification.log` record results.
 The earlier `fd4d761` / `7db57658` pair retains its 35 assembled Kanban/store checks.
 The preceding
 receipt-recovery pair retains 19 shared-output browser cases, a full sample
@@ -87,7 +94,7 @@ Queue, crash/recovery, retry-receipt and authorization/relay checks passed.
 Earlier Windows desktop checks passed 35 ordinary cases and the separate hidden
 native output fixture. The older `ac62e3` native binary has the seven startup
 offsets and twelve repeated startup-window checks. The refreshed debug host is
-`84126766`; its preceding dedicated isolation results are recorded above. That earlier
+`f7a4f687`; its current dedicated isolation results are recorded above. That earlier
 timing-stress record is historical, not a claim of a new repetition on this binary.
 
 The preceding `e7d088c` / `2f8c9cf5` pair and `fe07bdd2` host passed 96 dedicated
