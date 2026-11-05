@@ -17,6 +17,8 @@ mod desktop_update;
 mod mistral_login;
 mod navigation_recovery;
 mod open_project;
+#[cfg(all(test, windows))]
+mod output_save_fixture;
 mod repository_tools;
 mod setup_check;
 
