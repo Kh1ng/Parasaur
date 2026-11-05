@@ -43,6 +43,14 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Worker factory state](validation/beta-progress-2026-11-03/worker-factory-observations.md)
+  now exposes a registered worker's profile-scoped controller status, last
+  decision and reported gates through a read-only Nodes check. Six HTTP checks,
+  eleven Windows component checks and the sample Nodes browser flow pass.
+  Private `3cac46c` / public `26ed70e8` passes the combined build and fresh generic
+  Auth/relay regressions. Real worker access and hosted/installed acceptance
+  remain required; the public recovery ZIP predates this feature.
+
 - [Factory refresh recovery](validation/beta-progress-2026-11-03/kanban-refresh-recovery.md)
   now labels retained board/navbar observations as unavailable, blocks assignment
   and preserves uncertainty through retries until success. Windows unit,

@@ -1,5 +1,12 @@
 # Beta finishing pass: local validation
 
+Latest worker observability: [worker factory state](worker-factory-observations.md)
+now reads a registered worker's controller, last decision and gates for a chosen
+declared profile, without shell access or remote mutations. Six HTTP checks,
+eleven component checks and the full sample Nodes browser flow pass. Private
+`3cac46c` / public `26ed70e8` passes 1,105 server and 16 mock cases, build guards
+and fresh local Auth/PostgREST/relay regressions. Live acceptance remains open.
+
 Latest delivery progress: the [current public recovery package](current-public-release.md)
 at `43d73448` now includes the pipeline observation fixes. It passes actual
 isolated release installation with Windows npm first on PATH and byte-for-byte

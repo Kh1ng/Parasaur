@@ -1,6 +1,9 @@
 # Current enterprise integration — 2026-11-05
 
-The current assembled pair is private `fd4d761` with public core `7db57658`.
+The current assembled pair is private `3cac46c` with public core `26ed70e8`.
+It includes [worker factory observations](worker-factory-observations.md):
+a profile-scoped, read-only Nodes check for a registered worker's controller,
+last decision and reported gates, with independent unavailable states.
 It includes [failed-refresh recovery](kanban-refresh-recovery.md), retaining
 recorded context while execution and capacity remain explicitly unconfirmed
 through failed and pending status reads. The navbar also labels retained jobs.
@@ -43,19 +46,24 @@ streaming, corruption and cancellation evidence without a new production bridge.
 Protocol 2 blocks launch until broker registration is durable. Full kernel
 slice-path checks and bounded housekeeping close the reproduced cleanup gaps.
 
-The current integration passed 1,099 server cases (38 explicit skips), 15 mock
-cases, typechecks, production builds and artifact/transport guards. Thirty-five
-focused Kanban/store checks also passed in the assembled source, and the release manifest and
-emitted dashboard bundle were checked for the intended revision and explanations.
+The current integration passed 1,105 server cases (38 explicit skips), 16 mock
+cases, typechecks, production builds and artifact/transport guards. Six new
+controlled HTTP cases cover worker reads and the central auth boundary. Eleven
+Windows Nodes/panel component checks and the complete sample Nodes browser flow
+passed, with inspected desktop/mobile layouts. The release manifest and emitted
+dashboard bundle were checked for the intended revision and panel.
+Fresh SQL replay and real local Auth/PostgREST/HTTP/WebSocket relay regressions
+passed. These generic checks do not establish hosted worker-factory acceptance.
+The earlier `fd4d761` / `7db57658` pair retains its 35 assembled Kanban/store checks.
 The preceding `3bfc79b` / `819937bf` pair passed 100 dedicated native WSL isolation
 cases (one platform skip), SQL replay and real local Auth/PostgREST/HTTP/WebSocket
-relay checks. The current server, Rust, contracts, shared library, SQL and Auth
-driver inputs were byte-compared for the preceding `233947f` / `9f39774e`
-integration; this follow-up changes only public UI/store code and the private pin.
-Those native/Auth results are carried-forward evidence, not fresh runs. The preceding
+relay checks. The dedicated native result remains historical; Rust isolation
+sources are unchanged. Current server/contracts/UI changes have the fresh
+build and route-specific checks above, with fresh generic Auth/relay evidence.
+The preceding
 receipt-recovery pair retains 19 shared-output browser cases, a full sample
-Settings workflow and inspected desktop/mobile layouts. Private web/SQL source
-is unchanged from those checks; the compute/relay runtime changes are covered
+Settings workflow and inspected desktop/mobile layouts. SQL source is unchanged;
+later shared UI and compute/relay runtime changes are covered
 by the current focused and integration checks above. Later
 public core changes cover runner retention, event reads, pass turnover and
 server diagnostics, with their own focused evidence. The admission-view pair
