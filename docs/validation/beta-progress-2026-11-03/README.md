@@ -1,5 +1,12 @@
 # Beta finishing pass: local validation
 
+Latest delivery progress: the [current public recovery package](current-public-release.md)
+at `43d73448` now includes the pipeline observation fixes. It passes actual
+isolated release installation with Windows npm first on PATH and byte-for-byte
+HTTP reads of all 29 JavaScript chunks. The optimized CLI already matches the
+installed WSL binary; native desktop/settings and worker releases are unchanged.
+The desktop loads the central dashboard, so live deployment is still required.
+
 Latest recovery progress: [failed factory refreshes](kanban-refresh-recovery.md)
 retain recorded jobs while marking execution/capacity unconfirmed, disable
 assignment and keep the warning through retries until success. Windows unit,

@@ -80,9 +80,10 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   are still required.
 
 - The [current public recovery candidate](validation/beta-progress-2026-11-03/current-public-release.md)
-  includes optimized memory/scheduler repairs and is installed as the WSL user
-  CLI, with rollback and passing Windows integration reads. Isolated release
-  installation and cold dashboard assets pass. The central remains undeployed;
+  at `43d73448` includes the pipeline UI and optimized memory/scheduler repairs.
+  Its CLI bytes already match the WSL user installation; earlier rollback and
+  Windows integration reads remain recorded. Actual isolated release installation
+  and all 29 cold dashboard JavaScript chunks pass. The central remains undeployed;
   signed updates, target compatibility and authenticated live acceptance remain.
 
 - [Bounded controller passes](validation/beta-progress-2026-11-03/controller-pass-turnover.md)
