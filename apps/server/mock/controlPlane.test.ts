@@ -8,7 +8,20 @@ import ts from 'typescript';
 import { WebSocket } from 'ws';
 import type { ClientMessage, ProjectImportResult, ServerMessage, PairingAccessRequest, PairedDevice } from '@git-agent-harness/contracts';
 import { createMockControlPlane, MOCK_SCENARIOS } from './controlPlane.js';
-import type { ComputeOutputCatalog, ComputeOutputDownload, ComputeJournalReview } from '@git-agent-harness/contracts';
+import type { ComputeOutputCatalog, ComputeOutputDownload, ComputeJournalReview, NodeFactorySnapshot } from '@git-agent-harness/contracts';
+
+test('sample worker factory observations are source-scoped and do not run the central controller', async () => {
+  const running = await createMockControlPlane().listen(0);
+  try {
+    const before = await (await fetch(`${running.baseUrl}/api/loop/status`)).json();
+    const result = await (await fetch(`${running.baseUrl}/api/registry/nodes/sample-worker/factory?profile=other-project`)).json() as NodeFactorySnapshot;
+    assert.equal(result.node_id, 'sample-worker'); assert.equal(result.profile, 'other-project');
+    assert.deepEqual(result.loop, { state: 'available', value: { running: false } });
+    assert.equal(result.status.state, 'available');
+    assert.ok(JSON.stringify(result).includes('Sample review gate'));
+    assert.deepEqual(await (await fetch(`${running.baseUrl}/api/loop/status`)).json(), before);
+  } finally { await running.close(); }
+});
 
 test('sample receipt cleanup is reviewed, replay-safe and independent of saved output', async () => {
   const running = await createMockControlPlane().listen(0);
