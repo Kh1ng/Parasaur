@@ -114,3 +114,12 @@ The local recovery package's successful asset reads do not establish recovery
 of this deployed service. Local implementation and controlled memory testing
 can continue on Windows/WSL; live factory attribution still requires authorized
 central or host access. MacBook work remains deferred.
+
+## Update-package recheck — 2026-11-05 12:11 UTC
+
+Fresh Windows read-only GETs again returned health/HTML 200, `/api/info` 401,
+and 500 for both currently referenced assets (`index-oGMXkd18.js` and
+`index-DwFxA1zN.css`). Health reports version 0.2.0. Status, byte counts and
+response hashes are retained in `artifacts/live-central-20261105T121117Z/`;
+no authentication or live mutation was attempted. The passing `fdc9567f` local
+package does not establish recovery of this deployed dashboard.

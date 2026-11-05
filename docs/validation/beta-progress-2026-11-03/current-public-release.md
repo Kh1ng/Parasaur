@@ -4,14 +4,17 @@ The native desktop remains [source 018f6603](windows-updater-config.md), with
 the repaired Windows updater lookup. Its separate Windows installer and closed
 local test installation are unchanged by this CLI/server package update.
 
-Source: `5e261e0e9e8e975278f36579149c7954e60e4c6a`, version 0.3.0.
-Package: `artifacts/parasaur-central-5e261e0e.zip` (24,240,359 bytes).
-SHA-256: `fdf2b18947b4b65a348e30ee940f620f6182382ce0fa82add98329ece46a93d2`.
-This supersedes the retained `43d73448`, `819937bf`, `77209892` and historical
-`16e9ecc6` candidates. It adds [claim evidence](kanban-claim-evidence.md),
+Source: `fdc9567f5a2062c277e8bd365764c3aa565b2375`, version 0.3.0.
+Package: `artifacts/parasaur-central-fdc9567f.zip` (24,241,305 bytes).
+SHA-256: `7fcd07b910a341a36dbbe353a1c38719906a062e4d91bd9abc3d219d8b32f331`.
+This supersedes retained candidates `5e261e0e`, `43d73448`, `819937bf`,
+`77209892` and historical `16e9ecc6`. It adds [claim evidence](kanban-claim-evidence.md),
 [failed-refresh recovery and stale-worker activity](kanban-refresh-recovery.md)
 plus [worker factory observations](worker-factory-observations.md) and
 [streaming ledger reads](streamed-ledger-memory.md) to the matched package.
+It also includes [server update recovery](server-update-recovery.md), resuming
+persisted running updates and stopping status polling on unmount. Six Windows
+updater cases passed against both public and exact assembled private sources.
 All 29 JavaScript chunks served byte-for-byte
 after actual isolated release installation, including the lazy page assets.
 
@@ -41,16 +44,19 @@ checksums, ZIP CRC and archived-file byte comparisons passed.
 
 Both binaries require **glibc 2.39**; current Ubuntu-24.04 WSL meets that floor.
 Live central compatibility remains unverified. Source/log:
-`/home/khing/.cache/parasaur-public-release.ja36k2k5`.
+`/home/khing/.cache/parasaur-public-release.f1s0dg15`.
 
-The idle WSL user CLI at `~/.cargo/bin/gah` was atomically replaced and verified
-against the candidate, SHA-256
+The installed WSL user CLI at `~/.cargo/bin/gah` already matches the freshly
+built candidate, SHA-256
 `4cac1f30362fd072632f9dde9527183fff52a044e4335e308517b55949ab03e2`.
-Rollback: `~/.cache/parasaur-upgrade-backups/gah-before-5e261e0e`.
-The actual installed CLI passed the memory regression. Both native Windows
-integration reads passed again: account metadata and Mistral preflight.
-`USER_INSTALL.json` and `windows-installed-cli.log` record these checks.
-No provider sign-in, billing call or GUI interaction occurred.
+Rust source and tests are unchanged from `5e261e0e`; no user CLI replacement
+was necessary. Rollback from that installation remains
+`~/.cache/parasaur-upgrade-backups/gah-before-5e261e0e`.
+The actual optimized CLI passed the memory regression and four review-format
+cases again. Both native Windows integration reads passed after WSL recovery:
+account metadata and Mistral preflight. `USER_INSTALL.json` and
+`windows-installed-cli.log` record these checks. No provider sign-in, billing
+call or GUI interaction occurred.
 
 All six separate worker-release binary hashes remain unchanged. No worker
 service was started, stopped or upgraded; no new user MCP installation was made.
@@ -64,7 +70,7 @@ and hashes. The desktop bundles local Settings and loads its dashboard from the
 configured central service; rebuilding its unchanged native executable would
 not deliver these web fixes. The actual release installer was tested only in
 an isolated checkout. This is an unsigned, unpublished local candidate. The
-WSL user CLI is updated; the native desktop and central are unchanged. Signed
+WSL user CLI matches; the native desktop and central are unchanged. Signed
 updates, fresh-host installation,
 authenticated live pipeline acceptance, real provider usage/billing, live memory
 attribution, enterprise hosting and physical iPhone delivery remain required.

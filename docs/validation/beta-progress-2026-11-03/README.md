@@ -4,8 +4,9 @@ Latest update recovery: the [server update banner](server-update-recovery.md)
 resumes observation after reopening, stops polling on unmount, preserves
 uncertainty through interrupted reads and identifies the server component.
 Six Windows browser checks, typechecking and the production build pass.
-This source change follows the current package and private assembly; it is
-not yet packaged or deployed.
+The matched `fdc9567f` package and private `dec85e7` assembly include it; all
+six cases also pass against the exact private assembly. Live deployment remains
+open.
 
 Latest memory repair: [streaming ledger reads](streamed-ledger-memory.md) removes
 an extra whole-file text allocation while preserving complete decoded history.
@@ -18,11 +19,12 @@ Latest worker observability: [worker factory state](worker-factory-observations.
 now reads a registered worker's controller, last decision and gates for a chosen
 declared profile, without shell access or remote mutations. Six HTTP checks,
 eleven component checks and the full sample Nodes browser flow pass. Private
-`a10a5f2` / public `5e261e0e` passes 1,105 server and 16 mock cases, build guards
-and fresh local Auth/PostgREST/relay regressions. Live acceptance remains open.
+`dec85e7` / public `fdc9567f` passes 1,105 server and 16 mock cases, build guards
+and current browser transport checks. The prior pair retains its real local
+Auth/relay evidence. Live acceptance remains open.
 
 Latest delivery progress: the [current public recovery package](current-public-release.md)
-at `5e261e0e` includes the pipeline observation and streaming-ledger fixes.
+at `fdc9567f` includes pipeline observation, streaming-ledger and updater fixes.
 It passes actual isolated release installation with Windows npm first on PATH
 and byte-for-byte HTTP reads of all 29 JavaScript chunks. The installed WSL CLI
 matches the candidate; native desktop/settings and worker binaries retain their

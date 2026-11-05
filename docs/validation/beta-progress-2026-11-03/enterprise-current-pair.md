@@ -1,6 +1,10 @@
 # Current enterprise integration — 2026-11-05
 
-The current assembled pair is private `a10a5f2` with public core `5e261e0e`.
+The current assembled pair is private `dec85e7` with public core `fdc9567f`.
+It includes [server update recovery](server-update-recovery.md): persisted
+running updates resume observation, interrupted reads stay unconfirmed and
+unmounting stops further polling. All six recovery cases passed against this
+exact assembled private UI on Windows.
 It includes [streaming ledger reads](streamed-ledger-memory.md), removing the
 whole-file text copy while preserving full history and strict corruption errors.
 The controlled repeated probe observed lower peak and final RSS; live leak
@@ -52,17 +56,20 @@ slice-path checks and bounded housekeeping close the reproduced cleanup gaps.
 
 The current integration passed 1,105 server cases (38 explicit skips), 16 mock
 cases, typechecks, production builds and artifact/transport guards. Six new
-controlled HTTP cases cover worker reads and the central auth boundary. Eleven
-Windows Nodes/panel component checks and the complete sample Nodes browser flow
-passed, with inspected desktop/mobile layouts. The release manifest and emitted
-dashboard bundle were checked for the intended revision and panel.
-Fresh SQL replay and real local Auth/PostgREST/HTTP/WebSocket relay regressions
-passed. These generic checks do not establish hosted worker-factory acceptance.
+controlled HTTP cases cover worker reads and the central auth boundary. The
+earlier eleven Windows Nodes/panel cases and complete sample Nodes browser
+flow retain their desktop/mobile evidence; they were not rerun for this banner
+change. The release manifest and emitted dashboard bundle were checked for the
+intended revision and updater recovery copy.
+The current browser transport guards passed. The preceding `a10a5f2` /
+`5e261e0e` pair passed 100 dedicated native WSL isolation cases (one platform
+skip), SQL replay and real local Auth/PostgREST/HTTP/WebSocket relay checks,
+including durable receipts, crash recovery, recipient isolation and
+authorization. Those native/Auth results are retained evidence, not fresh runs
+for this pair. Public Rust sources/tests and private server/SQL overlay sources are
+unchanged; this update changes the shared banner and core pin. The refreshed
+native host remains `84126766` in that preceding validation cache.
 The earlier `fd4d761` / `7db57658` pair retains its 35 assembled Kanban/store checks.
-The current pair also passed 100 dedicated native WSL isolation cases (one
-platform skip) on the refreshed `84126766` host. SQL replay and real local
-Auth/PostgREST/HTTP/WebSocket relay checks passed again, including durable
-receipts, crash recovery, recipient isolation and authorization.
 The preceding
 receipt-recovery pair retains 19 shared-output browser cases, a full sample
 Settings workflow and inspected desktop/mobile layouts. SQL source is unchanged;
@@ -80,7 +87,7 @@ Queue, crash/recovery, retry-receipt and authorization/relay checks passed.
 Earlier Windows desktop checks passed 35 ordinary cases and the separate hidden
 native output fixture. The older `ac62e3` native binary has the seven startup
 offsets and twelve repeated startup-window checks. The refreshed debug host is
-`84126766`; its fresh dedicated isolation results are recorded above. That earlier
+`84126766`; its preceding dedicated isolation results are recorded above. That earlier
 timing-stress record is historical, not a claim of a new repetition on this binary.
 
 The preceding `e7d088c` / `2f8c9cf5` pair and `fe07bdd2` host passed 96 dedicated

@@ -44,7 +44,26 @@ updater or restart any server. Logs are retained locally at
 `artifacts/update-banner-before.log`, `artifacts/update-banner-after.log`,
 `artifacts/update-banner-typecheck.log` and `artifacts/update-banner-build.log`.
 
-This source change follows the packaged `5e261e0e` candidate and its validated
-enterprise pair; it is not included in those immutable artifacts. A matched
-new package, private assembly and live acceptance remain required. Signed
-desktop feeds, install/restart and fresh-host acceptance also remain open.
+The matched private pair `dec85e7` / `fdc9567f` now includes this change.
+Its full production assembly passed 1,105 server cases (38 explicit skips),
+16 mock cases, typechecks, artifact/input guards and browser transport checks.
+All six updater cases passed again on Windows against byte-matched assembled
+private source, including the private API transport's local mode. These checks
+do not establish hosted relay execution. The first harness attempt used the
+repository-root cwd and failed Tailwind configuration lookup before any tests;
+running from the assembled app directory passed without changing app source.
+The private build log remains in
+`/home/khing/.cache/parasaur-enterprise-current.1g6fqr53/build.log`.
+The prior pair retains its native isolation and real Auth/relay evidence; those
+checks were not rerun for this UI-only change.
+
+The [current public package](current-public-release.md) at `fdc9567f` also
+includes this repair. It passed 1,010 public server cases (two skips), 16 mock
+cases, actual isolated release installation, all 29 JavaScript chunk body reads
+and packaged updater-copy guards. The freshly optimized CLI still equals the
+installed binary; no replacement was needed. Both Windows integration reads
+passed after WSL recovery. Checksums, ZIP CRC and archived bytes passed.
+No service, worker binary, native desktop or saved setting was changed by this
+packaging pass. The current package is unsigned, unpublished and undeployed.
+Signed desktop feeds, install/restart, fresh-host and authenticated live pipeline
+acceptance remain open.

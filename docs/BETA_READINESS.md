@@ -46,8 +46,9 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 - [Server update recovery](validation/beta-progress-2026-11-03/server-update-recovery.md)
   resumes persisted running updates, cancels polling on unmount and labels
   interrupted status reads as unavailable. Six Windows browser checks,
-  typechecking and production build pass. This later source change still
-  needs a matched package/private assembly and live acceptance.
+  typechecking and production build pass. The matched `fdc9567f` package and
+  `dec85e7` private assembly include the fix; six assembled private cases also
+  pass. Signed updates and authenticated live acceptance remain open.
 
 - [Streaming ledger reads](validation/beta-progress-2026-11-03/streamed-ledger-memory.md)
   removes the extra whole-file text copy without truncating decoded history.
@@ -67,9 +68,10 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   now exposes a registered worker's profile-scoped controller status, last
   decision and reported gates through a read-only Nodes check. Six HTTP checks,
   eleven Windows component checks and the sample Nodes browser flow pass.
-  Private `a10a5f2` / public `5e261e0e` passes the combined build, 100 native
-  isolation checks and fresh generic Auth/relay regressions. Real worker access
-  and hosted/installed acceptance remain required; the current public recovery ZIP includes this feature.
+  Private `dec85e7` / public `fdc9567f` passes the combined build and browser
+  transport checks; the prior pair retains 100 native isolation checks and real
+  local Auth/relay evidence. Real worker access and hosted/installed acceptance
+  remain required; the current public recovery ZIP includes this feature.
 
 - [Factory refresh recovery](validation/beta-progress-2026-11-03/kanban-refresh-recovery.md)
   now labels retained board/navbar observations as unavailable, blocks assignment
@@ -108,7 +110,8 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   are still required.
 
 - The [current public recovery candidate](validation/beta-progress-2026-11-03/current-public-release.md)
-  at `5e261e0e` includes worker factory reads and the streaming-ledger repair.
+  at `fdc9567f` includes worker factory reads, streaming ledger reads and updater
+  recovery.
   Its optimized CLI is installed in WSL with rollback and fresh Windows
   integration reads. Actual isolated release installation
   and all 29 cold dashboard JavaScript chunks pass. The central remains undeployed;
