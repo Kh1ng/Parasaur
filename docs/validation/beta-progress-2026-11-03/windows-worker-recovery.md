@@ -59,9 +59,14 @@ requires administrator permission to update. A guarded application script is
 staged at `artifacts/apply-worker-supervisor-admin.ps1`; it checks the exact
 installed-file hash, retains rollback, appends the tested failure guard, checks
 PowerShell syntax and restarts only the existing worker launcher task. The
-administrator prompt is pending at the time of this record. The running worker
-recovery above does not depend on that approval, but automatic retry of a future
-keepalive exit is not yet established for the installed launcher.
+administrator application completed successfully. The installed script hash is
+`1835406bf4add934b5fe2617c955e3db46e96cc0c7361a00ad36b300518ff64b`;
+rollback is retained under
+`C:\Users\cspur\AppData\Local\ParasaurRecovery\worker-startup-20261105`.
+The launcher task is Running and the worker retained PID 2548 and its identity
+through the launcher restart. Windows still reads healthy version 0.3.0 afterward.
+A future forced WSL termination was not used as a live test; retry behavior is
+covered by the two real-script PowerShell regression cases.
 
 ## Remaining pipeline findings
 

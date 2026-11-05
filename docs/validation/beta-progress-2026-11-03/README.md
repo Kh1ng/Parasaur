@@ -9,8 +9,8 @@ Git transport, UI clarity and long-soak acceptance remain open.
 
 Windows follow-up: [worker recovery](windows-worker-recovery.md) updates the
 old worker, corrects its central origin, resumes its logon keepalive and verifies
-reachability from central. The tested launcher retry fix is awaiting administrator
-approval for the installed Program Files script.
+reachability from central. The tested launcher retry fix is installed in the protected
+Program Files script, with rollback; its task and worker remain running.
 
 Latest Mac work: [native client update and temporary central test](mac-client-update.md)
 installed and launched 0.3.0, fixed local app-bundle sealing, passed native and
