@@ -24,6 +24,21 @@ if command -v ditto >/dev/null 2>&1; then
 else
   cp -R "$source_app" "$next"
 fi
+# Local Mach-O builds have only a linker signature; seal the completed app
+# before the swap. A damaged distribution signature must never be replaced.
+if [ "$(uname -s)" = Darwin ]; then
+  if ! codesign --verify --deep --strict "$next" >/dev/null 2>&1; then
+    signature="$(codesign -d --verbose=2 "$next" 2>&1 || true)"
+    case "$signature" in
+      *"(adhoc,linker-signed)"*)
+        codesign --force --sign - --timestamp=none "$next"
+        codesign --verify --deep --strict "$next"
+        ;;
+      *) echo 'ERROR: desktop app signature is invalid; the installed app was retained' >&2; exit 1 ;;
+    esac
+  fi
+fi
+
 target="$app_dir/GAH.app"
 existing="$target"
 if [ ! -e "$existing" ] && [ -e "$app_dir/GAH Worker.app" ]; then

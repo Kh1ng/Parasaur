@@ -881,6 +881,9 @@ fn the_desktop_app_install_replaces_the_old_app_and_cleans_up() {
     let system_legacy = system_apps.join("GAH Worker.app");
     std::fs::create_dir_all(&system_legacy).unwrap();
     let home = temp.path().join("home");
+    let bin = temp.path().join("bin");
+    executable(&bin.join("codesign"), "exit 0\n");
+    let path = format!("{}:/usr/bin:/bin", bin.display());
     let output = bash(
         &[
             repo()
@@ -891,7 +894,7 @@ fn the_desktop_app_install_replaces_the_old_app_and_cleans_up() {
         ],
         &[
             ("HOME", home.to_str().unwrap()),
-            ("PATH", "/usr/bin:/bin"),
+            ("PATH", &path),
             ("CARGO_TARGET_DIR", "../cargo-target"),
             ("GAH_DESKTOP_APP_DIR", apps.to_str().unwrap()),
             ("GAH_DESKTOP_SKIP_BUILD", "1"),
@@ -1283,6 +1286,100 @@ fn installer_scripts_never_pass_bearer_tokens_in_curl_arguments() {
         assert!(
             source.contains("-H @-"),
             "{script} must read its Authorization header from stdin"
+        );
+    }
+}
+
+#[test]
+fn desktop_app_install_seals_linker_signatures_and_rejects_damaged_signed_apps() {
+    for kind in ["linker", "valid", "damaged"] {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = temp.path().join("repo");
+        std::fs::create_dir_all(&checkout).unwrap();
+        let target = temp.path().join("target");
+        let built = target.join("release/bundle/macos/GAH.app");
+        std::fs::create_dir_all(&built).unwrap();
+        std::fs::write(built.join("version.txt"), "new").unwrap();
+        let apps = temp.path().join("Applications");
+        let installed = apps.join("GAH.app");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(installed.join("version.txt"), "old").unwrap();
+        let bin = temp.path().join("bin");
+        executable(&bin.join("uname"), "echo Darwin\n");
+        executable(
+            &bin.join("codesign"),
+            r#"
+printf '%s\n' "$*" >> "$SIGN_LOG"
+case "$1" in
+  --verify)
+    [ "$SIGN_KIND" = valid ] || [ -f "$4/.fixture-sealed" ]
+    ;;
+  -d)
+    if [ "$SIGN_KIND" = linker ]; then
+      echo 'flags=0x20002(adhoc,linker-signed)' >&2
+    else
+      echo 'Authority=Developer ID Application: Fixture' >&2
+    fi
+    ;;
+  --force)
+    [ "$SIGN_KIND" = linker ] || exit 9
+    touch "$5/.fixture-sealed"
+    ;;
+  *) exit 8 ;;
+esac
+"#,
+        );
+        let log = temp.path().join("sign.log");
+        let path = format!("{}:/usr/bin:/bin", bin.display());
+        let output = bash(
+            &[
+                repo()
+                    .join("scripts/install-macos-desktop.sh")
+                    .to_str()
+                    .unwrap(),
+                checkout.to_str().unwrap(),
+            ],
+            &[
+                ("PATH", &path),
+                ("SIGN_KIND", kind),
+                ("SIGN_LOG", log.to_str().unwrap()),
+                ("CARGO_TARGET_DIR", target.to_str().unwrap()),
+                ("GAH_DESKTOP_APP_DIR", apps.to_str().unwrap()),
+                ("GAH_DESKTOP_SKIP_BUILD", "1"),
+                ("GAH_LEGACY_APP_DIR", temp.path().to_str().unwrap()),
+            ],
+            true,
+        );
+        assert_eq!(
+            output.status.success(),
+            kind != "damaged",
+            "{kind}: {}",
+            text(&output)
+        );
+        assert_eq!(
+            std::fs::read_to_string(installed.join("version.txt")).unwrap(),
+            if kind == "damaged" { "old" } else { "new" }
+        );
+        assert_eq!(
+            installed.join(".fixture-sealed").exists(),
+            kind == "linker",
+            "{kind}"
+        );
+        assert!(
+            !built.join(".fixture-sealed").exists(),
+            "source bundle stays unchanged"
+        );
+        let calls = std::fs::read_to_string(log).unwrap();
+        assert!(calls.contains("--verify --deep --strict"), "{kind}");
+        assert_eq!(
+            calls.contains("--force --sign - --timestamp=none"),
+            kind == "linker",
+            "{kind}"
+        );
+        assert_eq!(
+            std::fs::read_dir(&apps).unwrap().count(),
+            1,
+            "staging/backup cleanup: {kind}"
         );
     }
 }
