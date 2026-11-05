@@ -43,6 +43,13 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Factory refresh recovery](validation/beta-progress-2026-11-03/kanban-refresh-recovery.md)
+  now labels retained board/navbar observations as unavailable, blocks assignment
+  and preserves uncertainty through retries until success. Windows unit,
+  component and browser recovery checks pass; private `e630a95` / public
+  `191168dc` passes the combined build and 35 assembled board/store checks.
+  Installed-app and live node recovery remain unverified.
+
 - [Kanban claim evidence](validation/beta-progress-2026-11-03/kanban-claim-evidence.md)
   now separates claim ownership from dispatch-runtime execution, keeps claimed
   work outside intake visible, and explains the claiming machine and recovery

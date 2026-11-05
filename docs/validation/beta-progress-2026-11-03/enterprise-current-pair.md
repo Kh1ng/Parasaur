@@ -1,6 +1,9 @@
 # Current enterprise integration — 2026-11-05
 
-The current assembled pair is private `233947f` with public core `9f39774e`.
+The current assembled pair is private `e630a95` with public core `191168dc`.
+It includes [failed-refresh recovery](kanban-refresh-recovery.md), retaining
+recorded context while execution and capacity remain explicitly unconfirmed
+through failed and pending status reads. The navbar also labels retained jobs.
 It includes [claim and execution evidence](kanban-claim-evidence.md), so the
 shared board no longer presents claim ownership as confirmed running work.
 It includes [bounded delivery and enrollment repair](compute-delivery-authorization.md):
@@ -39,13 +42,14 @@ Protocol 2 blocks launch until broker registration is durable. Full kernel
 slice-path checks and bounded housekeeping close the reproduced cleanup gaps.
 
 The current integration passed 1,099 server cases (38 explicit skips), 15 mock
-cases, typechecks, production builds and artifact/transport guards. Seven focused
-Kanban checks also passed in the assembled source, and the release manifest and
+cases, typechecks, production builds and artifact/transport guards. Thirty-five
+focused Kanban/store checks also passed in the assembled source, and the release manifest and
 emitted dashboard bundle were checked for the intended revision and explanations.
 The preceding `3bfc79b` / `819937bf` pair passed 100 dedicated native WSL isolation
 cases (one platform skip), SQL replay and real local Auth/PostgREST/HTTP/WebSocket
 relay checks. The current server, Rust, contracts, shared library, SQL and Auth
-driver inputs were byte-compared with that verified assembly and are unchanged.
+driver inputs were byte-compared for the preceding `233947f` / `9f39774e`
+integration; this follow-up changes only public UI/store code and the private pin.
 Those native/Auth results are carried-forward evidence, not fresh runs. The preceding
 receipt-recovery pair retains 19 shared-output browser cases, a full sample
 Settings workflow and inspected desktop/mobile layouts. Private web/SQL source

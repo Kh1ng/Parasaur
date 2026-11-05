@@ -1,5 +1,12 @@
 # Beta finishing pass: local validation
 
+Latest recovery progress: [failed factory refreshes](kanban-refresh-recovery.md)
+retain recorded jobs while marking execution/capacity unconfirmed, disable
+assignment and keep the warning through retries until success. Windows unit,
+component and full-browser checks pass; desktop/mobile captures were inspected.
+Private `e630a95` / public `191168dc` passes the combined build and 35 assembled
+board/store checks. Installed apps and live services remain unchanged.
+
 Latest pipeline UI progress: [claim and execution evidence](kanban-claim-evidence.md)
 keeps claimed issues visible while separating ownership from confirmed running
 work. Stale workers remain uncertain, existing gates remain visible, and claimed
