@@ -43,6 +43,12 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- The [current public recovery candidate](validation/beta-progress-2026-11-03/current-public-release.md)
+  includes optimized memory/scheduler repairs and is installed as the WSL user
+  CLI, with rollback and passing Windows integration reads. Isolated release
+  installation and cold dashboard assets pass. The central remains undeployed;
+  signed updates, target compatibility and authenticated live acceptance remain.
+
 - [Bounded controller passes](validation/beta-progress-2026-11-03/controller-pass-turnover.md)
   stop sustained queues from keeping completed pass results alive indefinitely.
   Refill, pressure, shutdown and cross-pass work eligibility have local evidence.

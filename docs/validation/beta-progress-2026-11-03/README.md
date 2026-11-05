@@ -1,5 +1,11 @@
 # Beta finishing pass: local validation
 
+Latest installed-runtime progress: the [current public candidate](current-public-release.md)
+at `77209892` packages optimized memory/scheduler repairs and passes isolated
+release installation, public server/mock checks and cold asset reads. The WSL
+user CLI is updated with rollback; both Windows desktop integration reads pass.
+The native desktop and saved settings are unchanged. No live service was deployed.
+
 Latest scheduler progress: [bounded controller passes](controller-pass-turnover.md)
 prevent an always-busy parallel queue from retaining completed pass state
 indefinitely. The real-CLI regression fails on the previous binary and verifies

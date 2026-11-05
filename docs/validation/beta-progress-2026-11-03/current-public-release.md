@@ -1,4 +1,57 @@
-# Current public release candidate — Windows/WSL, 2026-11-04
+# Current public release candidate — Windows/WSL, 2026-11-05
+
+Source: `77209892c6df0799be5ffeeac701fb11477a7b95`, version 0.3.0.
+Package: `artifacts/parasaur-central-77209892.zip` (24,144,675 bytes).
+SHA-256: `173a7ef02ecad29212f10572b6247a3e409cf042a413692062a11ae6a025d3c7`.
+This supersedes the retained `16e9ecc6` candidate below.
+
+The package contains matched optimized Linux CLI/MCP binaries, the public
+server/web bundle, tracked source, manifest, build/install records, checksums
+and verification scripts/logs. It includes prior account/model/factory repairs
+plus [bounded capture](rust-output-memory.md), [streaming event reads](event-reader-memory.md)
+and [bounded controller passes](controller-pass-turnover.md). Private source
+and overlays are excluded; enterprise remains a separate private build.
+
+The fresh locked/offline optimized build passed **1,002 public server cases**
+(one explicit skip) and **15 mock cases**, with no failures. The optimized CLI
+passed the 128 MiB journal memory-limit check and all four review-format cases,
+including oversized approval rejection. Debug scheduler-budget and pressure
+hooks are absent from the release binary. These are local checks, not a daemon
+soak or live OOM allocation attribution.
+
+The actual updater passed isolated installation with deliberately old checkout
+manifests and Windows npm first on PATH. It selected Linux npm, installed locked
+dependencies, verified binary bytes and preserved the checkout manifests. Cold
+HTML/JS/CSS bodies and byte ranges passed, along with packaged model recovery,
+exact-account selection, uncertain-request retry and old-worker rejection checks.
+Root/build-tool/service commands were blocked by fixture executables. All file
+checksums, ZIP CRC and archived-file byte comparisons passed.
+
+Both binaries require **glibc 2.39**; current Ubuntu-24.04 WSL meets that floor.
+Live central compatibility remains unverified. Source/log:
+`/home/khing/.cache/parasaur-public-release.0352chor`.
+
+The idle WSL user CLI at `~/.cargo/bin/gah` was atomically updated to SHA-256
+`3dd8d65a9ff40c8fae37a76a8bee9c7a6dd988583b827f786817a8b4393f0cf9`.
+Rollback: `~/.cache/parasaur-upgrade-backups/gah-before-77209892`.
+Version/help and the memory regression pass against the installed executable.
+Both Windows desktop read-only installed-WSL checks pass: account metadata and
+Mistral protocol preflight. Their log is included as `windows-installed-cli.log`.
+No provider sign-in, billing call or GUI interaction occurred.
+
+All six separate worker-release binary hashes remain unchanged. No worker
+service was started, stopped or upgraded; no new user MCP installation was made.
+The installed Windows desktop already matches current production desktop code;
+its newer source changes are test-only. Its executable and saved settings hashes
+remain the values recorded below. The desktop remains closed.
+
+`BUILDINFO.json`, `INSTALL_CHECK.json` and `USER_INSTALL.json` retain exact checks
+and hashes. This is an unsigned, unpublished local candidate and local CLI
+update. The central is not deployed. Signed updates, fresh-host installation,
+authenticated live pipeline acceptance, real provider usage/billing, live memory
+attribution, enterprise hosting and physical iPhone delivery remain required.
+
+## Historical candidate — 16e9ecc6, 2026-11-04
 
 Source: `16e9ecc6f5ca8bd5a0db16c64574d1b6bde8dc17`, version 0.3.0.
 The local immutable recovery package is
