@@ -3,7 +3,7 @@ use crate::job_kind::JobKind;
 use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::{LazyLock, Mutex};
@@ -277,13 +277,7 @@ pub fn append_human_gate_if_transition(cfg: &GahConfig, entry: &LedgerEntry) -> 
         .context("conditional gate entry must have a work_id")?;
     let path = cfg.defaults.ledger_path();
     let _lock = locking::exclusive(&path)?;
-    let existing = if path.exists() {
-        let text =
-            fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-        parse_jsonl_entries(&text, &path, 0)?
-    } else {
-        Vec::new()
-    };
+    let existing = read_entries_unlocked(&path)?;
     if let Some(active) =
         effective_human_gate_from_entries(&existing, &entry.profile, &entry.repo_id, work_id)
     {
@@ -391,21 +385,45 @@ pub(super) fn parse_jsonl_entries(
     path: &Path,
     starting_line: usize,
 ) -> Result<Vec<LedgerEntry>> {
+    Ok(parse_jsonl_reader(text.as_bytes(), path, starting_line)?.entries)
+}
+
+/// Preserve full records and physical byte offsets without retaining a second
+/// whole-journal text allocation. One reusable line buffer handles framing.
+fn parse_jsonl_reader(
+    mut reader: impl BufRead,
+    path: &Path,
+    starting_line: usize,
+) -> Result<LedgerSnapshot> {
     let mut entries = vec![];
-    for (idx, line) in text.lines().enumerate() {
+    let mut line = String::new();
+    let mut byte_len = 0;
+    let mut line_number = starting_line;
+    loop {
+        line.clear();
+        let bytes = reader
+            .read_line(&mut line)
+            .with_context(|| format!("reading {}", path.display()))?;
+        if bytes == 0 {
+            break;
+        }
+        byte_len += bytes as u64;
+        line_number += 1;
+        let line = line.strip_suffix('\n').unwrap_or(&line);
+        let line = line.strip_suffix('\r').unwrap_or(line);
         if line.trim().is_empty() {
             continue;
         }
         let entry = serde_json::from_str::<LedgerEntry>(line).with_context(|| {
             format!(
                 "parsing ledger entry {} from {}",
-                starting_line + idx + 1,
+                line_number,
                 path.display()
             )
         })?;
         entries.push(entry);
     }
-    Ok(entries)
+    Ok(LedgerSnapshot { entries, byte_len })
 }
 
 pub(super) struct LedgerSnapshot {
@@ -424,17 +442,21 @@ pub(super) fn read_snapshot(cfg: &GahConfig) -> Result<LedgerSnapshot> {
             .or_default() += 1;
     }
     let _lock = locking::shared(&path)?;
-    if !path.exists() {
-        return Ok(LedgerSnapshot {
-            entries: vec![],
-            byte_len: 0,
-        });
-    }
-    let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    Ok(LedgerSnapshot {
-        byte_len: text.len() as u64,
-        entries: parse_jsonl_entries(&text, &path, 0)?,
-    })
+    read_snapshot_unlocked(&path)
+}
+
+fn read_snapshot_unlocked(path: &Path) -> Result<LedgerSnapshot> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(LedgerSnapshot {
+                entries: vec![],
+                byte_len: 0,
+            })
+        }
+        Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
+    };
+    parse_jsonl_reader(BufReader::new(file), path, 0)
 }
 
 pub fn read_entries(cfg: &GahConfig) -> Result<Vec<LedgerEntry>> {
@@ -442,11 +464,7 @@ pub fn read_entries(cfg: &GahConfig) -> Result<Vec<LedgerEntry>> {
 }
 
 pub(super) fn read_entries_unlocked(path: &Path) -> Result<Vec<LedgerEntry>> {
-    if !path.exists() {
-        return Ok(vec![]);
-    }
-    let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    parse_jsonl_entries(&text, path, 0)
+    Ok(read_snapshot_unlocked(path)?.entries)
 }
 
 #[cfg(test)]
@@ -673,6 +691,62 @@ mod tests {
     use std::fs;
     use time::format_description::well_known::Rfc3339;
     use time::OffsetDateTime;
+
+    #[test]
+    fn streamed_snapshot_preserves_records_and_physical_bytes() {
+        let (_tmp, cfg) = ledger_tests::test_config();
+        let path = cfg.defaults.ledger_path();
+        let mut entry = super::LedgerEntry::new(
+            "test",
+            &ledger_tests::profile(),
+            "codex",
+            "fix",
+            "fixture",
+            None,
+            None,
+        );
+        entry.error_summary = Some("café 🤖\nrecord contents".into());
+        let json = serde_json::to_string(&entry).unwrap();
+        let text = format!("\r\n{json}\r\n \t\r\n{json}");
+        fs::write(&path, &text).unwrap();
+        let snapshot = super::read_snapshot(&cfg).unwrap();
+        assert_eq!(snapshot.byte_len, text.len() as u64);
+        assert_eq!(snapshot.entries.len(), 2);
+        for actual in snapshot.entries {
+            assert_eq!(
+                serde_json::to_value(actual).unwrap(),
+                serde_json::to_value(&entry).unwrap()
+            );
+        }
+        assert_eq!(super::read_entries_unlocked(&path).unwrap().len(), 2);
+        assert_eq!(
+            super::parse_jsonl_entries(&text, &path, 7).unwrap().len(),
+            2
+        );
+    }
+
+    #[test]
+    fn streamed_snapshot_rejects_corruption_and_io_failures_without_partial_results() {
+        let (tmp, cfg) = ledger_tests::test_config();
+        let path = cfg.defaults.ledger_path();
+        assert!(super::read_snapshot(&cfg).unwrap().entries.is_empty());
+        fs::write(&path, "\n \t\n{broken\n").unwrap();
+        let error = super::read_snapshot(&cfg).err().unwrap().to_string();
+        assert!(error.contains("parsing ledger entry 3"), "{error}");
+        assert!(error.contains(&path.display().to_string()));
+        let error = super::parse_jsonl_entries("\n{broken", &path, 7)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("parsing ledger entry 9"), "{error}");
+        fs::write(&path, [0xff, b'\n']).unwrap();
+        assert!(super::read_snapshot(&cfg)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("reading"));
+        assert!(super::read_entries_unlocked(tmp.path()).is_err());
+    }
 
     fn dedup_exists(
         cfg: &crate::config::GahConfig,
