@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { appendFile, mkdir, readFile, rename, stat } from 'node:fs/promises';
-import { basename, resolve } from 'node:path';
+import { basename, resolve, win32 } from 'node:path';
 import { homedir, hostname, arch, cpus, freemem, loadavg, platform, release, totalmem, uptime } from 'node:os';
 import { promisify } from 'node:util';
 import { gzipSync } from 'node:zlib';
@@ -14,7 +14,7 @@ const TOP_PROCESSES = 20;
 // cap if testers need a longer window.
 const MAX_TIMELINE_BYTES = 5 * 1024 * 1024;
 
-export interface ProcessSample { pid: number; ppid: number; rss_kb: number; cpu: number; cmd: string }
+export interface ProcessSample { pid: number; ppid: number; rss_kb: number; cpu: number | null; cmd: string }
 export interface MemorySample {
   t: string;
   total_bytes: number;
@@ -22,6 +22,8 @@ export interface MemorySample {
   load1: number;
   server: { pid: number; rss_bytes: number; heap_used_bytes: number; external_bytes: number };
   processes: ProcessSample[];
+  /** Absent in historical samples. An empty failed reading is not an idle host. */
+  processes_status?: 'available' | 'unavailable';
 }
 
 /** Outside the Git checkout, same reasoning as adminUpdate.ts. */
@@ -41,6 +43,28 @@ export function parseProcesses(text: string, serverPid: number, limit = TOP_PROC
     if (!match) continue;
     all.push({ pid: +match[1], ppid: +match[2], rss_kb: +match[3], cpu: +match[4], cmd: basename(match[5]) });
   }
+  return selectProcesses(all, serverPid, limit);
+}
+
+/** Windows CIM supplies working-set bytes and names, never command lines.
+ * CPU percentage is unavailable from this snapshot and remains unknown. */
+export function parseWindowsProcesses(text: string, serverPid: number, limit = TOP_PROCESSES): ProcessSample[] {
+  const parsed: unknown = JSON.parse(text);
+  const all: ProcessSample[] = [];
+  for (const row of Array.isArray(parsed) ? parsed : [parsed]) {
+    if (!row || typeof row !== 'object') continue;
+    const pid = row.ProcessId;
+    const ppid = row.ParentProcessId;
+    const bytes = typeof row.WorkingSetSize === 'string' && /^\d+$/.test(row.WorkingSetSize)
+      ? Number(row.WorkingSetSize) : row.WorkingSetSize;
+    if (!Number.isSafeInteger(pid) || pid < 0 || !Number.isSafeInteger(ppid) || ppid < 0
+      || !Number.isSafeInteger(bytes) || bytes < 0 || typeof row.Name !== 'string' || !row.Name) continue;
+    all.push({ pid, ppid, rss_kb: bytes / 1024, cpu: null, cmd: win32.basename(row.Name) });
+  }
+  return selectProcesses(all, serverPid, limit);
+}
+
+function selectProcesses(all: ProcessSample[], serverPid: number, limit: number): ProcessSample[] {
   const children = new Map<number, number[]>();
   for (const p of all) children.set(p.ppid, [...(children.get(p.ppid) ?? []), p.pid]);
   const ours = new Set<number>([serverPid]);
@@ -53,9 +77,19 @@ export function parseProcesses(text: string, serverPid: number, limit = TOP_PROC
 
 export async function takeSample(): Promise<MemorySample> {
   let processes: ProcessSample[] = [];
+  let processes_status: MemorySample['processes_status'] = 'unavailable';
   try {
-    const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,rss=,pcpu=,comm='], { maxBuffer: 8 * 1024 * 1024, timeout: 5_000 });
-    processes = parseProcesses(stdout, process.pid);
+    if (process.platform === 'win32') {
+      const { stdout } = await execFileAsync('powershell.exe', [
+        '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+        '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance -ClassName Win32_Process -ErrorAction Stop | Select-Object ProcessId,ParentProcessId,WorkingSetSize,Name | ConvertTo-Json -Compress'
+      ], { maxBuffer: 8 * 1024 * 1024, timeout: 5_000, windowsHide: true });
+      processes = parseWindowsProcesses(stdout, process.pid);
+    } else {
+      const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,rss=,pcpu=,comm='], { maxBuffer: 8 * 1024 * 1024, timeout: 5_000 });
+      processes = parseProcesses(stdout, process.pid);
+    }
+    if (processes.some((sample) => sample.pid === process.pid)) processes_status = 'available';
   } catch {
     // No ps (or it failed): host totals and the server's own numbers still help.
   }
@@ -66,7 +100,8 @@ export async function takeSample(): Promise<MemorySample> {
     free_bytes: freemem(),
     load1: loadavg()[0] ?? 0,
     server: { pid: process.pid, rss_bytes: memory.rss, heap_used_bytes: memory.heapUsed, external_bytes: memory.external },
-    processes
+    processes,
+    processes_status
   };
 }
 
