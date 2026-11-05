@@ -1,11 +1,20 @@
 # Beta finishing pass: local validation
 
-Latest compute progress: [receipt retention controls](journal-retention-controls.md)
+Latest compute progress: [workspace admission visibility](compute-admission-visibility.md)
+shows pause reasons and recovery guidance separately from worker liveness, with
+independent expiry and hardware-member visibility. Private `4bca434` / public
+`f11b53c3` passes 1,087 server, 15 mock and 90 dedicated WSL cases (one platform
+skip), plus typechecks/builds and five new cloud Settings browser cases.
+Real SQL/Auth/PostgREST also passed admission reporting/expiry and retained
+queue, recovery, maintenance, authorization and relay checks.
+Hosted reporting, uncertain/legacy state and orphan metadata remain unfinished.
+
+The preceding [receipt retention controls](journal-retention-controls.md)
 expose the separate journal admission limit and owner-confirmed cleanup in shared
 Settings. Unverified receipts remain held; interrupted removal is resumable.
 Private `5ef4458` / public `189f01e3` passes the combined production build.
 The unchanged production sources passed 89 dedicated WSL cases, 18 browser
-cases and a full Settings workflow. Fleet admission visibility, uncertain/legacy
+cases and a full Settings workflow. Hosted admission visibility, uncertain/legacy
 state and orphan capability metadata remain unfinished. Final-pair real
 Auth/PostgREST also passed maintenance and retired-claim execution denial,
 queue/crash recovery and retained authorization/relay checks.

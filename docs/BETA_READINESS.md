@@ -175,8 +175,15 @@ server and 15 mock cases plus typechecks, production builds and artifact guards;
 unchanged production sources passed 89 dedicated WSL cases (one platform skip),
 18 browser cases and a full Settings workflow. Final-pair real Auth/PostgREST
 passed maintenance, retired-claim execution denial, queue/crash recovery and
-authorization/relay checks. Legacy/unknown state,
-pending-delivery reconciliation, fleet admission visibility and capability-metadata
+authorization/relay checks.
+[Workspace admission visibility](validation/beta-progress-2026-11-03/compute-admission-visibility.md)
+now reports compute pauses separately from liveness, with independent expiry and
+guidance visible to hardware members without dashboard access. The `4bca434` /
+`f11b53c3` pair passes 1,087 server, 15 mock and 90 dedicated WSL cases (one
+platform skip), plus typechecks/builds and five cloud Settings browser cases.
+Real SQL/Auth/PostgREST passed admission reporting/expiry and the retained
+queue, recovery, maintenance, authorization and relay checks.
+Hosted reporting, legacy/unknown state, pending-delivery reconciliation and capability-metadata
 maintenance, installed desktop/hosted artifact acceptance, production runtime/client and
 forge access, portable aliases, identity/ledger integration,
 artifact publication, full shared-hardware acceptance, staged migration,
