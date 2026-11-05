@@ -205,10 +205,12 @@ fn ticket_scan_capacity_deferral_resolves_claim_without_changing_attempt_history
     let mut deferred = failed.clone();
     deferred.validation_result = Some("deferred_capacity".into());
     deferred.failure_class = Some("backend_error".into());
-    let index = crate::ledger::index_entries_by_work_id(&[failed.clone(), claim.clone()]);
+    let index_history = [failed.clone(), claim.clone()];
+    let index = crate::ledger::index_entries_by_work_id(&index_history);
     let before = ledger_lookup_for_ticket(Some("TICKET-500"), &prof, &[], &index).unwrap();
     assert!(before.5);
-    let index = crate::ledger::index_entries_by_work_id(&[failed, claim, deferred]);
+    let index_history = [failed, claim, deferred];
+    let index = crate::ledger::index_entries_by_work_id(&index_history);
     let after = ledger_lookup_for_ticket(Some("TICKET-500"), &prof, &[], &index).unwrap();
     assert!(!after.5);
     assert_eq!((after.0, after.1, after.2), (before.0, before.1, before.2));

@@ -32,10 +32,8 @@ pub fn run(cfg: &GahConfig, profile_name: &str, json: bool) -> Result<()> {
     let mrs = fetch_mrs(profile)?;
 
     if json {
-        let ledger_index = crate::ledger::read_entries(cfg)
-            .ok()
-            .map(|e| crate::ledger::index_entries_by_work_id(&e))
-            .unwrap_or_default();
+        let entries = crate::ledger::read_entries(cfg).unwrap_or_default();
+        let ledger_index = crate::ledger::index_entries_by_work_id(&entries);
         let rows: Vec<SyncMrJson> = mrs
             .iter()
             .map(|mr| sync_mr_to_json(mr, Some(profile_name.to_string()), &ledger_index))
@@ -967,7 +965,7 @@ mod tests {
         review.review_gate_reason = Some("APPROVE omitted grounded evidence".into());
         set_review_identity(&mut review, &mr, Some(mr.review_metadata_fingerprint()));
         let mut ledger = crate::ledger::LedgerEntriesByWorkId::new();
-        ledger.insert("TICKET-295".into(), vec![review]);
+        ledger.insert("TICKET-295".into(), vec![&review]);
 
         let row = super::sync_mr_to_json(&mr, Some("test".into()), &ledger);
 
@@ -980,7 +978,7 @@ mod tests {
 
     fn reviewed_needs_fix_row(
         fingerprint: Option<String>,
-    ) -> (SyncMr, crate::ledger::LedgerEntriesByWorkId) {
+    ) -> (SyncMr, Vec<crate::ledger::LedgerEntry>) {
         let mut mr = base_mr();
         mr.work_id = Some("#701".into());
         mr.source_sha = Some("source-sha".into());
@@ -994,9 +992,7 @@ mod tests {
         set_review_identity(&mut review, &mr, fingerprint);
         review.review_blocking_findings = vec!["MR description omitted the finding".into()];
 
-        let mut ledger = crate::ledger::LedgerEntriesByWorkId::new();
-        ledger.insert("#701".into(), vec![review]);
-        (mr, ledger)
+        (mr, vec![review])
     }
 
     #[test]
@@ -1005,7 +1001,11 @@ mod tests {
             review_metadata_fingerprint(Some("source-sha"), Some("x"), Some("old metadata"), false);
         let (mr, ledger) = reviewed_needs_fix_row(Some(old));
 
-        let row = sync_mr_to_json(&mr, Some("test".into()), &ledger);
+        let row = sync_mr_to_json(
+            &mr,
+            Some("test".into()),
+            &crate::ledger::index_entries_by_work_id(&ledger),
+        );
 
         assert_eq!(row.classification, "NEEDS_REVIEW");
         assert_eq!(row.recommended_action, RecommendedAction::RunReview);
@@ -1015,13 +1015,13 @@ mod tests {
     #[test]
     fn unchanged_review_metadata_preserves_needs_fix() {
         let (mr, mut ledger) = reviewed_needs_fix_row(None);
-        set_review_identity(
-            &mut ledger.get_mut("#701").unwrap()[0],
-            &mr,
-            Some(mr.review_metadata_fingerprint()),
-        );
+        set_review_identity(&mut ledger[0], &mr, Some(mr.review_metadata_fingerprint()));
 
-        let row = sync_mr_to_json(&mr, Some("test".into()), &ledger);
+        let row = sync_mr_to_json(
+            &mr,
+            Some("test".into()),
+            &crate::ledger::index_entries_by_work_id(&ledger),
+        );
 
         assert_eq!(row.classification, "NEEDS_FIX");
         assert_eq!(row.recommended_action, RecommendedAction::ReuseBranch);
@@ -1031,11 +1031,15 @@ mod tests {
     #[test]
     fn backfilled_implementation_review_identity_is_valid_review_evidence() {
         let (mr, mut ledger) = reviewed_needs_fix_row(None);
-        let entry = &mut ledger.get_mut("#701").unwrap()[0];
+        let entry = &mut ledger[0];
         entry.mode = "fix".into();
         set_review_identity(entry, &mr, Some(mr.review_metadata_fingerprint()));
 
-        let row = sync_mr_to_json(&mr, Some("test".into()), &ledger);
+        let row = sync_mr_to_json(
+            &mr,
+            Some("test".into()),
+            &crate::ledger::index_entries_by_work_id(&ledger),
+        );
 
         assert_eq!(row.classification, "NEEDS_FIX");
         assert_eq!(row.review_verdict.as_deref(), Some("NEEDS_FIX"));
@@ -1044,13 +1048,17 @@ mod tests {
     #[test]
     fn stale_needs_fix_label_with_nonterminal_human_review_routes_to_review() {
         let (mr, mut ledger) = reviewed_needs_fix_row(None);
-        let review = &mut ledger.get_mut("#701").unwrap()[0];
+        let review = &mut ledger[0];
         review.review_verdict = Some("HUMAN_REVIEW".into());
         review.validation_result = Some("HUMAN_REVIEW".into());
         review.human_required = false;
         set_review_identity(review, &mr, Some(mr.review_metadata_fingerprint()));
 
-        let row = sync_mr_to_json(&mr, Some("test".into()), &ledger);
+        let row = sync_mr_to_json(
+            &mr,
+            Some("test".into()),
+            &crate::ledger::index_entries_by_work_id(&ledger),
+        );
 
         assert_eq!(row.classification, "NEEDS_REVIEW");
         assert_eq!(row.recommended_action, RecommendedAction::RunReview);
@@ -1060,14 +1068,18 @@ mod tests {
     #[test]
     fn invalid_review_output_cannot_select_fixmr_even_with_stale_needs_fix_label() {
         let (mr, mut ledger) = reviewed_needs_fix_row(None);
-        let review = &mut ledger.get_mut("#701").unwrap()[0];
+        let review = &mut ledger[0];
         review.review_verdict = Some("REVIEW_OUTPUT_INVALID".into());
         review.validation_result = Some("review_output_invalid".into());
         review.review_gate_reason = Some("finding explicitly withdrew itself".into());
         review.review_blocking_findings.clear();
         set_review_identity(review, &mr, Some(mr.review_metadata_fingerprint()));
 
-        let row = sync_mr_to_json(&mr, Some("test".into()), &ledger);
+        let row = sync_mr_to_json(
+            &mr,
+            Some("test".into()),
+            &crate::ledger::index_entries_by_work_id(&ledger),
+        );
 
         assert_eq!(row.classification, "NEEDS_REVIEW");
         assert_eq!(row.recommended_action, RecommendedAction::RunReview);
@@ -1081,13 +1093,17 @@ mod tests {
     #[test]
     fn terminal_human_review_hold_is_not_redispatched_or_auto_merged() {
         let (mr, mut ledger) = reviewed_needs_fix_row(None);
-        let review = &mut ledger.get_mut("#701").unwrap()[0];
+        let review = &mut ledger[0];
         review.review_verdict = Some("HUMAN_REVIEW".into());
         review.validation_result = Some("HUMAN_REVIEW".into());
         review.human_required = true;
         set_review_identity(review, &mr, Some(mr.review_metadata_fingerprint()));
 
-        let row = sync_mr_to_json(&mr, Some("test".into()), &ledger);
+        let row = sync_mr_to_json(
+            &mr,
+            Some("test".into()),
+            &crate::ledger::index_entries_by_work_id(&ledger),
+        );
 
         assert_eq!(row.classification, "READY_FOR_HUMAN");
         assert_eq!(
@@ -1103,7 +1119,7 @@ mod tests {
         mr.labels = vec!["gah-ready-for-human".into()];
         mr.url = Some("https://example.test/mr/7".into());
 
-        let implementation = &mut ledger.get_mut("#701").unwrap()[0];
+        let implementation = &mut ledger[0];
         implementation.mode = "fix".into();
         implementation.mr_url = mr.url.clone();
         implementation.effective_backend = "hy3".into();
@@ -1115,9 +1131,13 @@ mod tests {
         rereview.review_verdict = Some("APPROVE".into());
         rereview.validation_result = Some("APPROVE".into());
         set_review_identity(&mut rereview, &mr, Some(mr.review_metadata_fingerprint()));
-        ledger.get_mut("#701").unwrap().push(rereview);
+        ledger.push(rereview);
 
-        let row = sync_mr_to_json(&mr, Some("test".into()), &ledger);
+        let row = sync_mr_to_json(
+            &mr,
+            Some("test".into()),
+            &crate::ledger::index_entries_by_work_id(&ledger),
+        );
 
         assert_eq!(row.classification, "READY_FOR_HUMAN");
         assert_eq!(row.review_verdict.as_deref(), Some("APPROVE"));
@@ -1129,7 +1149,11 @@ mod tests {
     fn historical_review_without_metadata_identity_fails_safe_to_rereview() {
         let (mr, ledger) = reviewed_needs_fix_row(None);
 
-        let row = sync_mr_to_json(&mr, Some("test".into()), &ledger);
+        let row = sync_mr_to_json(
+            &mr,
+            Some("test".into()),
+            &crate::ledger::index_entries_by_work_id(&ledger),
+        );
 
         assert_eq!(row.classification, "NEEDS_REVIEW");
         assert_eq!(row.review_verdict, None);
@@ -1170,7 +1194,7 @@ mod tests {
         mr.title = "approved title".into();
         mr.draft = false;
         mr.labels = vec!["gah-ready-for-human".into()];
-        let review = &mut ledger.get_mut("#701").unwrap()[0];
+        let review = &mut ledger[0];
         review.review_verdict = Some("APPROVE".into());
         review.validation_result = Some("APPROVE".into());
         set_review_identity(
@@ -1184,7 +1208,11 @@ mod tests {
             )),
         );
 
-        let row = sync_mr_to_json(&mr, Some("test".into()), &ledger);
+        let row = sync_mr_to_json(
+            &mr,
+            Some("test".into()),
+            &crate::ledger::index_entries_by_work_id(&ledger),
+        );
 
         assert_eq!(row.classification, "READY_FOR_HUMAN");
         assert_eq!(row.review_verdict.as_deref(), Some("APPROVE"));
@@ -1194,7 +1222,7 @@ mod tests {
     fn redrafting_an_approved_mr_invalidates_the_old_review() {
         let (mut mr, mut ledger) = reviewed_needs_fix_row(None);
         mr.draft = true;
-        let review = &mut ledger.get_mut("#701").unwrap()[0];
+        let review = &mut ledger[0];
         review.review_verdict = Some("APPROVE".into());
         review.validation_result = Some("APPROVE".into());
         set_review_identity(
@@ -1208,7 +1236,11 @@ mod tests {
             )),
         );
 
-        let row = sync_mr_to_json(&mr, Some("test".into()), &ledger);
+        let row = sync_mr_to_json(
+            &mr,
+            Some("test".into()),
+            &crate::ledger::index_entries_by_work_id(&ledger),
+        );
 
         assert_eq!(row.classification, "NEEDS_REVIEW");
         assert_eq!(row.review_verdict, None);

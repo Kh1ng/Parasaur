@@ -342,7 +342,8 @@ fn clear_attempts_does_not_hide_current_provider_mr_state() {
     let mut prof = profile(tmp.path());
     prof.provider = String::new();
     let clear = LedgerEntry::new_clear_attempts("test", &prof, "#437");
-    let index = crate::ledger::index_entries_by_work_id(&[clear]);
+    let index_history = [clear];
+    let index = crate::ledger::index_entries_by_work_id(&index_history);
     let mut mr = crate::sync::SyncMr {
         title: "Draft: [GAH] Fix: #437 context exhaustion".into(),
         body: None,
@@ -550,7 +551,8 @@ fn scan_available_tickets_uses_preloaded_ledger_index_for_multiple_tickets() {
     second.work_id = Some("TICKET-211".into());
     second.branch = Some("gah/repo-211".into());
 
-    let index = crate::ledger::index_entries_by_work_id(&[first, second]);
+    let index_history = [first, second];
+    let index = crate::ledger::index_entries_by_work_id(&index_history);
     let mrs = vec![crate::sync::SyncMr {
         title: "[GAH] Fix: TICKET-211".into(),
         body: None,
@@ -621,7 +623,8 @@ fn clear_attempts_tombstone_resets_ticket_count() {
     // Tombstone
     let tombstone = LedgerEntry::new_clear_attempts("test", &prof, "TICKET-300");
 
-    let index = crate::ledger::index_entries_by_work_id(&[e1, e2, e3, tombstone]);
+    let index_history = [e1, e2, e3, tombstone];
+    let index = crate::ledger::index_entries_by_work_id(&index_history);
     let candidates = scan_available_tickets(&prof, &[], &index);
     assert_eq!(candidates.len(), 1);
     assert_eq!(
@@ -667,7 +670,8 @@ fn scan_available_tickets_reflects_claim_lifecycle() {
     let mut completed = LedgerEntry::new("test", &prof, "codex", "fix", "x", None, None);
     completed.work_id = Some("TICKET-501".into());
     completed.failure_class = Some("backend_error".into());
-    let index = crate::ledger::index_entries_by_work_id(&[claim, completed]);
+    let index_history = [claim, completed];
+    let index = crate::ledger::index_entries_by_work_id(&index_history);
     let candidates = scan_available_tickets(&prof, &[], &index);
     assert!(
         !candidates[0].has_active_claim,
@@ -679,7 +683,8 @@ fn scan_available_tickets_reflects_claim_lifecycle() {
     stale_claim.timestamp = (OffsetDateTime::now_utc() - time::Duration::hours(7))
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
-    let index = crate::ledger::index_entries_by_work_id(&[stale_claim]);
+    let index_history = [stale_claim];
+    let index = crate::ledger::index_entries_by_work_id(&index_history);
     let candidates = scan_available_tickets(&prof, &[], &index);
     assert!(
         !candidates[0].has_active_claim,
@@ -715,7 +720,8 @@ fn entries_after_tombstone_still_count() {
     e2.work_id = Some("TICKET-301".into());
     e2.failure_class = Some("backend_error".into());
 
-    let index = crate::ledger::index_entries_by_work_id(&[e1, tombstone, e2]);
+    let index_history = [e1, tombstone, e2];
+    let index = crate::ledger::index_entries_by_work_id(&index_history);
     let candidates = scan_available_tickets(&prof, &[], &index);
     assert_eq!(candidates.len(), 1);
     assert_eq!(
@@ -747,7 +753,8 @@ fn capacity_deferral_does_not_count_as_a_ticket_attempt() {
     deferred.failure_class = Some("backend_error".into());
     deferred.attempts_started = Some(0);
     deferred.attempts_completed = Some(0);
-    let index = crate::ledger::index_entries_by_work_id(&[deferred]);
+    let index_history = [deferred];
+    let index = crate::ledger::index_entries_by_work_id(&index_history);
 
     let candidates = scan_available_tickets(&prof, &[], &index);
 
@@ -781,7 +788,8 @@ fn infra_failures_not_counted_as_agent_failures() {
     e3.work_id = Some("TICKET-302".into());
     e3.failure_class = Some("harness_error".into());
 
-    let index = crate::ledger::index_entries_by_work_id(&[e1, e2, e3]);
+    let index_history = [e1, e2, e3];
+    let index = crate::ledger::index_entries_by_work_id(&index_history);
     let candidates = scan_available_tickets(&prof, &[], &index);
     assert_eq!(candidates.len(), 1);
     assert_eq!(
@@ -1205,8 +1213,8 @@ fn review_hold_entries_do_not_count_as_attempts() {
     // Create review_hold_release entry
     let review_hold_release = LedgerEntry::new_review_hold_release("test", &prof, "TICKET-441");
 
-    let index =
-        crate::ledger::index_entries_by_work_id(&[attempt_entry, review_hold, review_hold_release]);
+    let index_history = [attempt_entry, review_hold, review_hold_release];
+    let index = crate::ledger::index_entries_by_work_id(&index_history);
     let candidates = scan_available_tickets(&prof, &[], &index);
 
     assert_eq!(candidates.len(), 1);
@@ -1243,7 +1251,8 @@ fn review_hold_only_entries_show_zero_attempts() {
     // Create review_hold_release entry
     let review_hold_release = LedgerEntry::new_review_hold_release("test", &prof, "TICKET-442");
 
-    let index = crate::ledger::index_entries_by_work_id(&[review_hold, review_hold_release]);
+    let index_history = [review_hold, review_hold_release];
+    let index = crate::ledger::index_entries_by_work_id(&index_history);
     let candidates = scan_available_tickets(&prof, &[], &index);
 
     assert_eq!(candidates.len(), 1);

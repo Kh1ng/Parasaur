@@ -712,7 +712,7 @@ fn ledger_lookup_for_ticket(
     all_mrs: &[crate::sync::SyncMr],
     index: &crate::ledger::LedgerEntriesByWorkId,
 ) -> Option<TicketHistoryLookup> {
-    let ended_runs = EndedClaimRuns::from_entries(index.values().flatten());
+    let ended_runs = EndedClaimRuns::from_entries(index.values().flatten().copied());
     ledger_lookup_for_scan(work_id, profile, all_mrs, index, &ended_runs)
 }
 
@@ -738,10 +738,11 @@ fn ledger_lookup_with_setup_reason(
         entries
             .into_iter()
             .flatten()
+            .copied()
             .filter(|e| e.repo_id == profile.repo_id),
         ended_runs,
     );
-    for e in entries.into_iter().flatten() {
+    for e in entries.into_iter().flatten().copied() {
         // The ledger is a single global file shared by every profile
         // (Defaults::ledger_path, not per-profile), and work_id is
         // just a heading-derived string like "TICKET-090" with no
@@ -948,7 +949,7 @@ pub(crate) fn scan_available_tickets(
     let entries: Vec<LedgerEntry> = ledger_entries_by_work_id
         .values()
         .flatten()
-        .cloned()
+        .map(|entry| (*entry).clone())
         .collect();
     scan_available_tickets_with_dependencies(profile, all_mrs, ledger_entries_by_work_id, &entries)
         .available_tickets

@@ -1244,7 +1244,8 @@ mod tests {
             None,
         );
 
-        let index = index_entries_by_work_id(&[first, second, untagged]);
+        let index_history = [first, second, untagged];
+        let index = index_entries_by_work_id(&index_history);
         assert_eq!(index.len(), 2);
         assert_eq!(index["TICKET-096"].len(), 2);
         assert_eq!(index["#096"].len(), 2);

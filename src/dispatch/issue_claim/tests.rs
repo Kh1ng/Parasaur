@@ -1272,7 +1272,8 @@ fn a_lost_claim_does_not_count_as_an_attempt_on_the_issue() {
     lost.work_id = Some("TICKET-302".into());
     lost.validation_result = Some(crate::ledger::gates::CLAIM_LOST.into());
     lost.failure_class = Some("harness_error".into());
-    let index = crate::ledger::index_entries_by_work_id(&[lost]);
+    let index_history = [lost];
+    let index = crate::ledger::index_entries_by_work_id(&index_history);
 
     let scan =
         crate::dispatch::claims::scan_available_tickets_with_dependencies(&prof, &[], &index, &[]);

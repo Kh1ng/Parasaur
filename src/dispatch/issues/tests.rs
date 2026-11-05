@@ -1035,7 +1035,8 @@ fn github_dependency_query_fixture_releases_653_when_652_closes() {
     let mut prof = profile(tmp.path());
     prof.provider = "github".into();
     prof.repo = "owner/repo".into();
-    let ledger = ledger::index_entries_by_work_id(&ledger::read_entries(&cfg).unwrap());
+    let ledger_history = ledger::read_entries(&cfg).unwrap();
+    let ledger = ledger::index_entries_by_work_id(&ledger_history);
 
     fs::write(
         &dependency_path,
