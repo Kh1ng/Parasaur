@@ -665,7 +665,7 @@ fn spawn_with_idle_watch_with_shutdown(
     #[cfg(target_os = "linux")]
     let (resource_stop, resource_accumulator, resource_handle) =
         crate::runner::resources::spawn_resource_sampler(child.id());
-    let (progress_tx, progress_rx) = mpsc::channel();
+    let (progress_tx, progress_rx) = mpsc::sync_channel(1);
     let stdout_thread = child.stdout.take().map(|stdout| {
         copy_stream_to_file(stdout, log_path.to_path_buf(), Some(progress_tx.clone()))
     });
@@ -710,7 +710,7 @@ fn spawn_with_idle_watch_with_shutdown(
                     break Some(-2);
                 }
                 let previous_progress_at = last_progress_at;
-                while progress_rx.try_recv().is_ok() {
+                if progress_rx.try_recv().is_ok() {
                     let current_len = fs::metadata(log_path)
                         .map(|m| m.len())
                         .unwrap_or(last_seen_len);
