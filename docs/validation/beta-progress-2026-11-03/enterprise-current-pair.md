@@ -1,23 +1,25 @@
 # Current enterprise integration — 2026-11-04
 
-The current verified pair is private `afd4cee4` with public core `8963ebb5`.
-It retains [bounded workspaces](enterprise-bounded-workspace.md), durable
-compute delivery and native supervision, and adds an [opt-in automatic compute
-consumer with persistent archive admission](enterprise-compute-queue.md).
+The current verified pair is private `ac04a1a4` with public core `2cc5e3fd`.
+It retains automatic queued compute, bounded archives and durable delivery,
+and adds [verified owner/scope reconciliation](enterprise-compute-reconciliation.md).
+Protocol 2 blocks launch until broker registration is durable. Full kernel
+slice-path checks and bounded housekeeping close the reproduced cleanup gaps.
 
-The exact pair passed 1,058 server cases (33 explicit skips), 13 mock cases,
-typechecks, production builds and artifact/transport guards. The dedicated WSL
-run passed 62 cases with one platform-only skip. Two queued jobs completed
-through real disposable Auth/PostgREST, the sandbox, inference relay/worker,
-HTTP fixture provider and separate bounded archives. Repeated inference reads
-produced one provider attempt per job. Seven supplemental startup crash timings
-and the retained retry/revocation/relay checks passed.
+The exact pair passed 1,060 server cases (37 explicit skips), 13 mock cases,
+typechecks, production builds and artifact/transport guards. Dedicated WSL
+checks passed 68 cases with one platform-only skip. Real disposable
+Auth/PostgREST killed and restarted a consumer after its fixture-provider call,
+then verified one attempt, an unknown-exit interrupted receipt and recovered
+empty storage. Normal queued jobs and retained retry/revocation/relay checks
+passed. Seven startup offsets and twelve repetitions of the formerly failing
+window were clean on the retained final binary.
 
-Post-crash scope/slot reconciliation, journal/archive maintenance and review
-controls, production dispatch/client and forge runtime, portable aliases,
-execution identity, configuration migration and complete shared-hardware
-acceptance remain unfinished. This is local fixture evidence; installed
-releases and live services were not upgraded or enabled for cloud compute.
+Legacy/unknown state reconciliation, archive review/retention and journal/
+capability-metadata maintenance, production dispatch/client and forge runtime,
+portable aliases, ledger integration, configuration migration and complete
+shared-hardware acceptance remain unfinished. Installed releases and live
+services were not upgraded or enabled for cloud compute.
 
 ## Earlier integration record
 

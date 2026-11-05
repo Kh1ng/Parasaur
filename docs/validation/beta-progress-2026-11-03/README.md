@@ -1,14 +1,14 @@
 # Beta finishing pass: local validation
 
-Latest enterprise evidence: [automatic queued compute](enterprise-compute-queue.md)
-retains bounded workspaces, durable delivery and native supervision. Private
-`afd4cee4` / public `8963ebb5` passes the combined build, 62 dedicated WSL
-checks (one platform skip), seven supplemental startup crash timings and real
-Auth/PostgREST queue-to-inference-to-archive checks. Two queued fixture jobs
-completed with one provider attempt each and unchanged host input.
-Post-crash scope/slot reconciliation, journal/archive maintenance and review
-controls, production runtime/client and forge access, aliases, identity/ledger
-integration, full shared-hardware acceptance and migration remain unfinished.
+Latest enterprise evidence: [verified crash reconciliation](enterprise-compute-reconciliation.md)
+retains automatic queued compute and bounded archives. Private `ac04a1a4` /
+public `2cc5e3fd` passes the combined build, 68 dedicated WSL checks (one platform
+skip), real Auth/PostgREST consumer kill/restart and normal queued workflows.
+The launch handshake, systemd slice path and empty-scope retirement repairs
+passed seven startup offsets and twelve repeated formerly failing timings.
+Legacy/unknown state, archive review/retention and metadata maintenance,
+production runtime/client and forge access, aliases, ledger integration,
+full shared-hardware acceptance and migration remain unfinished.
 
 The preceding [durable inference retry receipts](enterprise-inference-receipts.md)
 fixes a reproduced duplicate-request path and records the clean private `14c16068`
