@@ -82,7 +82,7 @@ export async function takeSample(): Promise<MemorySample> {
     if (process.platform === 'win32') {
       const { stdout } = await execFileAsync('powershell.exe', [
         '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-        '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance -ClassName Win32_Process -ErrorAction Stop | Select-Object ProcessId,ParentProcessId,WorkingSetSize,Name | ConvertTo-Json -Compress'
+        '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId,WorkingSetSize,Name -ErrorAction Stop | Select-Object ProcessId,ParentProcessId,WorkingSetSize,Name | ConvertTo-Json -Compress'
       ], { maxBuffer: 8 * 1024 * 1024, timeout: 5_000, windowsHide: true });
       processes = parseWindowsProcesses(stdout, process.pid);
     } else {
