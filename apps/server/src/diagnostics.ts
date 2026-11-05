@@ -19,7 +19,7 @@ export interface MemorySample {
   t: string;
   total_bytes: number;
   free_bytes: number;
-  load1: number;
+  load1: number | null;
   server: { pid: number; rss_bytes: number; heap_used_bytes: number; external_bytes: number };
   processes: ProcessSample[];
   /** Absent in historical samples. An empty failed reading is not an idle host. */
@@ -91,14 +91,14 @@ export async function takeSample(): Promise<MemorySample> {
     }
     if (processes.some((sample) => sample.pid === process.pid)) processes_status = 'available';
   } catch {
-    // No ps (or it failed): host totals and the server's own numbers still help.
+    // Collector unavailable: host totals and the server's own numbers still help.
   }
   const memory = process.memoryUsage();
   return {
     t: new Date().toISOString(),
     total_bytes: totalmem(),
     free_bytes: freemem(),
-    load1: loadavg()[0] ?? 0,
+    load1: process.platform === 'win32' ? null : loadavg()[0] ?? null,
     server: { pid: process.pid, rss_bytes: memory.rss, heap_used_bytes: memory.heapUsed, external_bytes: memory.external },
     processes,
     processes_status

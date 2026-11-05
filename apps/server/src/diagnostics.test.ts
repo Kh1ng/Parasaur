@@ -51,6 +51,7 @@ test('Windows snapshots retain descendants, convert bytes and preserve unknown C
 test('native Windows diagnostics include the sampling process with a real working set', { skip: process.platform !== 'win32' }, async () => {
   const sample = await takeSample();
   assert.equal(sample.processes_status, 'available');
+  assert.equal(sample.load1, null, 'Windows has no Unix load average');
   const server = sample.processes.find((p) => p.pid === process.pid);
   assert.ok(server && server.rss_kb > 0);
   assert.equal(server.cpu, null);
