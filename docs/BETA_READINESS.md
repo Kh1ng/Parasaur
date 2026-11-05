@@ -43,6 +43,13 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Streaming ledger reads](validation/beta-progress-2026-11-03/streamed-ledger-memory.md)
+  removes the extra whole-file text copy without truncating decoded history.
+  119 ledger and 198 controller tests, formatting and Clippy pass. A controlled
+  twelve-pass comparison observed lower peak/final RSS; growth, live attribution
+  and a long soak remain unresolved. The optimized WSL user CLI is installed
+  with rollback and both Windows integration reads pass.
+
 - [Repeated controller memory](validation/beta-progress-2026-11-03/repeated-controller-memory.md)
   now has same-process measurements across twelve passes with four synthetic
   workers. Both default and process-local allocator diagnostic runs completed
@@ -54,9 +61,9 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   now exposes a registered worker's profile-scoped controller status, last
   decision and reported gates through a read-only Nodes check. Six HTTP checks,
   eleven Windows component checks and the sample Nodes browser flow pass.
-  Private `3cac46c` / public `26ed70e8` passes the combined build and fresh generic
-  Auth/relay regressions. Real worker access and hosted/installed acceptance
-  remain required; the public recovery ZIP predates this feature.
+  Private `a10a5f2` / public `5e261e0e` passes the combined build, 100 native
+  isolation checks and fresh generic Auth/relay regressions. Real worker access
+  and hosted/installed acceptance remain required; the current public recovery ZIP includes this feature.
 
 - [Factory refresh recovery](validation/beta-progress-2026-11-03/kanban-refresh-recovery.md)
   now labels retained board/navbar observations as unavailable, blocks assignment
@@ -95,9 +102,9 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
   are still required.
 
 - The [current public recovery candidate](validation/beta-progress-2026-11-03/current-public-release.md)
-  at `43d73448` includes the pipeline UI and optimized memory/scheduler repairs.
-  Its CLI bytes already match the WSL user installation; earlier rollback and
-  Windows integration reads remain recorded. Actual isolated release installation
+  at `5e261e0e` includes worker factory reads and the streaming-ledger repair.
+  Its optimized CLI is installed in WSL with rollback and fresh Windows
+  integration reads. Actual isolated release installation
   and all 29 cold dashboard JavaScript chunks pass. The central remains undeployed;
   signed updates, target compatibility and authenticated live acceptance remain.
 

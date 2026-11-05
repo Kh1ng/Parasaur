@@ -1,6 +1,10 @@
 # Current enterprise integration — 2026-11-05
 
-The current assembled pair is private `3cac46c` with public core `26ed70e8`.
+The current assembled pair is private `a10a5f2` with public core `5e261e0e`.
+It includes [streaming ledger reads](streamed-ledger-memory.md), removing the
+whole-file text copy while preserving full history and strict corruption errors.
+The controlled repeated probe observed lower peak and final RSS; live leak
+attribution and a long soak remain required.
 It includes [worker factory observations](worker-factory-observations.md):
 a profile-scoped, read-only Nodes check for a registered worker's controller,
 last decision and reported gates, with independent unavailable states.
@@ -55,11 +59,10 @@ dashboard bundle were checked for the intended revision and panel.
 Fresh SQL replay and real local Auth/PostgREST/HTTP/WebSocket relay regressions
 passed. These generic checks do not establish hosted worker-factory acceptance.
 The earlier `fd4d761` / `7db57658` pair retains its 35 assembled Kanban/store checks.
-The preceding `3bfc79b` / `819937bf` pair passed 100 dedicated native WSL isolation
-cases (one platform skip), SQL replay and real local Auth/PostgREST/HTTP/WebSocket
-relay checks. The dedicated native result remains historical; Rust isolation
-sources are unchanged. Current server/contracts/UI changes have the fresh
-build and route-specific checks above, with fresh generic Auth/relay evidence.
+The current pair also passed 100 dedicated native WSL isolation cases (one
+platform skip) on the refreshed `84126766` host. SQL replay and real local
+Auth/PostgREST/HTTP/WebSocket relay checks passed again, including durable
+receipts, crash recovery, recipient isolation and authorization.
 The preceding
 receipt-recovery pair retains 19 shared-output browser cases, a full sample
 Settings workflow and inspected desktop/mobile layouts. SQL source is unchanged;
@@ -77,8 +80,8 @@ Queue, crash/recovery, retry-receipt and authorization/relay checks passed.
 Earlier Windows desktop checks passed 35 ordinary cases and the separate hidden
 native output fixture. The older `ac62e3` native binary has the seven startup
 offsets and twelve repeated startup-window checks. The refreshed debug host is
-`f6028d54`; its isolation-host sources are unchanged. That earlier timing-stress
-record is historical, not a claim of a new repetition on this binary.
+`84126766`; its fresh dedicated isolation results are recorded above. That earlier
+timing-stress record is historical, not a claim of a new repetition on this binary.
 
 The preceding `e7d088c` / `2f8c9cf5` pair and `fe07bdd2` host passed 96 dedicated
 WSL isolation cases (one platform skip) after the Ubuntu-24.04 restart. The

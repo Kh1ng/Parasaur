@@ -1,24 +1,25 @@
 # Beta finishing pass: local validation
 
-Latest memory evidence: the [repeated controller probe](repeated-controller-memory.md)
-now samples one daemon across real pass boundaries. The one-wave control and
-two 12-pass/four-worker runs completed normally. Both traces show RSS growth;
-an allocator comparison changes footprint but does not resolve attribution.
-The test is opt-in, and no production allocator or installed runtime changed.
+Latest memory repair: [streaming ledger reads](streamed-ledger-memory.md) removes
+an extra whole-file text allocation while preserving complete decoded history.
+119 ledger and 198 controller tests, formatting and Clippy pass. The twelve-pass
+comparison observed lower peak/final RSS, but growth and live attribution remain
+unresolved. The optimized WSL user CLI is updated with rollback; Windows account
+metadata and Mistral preflight reads pass.
 
 Latest worker observability: [worker factory state](worker-factory-observations.md)
 now reads a registered worker's controller, last decision and gates for a chosen
 declared profile, without shell access or remote mutations. Six HTTP checks,
 eleven component checks and the full sample Nodes browser flow pass. Private
-`3cac46c` / public `26ed70e8` passes 1,105 server and 16 mock cases, build guards
+`a10a5f2` / public `5e261e0e` passes 1,105 server and 16 mock cases, build guards
 and fresh local Auth/PostgREST/relay regressions. Live acceptance remains open.
 
 Latest delivery progress: the [current public recovery package](current-public-release.md)
-at `43d73448` now includes the pipeline observation fixes. It passes actual
-isolated release installation with Windows npm first on PATH and byte-for-byte
-HTTP reads of all 29 JavaScript chunks. The optimized CLI already matches the
-installed WSL binary; native desktop/settings and worker releases are unchanged.
-The desktop loads the central dashboard, so live deployment is still required.
+at `5e261e0e` includes the pipeline observation and streaming-ledger fixes.
+It passes actual isolated release installation with Windows npm first on PATH
+and byte-for-byte HTTP reads of all 29 JavaScript chunks. The installed WSL CLI
+matches the candidate; native desktop/settings and worker binaries retain their
+hashes. The desktop loads the central dashboard, so live deployment is required.
 
 Latest recovery progress: [failed factory refreshes](kanban-refresh-recovery.md)
 retain recorded jobs while marking execution/capacity unconfirmed, disable

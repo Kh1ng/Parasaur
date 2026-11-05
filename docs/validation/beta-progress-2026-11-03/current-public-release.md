@@ -4,13 +4,15 @@ The native desktop remains [source 018f6603](windows-updater-config.md), with
 the repaired Windows updater lookup. Its separate Windows installer and closed
 local test installation are unchanged by this CLI/server package update.
 
-Source: `43d73448ff6b5297cd8db08c03cd83095610c0c7`, version 0.3.0.
-Package: `artifacts/parasaur-central-43d73448.zip` (24,179,633 bytes).
-SHA-256: `db6b30fe106c49111137820f1a4af882a538e534b884756578136ddfa3e907e6`.
-This supersedes the retained `819937bf`, `77209892` and historical `16e9ecc6`
-candidates. It adds [claim evidence](kanban-claim-evidence.md),
+Source: `5e261e0e9e8e975278f36579149c7954e60e4c6a`, version 0.3.0.
+Package: `artifacts/parasaur-central-5e261e0e.zip` (24,240,359 bytes).
+SHA-256: `fdf2b18947b4b65a348e30ee940f620f6182382ce0fa82add98329ece46a93d2`.
+This supersedes the retained `43d73448`, `819937bf`, `77209892` and historical
+`16e9ecc6` candidates. It adds [claim evidence](kanban-claim-evidence.md),
 [failed-refresh recovery and stale-worker activity](kanban-refresh-recovery.md)
-to the matched dashboard package. All 29 JavaScript chunks served byte-for-byte
+plus [worker factory observations](worker-factory-observations.md) and
+[streaming ledger reads](streamed-ledger-memory.md) to the matched package.
+All 29 JavaScript chunks served byte-for-byte
 after actual isolated release installation, including the lazy page assets.
 
 The package contains matched optimized Linux CLI/MCP binaries, the public
@@ -22,8 +24,8 @@ and [bounded controller passes](controller-pass-turnover.md), plus
 [native Windows diagnostics](windows-memory-diagnostics.md). Private source
 and overlays are excluded; enterprise remains a separate private build.
 
-The fresh locked/offline optimized build passed **1,004 public server cases**
-(two explicit skips) and **15 mock cases**, with no failures. The optimized CLI
+The fresh locked/offline optimized build passed **1,010 public server cases**
+(two explicit skips) and **16 mock cases**, with no failures. The optimized CLI
 passed the 128 MiB journal memory-limit check and all four review-format cases,
 including oversized approval rejection. Debug scheduler-budget and pressure
 hooks are absent from the release binary. These are local checks, not a daemon
@@ -39,17 +41,16 @@ checksums, ZIP CRC and archived-file byte comparisons passed.
 
 Both binaries require **glibc 2.39**; current Ubuntu-24.04 WSL meets that floor.
 Live central compatibility remains unverified. Source/log:
-`/home/khing/.cache/parasaur-public-release.9ph_129k`.
+`/home/khing/.cache/parasaur-public-release.ja36k2k5`.
 
-The WSL user CLI at `~/.cargo/bin/gah` already matches the candidate, SHA-256
-`e3a3c6fc0ee2f266cac63d360321e4002a3ecff06ab8a55f045e74c98533c552`.
-The freshly optimized CLI bytes equal the preceding installed build; Rust source
-is unchanged, so no user CLI replacement was necessary. The candidate passed
-the memory regression and four review-format cases again. The preceding install
-retains rollback at `~/.cache/parasaur-upgrade-backups/gah-before-819937bf` and
-its passing Windows account-metadata/Mistral preflight checks. Those installed
-checks were not rerun or added to this candidate's evidence. No provider sign-in,
-billing call or GUI interaction occurred.
+The idle WSL user CLI at `~/.cargo/bin/gah` was atomically replaced and verified
+against the candidate, SHA-256
+`4cac1f30362fd072632f9dde9527183fff52a044e4335e308517b55949ab03e2`.
+Rollback: `~/.cache/parasaur-upgrade-backups/gah-before-5e261e0e`.
+The actual installed CLI passed the memory regression. Both native Windows
+integration reads passed again: account metadata and Mistral preflight.
+`USER_INSTALL.json` and `windows-installed-cli.log` record these checks.
+No provider sign-in, billing call or GUI interaction occurred.
 
 All six separate worker-release binary hashes remain unchanged. No worker
 service was started, stopped or upgraded; no new user MCP installation was made.
@@ -63,7 +64,8 @@ and hashes. The desktop bundles local Settings and loads its dashboard from the
 configured central service; rebuilding its unchanged native executable would
 not deliver these web fixes. The actual release installer was tested only in
 an isolated checkout. This is an unsigned, unpublished local candidate. The
-installed apps and central are unchanged. Signed updates, fresh-host installation,
+WSL user CLI is updated; the native desktop and central are unchanged. Signed
+updates, fresh-host installation,
 authenticated live pipeline acceptance, real provider usage/billing, live memory
 attribution, enterprise hosting and physical iPhone delivery remain required.
 
