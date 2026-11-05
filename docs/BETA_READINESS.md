@@ -143,17 +143,18 @@ was followed by [durable inference retry receipts](validation/beta-progress-2026
 The [inference-side consumer](validation/beta-progress-2026-11-03/enterprise-inference-consumer.md)
 is retained with the new [compute process boundary](validation/beta-progress-2026-11-03/enterprise-compute-isolation.md)
 and [claim-bound inference socket](validation/beta-progress-2026-11-03/enterprise-inference-relay.md)
-at private `a58ce10d`, paired with public core `8963ebb5`, including the
+at private `637f088f`, paired with public core `8963ebb5`, including the
 [startup authorization repair](validation/beta-progress-2026-11-03/enterprise-startup-authorization.md),
-[shared capacity/native watchdog](validation/beta-progress-2026-11-03/enterprise-host-supervision.md)
-and [durable compute start/result delivery](validation/beta-progress-2026-11-03/enterprise-compute-recovery.md).
+[shared capacity/native watchdog](validation/beta-progress-2026-11-03/enterprise-host-supervision.md),
+[durable compute start/result delivery](validation/beta-progress-2026-11-03/enterprise-compute-recovery.md),
+and [bounded workspace/archive](validation/beta-progress-2026-11-03/enterprise-bounded-workspace.md).
 The exact combined build, SQL replay and real Auth/PostgREST/HTTP fixture-provider
-checks passed. Thirty-eight dedicated WSL checks, seven startup crash timings and
+checks passed. Fifty dedicated WSL checks, seven supplemental startup crash timings and
 sandboxed inference passed, including Node freeze, uncertain cleanup and lost
-committed start/completion replies.
+committed start/completion replies with preserved host input and bounded output.
 The automatic compute queue consumer, post-crash scope reconciliation, journal
-retention, production runtime/client and forge access, portable aliases, identity/ledger integration,
-bounded workspace storage, full shared-hardware acceptance, staged migration,
+retention and node-wide artifact budget, production runtime/client and forge access, portable aliases, identity/ledger integration,
+safe artifact review/publication, full shared-hardware acceptance, staged migration,
 hosted rollout and a real provider-backed job remain unfinished.
 
 A [current public recovery candidate](validation/beta-progress-2026-11-03/current-public-release.md)

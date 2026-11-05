@@ -1,24 +1,23 @@
 # Current enterprise integration — 2026-11-04
 
-The current verified pair is private `a58ce10d` with public core `8963ebb5`.
-It retains [shared capacity and independent supervision](enterprise-host-supervision.md)
-and adds [durable compute start/result delivery](enterprise-compute-recovery.md).
-A lost start reply cannot trigger a second program attempt; a lost completion
-reply can be reconciled from its receipt. Interrupted records remain unresolved
-without blocking delivery for unrelated completed claims.
+The current verified pair is private `637f088f` with public core `8963ebb5`.
+It retains [shared capacity and native supervision](enterprise-host-supervision.md)
+and [durable compute delivery](enterprise-compute-recovery.md), and adds a
+[bounded job workspace/archive](enterprise-bounded-workspace.md). Host input is
+preserved while edits are captured through a byte-limited Unix capability.
 
-The exact pair passed 1,041 server cases (26 explicit skips), 13 mock cases,
+The exact pair passed 1,048 server cases (31 explicit skips), 13 mock cases,
 typechecks, production builds and artifact/transport guards. The dedicated WSL
-run passed 38 cases with one platform-only skip. Seven startup crash timings
-and real disposable Auth/PostgREST checks passed, including lost committed
-start/completion replies and the sandbox-to-inference fixture flow. See the
-recovery and supervision records for fixture limits and earlier Rust results.
+run passed 50 cases with one platform-only skip. Real disposable
+Auth/PostgREST lost committed start/completion replies preserved the execution
+count and bounded archive. Seven supplemental startup crash timings passed;
+see the workspace record for their mode and the fixture limits.
 
-The automatic compute consumer, post-crash scope reconciliation, journal
-retention, production runtime/client, forge access, portable aliases, bounded
-workspace storage, execution identity, configuration migration and complete
-shared-hardware acceptance remain unfinished. Installed releases and live
-services were not upgraded.
+The automatic compute consumer, node-wide archive budget, journal retention,
+post-crash scope reconciliation, production runtime/client, forge access,
+safe artifact review/publication, portable aliases, execution identity,
+configuration migration and complete shared-hardware acceptance remain
+unfinished. Installed releases and live services were not upgraded.
 
 ## Earlier integration record
 
