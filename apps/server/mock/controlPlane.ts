@@ -1533,7 +1533,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     decision: { state: 'available', value: { timestamp: new Date(FIXED_NOW).toISOString(), kind: 'human_required', work_id: '#42', reason_code: 'stuck_loop_gate', reason: 'Sample worker: review repeated without progress; inspect its review evidence.' } },
     status: { state: 'available', value: { generated_at: new Date(FIXED_NOW).toISOString(), profile_blockers: [], profile_blocker_count: 0,
       work_blockers: [{ work_id: '#42', reason_code: 'stuck_loop_gate', message: 'Sample review gate awaiting operator action.', next_steps: ['Inspect the sample worker’s current review receipt.'] }], work_blocker_count: 1 } },
-  } satisfies NodeFactorySnapshot)));
+  } satisfies NodeFactorySnapshot));
   app.get('/api/registry/nodes/:id/health', (req, res) => res.json({
     node_id: req.params.id,
     status: 'healthy',
