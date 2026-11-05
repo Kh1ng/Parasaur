@@ -1,5 +1,27 @@
 # Live central discovery and dashboard failure
 
+## Fresh Windows recheck, 2026-11-05
+
+The real port-8443 service is reachable again: health is 200 and reports version
+0.2.0, dashboard HTML is 200, and unauthenticated `/api/info` is 401. Both assets
+referenced by that HTML (`index-oGMXkd18.js` and `index-DwFxA1zN.css`) still return
+500 with the fixed generic error body. This is a body-GET check, not a HEAD check.
+Evidence is retained under `artifacts/live-central-1793865414581/`.
+
+A new private owner-token card timed out without yielding a credential. A
+strict-host-key, batch-mode Windows SSH attempt as `khing` was denied with
+`Permission denied (publickey)`. No authenticated pipeline read or host log
+inspection succeeded, and no credential request remains pending. No live
+configuration, service, gate or job was changed.
+
+Read-only GitHub checks still show the same four open draft heads recorded in
+[forge gates](factory-forge-gates.md); #1679 has failed Rust CI, and all four have
+empty formal review-decision fields. Those facts do not establish what Michael's
+running controller is waiting for. A separate [Windows diagnostics repair](windows-memory-diagnostics.md)
+fixes unavailable local process sampling; it is not a repair of these live assets.
+
+## Earlier observations
+
 Read-only HTTPS checks on 2026-11-03 confirmed the actual Parasaur service at
 `https://hermesagent.tail82695.ts.net:8443`. The original HTTPS listener still
 returns 404 for `/api/info`; its previously identified service is Hermes.

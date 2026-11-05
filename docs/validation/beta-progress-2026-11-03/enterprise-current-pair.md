@@ -1,6 +1,8 @@
 # Current enterprise integration — 2026-11-05
 
-The current assembled pair is private `c7b2a06` with public core `ded751a2`.
+The current assembled pair is private `bc7d050` with public core `8ed53733`.
+It includes [native Windows memory diagnostics](windows-memory-diagnostics.md),
+retaining real process working sets and explicit unknown CPU/load readings.
 It includes [bounded controller passes](controller-pass-turnover.md), so a busy
 queue eventually releases completed pass state and returns to config reload.
 It also includes [streaming event history](event-reader-memory.md), preserving
@@ -29,12 +31,14 @@ streaming, corruption and cancellation evidence without a new production bridge.
 Protocol 2 blocks launch until broker registration is durable. Full kernel
 slice-path checks and bounded housekeeping close the reproduced cleanup gaps.
 
-The exact production pair passed 1,093 server cases (37 explicit skips), 15 mock
+The diagnostics integration passed 1,095 server cases (38 explicit skips), 15 mock
 cases, typechecks, production builds and artifact/transport guards. The preceding
 receipt-recovery pair retains 19 shared-output browser cases, a full sample
-Settings workflow and inspected desktop/mobile layouts. Its server/web/SQL
-production source is unchanged; this increment changes Rust runner code and
-the private core pin. The admission-view pair retains its five cloud Settings
+Settings workflow and inspected desktop/mobile layouts. Private web/SQL and
+compute/authorization runtime source is unchanged from those checks. Later
+public core changes cover runner retention, event reads, pass turnover and
+server diagnostics, with their own focused evidence. The admission-view pair
+retains its five cloud Settings
 browser cases, real SQL/Auth/PostgREST admission reporting/expiry, queue/crash
 recovery, maintenance, authorization and HTTP/WebSocket relay evidence.
 The preceding `9b4ae6d` Auth driver passed SQL replay and real Auth/PostgREST,
@@ -55,8 +59,9 @@ Live Linux OOM attribution/soak, legacy/unknown state resolution, unavailable/re
 capability-metadata maintenance,
 installed Tauri large-file saving, production dispatch/client and forge runtime,
 portable aliases, ledger integration, configuration migration and complete
-shared-hardware acceptance remain unfinished. Installed releases and live
-services were not upgraded or enabled for cloud compute.
+shared-hardware acceptance remain unfinished. Local [CLI candidate](current-public-release.md)
+and [Windows desktop](windows-updater-config.md) updates are recorded separately.
+Live services were not upgraded or enabled for cloud compute.
 
 ## Earlier integration record
 

@@ -1,5 +1,11 @@
 # Beta finishing pass: local validation
 
+Latest observability progress: [native Windows memory diagnostics](windows-memory-diagnostics.md)
+now collect process working sets and mark unavailable CPU/load/collection data
+explicitly. Six native tests and typechecking pass. The [live recheck](live-central-8443.md)
+still finds failed dashboard asset GETs and protected API access; the private
+token card timed out and Windows SSH is denied. No live service was changed.
+
 Latest native progress: [Windows updater configuration](windows-updater-config.md)
 fixes key discovery when HOME is unset, preserving XDG/file/environment overrides.
 All 36 ordinary Windows desktop tests and the NSIS build pass. The closed local

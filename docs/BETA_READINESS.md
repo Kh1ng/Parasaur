@@ -43,6 +43,12 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Native Windows diagnostics](validation/beta-progress-2026-11-03/windows-memory-diagnostics.md)
+  now include process working sets and preserve unknown CPU/load/collection
+  readings. Native tests and typechecking pass. The [live central recheck](validation/beta-progress-2026-11-03/live-central-8443.md)
+  still has failed asset GETs, a 401 API response and denied Windows SSH. Live
+  pipeline attribution and memory profiling remain unavailable without access.
+
 - [Windows updater key discovery](validation/beta-progress-2026-11-03/windows-updater-config.md)
   now uses the desktop profile when HOME is unset. Native tests and installer
   build pass; the closed local desktop test installation is updated with rollback.
