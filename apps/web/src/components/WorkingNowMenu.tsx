@@ -64,6 +64,7 @@ export function WorkingNowMenu({ jobs, agents, unavailable = false, onOpenBoard 
           {agents.length > 0 && (
             <div className="border-t border-subtle px-3 py-2">
               <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted">Agents</h2>
+              {(unavailable || stale > 0) && <p className="mt-1 text-xs text-secondary">Agent processes are observed separately; a visible process does not confirm job progress.</p>}
               <ul className="mt-1 space-y-1.5">
                 {agents.map((agent) => (
                   <li key={agent.id} className="flex items-start gap-2 text-xs">

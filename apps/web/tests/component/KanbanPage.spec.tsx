@@ -167,6 +167,7 @@ test('stale-only worker observations do not advertise running or idle execution'
   await expect(menu).toContainText('Last activity: 2026-10-05T18:30:00Z');
   await expect(menu).toContainText('Node: node');
   await expect(menu).toContainText('does not prove a process stopped');
+  await expect(menu).toContainText('a visible process does not confirm job progress');
   await expect(menu).not.toContainText('Nothing is running.');
   await page.screenshot({ path: testInfo.outputPath('stale-worker-menu.png') });
 });
