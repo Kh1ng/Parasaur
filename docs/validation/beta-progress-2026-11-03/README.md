@@ -1,9 +1,16 @@
 # Beta finishing pass: local validation
 
+Latest live work: [central recovery and memory attribution](live-central-recovery.md)
+restored the tailnet dashboard/API, preserved credentials and sessions, and
+verified every deployed JavaScript chunk. The latest optimized
+controller passed a 15-minute live trial under its unchanged limit. Native
+Windows Overview/Factory load with saved owner access. Worker connectivity,
+Git transport, UI clarity and long-soak acceptance remain open.
+
 Latest Mac work: [native client update and temporary central test](mac-client-update.md)
 installed and launched 0.3.0, fixed local app-bundle sealing, passed native and
 central HTTP/WebSocket/asset/cost checks, and removed the owned build tree.
-The live central still fails its dashboard assets; live acceptance remains open.
+The live central now serves verified assets; full live acceptance remains open.
 
 Latest activity repair: [account execution evidence](account-activity-evidence.md)
 uses exact session/worker account identity, node ownership and worker freshness.

@@ -34,20 +34,34 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 - Sample mode is explicitly labeled on every dashboard page, including update notices.
 - Installation uses complete release artifacts where available; build tooling is not a normal end-user prerequisite.
 
-## Enterprise and iPhone
+## Enterprise
 
 - Provisioned users can accept a workspace invitation, connect a remote node, and execute a job under the intended authorization boundaries.
 - Hosted and self-hosted configuration is documented and verified against its actual service.
+
+## Deferred mobile work
+
+Mobile is outside the current finishing scope. These requirements remain future
+work and are not gates for this desktop/shared-web pass.
+
 - A locked iPhone receives a notification and an in-flight Live Activity, updates its state, ends it, and opens the correct conversation when tapped.
 - Device revocation removes access and push registration.
 
 ## Evidence still required
 
+- [Live central recovery](validation/beta-progress-2026-11-03/live-central-recovery.md)
+  restored the tailnet dashboard and authenticated 0.3.0 API. All 29 deployed
+  JavaScript chunks pass byte checks. Borrowed alias indexes and streamed
+  completion/review reads plus filtered routing history are deployed. The latest
+  15-minute live controller trial passed under the original memory limit and
+  authenticated Windows Overview/Factory pages load. Extended memory validation,
+  worker connectivity, Git transport and real factory progression remain open.
+
 - [MacBook client update](validation/beta-progress-2026-11-03/mac-client-update.md)
   installed and launched native desktop/CLI 0.3.0. Native tests and a temporary
   central build/runtime passed; the central was stopped and its build files
   removed. Local bundle signing is repaired and regression-tested. The live
-  central still serves failing assets, so its dashboard/factory acceptance,
+  central now serves verified assets; full factory acceptance,
   real provider use, distribution signing and a client-memory soak remain open.
 
 - [Account activity evidence](validation/beta-progress-2026-11-03/account-activity-evidence.md)
@@ -194,8 +208,8 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 - Broad local shared-web checks passed at `0ee85993`: 160 Windows workflows,
   195 Windows component cases, 130 unit cases, typechecking and the remaining
   POSIX-only component case under WSL. These isolate the sample/API fixtures;
-  live factory, real provider consent/billing and physical iOS acceptance remain
-  required.
+  live factory and real provider consent/billing acceptance remain
+  required. Mobile acceptance is deferred.
 
 - The finishing branch now includes its previously missing merged factory and
   deployment-prefix fixes through `7848c117`. The combined 21-case real-CLI
