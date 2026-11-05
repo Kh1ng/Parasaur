@@ -280,6 +280,15 @@ of the prebuild gate issue.
   systemctl --user enable --now gah-watchdog.timer
   ```
 
+Parallel passes admit at most 128 actions, or one configured worker wave if it
+is larger. Refill continues within that budget. When it is reached, active
+workers finish and the pass releases its completed results and exclusions.
+Recurring loops then honor `pacing.loop_interval_seconds` and reload config;
+remaining work is reconsidered by normal admission. `--once` exits after that
+bounded pass, so a large backlog may need additional passes. Serial mode still
+executes at most one action. This is an action-count bound, not a wall-clock
+deadline or a limit on total process memory.
+
 Direct `gah loop --once` remains useful for a bounded operator smoke test. On
 Linux, a recurring foreground loop arms a kernel parent-death signal and exits
 through normal SIGTERM cleanup when its launcher disappears; it refuses to

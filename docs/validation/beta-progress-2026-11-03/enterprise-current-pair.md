@@ -1,6 +1,8 @@
 # Current enterprise integration — 2026-11-05
 
-The current assembled pair is private `3679931` with public core `a6a38c4d`.
+The current assembled pair is private `c7b2a06` with public core `ded751a2`.
+It includes [bounded controller passes](controller-pass-turnover.md), so a busy
+queue eventually releases completed pass state and returns to config reload.
 It also includes [streaming event history](event-reader-memory.md), preserving
 full controller recovery history while bounding limited event-query retention.
 It includes the [bounded Rust capture repair](rust-output-memory.md): fixed-size
@@ -42,7 +44,7 @@ Queue, crash/recovery, retry-receipt and authorization/relay checks passed.
 Earlier Windows desktop checks passed 35 ordinary cases and the separate hidden
 native output fixture. The older `ac62e3` native binary has the seven startup
 offsets and twelve repeated startup-window checks. The refreshed debug host is
-`20368c67`; its isolation-host sources are unchanged. That earlier timing-stress
+`3ddf89d9`; its isolation-host sources are unchanged. That earlier timing-stress
 record is historical, not a claim of a new repetition on this binary.
 
 The preceding `e7d088c` / `2f8c9cf5` pair and `fe07bdd2` host passed 96 dedicated

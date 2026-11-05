@@ -43,6 +43,12 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Bounded controller passes](validation/beta-progress-2026-11-03/controller-pass-turnover.md)
+  stop sustained queues from keeping completed pass results alive indefinitely.
+  Refill, pressure, shutdown and cross-pass work eligibility have local evidence.
+  This bounds record count, not total memory or execution time; live OOM
+  attribution and a long soak are still required.
+
 - [Streaming event reads](validation/beta-progress-2026-11-03/event-reader-memory.md)
   remove an additional whole-journal allocation and bound limited feed queries.
   A child-memory regression fails before the repair and passes afterward;

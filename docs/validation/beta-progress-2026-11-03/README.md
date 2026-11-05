@@ -1,5 +1,12 @@
 # Beta finishing pass: local validation
 
+Latest scheduler progress: [bounded controller passes](controller-pass-turnover.md)
+prevent an always-busy parallel queue from retaining completed pass state
+indefinitely. The real-CLI regression fails on the previous binary and verifies
+that remaining jobs run in the next pass. Controller/refill checks passed;
+the diagnostic follow-up also passed controller and shutdown checks. Live OOM
+attribution and a long soak remain required.
+
 Latest history progress: [streaming event reads](event-reader-memory.md) remove
 the extra whole-journal text allocation and bound limited event-query retention.
 The memory-limit regression fails on the previous CLI and passes on the new one.
