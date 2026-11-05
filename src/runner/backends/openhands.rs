@@ -100,8 +100,8 @@ pub(crate) fn run_with_executable(
         exit_code,
         duration_secs,
         log_path: log_path.to_string_lossy().into_owned(),
-        final_summary: fs::read_to_string(&log_path)
-            .ok()
+        final_summary: output::log_capture_complete(&log_path)
+            .then(|| output::read_capture_log(&log_path))
             .and_then(|text| output::extract_openhands_jsonl_summary(&text)),
         agy_cli_log_delta: None,
         internal_log_delta: None,

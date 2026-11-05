@@ -9,7 +9,8 @@ use std::thread;
 /// Per stream, bound both buffered input and redacted output. A backend can
 /// produce an endless line; never split it and risk exposing a partial secret.
 pub(crate) const MAX_CAPTURE_BYTES: usize = 16 * 1024 * 1024;
-const LIMIT_NOTICE: &str =
+pub(crate) const INCOMPLETE_CAPTURE_EXTENSION: &str = "capture-incomplete";
+pub(crate) const LIMIT_NOTICE: &str =
     "\nGAH: output capture exceeded the 16 MiB per-stream limit; remaining output omitted.\n";
 
 /// Append `reader` to `path` one redacted line at a time, sending a progress
@@ -64,10 +65,7 @@ pub(crate) fn copy_stream_to_file<R: Read + Send + 'static>(
                 }
                 if !complete {
                     pending.clear();
-                    if file
-                        .write_all(crate::redact::redact(LIMIT_NOTICE).as_bytes())
-                        .is_err()
-                    {
+                    if file.write_all(LIMIT_NOTICE.as_bytes()).is_err() {
                         return false;
                     }
                 }
@@ -86,10 +84,7 @@ pub(crate) fn copy_stream_to_file<R: Read + Send + 'static>(
             let text = crate::redact::redact(&String::from_utf8_lossy(&pending));
             if text.len() > MAX_CAPTURE_BYTES - written {
                 complete = false;
-                if file
-                    .write_all(crate::redact::redact(LIMIT_NOTICE).as_bytes())
-                    .is_err()
-                {
+                if file.write_all(LIMIT_NOTICE.as_bytes()).is_err() {
                     return false;
                 }
             } else if file.write_all(text.as_bytes()).is_err() {

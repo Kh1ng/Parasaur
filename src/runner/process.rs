@@ -636,6 +636,22 @@ fn spawn_with_idle_watch_with_shutdown(
     shutdown_requested: &AtomicBool,
     output_counts_as_progress: bool,
 ) -> Result<(i32, f64, crate::ledger::AttemptResourceUsage)> {
+    // Pessimistic durable evidence: even a full disk that prevents the final
+    // notice cannot make an earlier assistant message look authoritative.
+    let capture_marker =
+        log_path.with_extension(crate::runner::log_copier::INCOMPLETE_CAPTURE_EXTENSION);
+    let prior_incomplete = match fs::symlink_metadata(&capture_marker) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
+    if !prior_incomplete {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&capture_marker)
+            .context("marking backend output capture incomplete")?;
+    }
     let start = Instant::now();
     let hard_timeout = cmd
         .get_envs()
@@ -825,7 +841,9 @@ fn spawn_with_idle_watch_with_shutdown(
         let code = status.and_then(Result::ok).and_then(|status| status.code());
         code.unwrap_or(-1)
     });
-    if !crate::runner::pipes::readers_finish_within_grace(&[&stdout_thread, &stderr_thread]) {
+    let output_complete =
+        crate::runner::pipes::readers_finish_within_grace(&[&stdout_thread, &stderr_thread]);
+    if !output_complete {
         if let Ok(mut file) = fs::OpenOptions::new().append(true).open(log_path) {
             let _ = writeln!(
                 file,
@@ -835,6 +853,14 @@ fn spawn_with_idle_watch_with_shutdown(
     }
     // Stop collecting: a copier still reading closes its pipe at its next read.
     drop(progress_rx);
+    let capture_complete = output_complete
+        && [stdout_thread, stderr_thread]
+            .into_iter()
+            .flatten()
+            .all(|reader| reader.join().unwrap_or(false));
+    if capture_complete && !prior_incomplete {
+        let _ = fs::remove_file(&capture_marker);
+    }
     if let Some(error) = cleanup_error {
         exit_code = PROCESS_CLEANUP_FAILED_EXIT_CODE;
         if let Ok(mut file) = fs::OpenOptions::new().append(true).open(log_path) {
