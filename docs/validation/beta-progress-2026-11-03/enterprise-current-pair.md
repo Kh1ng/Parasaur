@@ -1,14 +1,19 @@
 # Current enterprise integration — 2026-11-04
 
-The current verified pair is private `360ff0c6` with public core `252d4b05`.
+The current assembled pair is private `d531a72f` with public core `f322996b`.
 It retains automatic queued compute, bounded archives and durable delivery,
 with [owner/scope reconciliation](enterprise-compute-reconciliation.md) and
 [saved-output review controls](saved-output-controls.md) in shared Settings.
+The [Windows native output check](windows-native-output.md) adds real filesystem
+streaming, corruption and cancellation evidence without a new production bridge.
 Protocol 2 blocks launch until broker registration is durable. Full kernel
 slice-path checks and bounded housekeeping close the reproduced cleanup gaps.
 
 The exact pair passed 1,072 server cases (37 explicit skips), 14 mock cases,
-typechecks, production builds and artifact/transport guards. Dedicated WSL
+typechecks, production builds and artifact/transport guards. Windows desktop
+checks passed 35 ordinary cases and the separate hidden native fixture. Public
+CLI/server/web and private production sources match the preceding `360ff0c6` /
+`252d4b05` pair. On that preceding pair, dedicated WSL
 checks passed 77 cases with one platform-only skip. Eleven browser behavior
 cases and a full sample Settings workflow passed. Real disposable
 Auth/PostgREST killed and restarted a consumer after its fixture-provider call,

@@ -154,6 +154,11 @@ and [verified crash reconciliation](validation/beta-progress-2026-11-03/enterpri
 now connect owner-only listing, bounded downloads and explicit reviewed discard
 to shared Settings. Browser behavior and a full sample Settings workflow passed;
 large-file saving in the installed Tauri app remains unverified.
+The [hidden Windows native check](validation/beta-progress-2026-11-03/windows-native-output.md)
+now verifies the existing stream path with real WebView2 filesystem objects:
+20 MiB saving, corrupt-block rejection and cancellation preserve existing files.
+Its `d531a72f` / `f322996b` assembly passes the production build; the interactive
+picker and user-selected filesystem paths still require acceptance.
 The exact combined build, SQL replay and real Auth/PostgREST/HTTP fixture-provider
 checks passed. Seventy-seven dedicated WSL checks and sandboxed inference passed,
 retaining the unchanged native host's earlier startup-crash evidence, including Node freeze, uncertain cleanup and lost

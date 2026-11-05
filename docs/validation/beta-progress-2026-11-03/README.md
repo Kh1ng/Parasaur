@@ -1,6 +1,13 @@
 # Beta finishing pass: local validation
 
-Latest enterprise evidence: [saved-output review controls](saved-output-controls.md)
+Latest Windows evidence: [native output acceptance](windows-native-output.md)
+verifies a 20 MiB streaming save, corrupt-block rejection and cancellation with
+real hidden WebView2 filesystem objects. The existing shared implementation
+passes without a new native bridge. The committed `d531a72f` / `f322996b` pair
+also passes the combined production build. Interactive picker, installed-release
+and journal-maintenance acceptance remain unfinished.
+
+The [saved-output review controls](saved-output-controls.md)
 connect owner-authenticated downloads and explicit retention actions to shared
 Settings. Private `360ff0c6` / public `252d4b05` passes 1,072 server cases,
 14 sample cases, 11 browser behavior cases, a full Settings workflow and 77
