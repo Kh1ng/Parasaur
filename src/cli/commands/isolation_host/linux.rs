@@ -126,6 +126,7 @@ pub(super) fn run(args: Args) -> Result<()> {
     );
     let group = PathBuf::from("/sys/fs/cgroup")
         .join(base.trim_start_matches('/'))
+        .join("parasaur.slice")
         .join("parasaur-jobs.slice")
         .join(&unit);
     ensure!(

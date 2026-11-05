@@ -15,6 +15,10 @@ Controllers sharing capacity must use the same user/runtime registry.
 
 The command establishes the resource scope in `parasaur-jobs.slice` and passes
 a duplicate of the locked lease to Bubblewrap's outer monitor using `--sync-fd`.
+Systemd expands that slice beneath `parasaur.slice`; the kernel path is the
+delegated user root followed by `parasaur.slice/parasaur-jobs.slice/<unit>`.
+Cleanup must check that full path, including processes outside the PID namespace
+that were attached to the same resource scope.
 The connector's trusted init must close all host descriptors and run as PID 1
 with `--as-pid-1` before forking the job. Using Bubblewrap's default visible
 reaper would expose the lease through `/proc/1/fd`. The private connector includes
