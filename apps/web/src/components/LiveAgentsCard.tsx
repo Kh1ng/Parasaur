@@ -3,6 +3,7 @@ import { Radio } from 'lucide-react';
 import type { RunningWorker, ActiveClaim, BackendInstanceSummary, ControllerActivity, DeviceAgent, LedgerEntry, QuotaCandidateStatus, Session } from '@git-agent-harness/contracts';
 import { backendInstancesApi, gahApi } from '../api/client.js';
 import { formatLocalTime } from '../lib/format.js';
+import { controllerActivityStatus } from '../lib/controllerActivity.js';
 
 /** What an agent account is doing right now, in the order the rows sort. */
 export type LiveState = 'working' | 'gates' | 'stale' | 'paused' | 'down' | 'halted' | 'idle' | 'unknown';
@@ -450,7 +451,7 @@ export function LiveAgentsCard({ profile, sessions, controllerRuns, claims, cand
       )}
       {lastRun && (
         <p className="mt-2 truncate text-xs text-muted" title={lastRun.outcome ?? lastRun.action}>
-          Last run: {lastRun.work_id ? <span className="font-mono">{lastRun.work_id}</span> : null} {lastRun.action.split(':')[0]} · {lastRun.status}
+          {controllerActivityStatus(lastRun) === 'deferred' ? 'Last decision:' : 'Last run:'} {lastRun.work_id ? <span className="font-mono">{lastRun.work_id}</span> : null} {lastRun.action.split(':')[0]} · {controllerActivityStatus(lastRun)}
           {lastRun.finished_at ? ` ${formatDuration(now - Date.parse(lastRun.finished_at))} ago` : ''}{lastRun.outcome ? ` · ${lastRun.outcome}` : ''}
         </p>
       )}

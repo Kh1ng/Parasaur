@@ -8,7 +8,7 @@ web
 
 ## Users
 
-The owner operates coding agents and a factory across multiple computers and provider accounts. The desktop and shared web interface are the primary surfaces; iPhone access provides remote control, notifications, and Live Activities.
+The owner operates coding agents and a factory across multiple computers and provider accounts. The desktop and shared web interface lead the current finishing pass. Mobile work, including iPhone remote control, notifications, and Live Activities, is deferred.
 
 ## Product Purpose
 
@@ -24,7 +24,7 @@ The owner uses Windows and operates a fleet that includes another person's machi
 
 ## Capabilities and Constraints
 
-The requested beta scope includes multiple accounts for one provider, configurable providers, account usage and limits, spend, Git workflows, updates, workspace and environment configuration, enterprise connectivity, and iOS notifications and Live Activities. Existing implementations are evidence to inspect, not proof that their complete flows work.
+The requested beta scope includes multiple accounts for one provider, configurable providers, account usage and limits, spend, Git workflows, updates, workspace and environment configuration, and enterprise connectivity. Mobile features are not gates for this beta pass. Existing implementations are evidence to inspect, not proof that their complete flows work.
 
 The shared React UI runs in web browsers and native shells. Desktop uses Tauri; iOS uses the existing native shell. Preserve authenticated mutation boundaries, review evidence, retry limits, and explicit approval gates. Unknown usage or cost stays unknown.
 
