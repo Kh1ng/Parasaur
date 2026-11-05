@@ -1,5 +1,14 @@
 # Recorded forge gates
 
+Rechecked read-only on 2026-11-05: the same four draft PR heads and recorded
+gates remain. #1679 still has failed Rust CI; the failed log names
+`capped_pr_dispatches_another_ticket_in_same_runtime_iteration`, consistent with
+the recorded controller-wide mode-change finding. The other three have no failed
+checks and no formal review decision. No running-controller state was available.
+The newly measured [Rust-loop OOM report #1681](https://github.com/Kh1ng/Parasaur/issues/1681)
+led to a separate [bounded-output repair](rust-output-memory.md); its live
+allocation source and effect on these gates remain unverified.
+
 Read-only GitHub inspection on 2026-11-03 found four open draft PRs authored by `Ram-Rod6198`. This is forge evidence, not the running controller's state. No PR, review, issue, assignment, or policy was changed.
 
 | PR / issue | Current recorded gate | Evidence needed to advance |

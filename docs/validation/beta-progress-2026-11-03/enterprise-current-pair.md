@@ -1,8 +1,10 @@
 # Current enterprise integration — 2026-11-05
 
-The current source pair is private `9b4ae6d` with public core `b0cd55e1`.
-Its production build input is private `c013752`; the revision difference is one
-Auth acceptance counter assertion, with identical production sources/artifacts.
+The current assembled pair is private `e7d088c` with public core `2f8c9cf5`.
+It includes the [bounded Rust capture repair](rust-output-memory.md): fixed-size
+live output retention, coalesced progress and rejection of incomplete reviewer
+evidence. This closes a reproduced path; #1681's actual Linux OOM allocation
+source and long-running stability still need live profiling.
 It retains automatic queued compute, bounded archives and durable delivery,
 with [owner/scope reconciliation](enterprise-compute-reconciliation.md) and
 [saved-output review controls](saved-output-controls.md) in shared Settings,
@@ -23,22 +25,29 @@ streaming, corruption and cancellation evidence without a new production bridge.
 Protocol 2 blocks launch until broker registration is durable. Full kernel
 slice-path checks and bounded housekeeping close the reproduced cleanup gaps.
 
-The production pair passed 1,093 server cases (37 explicit skips), 15 mock cases,
-typechecks, production builds and artifact/transport guards. Dedicated WSL
-isolation passed 96 cases with one platform-only skip. Nineteen shared-output
-browser cases and a full sample Settings workflow passed; desktop/mobile layouts
-were inspected. The preceding admission-view pair retains its five cloud Settings
+The exact production pair passed 1,093 server cases (37 explicit skips), 15 mock
+cases, typechecks, production builds and artifact/transport guards. The preceding
+receipt-recovery pair retains 19 shared-output browser cases, a full sample
+Settings workflow and inspected desktop/mobile layouts. Its server/web/SQL
+production source is unchanged; this increment changes Rust runner code and
+the private core pin. The admission-view pair retains its five cloud Settings
 browser cases, real SQL/Auth/PostgREST admission reporting/expiry, queue/crash
 recovery, maintenance, authorization and HTTP/WebSocket relay evidence.
-The corrected current Auth driver passed SQL replay and real Auth/PostgREST,
+The preceding `9b4ae6d` Auth driver passed SQL replay and real Auth/PostgREST,
 preserving local 125 and cloud completed/0 during retired-claim denial with no
 extra provider attempt. Reviewed cleanup kept the other job's archive and receipt.
 Queue, crash/recovery, retry-receipt and authorization/relay checks passed.
 Earlier Windows desktop checks passed 35 ordinary cases and the separate hidden
-native output fixture. The unchanged retained native binary also has the earlier
-pair's seven startup offsets and twelve clean repetitions of the failing window.
+native output fixture. The older `ac62e3` native binary has the seven startup
+offsets and twelve repeated startup-window checks. The refreshed debug host is
+`fe07bdd2`; its isolation-host sources are unchanged. That earlier timing-stress
+record is historical, not a claim of a new repetition on this binary.
 
-Legacy/unknown state resolution, unavailable/revoked delivery authorization,
+The final assembled pair and retained `fe07bdd2` host also passed 96 dedicated
+WSL isolation cases (one platform skip) after the Ubuntu-24.04 restart. The
+complete log is retained alongside the assembly described in the memory record.
+
+Live Linux OOM attribution/soak, legacy/unknown state resolution, unavailable/revoked delivery authorization,
 capability-metadata maintenance,
 installed Tauri large-file saving, production dispatch/client and forge runtime,
 portable aliases, ledger integration, configuration migration and complete

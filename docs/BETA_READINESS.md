@@ -43,6 +43,14 @@ This is the acceptance checklist for the owner's finishing pass, begun 2026-11-0
 
 ## Evidence still required
 
+- [Bounded Rust output capture](validation/beta-progress-2026-11-03/rust-output-memory.md)
+  now limits a reproduced unbounded live line buffer and coalesces progress.
+  Incomplete reviewer output cannot supply approval. Native runner/workflow/CLI
+  and refill checks, formatting and Clippy passed; the matched private assembly
+  passed 1,093 server and 15 mock cases. Confirmed Linux loop OOMs in #1681 still
+  need live allocation profiling and a multi-hour idle/dispatch soak. The local
+  copier probe does not establish the live root cause; Mac #1680 stays deferred.
+
 - [Exact factory account routing](validation/beta-progress-2026-11-03/factory-account-routing.md)
   now carries node/account/model selection through the real CLI and ledger,
   refuses older workers that cannot preserve it, and acknowledges submission

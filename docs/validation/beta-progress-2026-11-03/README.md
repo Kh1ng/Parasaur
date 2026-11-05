@@ -1,6 +1,13 @@
 # Beta finishing pass: local validation
 
-Latest compute progress: [retired-claim delivery reconciliation](compute-delivery-retirement.md)
+Latest factory progress: [bounded Rust output capture](rust-output-memory.md)
+closes a reproduced growing-buffer/progress-queue path and rejects incomplete
+reviewer evidence. Native runner, review-workflow, CLI and refill checks passed;
+the `e7d088c` / `2f8c9cf5` combined build passed 1,093 server and 15 mock cases.
+The new measured Linux OOM report #1681 still needs live allocation attribution
+and a long soak. No deployed worker or service was changed.
+
+Recent compute progress: [retired-claim delivery reconciliation](compute-delivery-retirement.md)
 fixes a reproduced endless retry without overwriting either the local result or
 cloud outcome. Explicit retired/unconfirmed receipts can be reviewed for cleanup
 with fresh proof. Private `9b4ae6d` has production sources identical to the

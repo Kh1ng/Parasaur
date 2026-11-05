@@ -4,6 +4,14 @@ This maps the owner's requested end state to current evidence. It is not a beta
 sign-off. Desktop/shared web lead the work; MacBook execution remains deferred.
 Earlier broad checks establish their recorded revisions, not every later edit.
 
+Follow-up on 2026-11-05: owner archive/receipt controls, admission visibility and
+retired-claim delivery reconciliation now have local evidence in the
+[current pair](enterprise-current-pair.md). The new confirmed Linux Rust-loop
+OOM report #1681 is separate from the unmeasured Mac report. A
+[bounded-output repair](rust-output-memory.md) closes one reproduced allocation
+path, but live heap attribution and a multi-hour soak remain required. This
+updates the maintenance/memory rows below; hosted acceptance is still missing.
+
 | Requested capability | Evidence inspected | Remaining requirement |
 | --- | --- | --- |
 | Factory claim → implementation → validation → review/repair → publication | Current controller/claim projections; [forge gates](factory-forge-gates.md); 21 real-CLI fixture checks in [merged factory checks](merged-factory-checks.md) | Authenticate to the real central and inspect Michael's current receipts, decisions and jobs; complete one real lifecycle without bypassing gates. |
