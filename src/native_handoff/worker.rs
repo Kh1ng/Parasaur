@@ -3,6 +3,8 @@
 //! journal owns each verified job directory; it never stores grant plaintext.
 use super::*;
 use fs2::FileExt;
+mod operations;
+pub use operations::{OperationPermission, OperationPurpose, OperationRequest, StartConsumption};
 
 /// Read a local caller's private expected binding, using context input limits.
 pub fn read_binding(path: &Path) -> Result<DispatchBinding> {
@@ -43,6 +45,10 @@ struct Journal {
     holder_invocation: String,
     phase: Phase,
     start: Option<StartIntent>,
+    execution: Option<operations::Execution>,
+    operation: Option<operations::Operation>,
+    #[serde(default)]
+    consumption_offered: bool,
 }
 
 /// Holds the cross-process writer lock until the external operation completes
@@ -96,11 +102,14 @@ impl WorkerRun {
             directory: directory.into(),
             _lock: lock,
             journal: Journal {
-                version: 1,
+                version: 2,
                 binding: binding.clone(),
                 holder_invocation: holder_invocation.into(),
                 phase: Phase::ReservationIntent,
                 start: None,
+                execution: None,
+                operation: None,
+                consumption_offered: false,
             },
             persistence_uncertain: false,
         };
@@ -135,7 +144,11 @@ impl WorkerRun {
                     .context_sha256
                     .bytes()
                     .all(|b| b.is_ascii_hexdigit())
-                && journal.version == 1
+                && matches!(journal.version, 1 | 2)
+                && (journal.version == 2
+                    || (journal.execution.is_none()
+                        && journal.operation.is_none()
+                        && !journal.consumption_offered))
                 && serde_json::to_vec(&journal.binding)? == serde_json::to_vec(binding)?
                 && journal.holder_invocation.len() == 32
                 && journal
@@ -158,6 +171,7 @@ impl WorkerRun {
                 "Invalid native worker start fence"
             );
         }
+        self.validate_operations()?;
         Ok(())
     }
 
@@ -169,6 +183,7 @@ impl WorkerRun {
         // Latch before writing: a failed rename/directory sync must never allow
         // a caller to fall back to its assumed previous in-memory phase.
         self.persistence_uncertain = true;
+        self.journal.version = 2;
         crate::installer::files::replace(
             &self.directory.join("worker.json"),
             &serde_json::to_vec(&self.journal)?,
@@ -244,11 +259,11 @@ impl WorkerRun {
             !self.persistence_uncertain,
             "Native worker persistence is uncertain"
         );
-        Ok(
-            serde_json::json!({"binding": self.journal.binding, "phase": self.journal.phase,
+        let mut view = serde_json::json!({"binding": self.journal.binding, "phase": self.journal.phase,
             "holder_invocation": self.journal.holder_invocation, "start_offered": self.journal.start.is_some(),
-            "execution_authorized": false}),
-        )
+            "execution_authorized": false});
+        view["operation"] = self.operation_observation();
+        Ok(view)
     }
 
     /// Combine durable intent with a fresh kernel-manager observation. Missing,
@@ -261,13 +276,24 @@ impl WorkerRun {
             &self.journal.holder_invocation,
         )
         .is_ok();
+        let running = self.journal.execution.as_ref().is_some_and(|execution| {
+            super::host::require_job(
+                &self.journal.binding.run_id,
+                &execution.invocation,
+                execution.pid,
+                &execution.start_ticks,
+            )
+            .is_ok()
+        });
         // Failed or absent manager evidence cannot establish free capacity.
         value["capacity_held"] = if held {
             true.into()
         } else {
             serde_json::Value::Null
         };
-        value["state"] = if held && self.journal.phase == Phase::Ready {
+        value["state"] = if held && running {
+            "running"
+        } else if held && self.journal.phase == Phase::Ready {
             "ready"
         } else {
             "unknown"

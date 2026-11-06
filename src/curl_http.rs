@@ -4,6 +4,11 @@ use std::process::{Command, Stdio};
 
 const STATUS_MARKER: &str = "__GAH_HTTP_STATUS__:";
 
+#[cfg(target_os = "linux")]
+mod control;
+#[cfg(target_os = "linux")]
+pub(crate) use control::request_control;
+
 pub struct CurlResponse {
     pub status: u16,
     pub body: Vec<u8>,

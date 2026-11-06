@@ -10,7 +10,7 @@ use std::{
 
 fn state(unit: &str) -> Result<BTreeMap<String, String>> {
     let mut command = Command::new("/usr/bin/systemctl");
-    command.args(["--user", "show", unit, "--property=Id,LoadState,ActiveState,SubState,MainPID,ControlGroup,InvocationID,Transient,Type,RemainAfterExit,FileDescriptorStoreMax,NFileDescriptorStore,FileDescriptorStorePreserve,NotifyAccess,Restart,KillMode,StopWhenUnneeded"]);
+    command.args(["--user", "show", unit, "--property=Id,LoadState,ActiveState,SubState,MainPID,ControlGroup,InvocationID,Transient,Type,ExitType,RemainAfterExit,FileDescriptorStoreMax,NFileDescriptorStore,FileDescriptorStorePreserve,NotifyAccess,Restart,KillMode,StopWhenUnneeded"]);
     let output = crate::runner::process::run_bounded(command, Duration::from_secs(2))
         .context("Native capacity holder state is unavailable")?;
     ensure!(
@@ -106,6 +106,82 @@ pub(super) fn require_ready(run_id: &str, invocation: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Kernel process identity, excluding zombies and reused PIDs.
+pub(super) fn process_start_ticks(pid: u32) -> Result<String> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))?;
+    let fields: Vec<_> = stat
+        .rsplit_once(')')
+        .context("Invalid native process identity")?
+        .1
+        .split_whitespace()
+        .collect();
+    ensure!(
+        fields
+            .first()
+            .is_some_and(|state| !matches!(*state, "Z" | "X"))
+            && fields.len() > 19,
+        "Native job process is no longer executable"
+    );
+    let ticks = fields[19];
+    ensure!(
+        ticks.parse::<u64>().is_ok_and(|value| value > 0),
+        "Invalid native process start time"
+    );
+    Ok(ticks.into())
+}
+
+/// Inspect a recorded job without treating service-name reuse as continuity.
+pub(super) fn require_job(run_id: &str, invocation: &str, pid: u32, ticks: &str) -> Result<()> {
+    let run = uuid::Uuid::parse_str(run_id)?;
+    ensure!(
+        !run.is_nil() && run.to_string() == run_id && pid > 0,
+        "Invalid native job identity"
+    );
+    let unit = format!("gah-native-job-{run}.service");
+    let values = state(&unit)?;
+    let group = std::fs::read_to_string(format!("/proc/{pid}/cgroup"))?;
+    let group = group
+        .strip_prefix("0::")
+        .and_then(|value| value.strip_suffix('\n'))
+        .filter(|value| {
+            value.starts_with('/') && !value.contains('\n') && value.ends_with(&format!("/{unit}"))
+        })
+        .context("Native job is outside its recorded service cgroup")?;
+    for (key, expected) in [
+        ("Id", unit.as_str()),
+        ("LoadState", "loaded"),
+        ("ActiveState", "active"),
+        ("SubState", "running"),
+        ("Transient", "yes"),
+        ("Type", "exec"),
+        ("ExitType", "cgroup"),
+        ("RemainAfterExit", "yes"),
+        ("Restart", "no"),
+        ("KillMode", "control-group"),
+        ("StopWhenUnneeded", "no"),
+        ("InvocationID", invocation),
+        ("ControlGroup", group),
+    ] {
+        ensure!(
+            values.get(key).map(String::as_str) == Some(expected),
+            "Native job has an unsafe or changed {key}"
+        );
+    }
+    ensure!(
+        values.get("MainPID") == Some(&pid.to_string()) && process_start_ticks(pid)? == ticks,
+        "Native job process identity changed"
+    );
+    Ok(())
+}
+
+pub(super) fn require_own_job(run_id: &str, invocation: &str, pid: u32, ticks: &str) -> Result<()> {
+    ensure!(
+        pid == std::process::id() && std::env::var("INVOCATION_ID").as_deref() == Ok(invocation),
+        "Native operation belongs to a different execution process"
+    );
+    require_job(run_id, invocation, pid, ticks)
 }
 
 /// Reserve actual host capacity for a verified context and pass its locked

@@ -1,7 +1,7 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
 
-fn directory() -> tempfile::TempDir {
+pub(super) fn directory() -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();
     fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
     directory
@@ -11,7 +11,7 @@ fn offer(run: &mut WorkerRun, grant: &StartGrant, send: impl FnOnce() -> Result<
     run.offer_start_checked(grant, send, |_, _| Ok(()))
 }
 
-fn binding() -> DispatchBinding {
+pub(super) fn binding() -> DispatchBinding {
     DispatchBinding {
         run_id: uuid::Uuid::new_v4().to_string(),
         context_sha256: "b".repeat(64),
@@ -30,7 +30,7 @@ fn binding() -> DispatchBinding {
     }
 }
 
-fn grant(binding: &DispatchBinding) -> StartGrant {
+pub(super) fn grant(binding: &DispatchBinding) -> StartGrant {
     StartGrant {
         run_id: binding.run_id.clone(),
         node_id: binding.node_id.clone(),

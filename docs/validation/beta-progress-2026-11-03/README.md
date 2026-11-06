@@ -1,5 +1,16 @@
 # Beta finishing pass: local validation
 
+Latest worker consumer: initial consumption and operation intent are now
+durably fenced before bounded, stdin-credential control requests. Replies must
+match the full scope and validity window, and the job's actual service/PID/
+start ticks and holder are checked. Explicit completion is required before
+another operation. Thirty-three native cases, eight HTTP-helper cases, two CLI
+cases and Clippy pass; the real WSL process check also rejects changed/dead
+job identities while retaining capacity. Entry records in that process check
+are controlled fixtures. Wrapper launch and backend/publication hooks remain
+unfinished; no model or installed service runs this increment. See
+[worker permission consumption](native-worker-host-admission.md#worker-side-permission-consumption).
+
 Latest continuation: the staged broker renews current controller/policy/spend
 and exact-route prerequisites per attempt/publication sequence after consumed
 start authority. Permissions are short-lived, durably sequenced and never

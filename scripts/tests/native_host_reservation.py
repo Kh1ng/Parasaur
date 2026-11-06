@@ -7,6 +7,7 @@ Requires a unified cgroup user manager with systemd-notify --fd (systemd 254+)
 and enough real headroom for the default 4 GiB implementation reservation.
 """
 import fcntl
+import datetime
 import json
 import os
 from pathlib import Path
@@ -61,7 +62,7 @@ def main():
     previous = set(registry.glob('*.lease'))
     run_id = str(uuid.uuid4())
     holder = f'gah-native-capacity-{run_id}.service'
-    job = f'parasaur-native-proof-job-{run_id}.service'
+    job = f'gah-native-job-{run_id}.service'
     with tempfile.TemporaryDirectory(prefix='parasaur-native-host-', dir=Path.home() / '.cache') as directory:
         root = Path(directory)
         repo = root / 'repo'
@@ -184,14 +185,39 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                              f'Path({str(ready)!r}).write_text(json.dumps({{"pid":os.getpid(),"child":child.pid}}))\n'
                              'time.sleep(30)\n')
             run('/usr/bin/systemd-run', '--user', '--collect', '--unit=' + job,
-                '-p', 'Type=exec', '-p', 'ExitType=cgroup', '-p', 'KillMode=control-group',
+                '-p', 'Type=exec', '-p', 'ExitType=cgroup', '-p', 'RemainAfterExit=yes', '-p', 'KillMode=control-group',
                 '-p', 'MemoryMax=64M', '-p', 'TimeoutStopSec=2', '-p', 'RuntimeMaxSec=30',
                 '/usr/bin/python3', str(child))
             wait_for(ready.exists)
             group = Path('/sys/fs/cgroup') / properties(job)['ControlGroup'].lstrip('/')
+            actual = json.loads(ready.read_text())
+            start_ticks = Path(f'/proc/{actual["pid"]}/stat').read_text().rsplit(')', 1)[1].split()[19]
+            invocation = ctl('show', job, '-p', 'InvocationID', '--value').stdout.strip()
+            # Controlled entry record: this part proves real process/service
+            # inspection, not a central grant exchange or model execution.
+            now = datetime.datetime.now(datetime.timezone.utc)
+            journal.update(phase='start_intent', start={'token_sha256': 'c' * 64,
+                           'expires_at': (now + datetime.timedelta(seconds=10)).isoformat()},
+                           consumption_offered=True,
+                           execution={'invocation': invocation, 'pid': actual['pid'], 'start_ticks': start_ticks,
+                                      'consumed_at': now.isoformat()})
+            journal_path = root / 'work' / 'worker.json'
+            journal_path.write_text(json.dumps(journal))
+            assert inspect()['state'] == 'running'
+            journal['execution']['start_ticks'] = str(int(start_ticks) + 1)
+            journal_path.write_text(json.dumps(journal))
+            assert inspect()['state'] == 'unknown'
+            journal['execution']['start_ticks'] = start_ticks
+            journal['execution']['invocation'] = 'f' * 32
+            journal_path.write_text(json.dumps(journal))
+            assert inspect()['state'] == 'unknown'
+            journal['execution']['invocation'] = invocation
+            journal_path.write_text(json.dumps(journal))
             os.kill(json.loads(ready.read_text())['pid'], signal.SIGKILL)
             wait_for(lambda: properties(job)['MainPID'] == '0')
             assert not empty(group) and is_locked(lease)
+            observed = inspect()
+            assert observed['state'] == 'unknown' and observed['capacity_held'] is True
             ctl('stop', job)
             assert empty(group) and is_locked(lease)
             ctl('stop', holder)
@@ -201,6 +227,7 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
             assert not canary.exists(), 'Admission must never invoke a backend'
             print(json.dumps({'passed': True, 'realDefaultHostAdmission': True,
                               'workerJournalWriterCrashRecovery': True,
+                              'realJobIdentityInspectionWithControlledEntry': True,
                               'mainCrashWithLiveDescendantRetainsCapacity': True,
                               'jobStopDoesNotReleaseCapacity': True,
                               'holderExitReleasesKernelLock': True, 'agentInvoked': False}, indent=2))

@@ -1,5 +1,66 @@
 # Native worker host admission
 
+## Worker-side permission consumption
+
+The staged worker now has real control clients for initial grant consumption
+and subsequent operation prerequisites. They use the central origin from the
+already verified worker context and require its full binding to match the
+journal. Start-consumption intent is synchronized before HTTP. A matching,
+unexpired consumed-start response can enter the job once, bound to the actual
+systemd job invocation, main PID, kernel process start ticks and unified cgroup.
+Re-exec/replacement cannot inherit that entry. This remains library plumbing;
+the executable wrapper and backend/publication hooks are not yet connected.
+
+Each operation records Pending before HTTP. The entire reply scope, purpose,
+sequence, timestamps and ten-second maximum validity must match. The physical
+holder and current job process are rechecked after the reply, and Authorized is
+synchronized before returning a fresh permission. Lost replies, bad scopes,
+expired replies and uncertain writes remain fenced. Another operation requires
+explicit completion of the exact authorized permission. There is no Drop-based
+completion: callers must first prove backend termination or finished
+publication. This module does not itself provide that backend/result proof.
+
+Only one operation record is retained per run. Diagnostic views distinguish
+Pending, Authorized and Completed without exposing stored permission data as
+current authority or claiming an agent ran. The worker journal writes version
+2; legacy version-1 start fences are retained and upgraded on the next write.
+Older readers fail closed rather than resetting the new state.
+
+Control requests use fixed `/usr/bin/curl`, stdin-only credentials/JSON, a
+five-second deadline, direct configured-authority connections and normal TLS
+verification. No insecure fallback is added. Body validation caps replies at
+64 KiB; a kernel file-size limit bounds both captured streams even for replies
+with no declared size. Known central refusal codes are retained, while arbitrary
+remote bodies/reasons are omitted from errors. Curl config discovery and TLS
+key logging are disabled for this path.
+
+I considered relying on curl's download-size option; its behavior for unknown
+lengths differs before 8.4.0, so the fixed Linux capture uses a kernel limit
+instead. See [curl's size-limit documentation](https://curl.se/docs/manpage.html#--max-filesize).
+Oversized writes use an ignored SIGXFSZ disposition and disabled core files;
+the [kernel resource-limit rules](https://man7.org/linux/man-pages/man2/getrlimit.2.html)
+and [exec signal-disposition rules](https://man7.org/linux/man-pages/man2/execve.2.html)
+support that behavior. Actual unknown-length reply tests pass without returning
+remote data in the error.
+
+Validation: 33 native context/host/journal/operation cases, eight HTTP-helper
+cases, two actual CLI cases, formatting and all-target/all-feature Clippy with
+warnings denied pass. The HTTP cases include real loopback POST/body/header
+capture, oversized responses without a declared length, stalled peers and
+unsafe inputs. State cases substitute the physical checker; they prove lost
+reply/reopen fences, scope/expiry refusal, explicit completion, persistence
+failure, safe denial messages and version-1 migration, not backend execution.
+Log: `/home/khing/.cache/parasaur-project-report.qy1ih6c9/native-operations-checks.log`.
+
+The expanded real Windows WSL process check also passes using default capacity
+settings. With controlled entry records and a real disposable job service,
+the compiled CLI reports Running only for the exact invocation/PID/start ticks.
+Changed identity or dead main process becomes Unknown even when descendants
+remain; the independent capacity lock stays held until the disposable job is
+empty and its holder is explicitly stopped. This is not a real central start
+exchange or model run. No installed CLI/API/service is changed, and the previous
+optimized candidate does not contain this increment.
+
 The private Linux `native-handoff host-reserve` command loads the verified
 central context using the worker's own identity, credentials and capacity
 settings. It reserves the real host's projected memory/CPU through the same
