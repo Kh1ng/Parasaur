@@ -1,5 +1,10 @@
 # Execution capacity and worker decision diagnostics
 
+Subsequent [worker execution and chat lifecycle checks](chat-runtime-lifecycle.md)
+configure Codex using the existing login and verify a real worker chat. The
+provider setup observations below describe the earlier baseline. Full factory
+progression and the central admission constraint remain unresolved.
+
 The event-query hypothesis was measured before editing. At
 2026-11-06T07:21:33Z the journal was 210,860,894 bytes, but the requested
 24-hour gah window contained 3,194 records and produced 1,915,671 JSON bytes.

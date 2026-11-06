@@ -1,5 +1,12 @@
 # Beta finishing pass: local validation
 
+Latest execution/lifecycle correction: [worker execution and chat runtime
+release](chat-runtime-lifecycle.md) reuses the existing login in WSL, completes a
+real worker chat and fixes archived ACP process retention. Three live worker
+archive cycles confirm complete process-tree exit. The matching private build
+passes; the patch is deployed to worker and central. Complete factory execution
+and the broader usage/auth acceptance remain open.
+
 Latest execution check: [capacity and worker diagnostics](execution-capacity.md)
 rules out the current event-query payload as the primary API memory bottleneck,
 identifies the central admission constraint and worker login gates, and fixes

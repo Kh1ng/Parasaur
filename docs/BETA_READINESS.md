@@ -49,6 +49,12 @@ work and are not gates for this desktop/shared-web pass.
 
 ## Evidence still required
 
+- [Worker execution and chat runtime lifecycle](validation/beta-progress-2026-11-03/chat-runtime-lifecycle.md)
+  establishes a real Windows worker chat using the existing login, fixes archived
+  ACP process retention, and verifies live cleanup. The tested four-module patch
+  is deployed to worker and central. Complete factory/review progression,
+  billing reconciliation and Mac memory acceptance remain open.
+
 - [Execution capacity and worker diagnostics](validation/beta-progress-2026-11-03/execution-capacity.md)
   identifies the central node's admission constraint and the worker's login
   gaps. The broad event query is not the measured API memory bottleneck.
