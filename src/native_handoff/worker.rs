@@ -4,6 +4,7 @@
 use super::*;
 use fs2::FileExt;
 mod operations;
+mod result;
 pub use operations::{OperationPermission, OperationPurpose, OperationRequest, StartConsumption};
 
 /// Read a local caller's private expected binding, using context input limits.

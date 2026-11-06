@@ -1,5 +1,17 @@
 # Beta finishing pass: local validation
 
+Latest terminal recovery: private `native-handoff result` verifies the recorded
+job's actual exit and empty cgroup, streams past the exact original history and
+spools one immutable actual ledger receipt. The original row is retained without
+normalization. Cold replay survives later ledger corruption or unit collection;
+receipt corruption and live jobs/descendants are refused. The real Rust receiver
+records once and acknowledges identical replays without releasing worker capacity.
+Forty-six native cases, 573 dispatch cases, 76 provider cases, three CLI cases,
+12 capability cases, formatting and Clippy pass. Six controlled-authority WSL
+process cases and the independent descendant/crash test cover recovery/import.
+Acknowledgement-driven release and central API wiring remain unfinished;
+nothing is installed. See [terminal result recovery](native-worker-host-admission.md#terminal-result-recovery).
+
 Latest native launch: private Linux `native-handoff start` now fences the offer,
 starts the fixed executable, records its actual invocation/PID/start ticks and
 releases the journal lock before PID-verified credential delivery. Five real

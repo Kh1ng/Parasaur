@@ -10,7 +10,7 @@ use std::{
 
 fn state(unit: &str) -> Result<BTreeMap<String, String>> {
     let mut command = Command::new("/usr/bin/systemctl");
-    command.args(["--user", "show", unit, "--property=Id,LoadState,ActiveState,SubState,MainPID,ControlGroup,InvocationID,Transient,Type,ExitType,RemainAfterExit,FileDescriptorStoreMax,NFileDescriptorStore,FileDescriptorStorePreserve,NotifyAccess,Restart,KillMode,StopWhenUnneeded"]);
+    command.args(["--user", "show", unit, "--property=Id,LoadState,ActiveState,SubState,MainPID,ControlGroup,InvocationID,Transient,Type,ExitType,RemainAfterExit,FileDescriptorStoreMax,NFileDescriptorStore,FileDescriptorStorePreserve,NotifyAccess,Restart,KillMode,StopWhenUnneeded,ExecMainPID,ExecMainCode,ExecMainStatus,ExecMainExitTimestampMonotonic,Slice"]);
     let output = crate::runner::process::run_bounded(command, Duration::from_secs(2))
         .context("Native capacity holder state is unavailable")?;
     ensure!(
@@ -213,6 +213,126 @@ pub(super) fn require_own_job(run_id: &str, invocation: &str, pid: u32, ticks: &
     require_job(run_id, invocation, pid, ticks)
 }
 
+/// Observe termination of the exact launched process and its entire cgroup.
+/// Missing unit metadata or a lingering descendant cannot produce a receipt.
+pub(super) fn terminal_job(
+    run_id: &str,
+    identity: &JobIdentity,
+) -> Result<crate::ledger::remote_dispatch::ProcessTermination> {
+    let unit = format!("gah-native-job-{run_id}.service");
+    let values = state(&unit)?;
+    let termination = terminal_state(&values, &unit, identity)?;
+    ensure!(
+        !matches!(process_start_ticks(identity.pid), Ok(ticks) if ticks == identity.start_ticks),
+        "Native job's original process still exists"
+    );
+    let slice = state("app.slice")?;
+    let parent = slice
+        .get("ControlGroup")
+        .filter(|group| {
+            group.starts_with('/')
+                && group.ends_with("/app.slice")
+                && group
+                    .split('/')
+                    .any(|part| part == format!("user@{}.service", unsafe { libc::geteuid() }))
+                && !group.split('/').any(|part| part == "..")
+        })
+        .context("Native job cgroup parent is unavailable")?;
+    let group = format!("{parent}/{unit}");
+    ensure!(
+        values
+            .get("ControlGroup")
+            .is_some_and(|value| value.is_empty() || value == &group),
+        "Native terminal job changed cgroup"
+    );
+    let directory = std::path::Path::new("/sys/fs/cgroup").join(group.trim_start_matches('/'));
+    match std::fs::read_to_string(directory.join("cgroup.events")) {
+        Ok(events) => ensure!(
+            events.lines().any(|line| line == "populated 0"),
+            "Native job descendants remain alive"
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !directory.exists() => {}
+        Err(_) => anyhow::bail!("Native job cgroup state is unavailable"),
+    }
+    ensure!(
+        terminal_state(&state(&unit)?, &unit, identity)? == termination,
+        "Native job termination changed during observation"
+    );
+    Ok(termination)
+}
+
+fn terminal_state(
+    values: &BTreeMap<String, String>,
+    unit: &str,
+    identity: &JobIdentity,
+) -> Result<crate::ledger::remote_dispatch::ProcessTermination> {
+    use crate::ledger::remote_dispatch::{ProcessTermination, TerminationReason};
+    for (key, expected) in [
+        ("Id", unit),
+        ("LoadState", "loaded"),
+        ("Transient", "yes"),
+        ("Type", "exec"),
+        ("ExitType", "cgroup"),
+        ("RemainAfterExit", "yes"),
+        ("Restart", "no"),
+        ("KillMode", "control-group"),
+        ("StopWhenUnneeded", "no"),
+        ("InvocationID", identity.invocation.as_str()),
+        ("MainPID", "0"),
+        ("Slice", "app.slice"),
+    ] {
+        ensure!(
+            values.get(key).map(String::as_str) == Some(expected),
+            "Native job termination has an unsafe or changed {key}"
+        );
+    }
+    ensure!(
+        matches!(
+            (
+                values.get("ActiveState").map(String::as_str),
+                values.get("SubState").map(String::as_str)
+            ),
+            (Some("active"), Some("exited")) | (Some("failed"), Some("failed"))
+        ),
+        "Native job is not terminal"
+    );
+    ensure!(
+        values.get("ExecMainPID") == Some(&identity.pid.to_string())
+            && values
+                .get("ExecMainExitTimestampMonotonic")
+                .is_some_and(|value| value.parse::<u64>().is_ok_and(|value| value > 0)),
+        "Native main process exit is unconfirmed"
+    );
+    let status: u32 = values
+        .get("ExecMainStatus")
+        .context("Native exit status unavailable")?
+        .parse()?;
+    let code: i32 = values
+        .get("ExecMainCode")
+        .context("Native exit code unavailable")?
+        .parse()?;
+    let (exit_code, signal) = match code {
+        libc::CLD_EXITED => (Some(status), None),
+        libc::CLD_KILLED | libc::CLD_DUMPED if status > 0 && status < 128 => (
+            None,
+            Some(match status as i32 {
+                libc::SIGKILL => "SIGKILL".into(),
+                libc::SIGTERM => "SIGTERM".into(),
+                libc::SIGINT => "SIGINT".into(),
+                libc::SIGABRT => "SIGABRT".into(),
+                libc::SIGSEGV => "SIGSEGV".into(),
+                other => format!("SIG{other}"),
+            }),
+        ),
+        _ => anyhow::bail!("Native process termination is unsupported or unconfirmed"),
+    };
+    Ok(ProcessTermination {
+        reason: TerminationReason::Exited,
+        exit_code,
+        signal,
+    })
+}
+
 /// Reserve actual host capacity for a verified context and pass its locked
 /// descriptor to this run's systemd holder. The caller must wait for the holder
 /// to become active/exited with one stored FD before accepting this response.
@@ -291,6 +411,63 @@ pub fn reserve(context: &WorkerContext, work: &std::path::Path) -> Result<serde_
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_state_requires_exact_exit_identity_and_preserves_failure_or_signal() {
+        let unit = "gah-native-job-fixture.service";
+        let identity = JobIdentity {
+            invocation: "a".repeat(32),
+            pid: 123,
+            start_ticks: "1".into(),
+        };
+        let mut values: BTreeMap<String, String> = [
+            ("Id", unit),
+            ("LoadState", "loaded"),
+            ("Transient", "yes"),
+            ("Type", "exec"),
+            ("ExitType", "cgroup"),
+            ("RemainAfterExit", "yes"),
+            ("Restart", "no"),
+            ("KillMode", "control-group"),
+            ("StopWhenUnneeded", "no"),
+            ("InvocationID", &identity.invocation),
+            ("MainPID", "0"),
+            ("Slice", "app.slice"),
+            ("ActiveState", "failed"),
+            ("SubState", "failed"),
+            ("ExecMainPID", "123"),
+            ("ExecMainExitTimestampMonotonic", "100"),
+            ("ExecMainCode", "1"),
+            ("ExecMainStatus", "7"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.into(), value.into()))
+        .collect();
+        assert_eq!(
+            terminal_state(&values, unit, &identity).unwrap().exit_code,
+            Some(7)
+        );
+        for (key, wrong) in [
+            ("InvocationID", "replaced"),
+            ("MainPID", "123"),
+            ("ExecMainPID", "999"),
+            ("ExecMainExitTimestampMonotonic", "0"),
+            ("SubState", "running"),
+            ("ExitType", "main"),
+        ] {
+            let mut changed = values.clone();
+            changed.insert(key.into(), wrong.into());
+            assert!(
+                terminal_state(&changed, unit, &identity).is_err(),
+                "accepted changed {key}"
+            );
+        }
+        values.insert("ExecMainCode".into(), libc::CLD_KILLED.to_string());
+        values.insert("ExecMainStatus".into(), libc::SIGKILL.to_string());
+        let killed = terminal_state(&values, unit, &identity).unwrap();
+        assert_eq!(killed.signal.as_deref(), Some("SIGKILL"));
+        assert!(killed.exit_code.is_none());
+    }
 
     #[test]
     fn holder_requires_exact_process_invocation_and_retention_contract() {

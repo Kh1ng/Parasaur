@@ -95,7 +95,7 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        for case in ('allowed', 'denied', 'publication-denied', 'lost-start-reply', 'provider-claims'):
+        for case in ('allowed', 'denied', 'publication-denied', 'lost-start-reply', 'running-result', 'provider-claims'):
             denied = case == 'denied'
             publication_denied = case == 'publication-denied'
             run_id = str(uuid.uuid4())
@@ -122,7 +122,8 @@ def main():
                 marker = root / 'backend-invoked'
                 backend = bins / 'codex'
                 backend.write_text('#!/bin/sh\n' +
-                    f'touch {marker}\nprintf "worker edit\\n" >> README.md\n' +
+                    f'touch {marker}\n' + ('sleep 2\n' if case == 'running-result' else '') +
+                    'printf "worker edit\\n" >> README.md\n' +
                     'printf \'{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":7}}\\n\'\n')
                 backend.chmod(0o700)
                 forge = bins / 'gh'
@@ -218,6 +219,16 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                         reply = json.loads(launched.stdout)
                         assert reply['launch_confirmed'] and reply['execution_authorized'] is False
                     stdout, stderr = work / 'job.stdout', work / 'job.stderr'
+                    collect = [binary, 'native-handoff', 'result', '--context-dir', str(context),
+                               '--binding-file', str(context / 'binding.json'), '--work-dir', str(work)]
+                    if case == 'running-result':
+                        deadline = time.monotonic() + 5
+                        while not marker.exists():
+                            assert time.monotonic() < deadline
+                            time.sleep(.02)
+                        pending = host_run(*collect, env=environment, check=False)
+                        assert pending.returncode != 0 and not pending.stdout and 'Native job' in pending.stderr
+                        assert not (work / 'result.json').exists()
                     group_path = properties(job).get('ControlGroup')
                     deadline = time.monotonic() + 60
                     while True:
@@ -267,6 +278,37 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                         assert base.startswith('/'), 'Missing user app slice evidence'
                         group = Path('/sys/fs/cgroup') / base.lstrip('/') / job
                     assert empty(group), 'Wrapper exit did not prove an empty cgroup'
+                    recovered = run(*collect, env=environment)
+                    assert owner not in recovered.stdout and grant['token'] not in recovered.stdout
+                    result = json.loads(recovered.stdout)
+                    receipt = json.loads(result['receipt_json'])
+                    differences = {key: (entry.get(key), receipt['ledger'].get(key))
+                        if isinstance(entry.get(key), (int, float)) else 'changed'
+                        for key in set(entry) | set(receipt['ledger']) if entry.get(key) != receipt['ledger'].get(key)}
+                    assert result['state'] == 'terminal' and receipt['ledger'] == entry, differences
+                    assert receipt['execution']['termination']['exit_code'] == (1 if denied or publication_denied else 0)
+                    receipt_file = root / 'receipt.json'
+                    receipt_file.write_text(result['receipt_json'])
+                    for expected in ('recorded', 'already_recorded'):
+                        imported = json.loads(run(binary, 'ledger', 'receive-dispatch', '--binding-file',
+                            str(context / 'binding.json'), '--receipt-file', str(receipt_file),
+                            '--acknowledgement', '--config-path', str(central), env=environment).stdout)
+                        assert imported['outcome'] == expected
+                        assert imported['receipt_sha256'] == result['receipt_sha256']
+                    # A cold recovery replays the committed original, even if
+                    # mutable ledger data or unit metadata later disappears.
+                    with (work / 'ledger.jsonl').open('a') as ledger:
+                        ledger.write('CORRUPT_TAIL_AFTER_RECOVERY\n')
+                    ctl('stop', job, check=False)
+                    assert json.loads(run(*collect, env=environment).stdout) == result
+                    spool_path = work / 'result.json'
+                    original = spool_path.read_bytes()
+                    changed = json.loads(original)
+                    changed['receipt_sha256'] = '0' * 64
+                    spool_path.write_text(json.dumps(changed))
+                    assert host_run(*collect, env=environment, check=False).returncode != 0
+                    spool_path.write_bytes(original)
+                    assert properties(holder)['NFileDescriptorStore'] == '1'
                     # Cold start/execute processes cannot offer/consume again,
                     # including when the original launch response was discarded.
                     for action in ('start', 'execute'):
@@ -278,7 +320,8 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                     print(json.dumps({'case': case, 'actualStartConsumption': True,
                         'actualProcessScope': True, 'backendFixtureInvoked': marker.exists(),
                         'operation': journal['operation']['phase'], 'capacityRetainedAfterExit': True,
-                        'replayRejected': True, 'startReplyDiscarded': case == 'lost-start-reply', 'realModelInvoked': False}), flush=True)
+                        'replayRejected': True, 'immutableResultRecovered': True, 'canonicalImportOnce': True,
+                        'startReplyDiscarded': case == 'lost-start-reply', 'realModelInvoked': False}), flush=True)
                 finally:
                     ctl('stop', job, check=False)
                     try:

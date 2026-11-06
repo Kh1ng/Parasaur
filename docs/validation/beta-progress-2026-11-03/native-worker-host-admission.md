@@ -1,5 +1,51 @@
 # Native worker host admission
 
+## Terminal result recovery
+
+The private Linux `native-handoff result --context-dir ... --binding-file ...
+--work-dir ...` command recovers a result without starting, cancelling or releasing
+anything. It requires the worker's own node identity and exact private journal.
+First capture checks the original invocation and main PID, systemd's exit
+code/signal and nonzero exit timestamp, the fixed job retention contract, and
+an empty full job cgroup. A second observation must agree after reading the
+ledger. Missing unit evidence, a live original process, live descendants or an
+absent actual ledger result retain the job for reconciliation.
+
+Original history is checked against the bound manifest's chunk hashes and
+streamed past; recovery does not allocate the entire history. Added rows are
+bounded, complete JSON lines. Exactly one row must match the run/profile/repo/
+work identity. Changed history, duplicate results and truncated/oversized rows
+are refused. The validated original row is embedded verbatim in the receipt,
+preserving numeric text, defaults and future fields instead of normalizing them
+before delivery.
+
+`result.json` is a private, non-overwriting spool with the complete binding,
+launched process identity, raw payload hash and canonical receipt hash. File and
+directory synchronization precede the reply. Cold replay returns the same saved
+bytes even if later ledger data changes or the exited unit is collected. Cached
+reads repeat synchronization, so a prior uncertain directory barrier is not
+assumed durable. Payload/identity/digest changes are refused. A saved receipt
+describes the captured exit; it does not certify current free capacity.
+
+The real-process worker fixture now recovers actual allowed and denied results,
+passes them through the real Rust canonical receiver, and verifies recorded/
+already-recorded acknowledgements with the same receipt digest. It also checks
+that a running backend and a dead main with live descendants cannot produce a
+receipt, cold replay survives lost unit metadata and changed ledger data, and
+spool corruption is rejected. Capacity remains held after canonical import.
+The HTTP authority/backend/forge are controlled fixtures; no real model or
+installed service is used. Canonical acknowledgement delivery to the worker,
+physical capacity release and central-to-worker API wiring remain unfinished.
+
+Validation: 46 native library cases, 573 dispatch cases, 76 provider cases,
+three native CLI cases, 12 capability cases, formatting and all-target/all-feature
+Clippy pass. Six WSL process cases cover the actual start/worker/result commands
+and canonical receiver with controlled authority/backend/forge; five recover an
+actual result and the unsupported provider-claim case refuses before consumption.
+The separate main-crash/live-descendant test also rejects result collection.
+Local metadata: `artifacts/central-live-20261105/native-worker-result.jsonl`.
+Rust log: `/home/khing/.cache/parasaur-project-report.qy1ih6c9/native-dispatch-checks.log`.
+
 ## Fixed launch transport
 
 The private Linux `native-handoff start` command now accepts the same bounded

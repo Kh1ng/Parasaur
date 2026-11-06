@@ -223,6 +223,11 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
             assert not empty(group) and is_locked(lease)
             observed = inspect()
             assert observed['state'] == 'unknown' and observed['capacity_held'] is True
+            refused_result = run(str(binary), 'native-handoff', 'result', '--binding-file', str(expected),
+                                 '--context-dir', str(context), '--work-dir', str(root / 'work'),
+                                 env=environment, check=False)
+            assert refused_result.returncode != 0 and 'Native job is not terminal' in refused_result.stderr
+            assert not (root / 'work' / 'result.json').exists()
             ctl('stop', job)
             assert empty(group) and is_locked(lease)
             ctl('stop', holder)

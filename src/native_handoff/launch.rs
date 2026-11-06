@@ -52,7 +52,7 @@ fn start_job(
             "--expand-environment=no",
         ])
         .arg(format!("--unit=gah-native-job-{run_id}.service"));
-    for property in ["ExitType=cgroup", "RemainAfterExit=yes", "Restart=no", "KillMode=control-group",
+    for property in ["ExitType=cgroup", "RemainAfterExit=yes", "Restart=no", "KillMode=control-group", "Slice=app.slice",
         "StopWhenUnneeded=no", "UMask=0077", "TimeoutStartSec=5s",
         "UnsetEnvironment=GAH_LEDGER_PATH GAH_EVENTS_PATH GAH_RECONCILIATION_PATH COORDINATOR_TOKEN"] {
         command.args(["-p", property]);

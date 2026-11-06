@@ -20,6 +20,8 @@ pub(super) fn add_native_handoff_operations(manifest: &mut CapabilityManifest) {
         "execute",
         #[cfg(target_os = "linux")]
         "start",
+        #[cfg(target_os = "linux")]
+        "result",
     ] {
         manifest.add_operation(OperationDefinition {
             operation_id: format!("native-handoff.{action}"), display_name: format!("Native Handoff {action}"),
