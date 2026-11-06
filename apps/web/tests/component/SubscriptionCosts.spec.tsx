@@ -53,10 +53,38 @@ test('a mounted navbar expires a window without requiring hover or a new snapsho
   await page.clock.install({ time: new Date('2026-11-05T20:00:00Z') });
   const subscriptions = subscriptionUsage({ candidates: [{
     backend: 'opencode', backend_instance: 'opencode', provider: 'mistral', eligible_now: true, modes: [],
-    quota_observations: [{ quota_window: 'daily', quota_remaining_percent: 75, quota_reset_at: '2026-11-05T20:00:30Z' }],
+    quota_observations: [{ quota_window: 'daily', quota_remaining_percent: 75, observed_at: '2026-11-05T20:00:00Z', quota_reset_at: '2026-11-05T20:00:30Z' }],
   }] } as never);
   const component = await mount(<SubscriptionUsageMenu subscriptions={subscriptions} onOpenQuota={() => undefined} />);
   await expect(component.getByRole('button', { name: 'Mistral opencode usage: 25% of daily used', exact: true })).toBeVisible();
   await page.clock.runFor(30_000);
   await expect(component.getByRole('button', { name: /usage unavailable; last recorded/ })).toBeVisible();
+});
+
+
+test('OpenCode subscription sources retain their provider and failed pools stay historical', async ({ mount, page }) => {
+  await page.clock.install({ time: new Date('2026-11-06T05:00:00Z') });
+  const observed = '2026-11-06T04:59:00Z';
+  const subscriptions = subscriptionUsage({ candidates: [{ backend: 'opencode', backend_instance: 'opencode', provider: 'mistral', eligible_now: true, modes: [], usage: {} }], quota_checks: [
+    { backend: 'opencode', backend_instance: 'opencode:nous-portal-api', provider: 'nous', status: 'data', checked_at: observed, quota_observations: [
+      { backend: 'opencode', observed_at: observed, quota_window: 'monthly', quota_remaining_percent: 25, quota_reset_at: '2026-11-25T00:00:00Z' },
+    ] },
+    ...['external', 'google-native'].map(pool => ({ backend: 'agy', backend_instance: `agy:${pool}`, provider: 'antigravity', quota_pool: `agy:${pool}`, status: pool === 'external' ? 'data' : 'failed', checked_at: observed, quota_observations: [
+      { backend: 'agy', observed_at: observed, quota_window: 'weekly', quota_remaining_percent: pool === 'external' ? 80 : 0, quota_reset_at: '2026-11-13T00:00:00Z' },
+    ] })),
+  ] } as never);
+  const component = await mount(<div><SubscriptionCards subscriptions={subscriptions} /><SubscriptionUsageMenu subscriptions={subscriptions} onOpenQuota={() => undefined} /></div>);
+  await expect(component.getByRole('article', { name: 'Mistral subscription' })).not.toContainText('75%');
+  await expect(component.getByRole('article', { name: 'Nous subscription' })).toContainText('75%');
+  const agy = component.getByRole('article', { name: 'Antigravity subscription' });
+  await expect(agy).toContainText('last recorded 100%');
+  await component.getByRole('button', { name: 'Antigravity agy usage: 20% of external models · weekly used', exact: true }).click();
+  const dialog = component.getByRole('dialog');
+  await expect(dialog).toContainText('20% of external models · weekly used.');
+  await expect(dialog).toContainText('Provider usage check failed.');
+  await expect(dialog).toContainText('last recorded 100%');
+  await expect(dialog).not.toContainText('Current usage unavailable.');
+  await page.clock.runFor(31 * 60_000);
+  await expect(dialog).toContainText('Current usage unavailable.');
+  await expect(dialog).toContainText('Usage reading is older than 30 minutes.');
 });

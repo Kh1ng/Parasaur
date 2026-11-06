@@ -14,7 +14,7 @@ const candidates = [
       { backend: 'claude', quota_window: '5-hour', quota_remaining_percent: 34, quota_reset_at: '2026-10-04T23:20:00Z', observed_at: '2026-10-04T22:58:00Z' }
     ] },
   { backend: 'codex', backend_instance: 'codex', provider: 'openai', model: 'gpt-6-sol', modes: ['improve'], configured: false, eligible_now: true, usage: { actual_cost_usd: 8.1 },
-    quota_observations: [{ backend: 'codex', quota_window: '10080m', quota_remaining_percent: 94, quota_reset_at: '2026-10-11T08:06:15Z' }] },
+    quota_observations: [{ backend: 'codex', quota_window: '10080m', observed_at: '2026-10-04T22:58:00Z', quota_remaining_percent: 94, quota_reset_at: '2026-10-11T08:06:15Z' }] },
   { backend: 'vibe', backend_instance: 'vibe', provider: 'z-ai', model: 'glm-5-3', modes: ['improve'], configured: false, eligible_now: false, reason: 'quota exhausted', unavailable_until: '2026-10-05T01:00:00Z', usage: {} }
 ];
 const accountSpend = [{ backend: 'codex', backend_instance: 'codex', actual_cost_usd: 8.1, estimated_cost_usd: null, observations: 1, actual_cost_unknown_observations: 0 }];
@@ -80,7 +80,7 @@ test('the navbar shows a ring per subscription and opens its windows; Quota list
     snapshot.quota_checks = [];
     snapshot.since = '7d';
     snapshot.account_spend = accountSpend;
-    snapshot.candidates = [...candidates, { ...candidates[1], model: 'another-codex-model' }].map((candidate) => ({ ...candidate, quota_observations: candidate.quota_observations?.map((o) => ({ ...o, quota_reset_at: o.quota_window === '5-hour' ? soon : week })) }));
+    snapshot.candidates = [...candidates, { ...candidates[1], model: 'another-codex-model' }].map((candidate) => ({ ...candidate, quota_observations: candidate.quota_observations?.map((o) => ({ ...o, observed_at: new Date().toISOString(), quota_reset_at: o.quota_window === '5-hour' ? soon : week })) }));
     await route.fulfill({ json: snapshot });
   });
   await page.routeWebSocket('**/ws**', (ws) => {

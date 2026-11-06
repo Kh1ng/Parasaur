@@ -1,5 +1,5 @@
 import type { QuotaCandidateStatus, QuotaCheck, QuotaObservation, QuotaSnapshot, RunningWorker, Session } from '@git-agent-harness/contracts';
-import { formatCost } from './format.js';
+import { formatCost, STALE_THRESHOLD_MS } from './format.js';
 
 /** One rate-limit window of a subscription, as the provider reports it. */
 export interface UsageWindow {
@@ -15,6 +15,8 @@ export interface UsageWindow {
   model: string | null;
   /** The account's quota pool this window belongs to (Gemini, External models, Vibe…). */
   pool: string | null;
+  /** A failed source check qualifies the retained reading, not its measured value. */
+  checkProblem?: string | null;
 }
 
 /** A subscription: everything the quota snapshot knows about one account. */
@@ -81,9 +83,13 @@ function usedPercent(observation: QuotaObservation): number | null {
   return null;
 }
 
-/** `agy-second:external` -> `agy-second`; a named credential wins. */
-export function accountId(source: { backend: string; backend_instance?: string | null; credential_id?: string | null }): string {
-  return source.credential_id ?? (source.backend_instance ?? source.backend).split(':')[0];
+/** A named credential wins. Only Antigravity's documented pool suffixes
+ * describe one account; generic runners may host unrelated providers. */
+export function accountId(source: { backend: string; provider?: string | null; backend_instance?: string | null; credential_id?: string | null }): string {
+  if (source.credential_id != null) return source.credential_id;
+  const instance = source.backend_instance ?? source.backend;
+  const antigravity = source.provider === 'antigravity' || ['agy', 'agy-main', 'agy-second'].includes(source.backend);
+  return antigravity ? instance.replace(/:(external|google-native)$/, '') : instance;
 }
 
 const POOL_LABELS: Record<string, string> = {
@@ -117,6 +123,36 @@ function toWindow(observation: QuotaObservation, index: number, pool: string | n
 
 type Scope = Pick<QuotaCheck, 'backend' | 'provider' | 'backend_instance' | 'credential_id' | 'quota_pool' | 'quota_observations'>;
 
+/** Check evidence must match the reading's account and pool. A failure on
+ * another account cannot invalidate it, and a fresh check cannot rejuvenate
+ * an older observation. Broad and model-specific checks retain their own
+ * latest outcome; recovery requires a reading newer than the failure. */
+export function quotaCheckProblem(source: Scope, observation: QuotaObservation, checks: QuotaCheck[]): string | null {
+  if (observation.check_error) return observation.check_error.startsWith('auth_required:') ? 'Provider sign-in required.' : 'Provider usage check failed.';
+  const matching = checks.filter(check => check.backend === (observation.backend ?? source.backend)
+    && (check.credential_id ?? null) === (observation.credential_id ?? source.credential_id ?? null)
+    && (check.backend_instance ?? null) === (observation.backend_instance ?? source.backend_instance ?? null)
+    && (check.quota_pool ?? null) === (observation.quota_pool ?? source.quota_pool ?? null)
+    && (!check.model || check.model === observation.model));
+  const latest = new Map<string | null, QuotaCheck>();
+  for (const check of matching) {
+    const key = check.model ?? null;
+    const previous = latest.get(key);
+    if (!previous || (Date.parse(check.checked_at ?? '') || 0) >= (Date.parse(previous.checked_at ?? '') || 0)) latest.set(key, check);
+  }
+  const check = [...latest.values()].filter(check => check.status !== 'data'
+    && !(Date.parse(check.checked_at ?? '') < Date.parse(observation.observed_at ?? '')))
+    .sort((a, b) => (Date.parse(b.checked_at ?? '') || 0) - (Date.parse(a.checked_at ?? '') || 0))[0];
+  if (!check) return null;
+  switch (check.status) {
+    case 'failed': return 'Provider usage check failed.';
+    case 'auth_required': return 'Provider sign-in required.';
+    case 'not_configured': return 'Quota source is not configured.';
+    case 'no_data': return 'Provider returned no current usage reading.';
+    default: return 'Usage check status unavailable.';
+  }
+}
+
 /**
  * One entry per account, not per routing candidate or model (#1411): an
  * account's pools (Antigravity's Gemini and external-model pools, Mistral's
@@ -140,6 +176,7 @@ export function subscriptionUsage(snapshot: Partial<Pick<QuotaSnapshot, 'candida
     const byWindow = new Map<string, UsageWindow>();
     account.scopes.forEach((scope) => (scope.quota_observations ?? []).forEach((observation, index) => {
       const window = toWindow(observation, index, pools.size > 1 ? poolLabel(scope, id) : null);
+      window.checkProblem = quotaCheckProblem(scope, observation, snapshot?.quota_checks ?? []);
       const key = `${window.pool}|${observation.quota_window}|${window.model}`;
       const previous = byWindow.get(key);
       // A candidate and its account check report the same reading; keep the newest.
@@ -230,10 +267,20 @@ export function busySubscriptionIds(input: {
   return busy;
 }
 
-/** A passed or invalid reset cannot confirm the current allowance. No reset
- * is allowed for providers that report usage without a scheduled window. */
+/** Current allowance requires a recent observation and a successful source.
+ * Providers without a scheduled window may legitimately omit the reset. */
+export function usageWindowProblem(window: Pick<UsageWindow, 'resetAt' | 'observedAt' | 'checkProblem'>, now: number): string | null {
+  if (window.checkProblem) return window.checkProblem;
+  const observed = Date.parse(window.observedAt ?? '');
+  if (!Number.isFinite(observed)) return 'Observation time unavailable.';
+  if (observed > now) return 'Observation time is in the future.';
+  if (now - observed > STALE_THRESHOLD_MS) return 'Usage reading is older than 30 minutes.';
+  if (window.resetAt !== null && !(Date.parse(window.resetAt) > now)) return 'Recorded quota window has ended or has no valid reset time.';
+  return null;
+}
+
 export function usageWindowIsCurrent(window: UsageWindow, now: number): boolean {
-  return window.resetAt === null || Date.parse(window.resetAt) > now;
+  return usageWindowProblem(window, now) === null;
 }
 
 /** Historical readings remain available, but cannot select the current limit. */
@@ -246,7 +293,7 @@ export function currentTightestWindow(usage: SubscriptionUsage, now: number): Us
  * scaled from the elapsed part of the window to all of it. Null until a
  * meaningful slice of the window has passed. */
 export function projectedPercent(window: UsageWindow, now: number): number | null {
-  if (window.usedPercent === null || !window.windowMs || !window.resetAt) return null;
+  if (window.usedPercent === null || !window.windowMs || !window.resetAt || !usageWindowIsCurrent(window, now)) return null;
   const remaining = Date.parse(window.resetAt) - now;
   if (!Number.isFinite(remaining) || remaining <= 0 || remaining > window.windowMs) return null;
   const elapsed = window.windowMs - remaining;

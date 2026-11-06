@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { currentTightestWindow, usageWindowIsCurrent, formatUntil, projectedPercent, recordedCostLabel, usageTone, type SubscriptionUsage, type UsageWindow } from '../lib/subscriptionUsage.js';
+import { currentTightestWindow, usageWindowProblem, formatUntil, projectedPercent, recordedCostLabel, usageTone, type SubscriptionUsage, type UsageWindow } from '../lib/subscriptionUsage.js';
 import { formatLocalTime } from '../lib/format.js';
 import { UsageRing } from './UsageRing.js';
+import { useNow } from '../hooks/useNow.js';
 
 const BAR_CLASS = { good: 'bg-accent', warning: 'bg-warning', critical: 'bg-critical', unknown: 'bg-muted' } as const;
 
 /** A window's name, time to reset and used share, with a thin bar and the pace projection under it. */
 export function UsageWindowRow({ window, now, compact = false, unconfirmed = false }: { window: UsageWindow; now: number; compact?: boolean; unconfirmed?: boolean }) {
-  unconfirmed ||= !usageWindowIsCurrent(window, now);
+  const problem = usageWindowProblem(window, now);
+  const observed = formatLocalTime(window.observedAt);
+  unconfirmed ||= Boolean(problem);
   const until = unconfirmed ? null : formatUntil(window.resetAt, now);
   const projected = unconfirmed ? null : projectedPercent(window, now);
   const tone = unconfirmed ? 'unknown' : usageTone(window.usedPercent);
@@ -32,6 +35,7 @@ export function UsageWindowRow({ window, now, compact = false, unconfirmed = fal
           {window.resetAt && <>{unconfirmed ? 'Recorded reset' : 'resets'} {formatLocalTime(window.resetAt) ?? window.resetAt}</>}
         </p>
       )}
+      {unconfirmed && problem && <p className="mt-0.5 text-[11px] text-muted">{problem}{observed && <> Last observed {observed}.</>}</p>}
     </div>
   );
 }
@@ -77,13 +81,8 @@ export function SubscriptionDetail({ usage, now, unavailable = false }: { usage:
 export function SubscriptionUsageMenu({ subscriptions, busy, onOpenQuota, unavailable = false }: { subscriptions: SubscriptionUsage[]; /** Subscriptions with a job running now. */ busy?: Set<string>; onOpenQuota: () => void; unavailable?: boolean }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [pinned, setPinned] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
+  const now = useNow();
   const menu = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     if (!openId) return;
@@ -108,8 +107,8 @@ export function SubscriptionUsageMenu({ subscriptions, busy, onOpenQuota, unavai
           const label = `${usage.providerLabel} ${usage.id} ${unconfirmed ? 'usage unavailable; last recorded' : 'usage'}${tight && tight.usedPercent !== null ? `: ${Math.round(tight.usedPercent)}% of ${tight.label.toLowerCase()} used` : ''}${working ? ', working now' : ''}`;
           return (
             <button key={usage.id} type="button" aria-label={label} aria-expanded={openId === usage.id} aria-haspopup="true"
-              onMouseEnter={() => { if (!pinned) { setOpenId(usage.id); setNow(Date.now()); } }}
-              onClick={() => { setPinned(openId !== usage.id || !pinned); setOpenId(usage.id); setNow(Date.now()); }}
+              onMouseEnter={() => { if (!pinned) setOpenId(usage.id); }}
+              onClick={() => { setPinned(openId !== usage.id || !pinned); setOpenId(usage.id); }}
               className={`flex h-9 w-9 items-center justify-center rounded-md hover:bg-overlay/5 ${openId === usage.id ? 'bg-overlay/5' : ''}`}>
               <UsageRing usage={usage} working={working} unconfirmed={unavailable} now={now} />
             </button>

@@ -53,7 +53,8 @@ test('quota windows compare exact percentages and distinguish missing, stale, an
   await expect(claude.getByRole('progressbar', { name: 'weekly · opus: 75% used, 25% remaining' })).toBeVisible();
   await expect(codex.getByText(/Resets in (59m|1h 0m)/)).toBeVisible();
   await expect(vibe.getByText('Unavailable', { exact: true })).toBeVisible();
-  await expect(vibe.getByText('Stale', { exact: true })).toHaveCount(2);
+  await expect(vibe.getByText('Stale', { exact: true })).toHaveCount(1);
+  await expect(vibe.getByText('Last recorded', { exact: true })).toHaveCount(1);
   await expect(vibe.getByText('No usage percentage available', { exact: true })).toBeVisible();
   await expect(vibe.getByRole('progressbar')).toHaveCount(0);
 

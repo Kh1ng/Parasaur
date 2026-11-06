@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { currentTightestWindow, usageWindowIsCurrent, formatUntil, projectedPercent, recordedCostLabel, usageTone, type SubscriptionUsage } from '../lib/subscriptionUsage.js';
 import { formatAge } from '../lib/format.js';
 import { UsageRing } from './UsageRing.js';
 import { agentDisplayName } from './LiveAgentsCard.js';
 import { UsageWindowRow } from './SubscriptionUsageMenu.js';
+import { useNow } from '../hooks/useNow.js';
 
 const DOT_CLASS = { good: 'bg-good', warning: 'bg-warning', critical: 'bg-critical', unknown: 'bg-muted/40' } as const;
 
@@ -66,11 +67,7 @@ function SubscriptionCard({ usage, now, open, onToggle, unavailable }: { usage: 
  */
 export function SubscriptionCards({ subscriptions, unavailable = false }: { subscriptions: SubscriptionUsage[]; unavailable?: boolean }) {
   const [open, setOpen] = useState<Set<string>>(() => new Set());
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
+  const now = useNow();
   if (subscriptions.length === 0) return null;
   const toggle = (id: string) => setOpen((current) => {
     const next = new Set(current);
