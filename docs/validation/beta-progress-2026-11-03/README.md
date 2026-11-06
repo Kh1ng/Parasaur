@@ -1,5 +1,14 @@
 # Beta finishing pass: local validation
 
+Latest replay correction: [request binding](worker-execution-results.md#request-binding-follow-up)
+rejects changed work, routes and execution controls on a reused dispatch request
+or active-work join. Both APIs run the `5328f873` backport; independent central
+and worker live checks reject converting an owned dry-run to real execution,
+then return its original receipt on an exact replay. The matched private build
+passes 1,158 server and 17 mock cases. Native policy/history transfer remains
+open. At 15:31 UTC, the unchanged memory observer had 4.63 hours without OOM or
+gaps; full ten-hour and sustained-load acceptance remain incomplete.
+
 Latest worker correction: [execution ownership and results](worker-execution-results.md)
 keeps unknown cancellations, disconnects and lost acknowledgements from
 releasing work prematurely. Offered receipts survive coordinator restart, and

@@ -129,4 +129,38 @@ replays, changed work and controls, active-work joins, central restart, legacy
 receipt inspection and reentrant start publication. Logs are
 `request-binding-negative.log`, `request-binding-build.log` and
 `request-binding-checks.log` under the same isolated source parent above.
-This follow-up is not deployed and does not implement native policy transfer.
+Public `5328f873` is deployed as a targeted API backport on both hosts. Private
+`d3eca7c` pins that revision and passes 1,158 server cases (38 explicit skips),
+17 mock cases, production builds and private packaging/input/credential and
+transport guards. Its log is
+`/home/khing/.cache/parasaur-enterprise-current.qxgrw5g3/build.log`.
+The targeted builds reproduce both installed module preimages, verify that the
+new identity module was absent, and pass the session/fleet/real-process boundary
+checks. Manifests, archives and source patch are retained under ignored
+`artifacts/parasaur-request-binding-5328f873/`; build log:
+`/home/khing/.cache/parasaur-request-binding.w8vdcv92/build.log`.
+
+Worker API PID changed from 339737 to 352938 at 15:28:20 UTC. Central changed
+from 826870 to 841661. Its first post-install metadata observation timed out;
+read-only verification of that same PID passed at 15:30:26 UTC. Stored preflight
+hashes now permit exact configuration, owner credential, CLI and chat-index
+comparisons across a pending verification; all passed. The 96 observed central
+chat sessions, protected runtime modules, controller PID 666974 and observer
+PID 667504 were preserved. There was no restart on observation timeout. Shared
+web remains `b27bdf55`; no UI change is needed for this server correction.
+
+Owned request `factory-dry-run-04831e3ad71941f89b1aaf3166e8c483` completed on
+the pinned Windows WSL worker with observed exit code zero. Both central and
+the worker independently refused the same request with `dryRun` changed to
+false, and both returned the original session and execution result for an
+unchanged replay afterward. The HTTP route currently reports those conflicts
+as 502 with the explicit mismatch message; the WebSocket/internal error has
+code `DISPATCH_REQUEST_CONFLICT`. No real issue or manual-worker bypass was
+selected. The final independent worker roster was empty of active sessions.
+
+At 15:31:07 UTC the original observer was still live: 274 samples over
+16,665.025 seconds, no gaps and zero cgroup OOM kills. This is not the ten-hour
+or sustained-agent-load acceptance. Metadata reports are retained under ignored
+`artifacts/central-live-20261105/request-binding-*.json`. Native policy/history
+transfer remains unimplemented; this correction does not establish complete
+factory execution or close an issue.
