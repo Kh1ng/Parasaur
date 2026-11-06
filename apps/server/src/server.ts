@@ -95,7 +95,8 @@ import { pairingRouter } from './pairing.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { resolveChatProject } from './projectCatalog.js';
 import { RegistryService, NodeDoctorError } from './registryService.js';
-import { ClaimsService, ClaimConflictError } from './claimsService.js';
+import { ClaimsService } from './claimsService.js';
+import { claimsRouter } from './claimsRouter.js';
 import { backendForProfile, helperRouteFor, readSettings as readManagerChatSettings, setBackendForProfile, validHelperRoute, writeSettings as writeManagerChatSettings } from './managerChat/settingsStore.js';
 import { gatewayBaseUrl, gatewayApiKey, gatewayHealth, recall } from './managerChat/memoryGatewayClient.js';
 import { readGatewaySettings, writeGatewaySettings } from './gatewaySettingsStore.js';
@@ -1173,85 +1174,12 @@ export function createServer(
     }
   });
 
-  // Central claim arbitration (issue #882). All three verify the calling
-  // node is actually registered and has declared the profile it's trying
-  // to claim -- a node can't claim work under a profile it never told the
-  // registry it runs.
-  function authorizeClaimRequest(nodeId: unknown, profile: unknown, workId: unknown): { nodeId: string; profile: string; workId: string } {
-    if (typeof nodeId !== 'string' || !nodeId) throw new Error('Missing or invalid node_id');
-    if (typeof profile !== 'string' || !profile) throw new Error('Missing or invalid profile');
-    if (typeof workId !== 'string' || !workId) throw new Error('Missing or invalid work_id');
-    const node = registryService.getNode(nodeId);
-    if (!node) throw new Error(`Node '${nodeId}' is not registered`);
-    if (!node.profiles?.includes(profile)) {
-      throw new Error(`Node '${nodeId}' has not declared profile '${profile}' at registration`);
-    }
-    return { nodeId, profile, workId };
-  }
-
-  const claimsStoreUnavailable = (res: express.Response, error: unknown): void => {
-    console.error(`Claims store failed to load: ${error instanceof Error ? error.message : String(error)}`);
-    res.status(500).json({ error: 'Claims store unavailable', message: 'The claims store could not be loaded; check server logs.' });
-  };
-
-  app.post('/api/claims/acquire', (req, res) => {
-    let claims;
-    try {
-      claims = centralClaims();
-    } catch (error) {
-      claimsStoreUnavailable(res, error);
-      return;
-    }
-    try {
-      const { nodeId, profile, workId } = authorizeClaimRequest(req.body.node_id, req.body.profile, req.body.work_id);
-      const lease = claims.acquire(nodeId, profile, workId, req.body.lease_seconds);
-      res.status(200).json(lease);
-    } catch (error) {
-      if (error instanceof ClaimConflictError) {
-        res.status(409).json({ error: 'Conflict', message: error.message, held_by: error.heldBy });
-        return;
-      }
-      res.status(400).json({ error: 'Bad Request', message: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  app.post('/api/claims/renew', (req, res) => {
-    let claims;
-    try {
-      claims = centralClaims();
-    } catch (error) {
-      claimsStoreUnavailable(res, error);
-      return;
-    }
-    try {
-      const { nodeId, profile, workId } = authorizeClaimRequest(req.body.node_id, req.body.profile, req.body.work_id);
-      const lease = claims.renew(nodeId, profile, workId, req.body.lease_seconds);
-      res.status(200).json(lease);
-    } catch (error) {
-      if (error instanceof ClaimConflictError) {
-        res.status(409).json({ error: 'Conflict', message: error.message, held_by: error.heldBy });
-        return;
-      }
-      res.status(400).json({ error: 'Bad Request', message: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  app.post('/api/claims/release', (req, res) => {
-    let claims;
-    try {
-      claims = centralClaims();
-    } catch (error) {
-      claimsStoreUnavailable(res, error);
-      return;
-    }
-    try {
-      const { nodeId, profile, workId } = authorizeClaimRequest(req.body.node_id, req.body.profile, req.body.work_id);
-      claims.release(nodeId, profile, workId);
-      res.status(200).json({ success: true });
-    } catch (error) {
-      res.status(400).json({ error: 'Bad Request', message: error instanceof Error ? error.message : String(error) });
-    }
-  });
+  app.use('/api/claims', claimsRouter({
+    claims: centralClaims,
+    localNodeId: getCoordinatorIdentity(undefined, coordinatorPort).node_id,
+    profiles: listProfiles,
+    node: id => registryService.getNode(id)
+  }));
 
   // Pull-data REST endpoints (TICKET-productization): these are on-demand
   // fetches -- report parameters, one work item's timeline -- that don't
