@@ -171,7 +171,7 @@ async function main() {
   // Initialize provider registry with default profile
   const providerRegistry = getProviderRegistry();
   providerRegistry.setDefaultProfile('gah');
-  
+
   // Set up WebSocket handler
   createWebSocketHandler(wss, {
     registryService,
