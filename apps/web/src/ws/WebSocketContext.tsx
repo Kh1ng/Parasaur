@@ -194,6 +194,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
           profile: profileOverride ?? undefined,
           activityCursor: activityCursorRef.current ?? undefined,
           capabilities: {
+            supportsCapacityWaitActivity: true,
             supportsTerminal: true,
             supportsNotifications: true,
             version: '0.1.0'

@@ -548,6 +548,8 @@ export type ClientMessage =
     };
 
 export type ClientCapabilities = {
+  /** Older clients cannot render the history-only dispatch_deferred kind. */
+  supportsCapacityWaitActivity?: boolean;
   supportsTerminal: boolean;
   supportsNotifications: boolean;
   version: string;

@@ -247,6 +247,52 @@ test('activity reconnect replays only events after the client cursor', async () 
   }
 });
 
+test('quiet capacity receipts reach capable clients without breaking an already-open legacy client', { timeout: 10000 }, async () => {
+  const server = http.createServer();
+  const wss = new WebSocketServer({ server });
+  const events: ControllerEvent[] = [
+    { timestamp: '2026-11-06T06:00:00Z', event_type: 'dispatch_finished', profile: 'gah', work_id: '#7', details: 'review: deferred_capacity: node admission deferred: memory reserve' },
+    { timestamp: '2026-11-06T06:00:01Z', event_type: 'dispatch_finished', profile: 'gah', work_id: '#8', details: 'dispatch_ticket: success' }
+  ];
+  createWebSocketHandler(wss, { activityFeed: new ActivityFeed(null), runEvents: async () => [...events],
+    runQuota: (async () => { throw new Error('fixture quota unavailable'); }) as never, backgroundProfiles: async () => ['gah'], backgroundIntervalMs: 20 });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const connect = async (capable: boolean) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}`);
+    const messages: ServerMessage[] = [];
+    let replayResolve!: () => void;
+    const replay = new Promise<void>(resolve => { replayResolve = resolve; });
+    ws.on('message', bytes => {
+      const message = JSON.parse(bytes.toString()) as ServerMessage;
+      messages.push(message);
+      if (message.type === 'activity.replay') replayResolve();
+    });
+    await new Promise<void>(resolve => ws.once('open', resolve));
+    ws.send(JSON.stringify({ type: 'client.hello', clientVersion: 'test', profile: 'gah', capabilities: capable ? { supportsCapacityWaitActivity: true } : {} }));
+    await replay;
+    return { ws, messages };
+  };
+  try {
+    const legacy = await connect(false);
+    const modern = await connect(true);
+    const replayKinds = (messages: ServerMessage[]) => messages.flatMap(message => message.type === 'activity.replay' ? message.events.map(event => event.kind) : []);
+    assert.deepEqual(replayKinds(legacy.messages), ['dispatch_completed']);
+    assert.deepEqual(replayKinds(modern.messages), ['dispatch_deferred', 'dispatch_completed']);
+    events.push({ ...events[0], timestamp: '2026-11-06T06:01:00Z' }, { ...events[1], timestamp: '2026-11-06T06:01:01Z' });
+    const received = (messages: ServerMessage[], kind: string) => messages.some(message => message.type === 'activity.event' && message.event.kind === kind);
+    const deadline = Date.now() + 3000;
+    while (!received(legacy.messages, 'dispatch_completed') || !received(modern.messages, 'dispatch_deferred')) {
+      assert.ok(Date.now() < deadline, 'Both clients receive supported live events');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(received(legacy.messages, 'dispatch_deferred'), false);
+  } finally {
+    for (const socket of wss.clients) socket.terminate();
+    await new Promise<void>(resolve => wss.close(() => resolve()));
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
 test('background activity is delivered without a dashboard and backfill stays silent', async () => {
   const server = http.createServer();
   const wss = new WebSocketServer({ server });

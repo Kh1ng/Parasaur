@@ -73,6 +73,8 @@ class WebSocketSessionStore {
       if (ws !== exclude && ws.readyState === WebSocket.OPEN) {
         if (message.type === 'workers.snapshot' && (!webSocketAccessValid(ws) || requiresFleetAuthentication(ws, 'session.status'))) continue;
         if (message.type === 'activity.event' && message.event.pairingRequestId && !webSocketCanApprovePairing(ws)) continue;
+        if ((message.type === 'activity.event' || message.type === 'activity.updated')
+          && message.event.kind === 'dispatch_deferred' && info.capabilities?.supportsCapacityWaitActivity !== true) continue;
         // Profile-scoped chat pushes only reach clients subscribed to that
         // profile; everything else still fans out to all connected clients.
         if (profile && info.profile !== profile) continue;
@@ -273,6 +275,7 @@ export function createWebSocketHandler(
           ws.send(JSON.stringify({
             type: 'activity.replay',
             events: activityFeed.replay(profile, message.activityCursor)
+              .filter(event => event.kind !== 'dispatch_deferred' || message.capabilities?.supportsCapacityWaitActivity === true)
           } satisfies ServerMessage));
           ws.send(JSON.stringify({ type: 'activity.unread', count: activityFeed.unreadCount(webSocketCanApprovePairing(ws)) } satisfies ServerMessage));
           console.log(`Client hello from ${message.clientVersion} with profile: ${profile}`);
