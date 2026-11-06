@@ -9,6 +9,12 @@ for `exec:human-required`, including legacy mode. Context/intake/decision checks
 the CLI fixture, server wrapper checks and Clippy pass. This remains staged;
 the live broker caller, grant lifecycle and worker executor are unfinished.
 See [current work revalidation](native-dispatch-broker.md#current-work-and-route-revalidation).
+Matched private `ebe1e9b` / public `8e5d08c5` passes 1,186 server cases (38
+existing skips), all 17 mock cases and its production/release guards. The exact
+optimized CLI also passes current controller/route and paid-grant revocation
+checks through the real Rust/server bridge, with controlled provider/worker
+fixtures. Nothing was installed or restarted. The original memory observation
+is still running at about 9.1 hours; no leak-fixed claim is supported.
 
 Latest current-policy prerequisite: the private native CLI/server path checks
 current central policy, permissions, factory enablement and live spend after

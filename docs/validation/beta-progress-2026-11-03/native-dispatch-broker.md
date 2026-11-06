@@ -111,6 +111,32 @@ the human-required label appears; its backend canary is never invoked and its
 forge log shows no mutations by either check. The existing context CLI case
 also passes. The server flag/response test and server typecheck pass.
 
+Public `8e5d08c5` / private `ebe1e9b` passes the complete matched enterprise
+assembly: 1,186 server cases, 38 existing skips, 17 mock cases, production
+server/shared-web builds and release/input/credential/transport guards. Log:
+`/home/khing/.cache/parasaur-enterprise-current.182uz12i/build.log`.
+
+The immutable optimized `8e5d08c5` CLI compares all 608 Rust/Cargo inputs against
+its source archive and passes release/context/zero-spend smokes. Its SHA-256 is
+`73578a153e7f05c1cb8bbf18316928a3b4c5c2fccb73a0fcfe38e71436a2679a`;
+the staged directory is `artifacts/parasaur-native-context-8e5d08c5/`.
+The exact binary also passes the real Rust/server broker bridge with controlled
+provider and worker fixtures. Current controller/route checks are exercised
+inside its authorization callback. A human-required label added after context
+preparation refuses the run. Revoking the exact paid-route grant after
+preparation also refuses it, and restoring the grant permits the check again.
+These approval operations change only the disposable fixture ledger. No real
+provider writes or backend/model executions occur. Lost-start/reload recovery,
+single canonical import, failed outcome/unknown-cost preservation and history
+cleanup still pass. The grant generator/transport remain controlled fixtures,
+so this does not prove production native execution.
+
+A read-only 20:00 UTC observation confirms the same controller `666974` and
+observer `667504` remain running: 543 samples, 32,806.617 seconds (about 9.1
+hours), no sampling gaps and no OOM kills. This is still short of the ten-hour
+observation requirement and does not supply sustained agent-load acceptance or
+prove the leak fixed. No live service or installed CLI was changed.
+
 - Server `npm run --workspace=apps/server typecheck` passes.
 - Windows: 37 of 39 combined broker/claim cases pass; two existing POSIX-only
   claim cases skip. All 15 broker cases pass.
