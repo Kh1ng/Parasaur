@@ -81,6 +81,18 @@ in the isolated Linux source at
 `/home/khing/.cache/parasaur-project-report.qy1ih6c9/native-handoff-result-checks.log`.
 The TypeScript contract builds and server typecheck pass.
 
+Public source is `fbdaf459`. Private `59d8168` pins that revision; its complete
+assembly passes 1,158 server cases (38 explicit skips), 17 mock cases, production
+server/web builds, input/artifact guards and browser credential/transport checks.
+Log: `/home/khing/.cache/parasaur-enterprise-current.bno66sx5/build.log`.
+
+At 15:59:24 UTC on November 6, the original controller PID 666974 and observer
+PID 667504 still matched their live units. The observer was running with 302
+samples over 18,345.12 seconds, zero gaps and zero cgroup OOM kills. Latest
+controller RSS was 733,252 KiB. This is not a ten-hour memory pass or evidence
+of bounded memory under sustained agent load. Metadata is retained in ignored
+`artifacts/central-live-20261105/native-result-import-memory.json`.
+
 This is source-only. It is not deployed, has not imported a live factory result
 and has not closed an issue. The running controller and its memory observer are
 not restarted. Next, native job preparation must carry central policy/history

@@ -9,6 +9,10 @@ policy/history preparation and automatic native execution remain open.
 Verification passes 132 ledger, nine capability, 43 telemetry and seven CLI
 ledger cases, plus all-target/all-feature Clippy, formatting, TypeScript
 contracts build and server typechecking.
+Matched private `59d8168` / public `fbdaf459` also passes 1,158 server and 17
+mock cases plus production builds and artifact/credential guards. The existing
+memory observer remains live at 5.10 hours without gaps or OOM; ten-hour and
+sustained-load acceptance are still open.
 
 Latest replay correction: [request binding](worker-execution-results.md#request-binding-follow-up)
 rejects changed work, routes and execution controls on a reused dispatch request
