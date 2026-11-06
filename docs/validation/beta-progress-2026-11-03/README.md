@@ -6,6 +6,9 @@ refuses duplicate launch after lost replies or restart. Fifteen broker cases
 pass on Windows and WSL; the combined claim/broker suite passes 37 Windows
 cases (two POSIX skips) and all 39 Linux cases. An actual Rust preparation,
 worker-check and canonical-import bridge passes with controlled transport.
+Matched private `cf6e538` / public `c32ad26f` passes the full enterprise
+assembly: 1,185 server cases (38 skips), 17 mock cases, production builds and
+release/credential/transport guards.
 This is source-only: production authority, host admission, worker execution
 and live reconciliation remain unfinished. Usage and persistent GitLab auth
 also remain unverified in the owner's actual client.

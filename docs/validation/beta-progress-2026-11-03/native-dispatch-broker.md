@@ -61,6 +61,16 @@ root. Operator deletion of durable history is not a supported replay mechanism.
   canonical digest matches the acknowledgement; ownership releases only after
   import; history is reclaimed; terminal replay starts/imports nothing again.
   The canary backend and real issues are never invoked.
+- Matched private commit `cf6e538` pins public `c32ad26f`: its complete assembly
+  passes 1,185 server cases (38 existing skips), all 17 mock cases, production
+  server/shared-web builds, release/input guards and credential-route/transport
+  checks. The verification log is
+  `/home/khing/.cache/parasaur-enterprise-current.c382n0vp/build.log`.
+- A read-only observation at 19:15 UTC confirms the original controller
+  `666974` and observer `667504` are still running: 499 samples, 30,165.928
+  elapsed seconds, zero observation gaps and zero OOM kills. This is about
+  8.4 hours, short of the ten-hour observation requirement and not sustained
+  agent-load acceptance. It does not prove the memory issue fixed.
 
 Local logs: `artifacts/native-broker-windows-tests.log`,
 `artifacts/native-broker-linux-tests.log` and
