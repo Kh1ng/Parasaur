@@ -2,16 +2,27 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import http from 'node:http';
 import express from 'express';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DeviceAccess, DEVICE_LIFETIME } from './deviceAccess.js';
+import { authMiddleware, requireOwner } from './authMiddleware.js';
 import { sessionHandoffRouter } from './sessionHandoff.js';
 
 test('handoff requires owner approval, the initiating verifier, TLS/origin, and a single claim within sixty seconds', async () => {
   const previous = process.env.COORDINATOR_TOKEN;
   process.env.COORDINATOR_TOKEN = 'handoff-owner-fixture';
   let now = Date.now();
+  const directory = mkdtempSync(join(tmpdir(), 'gah-handoff-'));
+  const store = join(directory, 'devices.json');
+  const access = new DeviceAccess(store, () => now);
   const app = express();
+  app.locals.deviceAccess = access;
   app.set('trust proxy', 'loopback');
   app.use(express.json());
-  app.use('/handoff', sessionHandoffRouter(() => now));
+  app.use('/handoff', sessionHandoffRouter(access, () => now));
+  app.get('/session', authMiddleware, (_req, res) => res.json(res.locals.authPrincipal));
+  app.get('/owner', authMiddleware, requireOwner, (_req, res) => res.json({ owner: true }));
   const server = http.createServer(app);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
@@ -37,7 +48,26 @@ test('handoff requires owner approval, the initiating verifier, TLS/origin, and 
     assert.equal((await post('/claim', { code: first.code })).status, 410);
     const claimed = await post('/claim', first);
     assert.equal(claimed.status, 200);
-    assert.deepEqual(await claimed.json(), { token: 'handoff-owner-fixture' });
+    const body = await claimed.json() as { device: { id: string; expires_at: string } };
+    assert.ok(body.device.id);
+    assert.equal(body.device.expires_at, new Date(now + DEVICE_LIFETIME).toISOString());
+    assert.ok(!JSON.stringify(body).includes('handoff-owner-fixture'));
+    const cookie = claimed.headers.get('set-cookie')!;
+    assert.match(cookie, /HttpOnly/);
+    assert.match(cookie, /Secure/);
+    assert.match(cookie, /SameSite=Strict/);
+    assert.match(cookie, /Max-Age=2592000/);
+    const credential = cookie.split(';')[0];
+    const headers = { ...remote, Cookie: credential };
+    const session = () => fetch(base + '/session', { headers });
+    assert.deepEqual(await (await session()).json(), { kind: 'device', id: body.device.id });
+    assert.equal((await fetch(base + '/owner', { headers })).status, 403);
+    // Reloading durable storage keeps access without retaining an owner token.
+    app.locals.deviceAccess = new DeviceAccess(store, () => now);
+    assert.equal((await session()).status, 200);
+    app.locals.deviceAccess.revoke(body.device.id);
+    assert.equal((await session()).status, 401);
+
     assert.equal((await post('/claim', first)).status, 410);
     assert.equal((await post('/approve', { code: first.code }, owner)).status, 410);
     assert.equal((await post('/approve', { code: second.code }, owner)).status, 200);
@@ -49,8 +79,13 @@ test('handoff requires owner approval, the initiating verifier, TLS/origin, and 
     now += 60_000;
     assert.equal((await post('/claim', second)).status, 410);
     assert.equal((await post('/approve', { code: second.code }, owner)).status, 410);
+    const expiring = access.pairApprovedDevice('Expiry check');
+    assert.ok(access.authenticate(expiring.token));
+    now += DEVICE_LIFETIME;
+    assert.equal(access.authenticate(expiring.token), null);
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
+    rmSync(directory, { recursive: true, force: true });
     if (previous === undefined) delete process.env.COORDINATOR_TOKEN; else process.env.COORDINATOR_TOKEN = previous;
   }
 });

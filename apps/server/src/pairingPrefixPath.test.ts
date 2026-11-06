@@ -59,7 +59,10 @@ test('the device-approval cookie path follows the validated public prefix', asyn
     const handoff = await (await post('/handoff', {}, { ...remote, 'X-Forwarded-Prefix': '/parasaur' })).json() as { code: string; verifier: string };
     assert.equal((await post('/handoff/approve', { code: handoff.code }, owner)).status, 200);
     const session = await post('/handoff/claim', handoff, { ...remote, 'X-Forwarded-Prefix': '/parasaur' });
-    assert.deepEqual(await session.json(), { token: 'owner-fixture-secret' });
+    const paired = await session.json() as { device: { id: string } };
+    assert.ok(paired.device.id);
+    assert.ok(!JSON.stringify(paired).includes('owner-fixture-secret'));
+    assert.match(session.headers.getSetCookie()[0], /gah_device=.*HttpOnly/);
     assert.equal((await post('/handoff/claim', handoff)).status, 410);
     // Without a prefix the cookie keeps the app-absolute path.
     const plain = await post('/access/request', { name: 'Root browser' });

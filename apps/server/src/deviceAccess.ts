@@ -92,13 +92,14 @@ export class DeviceAccess {
 
   redeem(code: unknown, serverId: unknown, origin: string, name: unknown): { device: PairedDevice; token: string } {
     this.inspect(code, serverId, origin);
-    const paired = this.pair(name);
+    const paired = this.pairApprovedDevice(name);
     this.offers.delete(code as string);
     return paired;
   }
 
-  /** Every approved flow issues only the existing controller credential. */
-  private pair(name: unknown): { device: PairedDevice; token: string } {
+  /** Issue an ordinary controller after the calling flow verifies approval.
+   * Persist only its hash; owner authority never transfers to the new device. */
+  pairApprovedDevice(name: unknown): { device: PairedDevice; token: string } {
     if (typeof name !== 'string' || !name.trim() || name.length > 80 || /[\x00-\x1f\x7f]/.test(name)) throw new Error('Enter a device name of 1–80 characters.');
     const records = this.records();
     if (records.length >= 1000) throw new Error('Paired device storage is full. Ask the owner to maintain the device store.');
@@ -166,7 +167,7 @@ export class DeviceAccess {
     const entry = this.boundRequest(cookie, origin);
     if (this.refreshRequest(entry).status !== 'approved') throw new Error('This request is not approved or has already been claimed.');
     if (entry.approvedBy !== 'owner' && (!entry.approvedBy || !this.canApprovePairing(entry.approvedBy))) throw new Error('The approving device no longer has pairing approval enabled.');
-    const paired = this.pair(entry.request.name);
+    const paired = this.pairApprovedDevice(entry.request.name);
     entry.request.status = 'claimed';
     return paired;
   }

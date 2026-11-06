@@ -249,8 +249,8 @@ export function EmbedApp() {
   };
   useEffect(checkSession, [isConnected]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Cookie sessions are detected through auth polling. Owner sign-in uses a
-  // short-lived approval code; its claim verifier stays in this effect only.
+  // Cookie sessions survive panel and browser restarts. The short-lived
+  // approval verifier stays in this effect; owner credentials never enter it.
   useEffect(() => {
     if (!signedOut) return;
     let stopped = false;
@@ -267,8 +267,8 @@ export function EmbedApp() {
         if (handoff) {
           const result = await pairingApi.claimHandoff(handoff.code, handoff.verifier);
           if (stopped) return;
-          if (result.token) {
-            saveCoordinatorToken(result.token);
+          if (result.device) {
+            saveCoordinatorToken('');
             handoff = null;
             setHandoffCode(null);
           }
@@ -320,7 +320,7 @@ export function EmbedApp() {
           <div className="max-w-sm space-y-3 text-center">
             <h2 className="text-base font-semibold text-primary">Sign in to Parasaur</h2>
             <p className="text-sm text-secondary">
-              Open Parasaur and sign in with your owner token, then confirm Connect GitLab panel. The sign-in link expires after 60 seconds; Retry prepares a new link. Pairing links also work.
+              Open Parasaur and ask the owner to confirm Connect GitLab panel. Approval stays signed in on this browser until it expires or is revoked. The approval link expires after 60 seconds; Retry prepares a new link. Allow cookies for Parasaur, or use the same-origin GitLab installation.
             </p>
             <div className="flex justify-center gap-2">
               <ExternalAnchor href={`${context ? standaloneUrl(context) : withBasePath('/')}${handoffCode ? `#gah_signin=${encodeURIComponent(handoffCode)}` : ''}`} className="btn-primary !min-h-11 text-sm">

@@ -38,7 +38,7 @@ export function pairingRouter(access: DeviceAccess, identity: CoordinatorIdentit
       return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString('utf8');
     } catch { throw new Error('No access request is bound to this browser.'); }
   };
-  router.use('/handoff', sessionHandoffRouter());
+  router.use('/handoff', sessionHandoffRouter(access));
   router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   router.use(rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false,
     skip: req => req.method === 'GET' && ['/session', '/access/status', '/access/requests'].includes(req.path),
