@@ -66,13 +66,13 @@ fn native_work_check_reobserves_controller_eligibility_without_backend_or_provid
         .assert()
         .success();
     let bound: Value = serde_json::from_slice(&prepared.get_output().stdout).unwrap();
-    let check = || {
+    let check = |flag: &str| {
         let mut command = bin();
         command
             .args([
                 "native-handoff",
                 "check-current-policy",
-                "--check-work",
+                flag,
                 "--context-dir",
                 input.to_str().unwrap(),
                 "--expected-context",
@@ -90,16 +90,24 @@ fn native_work_check_reobserves_controller_eligibility_without_backend_or_provid
         command
     };
     let calls_before = forge.calls().len();
-    let ready = check().assert().success();
+    let ready = check("--check-work").assert().success();
     let ready: Value = serde_json::from_slice(&ready.get_output().stdout).unwrap();
     assert_eq!(ready["work_current"], true);
     assert_eq!(ready["execution_authorized"], false);
+    let continued = check("--check-route").assert().success();
+    let continued: Value = serde_json::from_slice(&continued.get_output().stdout).unwrap();
+    assert_eq!(continued["route_current"], true);
+    assert!(continued["work_current"].is_null());
+    assert_eq!(continued["execution_authorized"], false);
     forge.update(|state| {
         state["issues"]["1"]["labels"] = serde_json::json!(["exec:human-required"])
     });
-    check().assert().failure().stderr(predicate::str::contains(
-        "no longer the current controller action",
-    ));
+    check("--check-work")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "no longer the current controller action",
+        ));
     assert!(
         !canary.exists(),
         "A work check must never start the selected backend"

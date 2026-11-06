@@ -1,5 +1,14 @@
 # Beta finishing pass: local validation
 
+Latest continuation: the staged broker renews current controller/policy/spend
+and exact-route prerequisites per attempt/publication sequence after consumed
+start authority. Permissions are short-lived, durably sequenced and never
+replayed; current owner/worker membership and exact claim/context are required.
+Thirty-one broker/HTTP cases, four concrete-authority cases, Rust checks and a
+real CLI/server bridge pass. Target/generation validation, the actual wrapper,
+attempt/publication workflow and production transport remain unfinished. See
+[continuation prerequisites](native-dispatch-broker.md#sequenced-continuation-prerequisites).
+
 Latest worker recovery: host admission now commits a private, per-run journal
 under a cross-process file lock. Initial start offers are fenced durably before
 transport and cannot repeat after lost replies, reopen or uncertain writes.

@@ -22,7 +22,7 @@ mod work;
 #[cfg(target_os = "linux")]
 pub mod worker;
 pub use current::check_current_policy;
-pub use work::check_current_work;
+pub use work::{check_current_route, check_current_work};
 
 const MAX_JSON: u64 = 8 * 1024 * 1024;
 const MAX_HISTORY: u64 = 128 * 1024 * 1024;

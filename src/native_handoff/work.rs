@@ -13,6 +13,30 @@ pub fn check_current_work(
     node_id: &str,
     origin: &str,
 ) -> Result<DispatchBinding> {
+    check_current(cfg, context, expected, node_id, origin, true)
+}
+
+/// Recheck the same immutable policy, exact account/model and live routing
+/// approvals for a running job. Queue priority is not renewed execution
+/// authority: central must also check its consumed start and held native claim.
+pub fn check_current_route(
+    cfg: &GahConfig,
+    context: &Path,
+    expected: &str,
+    node_id: &str,
+    origin: &str,
+) -> Result<DispatchBinding> {
+    check_current(cfg, context, expected, node_id, origin, false)
+}
+
+fn check_current(
+    cfg: &GahConfig,
+    context: &Path,
+    expected: &str,
+    node_id: &str,
+    origin: &str,
+    require_next_action: bool,
+) -> Result<DispatchBinding> {
     let bound = check_current_policy(cfg, context, expected, node_id, origin)?;
     let manifest_bytes = read_blob(&context.join("manifest.json"), None, MAX_JSON)?;
     ensure!(
@@ -51,29 +75,31 @@ pub fn check_current_work(
         "Native work revalidation requires an exact backend and model"
     );
     let entries = crate::ledger::read_entries(cfg)?;
-    let snapshot = crate::status::build_snapshot_from_entries(
-        cfg,
-        &args.profile,
-        crate::clock::now_utc(),
-        &entries,
-    )?;
-    ensure!(
-        !snapshot
-            .errors
-            .iter()
-            .any(|error| error.incomplete_snapshot),
-        "Current work evidence is incomplete; native work remains held"
-    );
-    let action = crate::controller::decide_next_action(&snapshot);
-    let generation = match &action {
-        NextAction::ReviewMr { branch, .. } => snapshot
-            .merge_requests
-            .iter()
-            .find(|mr| &mr.branch == branch)
-            .and_then(|mr| mr.review_generation.as_deref()),
-        _ => None,
-    };
-    ensure!(matches_action(args,&action,generation,&profile.local_path),"Prepared native work is no longer the current controller action ({}); reconcile without starting it",action.kind());
+    if require_next_action {
+        let snapshot = crate::status::build_snapshot_from_entries(
+            cfg,
+            &args.profile,
+            crate::clock::now_utc(),
+            &entries,
+        )?;
+        ensure!(
+            !snapshot
+                .errors
+                .iter()
+                .any(|error| error.incomplete_snapshot),
+            "Current work evidence is incomplete; native work remains held"
+        );
+        let action = crate::controller::decide_next_action(&snapshot);
+        let generation = match &action {
+            NextAction::ReviewMr { branch, .. } => snapshot
+                .merge_requests
+                .iter()
+                .find(|mr| &mr.branch == branch)
+                .and_then(|mr| mr.review_generation.as_deref()),
+            _ => None,
+        };
+        ensure!(matches_action(args,&action,generation,&profile.local_path),"Prepared native work is no longer the current controller action ({}); reconcile without starting it",action.kind());
+    }
     let mut current = crate::ledger::LedgerEntry::new(
         &args.profile,
         profile,

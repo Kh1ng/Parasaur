@@ -25,6 +25,11 @@ export type NativeAuthorization = { allowed: true }
   | { allowed: false; reason: typeof authorityReasons[number] };
 export type NativeGrantConsumption = (NativeClaimBinding & { allowed: true; reservation_id: string; expires_at: string; consumed_at: string })
   | { allowed: false; reason: 'invalid_grant' | 'expired' | 'already_consumed' | 'consumption_in_progress' | Exclude<NativeAuthorization, {allowed:true}>['reason'] };
+export interface NativeOperationRequest extends NativeClaimBinding {
+  reservation_id: string; sequence: number; purpose: 'attempt' | 'publish';
+}
+export type NativeOperationAuthorization = (NativeOperationRequest & { allowed: true; authorized_at: string; expires_at: string })
+  | { allowed: false; reason: 'invalid_operation' | 'operation_in_progress' | Exclude<NativeAuthorization, {allowed:true}>['reason'] };
 export type NativeWorkerObservation = NativeClaimBinding & (
   { state: 'waiting_capacity' } | { state: 'ready'; reservation: NativeHostReservation }
   | { state: 'running' } | { state: 'unknown' } | { state: 'terminal'; receipt_json: string }
@@ -42,11 +47,13 @@ interface Journal {
   updated_at: string; reason?: string; receipt_file?: string; receipt_sha256?: string;
   acknowledgement?: NativeResultAcknowledgement; history_cleaned?: boolean;
   start_grant?: { reservation: NativeHostReservation; issued_at: string; expires_at: string; token_sha256: string; consumed_at?: string };
+  last_operation?: { sequence: number; purpose: NativeOperationRequest['purpose']; authorized_at: string };
 }
 export type NativeDispatchView = Pick<Journal, 'phase' | 'updated_at' | 'reason' | 'acknowledgement'> & { binding: NativeDispatchBinding; grant_consumed_at?: string };
 type Deps = {
   root: string; centralUrl: string; coordinatorNodeId: string; claims: ClaimsService; transport: NativeWorkerTransport;
   authorizeStart: (binding: NativeDispatchBinding, reservation: NativeHostReservation, signal?: AbortSignal) => Promise<NativeAuthorization>;
+  authorizeContinuation: (binding: NativeDispatchBinding, reservation: NativeHostReservation, signal?: AbortSignal) => Promise<NativeAuthorization>;
   recordCanonicalResult: (files: { bindingFile: string; receiptFile: string }) => Promise<NativeResultAcknowledgement>;
   now?: () => number;
   observationTimeoutMs?: number;
@@ -90,6 +97,7 @@ export class NativeDispatchBroker {
   private readonly now: () => number;
   private readonly active = new Map<string, Promise<NativeDispatchView>>();
   private readonly consuming = new Set<string>();
+  private readonly advancing = new Set<string>();
   private persistenceUncertain = false;
   private readonly timeout: number;
 
@@ -182,6 +190,47 @@ export class NativeDispatchBroker {
     return decision?.allowed === false && authorityReasons.includes(decision.reason)
       ? decision.reason : 'authority_unavailable';
   }
+
+  /** Renew one attempt/publication prerequisite after the initial grant was
+   * consumed. Commit its sequence before returning permission; lost replies
+   * burn that sequence. Never cache permission or replay an earlier response.
+   * The worker must separately enforce its actual holder, source validation,
+   * attempt limits and durable job lifecycle before performing the operation. */
+  async authorizeOperation(request: NativeOperationRequest): Promise<NativeOperationAuthorization> {
+    if (!request || !isNativeRunId(request.run_id) || !digest(request.context_sha256)
+      || !Number.isSafeInteger(request.sequence) || request.sequence < 1
+      || !['attempt','publish'].includes(request.purpose)) return {allowed:false,reason:'invalid_operation'};
+    request={run_id:request.run_id,node_id:request.node_id,context_sha256:request.context_sha256,
+      reservation_id:request.reservation_id,sequence:request.sequence,purpose:request.purpose};
+    if (this.advancing.has(request.run_id)) return {allowed:false,reason:'operation_in_progress'};
+    this.advancing.add(request.run_id);
+    try {
+      let journal=this.read(request.run_id);
+      if (!this.operationMatches(journal,request)) return {allowed:false,reason:'invalid_operation'};
+      if (!this.owns(journal.binding)) return {allowed:false,reason:'claim_lost'};
+      const decision=await this.deadline(signal=>this.deps.authorizeContinuation(journal.binding,journal.start_grant!.reservation,signal));
+      if (decision?.allowed!==true) return {allowed:false,reason:this.denialReason(decision)};
+      journal=this.read(request.run_id);
+      if (!this.operationMatches(journal,request)) return {allowed:false,reason:'invalid_operation'};
+      if (!this.owns(journal.binding)) return {allowed:false,reason:'claim_lost'};
+      if (bindingHash(this.prepared(request.run_id,request.context_sha256))!==journal.binding_sha256) return {allowed:false,reason:'invalid_operation'};
+      const authorized_at=new Date(this.now()).toISOString();
+      const expires_at=new Date(Date.parse(authorized_at)+10_000).toISOString();
+      this.update(journal,{last_operation:{sequence:request.sequence,purpose:request.purpose,authorized_at}});
+      if (this.now()>=Date.parse(expires_at)) return {allowed:false,reason:'authority_unavailable'};
+      return {...request,allowed:true,authorized_at,expires_at};
+    } catch { return {allowed:false,reason:'authority_unavailable'}; }
+    finally {this.advancing.delete(request.run_id);}
+  }
+
+  private operationMatches(journal: Journal, request: NativeOperationRequest): boolean {
+    return journal.start_offered && !!journal.start_grant?.consumed_at && !journal.terminal_observed
+      && journal.phase!=='terminal' && same(journal.binding,request)
+      && journal.start_grant.reservation.id===request.reservation_id
+      && this.now()>=Date.parse(journal.start_grant.consumed_at)
+      && (!journal.last_operation || this.now()>=Date.parse(journal.last_operation.authorized_at))
+      && request.sequence===(journal.last_operation?.sequence??0)+1;
+  }
   private owns(binding: NativeDispatchBinding): boolean {
     const held = this.deps.claims.getLease(binding.profile, binding.work_id);
     return held?.node_id === this.deps.coordinatorNodeId && !!held.native_handoff && same(held.native_handoff, binding);
@@ -257,6 +306,7 @@ export class NativeDispatchBroker {
     if (this.persistenceUncertain) throw Error('Native broker persistence is uncertain; inspect and reload its journal');
     const journal = readJson<Journal>(this.journalPath(run));
     const grant = journal.start_grant;
+    const operation = journal.last_operation;
     if (journal.version !== 1 || journal.binding?.run_id !== run || !digest(journal.binding.context_sha256)
       || !phases.includes(journal.phase) || typeof journal.stage_offered !== 'boolean' || typeof journal.start_offered !== 'boolean'
       || typeof journal.terminal_observed !== 'boolean' || journal.binding_sha256 !== bindingHash(journal.binding)
@@ -269,7 +319,10 @@ export class NativeDispatchBroker {
       || (journal.start_offered && !journal.stage_offered) || (journal.phase === 'terminal' && (!journal.terminal_observed || !journal.acknowledgement
         || !same(journal.acknowledgement, journal.binding) || journal.acknowledgement.profile !== journal.binding.profile
         || journal.acknowledgement.work_id !== journal.binding.work_id || !digest(journal.acknowledgement.receipt_sha256)
-        || !['recorded','already_recorded'].includes(journal.acknowledgement.outcome)))) throw Error('Unsupported native broker journal; retain it for reconciliation');
+        || !['recorded','already_recorded'].includes(journal.acknowledgement.outcome)))
+      || (Object.hasOwn(journal,'last_operation') && (!operation || !grant?.consumed_at || !Number.isSafeInteger(operation.sequence) || operation.sequence<1
+        || !['attempt','publish'].includes(operation.purpose) || !Number.isFinite(Date.parse(operation.authorized_at))
+        || Date.parse(operation.authorized_at)<Date.parse(grant.consumed_at)))) throw Error('Unsupported native broker journal; retain it for reconciliation');
     return journal;
   }
   private write(journal: Journal): void {

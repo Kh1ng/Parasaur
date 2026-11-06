@@ -52,8 +52,10 @@ pub enum Command {
         config_path: Option<String>,
     },
     CheckCurrentPolicy {
-        #[arg(long)]
+        #[arg(long, conflicts_with = "check_route")]
         check_work: bool,
+        #[arg(long)]
+        check_route: bool,
         #[arg(long)]
         context_dir: PathBuf,
         #[arg(long)]
@@ -112,6 +114,7 @@ pub fn run(args: Args) -> Result<()> {
         }
         Command::CheckCurrentPolicy {
             check_work,
+            check_route,
             context_dir,
             expected_context,
             node_id,
@@ -121,6 +124,8 @@ pub fn run(args: Args) -> Result<()> {
             let cfg = crate::config::load(config_path.as_deref())?;
             let check = if check_work {
                 crate::native_handoff::check_current_work
+            } else if check_route {
+                crate::native_handoff::check_current_route
             } else {
                 crate::native_handoff::check_current_policy
             };
@@ -133,7 +138,7 @@ pub fn run(args: Args) -> Result<()> {
             )?;
             println!(
                 "{}",
-                serde_json::json!({"binding":binding,"policy_current":true,"work_current":check_work.then_some(true),"execution_authorized":false})
+                serde_json::json!({"binding":binding,"policy_current":true,"work_current":check_work.then_some(true),"route_current":(check_work || check_route).then_some(true),"execution_authorized":false})
             );
         }
         Command::Prepare {

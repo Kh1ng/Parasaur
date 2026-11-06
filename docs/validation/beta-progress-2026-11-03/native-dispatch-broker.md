@@ -1,5 +1,43 @@
 # Durable native dispatch broker
 
+## Sequenced continuation prerequisites
+
+The staged broker now renews central prerequisites for one `attempt` or
+`publish` operation after initial start consumption. A mandatory continuation
+callback checks the live controller identity before and after the real current
+policy/spend and exact-route CLI check. `check-current-policy --check-route`
+shares initial work revalidation's policy/runtime restrictions and live routing
+approval checks, without requiring that running work still head the queue.
+It returns `execution_authorized: false`; target/generation validation, attempt
+limits and the full publication workflow remain worker responsibilities.
+
+The broker requires its exact consumed start, holder identity, prepared context
+and held native claim before and after that asynchronous check. It accepts only
+the next integer sequence and persists a single last-operation record before
+returning a permission with at most ten seconds of validity. Concurrent calls,
+cold replay, forged identities, changed claims, terminal runs and uncertain
+writes cannot return a reusable permission. Lost replies burn the sequence.
+Denials retain the claim and do not spend a sequence. The original reservation's
+start-offer expiry does not end an already running job's capacity lifetime;
+the worker must affirmatively re-observe its actual independent holder.
+
+Conditional `POST /api/native-dispatch/operation` accepts six bounded fields:
+run/node/context/holder identity, sequence and purpose. Service-owner auth and
+current registered profile membership are mandatory, including a second
+membership check after the asynchronous decision. A revoked worker may burn a
+sequence but never receive permission. There are no arbitrary commands, paths,
+credential values or cached-permission responses. This endpoint remains absent
+from default production startup until the native broker/worker is wired.
+
+All 31 broker/HTTP cases pass on Windows, all four concrete-authority cases pass
+on WSL, and server typechecking passes. Rust's 25 native context/host/journal
+cases, 17 capacity cases, two actual CLI cases, formatting and all-target/
+all-feature Clippy with warnings denied pass. The real Rust/server bridge also
+refuses live-fixture route approval revocation and factory pause during later
+operations, rejects cold sequence replay, and retains unknown failed-result
+cost through canonical import. Its provider/controller/transport are controlled
+fixtures: no model or real issue runs. Production execution remains unfinished.
+
 This remains source-only orchestration. The broker, concrete initial authority
 check and conditional HTTP grant consumer exist, but runtime startup does not
 construct a native broker/worker transport or executor. The consumer route is

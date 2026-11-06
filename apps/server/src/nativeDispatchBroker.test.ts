@@ -11,7 +11,7 @@ import type { AddressInfo } from 'node:net';
 import { nativeGrantRouter } from './nativeGrantRouter.js';
 import type { NativeResultAcknowledgement } from '@git-agent-harness/contracts';
 import { ClaimsService, ClaimConflictError } from './claimsService.js';
-import { NativeDispatchBroker, type NativeAuthorization, type NativeDispatchBinding, type NativeHostReservation, type NativeWorkerObservation, type NativeStartGrant } from './nativeDispatchBroker.js';
+import { NativeDispatchBroker, type NativeAuthorization, type NativeDispatchBinding, type NativeHostReservation, type NativeWorkerObservation, type NativeStartGrant, type NativeOperationRequest } from './nativeDispatchBroker.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 function fixture() {
@@ -36,6 +36,7 @@ function fixture() {
   const ack: NativeResultAcknowledgement = { ...binding, profile: 'gah', work_id: '#1525', receipt_sha256: 'b'.repeat(64), outcome: 'recorded' };
   const deps = () => ({ root, centralUrl: 'https://central.invalid', coordinatorNodeId: 'central', claims, now: () => now, observationTimeoutMs:timeout,
     authorizeStart: () => authorize(),
+    authorizeContinuation: () => authorize(),
     transport: {
       async stage() { stages++; assert.equal(JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8')).stage_offered,true); if (stageHangs) return new Promise<NativeWorkerObservation>(() => undefined); if (stageFails) throw Error('PRIVATE_STAGE_TOKEN'); return observation; },
       async start(_binding: NativeDispatchBinding, offered: NativeStartGrant) { starts++; grant = offered; assert.equal(JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8')).start_offered,true); if (startFails) throw Error('PRIVATE_START_TOKEN'); if (consume && !(await broker.consumeStartGrant(offered)).allowed) throw Error('Start authority refused'); observation = { ...binding,state: 'running' }; return observation; },
@@ -65,6 +66,7 @@ async function grantEndpoint(broker: NativeDispatchBroker, worker: (id: string)=
   const url=`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/native-dispatch/consume`;
   return {
     post:(body:unknown,owner=true)=>fetch(url,{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify(body)}),
+    operation:(body:unknown,owner=true)=>fetch(url.replace('/consume','/operation'),{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify(body)}),
     close:()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())),
   };
 }
@@ -78,6 +80,86 @@ test('concurrent exact requests persist intent before transport and stage/start 
   assert.equal(readFileSync(join(f.runPath,'broker.json'),'utf8').includes(f.grant.token), false);
   assert.ok(results.every(result => result.grant_consumed_at));
   assert.equal(JSON.stringify(f.broker.get(f.run)).includes('token_sha256'),false);
+});
+
+const operation=(f:ReturnType<typeof fixture>,sequence=1,purpose:NativeOperationRequest['purpose']='attempt'):NativeOperationRequest=>({
+  run_id:f.run,node_id:f.binding.node_id,context_sha256:f.binding.context_sha256,reservation_id:'reservation',sequence,purpose,
+});
+
+test('later operations require consumed start authority and exact monotonic sequences across restart',async()=>{
+  const unconsumed=fixture();unconsumed.skipConsumption();await unconsumed.broker.offerPrepared(unconsumed.run,unconsumed.binding.context_sha256);
+  assert.deepEqual(await unconsumed.broker.authorizeOperation(operation(unconsumed)),{allowed:false,reason:'invalid_operation'});
+  const f=fixture();await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  const results=await Promise.all([f.broker.authorizeOperation(operation(f)),f.broker.authorizeOperation(operation(f))]);
+  assert.equal(results.filter(r=>r.allowed).length,1);
+  const granted=results.find(r=>r.allowed)!;
+  if(granted.allowed)assert.equal(Date.parse(granted.expires_at)-Date.parse(granted.authorized_at),10000);
+  assert.deepEqual(await f.reload().authorizeOperation(operation(f)),{allowed:false,reason:'invalid_operation'});
+  assert.deepEqual(await f.broker.authorizeOperation(operation(f,3)),{allowed:false,reason:'invalid_operation'});
+  assert.equal((await f.broker.authorizeOperation(operation(f,2,'publish'))).allowed,true);
+  f.advance(); // The original reservation's start-offer expiry is not a running job's lifetime.
+  assert.equal((await f.reload().authorizeOperation(operation(f,3))).allowed,true);
+  assert.equal(f.starts,1);assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+});
+
+test('later authority is fresh and denial never consumes an operation sequence or releases ownership',async()=>{
+  const f=fixture();await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  for(const reason of ['factory_paused','policy_changed','budget_held','controller_changed','authority_unavailable'] as const){
+    f.authorize(async()=>({allowed:false,reason}));
+    assert.deepEqual(await f.broker.authorizeOperation(operation(f)),{allowed:false,reason});
+    assert.equal(JSON.parse(readFileSync(join(f.runPath,'broker.json'),'utf8')).last_operation,undefined);
+  }
+  f.authorize(async()=>({allowed:true}));
+  assert.equal((await f.broker.authorizeOperation(operation(f))).allowed,true);
+  assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+});
+
+test('ownership changing during a later check cannot deliver permission',async()=>{
+  const f=fixture();await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  f.authorize(async()=>{
+    await f.claims.completeNative('central','gah','#1525',f.binding,async()=>f.ack);
+    f.claims.acquire('replacement','gah','#1525');return {allowed:true};
+  });
+  assert.deepEqual(await f.broker.authorizeOperation(operation(f)),{allowed:false,reason:'claim_lost'});
+  assert.equal(f.claims.getLease('gah','#1525')?.node_id,'replacement');
+});
+
+test('uncertain later-permission commit never returns permission or allows replay',async t=>{
+  const f=fixture();await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  const rename=fs.renameSync;
+  t.mock.method(fs,'renameSync',(source:fs.PathLike,destination:fs.PathLike)=>{
+    rename(source,destination);if(String(destination)===join(f.runPath,'broker.json'))throw Error('Injected operation sync uncertainty');
+  });syncBuiltinESMExports();
+  try {assert.deepEqual(await f.broker.authorizeOperation(operation(f)),{allowed:false,reason:'authority_unavailable'});}
+  finally {t.mock.restoreAll();syncBuiltinESMExports();}
+  assert.deepEqual(await f.reload().authorizeOperation(operation(f)),{allowed:false,reason:'invalid_operation'});
+  assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+});
+
+test('terminal or forged later operations cannot obtain permission',async()=>{
+  const f=fixture();await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  for(const changes of [{node_id:'other'},{context_sha256:'f'.repeat(64)},{reservation_id:'other'},{sequence:0},{sequence:1.5},{purpose:'shell'}]){
+    assert.equal((await f.broker.authorizeOperation({...operation(f),...changes} as NativeOperationRequest)).allowed,false);
+  }
+  f.observe({...f.binding,state:'terminal',receipt_json:'{"fixture":"finished"}'});
+  await f.broker.reconcile(f.run);
+  assert.deepEqual(await f.broker.authorizeOperation(operation(f)),{allowed:false,reason:'invalid_operation'});
+});
+
+test('later HTTP checks require service ownership, exact input and continuing profile membership',async()=>{
+  const f=fixture();await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  let registered=true;const endpoint=await grantEndpoint(f.broker,()=>registered?{profiles:['gah']}:undefined);
+  try {
+    assert.equal((await endpoint.operation(operation(f),false)).status,403);
+    assert.equal((await endpoint.operation({...operation(f),command:'arbitrary'})).status,400);
+    registered=false;assert.equal((await endpoint.operation(operation(f))).status,403);
+    registered=true;
+    f.authorize(async()=>{registered=false;return {allowed:true};});
+    assert.equal((await endpoint.operation(operation(f))).status,403);
+    registered=true;f.authorize(async()=>({allowed:true}));
+    assert.equal((await endpoint.operation(operation(f))).status,409);
+    assert.equal((await endpoint.operation(operation(f,2,'publish'))).status,200);
+  } finally {await endpoint.close();}
 });
 
 test('lost start acknowledgement, expiry, restart and stale ready observations never cause another launch', async () => {

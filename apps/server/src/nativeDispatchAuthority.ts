@@ -12,6 +12,17 @@ let checking = false;
  * broker separately fences the claim and reservation before/after this I/O.
  * No external-process fallback or permissive missing-CLI/loop behavior. */
 export function nativeDispatchAuthority(root: string, centralUrl: string, config?: string) {
+  return authority(root, centralUrl, config, true);
+}
+
+/** Running work rechecks policy/spend and exact live route approvals without
+ * demanding that it still lead the current queue. Claims and sequence fences
+ * remain broker-owned checks on both sides of this I/O. */
+export function nativeContinuationAuthority(root: string, centralUrl: string, config?: string) {
+  return authority(root, centralUrl, config, false);
+}
+
+function authority(root: string, centralUrl: string, config: string | undefined, checkWork: boolean) {
   const ownedRoot = resolve(root);
   return async (binding: NativeDispatchBinding, _reservation: NativeHostReservation, signal?: AbortSignal): Promise<NativeAuthorization> => {
     if (checking) return { allowed: false, reason: 'authority_busy' };
@@ -22,7 +33,7 @@ export function nativeDispatchAuthority(root: string, centralUrl: string, config
       const before = await readLoopExecutionState(binding.profile, signal);
       if (before.state !== 'active') return { allowed: false, reason: before.state === 'paused' ? 'factory_paused' : 'authority_unavailable' };
       const current = await runCheckNativePolicy({ contextDirectory: join(run, 'context'), contextSha256: binding.context_sha256,
-        nodeId: binding.node_id, centralUrl, config, signal, checkWork: true });
+        nodeId: binding.node_id, centralUrl, config, signal, checkWork, checkRoute: !checkWork });
       if (!isDeepStrictEqual(current, binding)) return { allowed: false, reason: 'policy_changed' };
       const after = await readLoopExecutionState(binding.profile, signal);
       if (signal?.aborted) return { allowed: false, reason: 'authority_unavailable' };
