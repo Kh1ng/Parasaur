@@ -38,6 +38,7 @@ pub mod mcp;
 pub mod memory_gateway;
 mod model_validation;
 pub mod models;
+pub mod native_handoff;
 pub mod network_exposure;
 pub mod node_register;
 pub mod node_role;

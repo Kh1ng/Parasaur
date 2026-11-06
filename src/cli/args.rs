@@ -108,6 +108,9 @@ pub enum PmCommands {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Private native worker policy/history preparation. Does not launch work.
+    #[command(hide = true)]
+    NativeHandoff(crate::cli::commands::native_handoff::Args),
     /// Private-descriptor host admission and lifetime supervision for isolated jobs.
     #[command(hide = true)]
     IsolationHost(crate::cli::commands::isolation_host::Args),

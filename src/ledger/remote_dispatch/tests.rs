@@ -279,3 +279,60 @@ fn receipt_identity_uses_original_json_before_receiver_defaults_or_schema_upgrad
         ReceiveOutcome::AlreadyRecorded
     );
 }
+
+#[test]
+fn failed_preflight_or_changed_generation_is_retained_without_inventing_a_review_opinion() {
+    let (_tmp, cfg, binding, mut receipt) = fixture();
+    receipt.ledger.attempts_started = Some(0);
+    receipt.ledger.attempts_completed = Some(0);
+    receipt.ledger.attempt_routing.clear();
+    receipt.ledger.review_generation = None;
+    receipt.ledger.review_contract_version = None;
+    receipt.ledger.branch = None;
+    receipt.ledger.requested_model = None;
+    receipt.ledger.failure_class = Some("harness_error".into());
+    receipt.ledger.failure_stage = Some("preflight".into());
+    receipt.ledger.usage.usage_unknown_reason =
+        Some(super::super::UsageUnknownReason::NoAttemptStarted);
+    assert_eq!(
+        receive(&cfg, &binding, &receipt).unwrap(),
+        ReceiveOutcome::Recorded
+    );
+    let stored = super::super::read_entries(&cfg).unwrap().remove(0);
+    assert_eq!(stored.review_generation, None);
+    assert_eq!(stored.review_verdict, None);
+    let (_tmp, cfg, binding, mut stale) = fixture();
+    stale.ledger.failure_class = Some("stale_source".into());
+    stale.ledger.failure_stage = Some("preflight".into());
+    stale.ledger.review_generation = Some("review-v1:new-head:new-metadata".into());
+    assert_eq!(
+        receive(&cfg, &binding, &stale).unwrap(),
+        ReceiveOutcome::Recorded
+    );
+    assert_eq!(
+        super::super::read_entries(&cfg).unwrap()[0].review_generation,
+        stale.ledger.review_generation
+    );
+}
+
+#[test]
+fn a_read_only_job_can_report_its_policy_refusal_but_cannot_claim_remote_publication() {
+    let (_tmp, mut cfg, mut binding, mut receipt) = fixture();
+    cfg.profiles.get_mut("test").unwrap().delivery_mode = crate::config::DeliveryMode::Handoff;
+    binding.mode = "fix".into();
+    binding.review_generation = None;
+    receipt.ledger.mode = "fix".into();
+    receipt.ledger.review_generation = None;
+    receipt.ledger.dispatch_reason = Some("repo_policy_blocked".into());
+    receipt.ledger.failure_class = Some("human_blocked".into());
+    receipt.ledger.validation_result = Some("policy_blocked".into());
+    receipt.ledger.human_required = true;
+    receipt.ledger.human_required_reason_code = Some("policy_approval".into());
+    assert_eq!(
+        receive(&cfg, &binding, &receipt).unwrap(),
+        ReceiveOutcome::Recorded
+    );
+    receipt.ledger.mr_created = true;
+    assert!(receive(&cfg, &binding, &receipt).is_err());
+    assert!(!super::super::read_entries(&cfg).unwrap()[0].mr_created);
+}

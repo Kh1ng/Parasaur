@@ -1,5 +1,16 @@
 # Beta finishing pass: local validation
 
+Latest native input: [policy/history context](native-worker-context.md) prepares
+and verifies a job's central history, limits, validation and generation while
+retaining worker-local credentials, paths and capacity settings. The actual CLI
+check reads prepared central history despite an inherited empty worker ledger
+and never starts a backend. It is source-only: authority refresh, execution
+admission and the durable native broker remain unfinished.
+Context, ledger, actual CLI, dispatch, capability, telemetry and spend checks
+pass, including 570 dispatch cases, real daily/monthly budget rollover and
+all-target/all-feature Clippy. Counts and overlapping filters are documented
+in the linked evidence.
+
 Latest native increment: [worker result ingestion](native-worker-result-import.md)
 adds a local-only CLI boundary for importing a worker's terminal native ledger
 result against a separately prepared central job binding. Identical delivery

@@ -243,6 +243,7 @@ pub(in crate::dispatch) fn review(
         ledger.review_source_sha.as_deref(),
         ledger.review_metadata_fingerprint.as_deref(),
     );
+    identity::assert_selected_generation(args.expected_review_generation.as_deref(), ledger)?;
     if super::super::review::head::skip_reviewed_head(cfg, profile, &target, ledger)? {
         return Ok(());
     }

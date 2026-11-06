@@ -322,6 +322,7 @@ pub fn generate_manifest() -> CapabilityManifest {
 
     // Add all operations from all CLI command modules
     add_isolation_host_operations(&mut manifest);
+    add_native_handoff_operations(&mut manifest);
     add_availability_operations(&mut manifest);
     add_candidates_operations(&mut manifest);
     add_policy_operations(&mut manifest);

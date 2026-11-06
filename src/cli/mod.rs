@@ -35,10 +35,14 @@ pub fn run() -> Result<()> {
     if let Commands::IsolationHost(args) = cli.command {
         return commands::isolation_host::run(args);
     }
+    if let Commands::NativeHandoff(args) = cli.command {
+        return commands::native_handoff::run(args);
+    }
     let _agy_refresh_guard = AgyRefreshGuard;
     crate::update::heal_parasaur_alias();
     match cli.command {
         Commands::IsolationHost(_) => unreachable!("handled before interactive startup"),
+        Commands::NativeHandoff(_) => unreachable!("handled before interactive startup"),
         Commands::Memory(args) => commands::memory::run(args)?,
         Commands::Diag(args) => commands::diag::run(args)?,
         Commands::Route(args) => commands::route::run(

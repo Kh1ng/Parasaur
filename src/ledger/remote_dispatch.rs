@@ -138,6 +138,35 @@ pub fn receive(
         "A remote review requires its selected review generation"
     );
     let entry = &receipt.ledger;
+    if ledger_mode == "handoff" {
+        ensure!(
+            !entry.push_attempted
+                && !entry.push_succeeded
+                && !entry.mr_attempted
+                && !entry.mr_created,
+            "Worker attempted a remote publication under read-only delivery policy"
+        );
+    }
+    // A failed preflight can terminate before an observed generation, branch
+    // or route exists. That is a failed job, not a review of the selected head.
+    let mut usage_without_absence_marker = entry.usage.clone();
+    usage_without_absence_marker.usage_unknown_reason = None;
+    let no_attempt_failure = entry.failure_class.is_some()
+        && entry.attempts_started == Some(0)
+        && entry.attempts_completed == Some(0)
+        && entry.attempts.is_empty()
+        && entry.attempt_routing.is_empty()
+        && entry.backend_exit_code.is_none()
+        && entry.review_verdict.is_none()
+        && entry.usage.usage_unknown_reason == Some(super::UsageUnknownReason::NoAttemptStarted)
+        && !super::summary::usage_has_observation(&usage_without_absence_marker);
+    let stale_source =
+        entry.failure_class.as_deref() == Some("stale_source") && entry.review_verdict.is_none();
+    let policy_refusal = entry.dispatch_reason.as_deref() == Some("repo_policy_blocked")
+        && entry.failure_class.as_deref() == Some("human_blocked")
+        && entry.validation_result.as_deref() == Some("policy_blocked")
+        && entry.human_required
+        && entry.human_required_reason_code.as_deref() == Some("policy_approval");
     ensure!(
         (1..=LEDGER_SCHEMA_VERSION).contains(&entry.schema_version)
             && entry.remote_execution.is_none(),
@@ -152,15 +181,21 @@ pub fn receive(
             && entry.repo == binding.repo
             && entry.provider == profile.provider
             && entry.work_id.as_deref() == Some(binding.work_id.as_str())
-            && entry.mode == ledger_mode
-            && entry.review_generation == binding.review_generation
+            && (entry.mode == ledger_mode
+                || (entry.mode == binding.mode && entry.failure_class.is_some()))
+            && (entry.review_generation == binding.review_generation
+                || stale_source
+                || (no_attempt_failure && entry.review_generation.is_none()))
             && (binding.review_generation.is_none()
+                || (no_attempt_failure && entry.review_generation.is_none())
                 || entry.review_contract_version == Some(super::REVIEW_CONTRACT_VERSION))
-            && entry.dispatch_reason == binding.dispatch_reason
+            && (entry.dispatch_reason == binding.dispatch_reason || policy_refusal)
             && binding
                 .branch
                 .as_ref()
-                .is_none_or(|branch| entry.branch.as_ref() == Some(branch)),
+                .is_none_or(|branch| entry.branch.as_ref() == Some(branch)
+                    || stale_source
+                    || (no_attempt_failure && entry.branch.is_none())),
         "Worker result does not match the prepared dispatch identity"
     );
     ensure!(
@@ -168,7 +203,8 @@ pub fn receive(
             && binding
                 .model
                 .as_ref()
-                .is_none_or(|model| entry.requested_model.as_ref() == Some(model)),
+                .is_none_or(|model| entry.requested_model.as_ref() == Some(model)
+                    || (no_attempt_failure && entry.requested_model.is_none())),
         "Worker result does not match the requested backend or model"
     );
     if let Some(account) = &binding.backend_instance {

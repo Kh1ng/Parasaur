@@ -32,6 +32,8 @@ mod ledger;
 mod maintenance;
 #[path = "gah_cli/manager_log.rs"]
 mod manager_log;
+#[path = "gah_cli/native_handoff.rs"]
+mod native_handoff;
 #[path = "gah_cli/pm.rs"]
 mod pm;
 #[path = "gah_cli/profile.rs"]

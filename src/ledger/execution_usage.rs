@@ -12,10 +12,12 @@ pub(crate) fn proven_unstarted(entry: &LedgerEntry) -> bool {
     entry.attempts.is_empty()
         && entry.attempt_routing.is_empty()
         && entry.review_verdict.is_none()
-        && entry
-            .validation_result
-            .as_deref()
-            .is_none_or(|result| matches!(result, "deferred_capacity" | "claim_lost"))
+        && entry.validation_result.as_deref().is_none_or(|result| {
+            matches!(
+                result,
+                "deferred_capacity" | "claim_lost" | "policy_blocked"
+            )
+        })
         && entry.attempts_started == Some(0)
         && entry.attempts_completed == Some(0)
         && entry.backend_exit_code.is_none()

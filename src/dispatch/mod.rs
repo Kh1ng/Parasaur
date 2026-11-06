@@ -91,6 +91,8 @@ pub use self::validation::{self_check_validation_gate, ValidationGateError};
 
 pub(super) const MIN_DISPATCH_FREE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DispatchArgs {
     pub profile: String,
     pub mode: String,
@@ -121,9 +123,9 @@ pub struct DispatchArgs {
     pub escalate: bool,
     /// TICKET-118: for FixMr action, reuse an existing branch instead of creating a new one.
     pub existing_branch: Option<String>,
-    /// Exact review generation selected by the controller for an existing-
-    /// branch repair. Direct CLI dispatches leave this unset; controller
-    /// FixMr actions require an exact match during repair-context preflight.
+    /// Exact review generation selected by central for a review or an existing-
+    /// branch repair. Direct CLI dispatches leave this unset. A prepared review
+    /// and controller FixMr require a match before any reviewer/repair launch.
     pub expected_review_generation: Option<String>,
     /// TICKET-073: deliberately bypass the fresh-worktree self-verification of
     /// a profile's `validation_commands`. Intended only for recovering from a
@@ -146,6 +148,7 @@ pub struct DispatchArgs {
     /// Parallel-controller two-phase admission: after reserving the selected
     /// route, request node capacity and wait for the controller's decision.
     /// Direct CLI dispatches leave this unset and retain blocking route waits.
+    #[serde(skip)]
     pub route_admission: Option<crate::controller::RouteNodeAdmission>,
 }
 
@@ -201,6 +204,8 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
     );
     ledger.work_id = args.work_id.clone();
     ledger.dispatch_reason = args.dispatch_reason.clone();
+    ledger.requested_model = args.model.clone();
+    ledger.branch = args.existing_branch.clone().or_else(|| args.branch.clone());
     let started = Instant::now();
     fs::create_dir_all(&session_dir)?;
     crate::running_workers::initialize_dispatch(&session_dir, args, &ts);
