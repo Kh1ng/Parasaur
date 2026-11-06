@@ -2,8 +2,52 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import type { ServerMessage } from '@git-agent-harness/contracts';
-import { createSessionManager } from './SessionManager.js';
+import { createSessionManager, type SessionOptions } from './SessionManager.js';
 import { MAX_DIAGNOSTIC_CHARS, DIAGNOSTIC_TRUNCATION } from '../diagnosticTail.js';
+
+test('worker request replay rejects changed work or execution controls before joining a pending or finished session', async () => {
+  let launches = 0;
+  const manager = createSessionManager({ disableCleanupTimer: true,
+    providerRegistry: { isProviderAvailable: () => true }, pushBus: { publish() {} },
+    dispatchRunner: () => { launches++; return { promise: new Promise(() => {}), cancel: async () => ({ cancelled: true }) }; }
+  });
+  const options: SessionOptions = { requestId: 'bound-worker-request', profile: 'fixture',
+    providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'fix',
+    target: 'ticket.md', backend: 'codex', model: 'model', dryRun: true,
+    gitlab: { project: 'owner/repo', kind: 'issue', iid: 1, webUrl: 'https://gitlab.example/owner/repo/-/issues/1' } };
+  const starting = manager.startSession(options);
+  await assert.rejects(manager.startSession({ ...options, target: 'another.md' }), { code: 'DISPATCH_REQUEST_CONFLICT' });
+  const session = await starting;
+  await new Promise(resolve => setImmediate(resolve));
+  await manager.stopSession(session.id);
+  for (const changed of [{ profile: 'other' }, { repo: 'other/repo' }, { mode: 'review' },
+    { backendInstance: 'another-account' }, { model: 'other-model' }, { dryRun: false },
+    { retries: 0 }, { budget: 0 }, { prod: true }, { manualWorker: true },
+    { reasoningEffort: 'high' }, { gitlab: { ...options.gitlab!, iid: 2 } }]) {
+    await assert.rejects(manager.startSession({ ...options, ...changed }), { code: 'DISPATCH_REQUEST_CONFLICT' });
+  }
+  const replay = await manager.startSession({ ...options, gitlab: { webUrl: options.gitlab!.webUrl,
+    iid: 1, kind: 'issue', project: 'owner/repo' } });
+  assert.equal(replay.id, session.id);
+  assert.equal(launches, 1);
+});
+
+test('a synchronous start subscriber can replay the bound request without launching a second worker', async () => {
+  let launches = 0;
+  let replay: Promise<unknown> | undefined;
+  const options: SessionOptions = { requestId: 'reentrant-start', profile: 'fixture',
+    providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'fix' };
+  const manager = createSessionManager({ disableCleanupTimer: true,
+    providerRegistry: { isProviderAvailable: () => true },
+    pushBus: { publish(message) { if (message.type === 'session.started') replay = manager.startSession(options); } },
+    dispatchRunner: () => { launches++; return { promise: new Promise(() => {}), cancel: async () => ({ cancelled: true }) }; }
+  });
+  const session = await manager.startSession(options);
+  assert.equal(await replay, session);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(launches, 1);
+  await manager.stopSession(session.id);
+});
 
 test('session diagnostics retain a bounded tail and retired sessions ignore late output', async () => {
   const published: ServerMessage[] = [];

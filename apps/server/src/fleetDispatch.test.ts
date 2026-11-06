@@ -16,6 +16,47 @@ import { DISPATCH_LEASE_MS, GitLabEventStore } from './integrations/gitlab/event
 import { GitLabEventQueue } from './integrations/gitlab/queue.js';
 import { createFleetDispatchCoordinator } from './fleetDispatch.js';
 
+test('fleet request binding survives restart and rejects changed controls without launching or replacing receipts', async () => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'gah-bound-request-'));
+  const leaseStorePath = resolve(dir, 'leases.json');
+  const transportMap = new Map<string, FakeTransport>();
+  const node = await createMockNode();
+  const registryService = { getNode: () => undefined,
+    getNodeObservations: async () => [makeSnapshot('worker-1', node.url, 0, 0, 0, { dispatch_execution_options: true })] } as unknown as RegistryService;
+  const fresh = () => createCoordinatorHarness({ leaseStorePath, registryService, transportMap,
+    published: [], coordinatorNodeId: 'central', coordinatorUrl: 'http://127.0.0.1:9999' });
+  const options = { requestId: 'bound-fleet-request', profile: 'gah', providerKind: 'codex' as const,
+    instanceId: 'codex-0', repo: 'owner/repo', mode: 'fix', target: 'ticket.md',
+    backend: 'codex', model: 'model', dryRun: true, retainReceipt: true };
+  try {
+    let fleet = fresh();
+    const starting = fleet.startSession(options);
+    await assert.rejects(fleet.startSession({ ...options, dryRun: false }), { code: 'DISPATCH_REQUEST_CONFLICT' });
+    const session = await starting;
+    node.sessions = [session];
+    for (const changed of [{ profile: 'other' }, { target: 'other.md' }, { mode: 'review' },
+      { instanceId: 'codex-1' }, { model: 'another-model' }, { dryRun: false },
+      { retries: 0 }, { budget: 0 }, { manualWorker: true }, { nodeId: 'worker-2' }]) {
+      await assert.rejects(fleet.startSession({ ...options, ...changed }), { code: 'DISPATCH_REQUEST_CONFLICT' });
+    }
+    await assert.rejects(fleet.startSession({ ...options, requestId: 'other-request', dryRun: false }), { code: 'DISPATCH_REQUEST_CONFLICT' });
+    await fleet.stopSession(session.id);
+    const bytes = readFileSync(leaseStorePath, 'utf8');
+    fleet = fresh();
+    assert.equal((await fleet.startSession({ ...options, retainReceipt: false })).id, session.id);
+    await assert.rejects(fleet.startSession({ ...options, dryRun: false }), { code: 'DISPATCH_REQUEST_CONFLICT' });
+    assert.equal(fleet.getSessionByRequestId(options.requestId)?.id, session.id);
+    assert.equal(readFileSync(leaseStorePath, 'utf8'), bytes);
+    const saved = JSON.parse(bytes);
+    delete saved.leases[0].requestFingerprint;
+    writeFileSync(leaseStorePath, JSON.stringify(saved));
+    fleet = fresh();
+    await assert.rejects(fleet.startSession(options), { code: 'DISPATCH_REQUEST_UNVERIFIED' });
+    assert.equal(fleet.getSessionByRequestId(options.requestId)?.id, session.id, 'legacy evidence stays inspectable');
+    assert.equal(transportMap.get('worker-1')?.startCalls, 1);
+  } finally { await node.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 type PublishedMessage = ServerMessage;
 
 type MockNodeHandle = {

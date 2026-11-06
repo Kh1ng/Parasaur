@@ -96,3 +96,37 @@ not replaced or restarted by this rollout.
 Metadata-only deployment, dry-run and memory reports are retained under ignored
 `artifacts/central-live-20261105/`. No issue was closed, no source was pushed,
 and no mobile or Mac acceptance was performed.
+
+## Request binding follow-up
+
+Native handoff inspection found another gap: pending and saved starts reused a
+request id without checking its complete execution request. The work key also
+intentionally omits execution controls, so joining active work could return a
+preview receipt to a caller requesting real execution, or the reverse.
+
+Worker starts now bind request ids to a canonical fingerprint of profile,
+provider/account, repository/work target, backend/model, budget, execution
+flags, reasoning and GitLab context. Central additionally binds the requested
+node and upstream coordinator. Pending joins and saved receipts require the
+same binding, including across central restart. Operational receipt retention
+can change without changing execution. A changed request is refused before
+launch; a historical lease without the binding remains inspectable but cannot
+prove an equivalent replay. Reconciliation and cancellation of its existing
+session remain available. Session cleanup and unpinned receipt retention keep
+their existing limits; worker restart persistence is not newly promised.
+
+The fingerprint is separate from the work key: the latter still prevents
+concurrent duplicate work, while the fingerprint determines whether the caller
+can receive that work's existing receipt. Snapshotting the request before
+asynchronous admission also prevents caller mutation from changing its meaning.
+Worker start publication occurs only after the pending request owns its slot,
+so a synchronous start subscriber cannot recursively launch a duplicate.
+
+Both new replay regressions fail against the previous implementation with the
+expected missing rejection. The corrected server builds and passes all 99
+focused session/CLI/fleet/WebSocket cases. These include pending/terminal
+replays, changed work and controls, active-work joins, central restart, legacy
+receipt inspection and reentrant start publication. Logs are
+`request-binding-negative.log`, `request-binding-build.log` and
+`request-binding-checks.log` under the same isolated source parent above.
+This follow-up is not deployed and does not implement native policy transfer.

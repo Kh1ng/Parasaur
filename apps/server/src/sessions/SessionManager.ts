@@ -10,6 +10,7 @@ import { generateSessionId, GAHError } from '@git-agent-harness/shared';
 import { getProviderRegistry } from '../provider/ProviderRegistry.js';
 import { getServerPushBus } from '../serverPushBus.js';
 import { diagnosticTail } from '../diagnosticTail.js';
+import { dispatchRequestFingerprint, assertDispatchRequestIdentity } from '../dispatchRequestIdentity.js';
 import { isSessionTerminal } from '@git-agent-harness/contracts';
 import { runDispatchCancellable, type DispatchOptions, type DispatchResult, type CancellableDispatch, type CancellationResult } from '../gahCli.js';
 import type {
@@ -72,6 +73,7 @@ function executionResult(reason: SessionExecutionResult['reason'], result?: Disp
 class SessionManagerImpl {
   private sessions: Map<SessionId, Session> = new Map();
   private requestToSessionId: Map<string, SessionId> = new Map();
+  private requestFingerprints = new Map<string, string>();
   private pendingSessions: Map<string, Promise<Session>> = new Map();
   private activeDispatches: Map<SessionId, CancellableDispatch> = new Map();
   private profileDispatchTails: Map<string, Promise<void>> = new Map();
@@ -92,8 +94,12 @@ class SessionManagerImpl {
     }
   }
   async startSession(options: SessionOptions): Promise<Session> {
+    options = { ...options, gitlab: options.gitlab && { ...options.gitlab } };
     const { requestId } = options;
+    const fingerprint = dispatchRequestFingerprint(options);
     if (requestId) {
+      const previous = this.requestFingerprints.get(requestId);
+      if (previous) assertDispatchRequestIdentity(previous, fingerprint);
       const pending = this.pendingSessions.get(requestId);
       if (pending) {
         return pending;
@@ -109,8 +115,11 @@ class SessionManagerImpl {
       }
     }
 
-    const startPromise = this.startSessionFresh(options);
+    // Publish only after this request owns its pending slot: subscribers can
+    // synchronously replay a start when they receive session.started.
+    const startPromise = Promise.resolve().then(() => this.startSessionFresh(options));
     if (requestId) {
+      this.requestFingerprints.set(requestId, fingerprint);
       this.pendingSessions.set(requestId, startPromise);
     }
     try {
@@ -122,6 +131,7 @@ class SessionManagerImpl {
     } finally {
       if (requestId) {
         this.pendingSessions.delete(requestId);
+        if (!this.requestToSessionId.has(requestId)) this.requestFingerprints.delete(requestId);
       }
     }
   }
@@ -499,6 +509,7 @@ class SessionManagerImpl {
         .map(([requestId]) => requestId);
       for (const requestId of requestIdsToRemove) {
         this.requestToSessionId.delete(requestId);
+        this.requestFingerprints.delete(requestId);
         this.pendingSessions.delete(requestId);
       }
       this.sessions.delete(sessionId);

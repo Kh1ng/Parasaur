@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { requiresDispatchExecutionOptions } from './dispatchExecutionOptions.js';
+import { dispatchRequestFingerprint, assertDispatchRequestIdentity } from './dispatchRequestIdentity.js';
 import http from 'node:http';
 import https from 'node:https';
 import WebSocket from 'ws';
@@ -47,6 +48,7 @@ type FleetDispatchDeps = {
 };
 
 type LeaseRecord = {
+  requestFingerprint?: string;
   retainReceipt?: boolean;
   requestId: string;
   workKey: string;
@@ -220,6 +222,7 @@ function isCompleteLease(value: unknown): value is LeaseRecord {
   const lease = value as Partial<LeaseRecord> | null;
   if (!(typeof lease === 'object' && lease !== null
     && (lease.retainReceipt === undefined || typeof lease.retainReceipt === 'boolean')
+    && (lease.requestFingerprint === undefined || (typeof lease.requestFingerprint === 'string' && /^[a-f0-9]{64}$/.test(lease.requestFingerprint)))
     && isNonEmptyString(lease.requestId)
     && isNonEmptyString(lease.nodeId)
     && isNonEmptyString(lease.nodeUrl)
@@ -361,7 +364,7 @@ class LeaseStore {
       if (existing.session.id === record.session.id) {
         // Several request IDs can join one running job; all observe its outcome.
         this.leases.set(existing.requestId, { ...record, requestId: existing.requestId,
-          retainReceipt: existing.retainReceipt });
+          retainReceipt: existing.retainReceipt, requestFingerprint: existing.requestFingerprint });
       } else if (existing.workKey === record.workKey && !existing.retainReceipt
         && (existing.state === 'terminal' || existing.state === 'expired')) {
         this.leases.delete(existing.requestId);
@@ -705,8 +708,8 @@ export class FleetDispatchCoordinator {
   private readonly localSessionManager: ReturnType<typeof getSessionManager>;
   private readonly leaseStore: LeaseStore;
   private readonly remoteTransports = new Map<string, NodeDispatchTransport>();
-  private readonly pendingRequestStarts = new Map<string, Promise<Session>>();
-  private readonly pendingWorkStarts = new Map<string, Promise<Session>>();
+  private readonly pendingRequestStarts = new Map<string, { fingerprint: string; promise: Promise<Session> }>();
+  private readonly pendingWorkStarts = new Map<string, { fingerprint: string; promise: Promise<Session> }>();
   private readonly localTransport: LocalNodeTransport;
   private readonly transportFactory: NonNullable<FleetDispatchDeps['transportFactory']>;
 
@@ -723,6 +726,7 @@ export class FleetDispatchCoordinator {
   }
 
   async startSession(options: RoutedSessionOptions): Promise<Session> {
+    options = { ...options, gitlab: options.gitlab && { ...options.gitlab } };
     if (options.backendInstance !== undefined && (typeof options.backendInstance !== 'string'
       || !/^[a-zA-Z0-9_-]{1,128}$/.test(options.backendInstance)
       || !options.backend || options.backend === 'auto' || !options.nodeId)) {
@@ -730,24 +734,27 @@ export class FleetDispatchCoordinator {
     }
     const requestId = options.requestId ?? generateRequestId();
     const workKey = deriveDispatchWorkKey(options);
+    const fingerprint = dispatchRequestFingerprint(options);
     const pending = this.pendingRequestStarts.get(requestId) ?? this.pendingWorkStarts.get(workKey);
     if (pending) {
-      const session = await pending;
+      assertDispatchRequestIdentity(pending.fingerprint, fingerprint);
+      const session = await pending.promise;
       this.assertAccountBinding(session, options);
       if (options.retainReceipt) this.pinReceipt(requestId, session.id);
       return session;
     }
 
     const startPromise = this.startSessionFresh(options, requestId, workKey);
-    this.pendingRequestStarts.set(requestId, startPromise);
-    this.pendingWorkStarts.set(workKey, startPromise);
+    const pendingStart = { fingerprint, promise: startPromise };
+    this.pendingRequestStarts.set(requestId, pendingStart);
+    this.pendingWorkStarts.set(workKey, pendingStart);
     try {
       return await startPromise;
     } finally {
-      if (this.pendingRequestStarts.get(requestId) === startPromise) {
+      if (this.pendingRequestStarts.get(requestId) === pendingStart) {
         this.pendingRequestStarts.delete(requestId);
       }
-      if (this.pendingWorkStarts.get(workKey) === startPromise) {
+      if (this.pendingWorkStarts.get(workKey) === pendingStart) {
         this.pendingWorkStarts.delete(workKey);
       }
     }
@@ -759,6 +766,7 @@ export class FleetDispatchCoordinator {
 
     const existingByRequest = this.leaseStore.getByRequestId(requestId);
     if (existingByRequest && existingByRequest.state !== 'expired') {
+      assertDispatchRequestIdentity(existingByRequest.requestFingerprint, dispatchRequestFingerprint(options));
       this.assertAccountBinding(existingByRequest.session, options);
       if (options.retainReceipt) this.pinReceipt(requestId, existingByRequest.session.id);
       return existingByRequest.session;
@@ -766,6 +774,7 @@ export class FleetDispatchCoordinator {
 
     const existingByWorkKey = this.leaseStore.getByWorkKey(workKey);
     if (existingByWorkKey) {
+      assertDispatchRequestIdentity(existingByWorkKey.requestFingerprint, dispatchRequestFingerprint(options));
       this.assertAccountBinding(existingByWorkKey.session, options);
       if (options.retainReceipt) this.pinReceipt(requestId, existingByWorkKey.session.id);
       return existingByWorkKey.session;
@@ -785,6 +794,7 @@ export class FleetDispatchCoordinator {
       model: options.model, budget: options.budget, gitlab: options.gitlab
     };
     const offered: LeaseRecord = { requestId, retainReceipt: options.retainReceipt, workKey,
+      requestFingerprint: dispatchRequestFingerprint(options),
       profile: options.profile, nodeId: target.nodeId, nodeUrl: target.advertisedUrl,
       session: decorateSession(pending, target.nodeId, 'offered'), state: 'offered',
       createdAt: nowIso(), updatedAt: nowIso(), coordinatorNodeId: this.coordinatorIdentity.node_id,
