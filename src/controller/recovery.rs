@@ -405,6 +405,9 @@ pub(super) fn record_action_events(
     review_generation: Option<&str>,
 ) -> Result<()> {
     let original_reason_code = original_action.human_required_reason_code();
+    if let Err(error) = crate::spend_budget::record_action(cfg, profile_name, effective_action) {
+        eprintln!("[gah] spend budget notice failed (swallowed): {error:#}");
+    }
     let effective_reason_code = effective_action.human_required_reason_code();
     let original_plan = remediation_plan_for_action(cfg, profile_name, original_action);
     let effective_plan = remediation_plan_for_action(cfg, profile_name, effective_action);

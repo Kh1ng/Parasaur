@@ -79,6 +79,12 @@ pub fn run(args: Args) -> Result<()> {
     }
     runner::install_shutdown_handler()?;
     let mut cfg = config::load(args.config_path.as_deref())?;
+    // Explicit commands report a refused spend policy as an error before
+    // acquiring claims. The dispatch layer rechecks for controller callers
+    // and for changes in history while this command was waiting for its lock.
+    if !args.dry_run {
+        crate::spend_budget::ensure_available(&cfg, &args.profile)?;
+    }
     if args.manual_worker {
         prepare_manual_worker(&mut cfg, &args)?;
         println!(

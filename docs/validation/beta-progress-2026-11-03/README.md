@@ -1,5 +1,10 @@
 # Beta finishing pass: local validation
 
+Latest staged control: [factory spend ceilings](factory-spend-ceilings.md)
+adds explicit daily/monthly recorded-cost guards, UTC rollover, pause notices
+and shared status. CLI and rendered scenarios pass. This is not enabled on
+the live controller; the existing memory observation remains uninterrupted.
+
 Latest usage delivery: [combined recorded usage](combined-recorded-usage.md)
 is live at public `39c29be4`, with chat and factory source coverage, measured
 subtotals, account/model/project/work/day grouping and JSON export. Both live

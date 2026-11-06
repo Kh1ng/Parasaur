@@ -65,6 +65,7 @@ pub mod server;
 pub mod setup;
 pub mod skill_bindings;
 pub mod skill_inventory;
+pub mod spend_budget;
 pub mod status;
 pub mod sync;
 pub mod telemetry;

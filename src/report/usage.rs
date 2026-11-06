@@ -1,7 +1,10 @@
 //! Canonical execution usage for the combined chat/factory report. Ledger
 //! records are visited under their read lock; only grouped readings survive.
 use crate::config::GahConfig;
-use crate::ledger::{self, LedgerEntry, LedgerUsage, UsageUnknownReason};
+use crate::ledger::execution_usage::proven_unstarted;
+#[cfg(test)]
+use crate::ledger::UsageUnknownReason;
+use crate::ledger::{self, LedgerEntry, LedgerUsage};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -200,12 +203,7 @@ pub(super) fn build(cfg: &GahConfig, since: &str, profile: Option<&str>) -> Resu
         }
         entries += 1;
         let day = timestamp.to_offset(UtcOffset::UTC).date().to_string();
-        if entry.attempts.is_empty()
-            || !entry
-                .attempts
-                .iter()
-                .any(|attempt| ledger::summary::usage_has_observation(&attempt.usage))
-        {
+        if !ledger::execution_usage::has_attempt_usage(&entry) {
             let identity = identity(
                 &entry,
                 &entry.usage,
@@ -298,34 +296,6 @@ fn identity(
         usage_classification: usage.usage_classification.clone(),
         day: day.into(),
     }
-}
-
-fn proven_unstarted(entry: &LedgerEntry) -> bool {
-    entry.attempts.is_empty()
-        && entry.attempt_routing.is_empty()
-        && entry.review_verdict.is_none()
-        && entry
-            .validation_result
-            .as_deref()
-            .is_none_or(|result| matches!(result, "deferred_capacity" | "claim_lost"))
-        && entry.attempts_started == Some(0)
-        && entry.attempts_completed == Some(0)
-        && entry.backend_exit_code.is_none()
-        && entry.usage.usage_unknown_reason == Some(UsageUnknownReason::NoAttemptStarted)
-        && entry.usage.usage_source.is_none()
-        && [
-            entry.usage.input_tokens,
-            entry.usage.output_tokens,
-            entry.usage.total_tokens,
-            entry.usage.cache_read_tokens,
-            entry.usage.cache_write_tokens,
-            entry.usage.reasoning_tokens,
-            entry.usage.requests_count,
-        ]
-        .iter()
-        .all(Option::is_none)
-        && entry.usage.actual_cost_usd.is_none()
-        && entry.usage.estimated_cost_usd.is_none()
 }
 
 #[cfg(test)]

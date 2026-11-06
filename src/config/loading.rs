@@ -26,7 +26,15 @@ pub fn load(config_path: Option<&str>) -> Result<GahConfig> {
     }
 
     // Lint candidate model consistency
+    if let Some(budget) = &cfg.defaults.routing.spend_budget {
+        budget.validate()?;
+    }
     for (name, profile) in &cfg.profiles {
+        if let Some(budget) = profile.effective_routing(&cfg.defaults).spend_budget {
+            budget
+                .validate()
+                .with_context(|| format!("profile '{name}' spend budget"))?;
+        }
         if let Err(mismatches) = check_profile_candidate_model_consistency(&cfg.defaults, profile) {
             for m in mismatches {
                 eprintln!("WARNING: Profile '{}': {}", name, m);

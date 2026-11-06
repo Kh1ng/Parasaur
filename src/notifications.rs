@@ -51,6 +51,9 @@ const TERMINAL_FAILURE_EVENT_DEDUPE_SECONDS_ENV: &str = "GAH_TERMINAL_FAILURE_DE
 /// A notification-worthy controller/dispatch event. All fields are borrowed
 /// from the live dispatch/controller state to avoid cloning.
 pub enum NotifyEvent<'a> {
+    /// A configured recorded-spend ceiling or incomplete cost reading pauses
+    /// intake. The controller owns resumption; this never wakes an agent.
+    SpendBudgetHeld { profile: &'a str, reason: &'a str },
     /// A controller action was decided as `HumanRequired`.
     HumanRequired {
         reason: &'a str,
@@ -167,6 +170,7 @@ fn route_label(backend: &str, model: &str) -> String {
 /// `notify_command`. Pure and allocation-light; unit-tested below.
 pub fn format_message(event: &NotifyEvent) -> String {
     match event {
+        NotifyEvent::SpendBudgetHeld { profile, reason } => format!("[gah] {profile}: factory intake paused: {reason}"),
         NotifyEvent::HumanRequired {
             reason,
             reference,
@@ -434,7 +438,7 @@ pub fn format_wake_instruction(event: &NotifyEvent, autonomy: WakeAutonomy) -> O
         // The controller owns this bounded reroute. Waking a manager for each
         // malformed intermediate opinion would recreate the notification
         // spam this event is designed to explain.
-        NotifyEvent::ReviewOutputInvalid { .. } | NotifyEvent::PaidRouteApprovalRequired { .. } => {
+        NotifyEvent::ReviewOutputInvalid { .. } | NotifyEvent::PaidRouteApprovalRequired { .. } | NotifyEvent::SpendBudgetHeld { .. } => {
             return None
         }
         // Issue #653: external approvals are operator decisions; a woken
@@ -568,6 +572,9 @@ fn activity_url(central_url: &str) -> anyhow::Result<String> {
 
 fn activity_shape(event: &NotifyEvent<'_>) -> (&'static str, &'static str, &'static str) {
     match event {
+        NotifyEvent::SpendBudgetHeld { .. } => {
+            ("action_required", "warning", "Spend limit pauses factory")
+        }
         NotifyEvent::DispatchFailed { .. } => ("dispatch_failed", "error", "Work failed"),
         NotifyEvent::MrCreated { .. } | NotifyEvent::HandoffCreated { .. } => {
             ("review_ready", "success", "Review ready")
@@ -610,6 +617,11 @@ fn activity_body(profile: &Profile, event: &NotifyEvent<'_>) -> (String, String)
         }
     ) {
         id_seed["quota_transition"] = uuid::Uuid::new_v4().to_string().into();
+    }
+    // The profile receipt has already reserved this transition. A later
+    // recovery and re-hold in the same window must reach the central feed too.
+    if matches!(event, NotifyEvent::SpendBudgetHeld { .. }) {
+        id_seed["spend_transition"] = uuid::Uuid::new_v4().to_string().into();
     }
     let digest = format!("{:x}", Sha256::digest(id_seed.to_string().as_bytes()));
     let occurred_at = match event {
@@ -1027,6 +1039,7 @@ fn record_terminal_failure_resolved(
 
 fn event_name(event: &NotifyEvent<'_>) -> &'static str {
     match event {
+        NotifyEvent::SpendBudgetHeld { .. } => "spend_budget_held",
         NotifyEvent::HumanRequired { .. } => "human_required",
         NotifyEvent::PaidRouteApprovalRequired { .. } => "paid_route_approval_required",
         NotifyEvent::ExternalApprovalRequested { .. } => "external_approval_requested",
@@ -1065,6 +1078,7 @@ fn event_run_id<'a>(event: &'a NotifyEvent<'a>) -> Option<&'a str> {
 
 fn event_profile<'a>(event: &'a NotifyEvent<'a>) -> Option<&'a str> {
     match event {
+        NotifyEvent::SpendBudgetHeld { profile, .. } => Some(profile),
         NotifyEvent::DispatchFailed { profile, .. }
         | NotifyEvent::PaidRouteApprovalRequired { profile, .. }
         | NotifyEvent::ExternalApprovalRequested { profile, .. }

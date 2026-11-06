@@ -25,6 +25,8 @@ mod loading;
 mod orchestration;
 pub use loading::load;
 mod routing_policy;
+mod spend_budget;
+pub use spend_budget::{SpendBudget, SpendCostBasis};
 mod worker_scaling;
 pub use orchestration::OrchestrationMode;
 use routing_policy::merge_routing_policy;

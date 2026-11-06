@@ -165,6 +165,8 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
         return dry_run::dry_run(cfg, profile, args);
     }
 
+    crate::spend_budget::ensure_available(cfg, &args.profile)?;
+
     // TICKET-073: self-check the validation gate in a fresh worktree (skipped
     // when unchanged) before any backend spend; its failure is distinct.
     self_check_validation_gate(profile, cfg, args.skip_validation_gate)?;

@@ -208,6 +208,16 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
         };
     }
 
+    // A timed profile spend hold blocks new dispatches without killing work
+    // already running or creating a durable human gate on its work item.
+    if let Some(action) = snapshot
+        .spend_budget
+        .as_ref()
+        .and_then(|budget| budget.wait_action())
+    {
+        return action;
+    }
+
     let mut mrs: Vec<&crate::sync::SyncMrJson> = snapshot.merge_requests.iter().collect();
     mrs.sort_by(|a, b| a.branch.cmp(&b.branch));
 

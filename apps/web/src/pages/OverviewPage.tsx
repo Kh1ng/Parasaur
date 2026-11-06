@@ -1,4 +1,5 @@
 import { RunningWorkersRoster } from '../components/RunningWorkersRoster.js';
+import { SpendBudgetCard } from '../components/SpendBudgetCard.js';
 import { useEffect } from 'react';
 import { ExternalAnchor } from '../components/ExternalAnchor';
 import { useAutoRefresh } from '../hooks/useAutoRefresh.js';
@@ -332,6 +333,8 @@ export function OverviewPage({ sessions, onNavigate, onOpenWork = () => {}, onWa
           )}
         </section>
       </div>
+
+      <SpendBudgetCard budget={status.key === profile ? snapshot?.spend_budget : undefined} />
 
       {snapshot?.recent_ledger && (
         <section className="card-padded">

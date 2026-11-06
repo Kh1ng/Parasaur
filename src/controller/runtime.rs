@@ -1301,6 +1301,27 @@ pub(crate) fn run_dispatch_and_record(
         Err(e) if crate::dispatch::capacity_deferred_error(&e) => {
             record_capacity_deferral(cfg, args, label, work_id, &e)
         }
+        Err(e)
+            if e.downcast_ref::<crate::spend_budget::SpendBudgetHeld>()
+                .is_some() =>
+        {
+            crate::events::record_with_run_id_and_reason_code(
+                cfg,
+                crate::events::EventType::DispatchFinished,
+                Some(&args.profile),
+                work_id,
+                args.run_id.as_deref(),
+                format!("{label}: {e}"),
+                Some("spend_budget"),
+            )?;
+            if args.route_admission.is_none() {
+                // A direct CLI command must not exit successfully if spend
+                // crossed its ceiling while it waited for the profile lock.
+                Err(e)
+            } else {
+                Ok(Some(format!("Deferred {label}: {e}; no backend launched")))
+            }
+        }
         // Another loop holds the issue. That is a skip, not a failed dispatch.
         Err(e) if crate::dispatch::issue_claim_lost(&e).is_some() => {
             crate::events::record_with_run_id(

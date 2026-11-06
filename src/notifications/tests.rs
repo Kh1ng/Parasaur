@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+fn reserved_spend_transitions_are_distinct_in_the_central_feed() {
+    let profile = crate::config::tests::test_profile_for_notifications();
+    let event = NotifyEvent::SpendBudgetHeld {
+        profile: "test",
+        reason: "day ceiling reached",
+    };
+    let (first, body) = activity_body(&profile, &event);
+    let (next_transition, _) = activity_body(&profile, &event);
+    assert_ne!(first, next_transition);
+    let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(body["title"], "Spend limit pauses factory");
+    assert_eq!(body["kind"], "action_required");
+    assert_eq!(body["profile"], "test");
+}
+
+#[test]
 fn human_required_includes_reason_and_reference() {
     let msg = format_message(&NotifyEvent::HumanRequired {
         reason: "MR ready for human decision",

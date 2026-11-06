@@ -37,6 +37,7 @@ pub enum EventType {
     /// the controller run (not an in-flight dispatch) and is intentionally
     /// distinct from a backend failure.
     ReviewBudgetExhausted,
+    SpendBudgetHeld,
     DuplicateGuardTriggered,
     PmPlanned,
     PmPublished,
@@ -72,6 +73,7 @@ impl EventType {
             Self::WaitSelected => "wait_selected",
             Self::HumanRequired => "human_required",
             Self::ReviewBudgetExhausted => "review_budget_exhausted",
+            Self::SpendBudgetHeld => "spend_budget_held",
             Self::DuplicateGuardTriggered => "duplicate_guard_triggered",
             Self::PmPlanned => "pm_planned",
             Self::PmPublished => "pm_published",

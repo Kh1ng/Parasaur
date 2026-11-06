@@ -1914,6 +1914,41 @@ counts changes already on the branch.
 
 A profile env file cannot set `GAH_ENFORCE_JOB_FILE`; only the `--enforce-job-file` flag turns enforcement on.
 
+## Factory spend ceilings
+
+An opt-in profile policy pauses new factory actions when recorded execution
+spend reaches a calendar-UTC ceiling. Set either or both windows:
+
+```toml
+[profiles.my_project.routing.spend_budget]
+daily_usd = 10.0
+monthly_usd = 100.0
+cost_basis = "actual"
+```
+
+The amounts above are examples, not installed defaults. `actual` uses only
+provider-reported actual cost. `estimated` explicitly chooses API-equivalent
+estimates instead; it never fills a missing actual reading. Missing or invalid
+costs in an enabled window hold intake, rather than count as zero. Known
+subtotals and missing-reading counts remain visible in `gah status --json`.
+This policy covers the recorded factory ledger; chat and other nodes' independent
+histories are outside its scope. It is not a provider billing limit.
+
+`[defaults.routing.spend_budget]` supplies a default. A profile section replaces
+that whole policy, including its cost basis; an empty profile section disables
+the inherited ceiling. Zero refuses new intake immediately. Negative or
+nonfinite amounts are rejected. The effective policy is returned by
+`gah config show --json --full`.
+
+The loop records `spend_budget_held` and sends one pause notification per
+transition. It does not wake a manager agent, reset attempts, grant approvals,
+or terminate running dispatches. Running work can complete and exceed the
+ceiling; this is an intake guard, not a reservation or prepaid guarantee.
+Daily/monthly rollover automatically releases the relevant window. Both windows
+must permit intake. The loop rechecks on its short wait cadence and at rollover;
+a controller restart reloads policy edits. Direct non-preview
+dispatches use the same preflight before validation, worktree creation or spend.
+
 ## Manager log
 
 Manager observations are appended to `manager-log.jsonl` beside the ledger;

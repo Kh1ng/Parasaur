@@ -505,6 +505,20 @@ export interface StatusSnapshot {
   open_managed_mr_count: number;
   inflight_implementation_count: number;
   implementation_intake_paused: boolean;
+  /** Calendar-UTC factory ledger ceiling; missing costs hold enabled intake. */
+  spend_budget?: {
+    cost_basis: 'actual' | 'estimated';
+    scope: 'recorded-factory-ledger';
+    windows: Array<{
+      window: 'day' | 'month'; starts_at: string; resets_at: string;
+      limit_usd: number; reported_usd: number | null;
+      measured_observations: number; unmeasured_observations: number;
+      exhausted: boolean; incomplete: boolean;
+    }>;
+    intake_held: boolean;
+    hold_reason: string | null;
+    retry_at: string;
+  } | null;
   /** Compatibility projection keyed by logical backend name. A `true` value
    * means the executable resolves through the same resolver dispatch uses. */
   backend_configured: Record<string, boolean>;
@@ -1290,6 +1304,12 @@ export interface EventPolicySummary {
  * view. Values reflect inheritance through defaults + canonical + repo config
  * for the requested profile. */
 export interface ConfigProfileSummary {
+  /** Explicit calendar-UTC factory-ledger intake policy; absent on older CLIs. */
+  spend_budget?: {
+    daily_usd?: number | null;
+    monthly_usd?: number | null;
+    cost_basis: 'actual' | 'estimated';
+  } | null;
   /** Absent on older CLIs; provider event ingestion must fail closed. */
   event_policy?: EventPolicySummary;
   profile: string;
@@ -1400,6 +1420,7 @@ export type ControllerEventType =
   | 'central_claim_attempt'
   | 'backend_marked_unavailable'
   | 'wait_selected'
+  | 'spend_budget_held'
   | 'human_required'
   | 'duplicate_guard_triggered'
   | 'loop_stopped';

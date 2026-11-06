@@ -189,6 +189,10 @@ pub struct RoutingPolicy {
     /// Unset axes are unlimited; see `IssueBudget`.
     #[serde(default, skip_serializing_if = "IssueBudget::is_default")]
     pub issue_budget: IssueBudget,
+    /// Calendar-UTC recorded factory spend ceilings. An explicit profile
+    /// section replaces the default policy as a whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spend_budget: Option<super::SpendBudget>,
 }
 
 impl RoutingPolicy {
@@ -669,6 +673,7 @@ pub(super) fn merge_routing_policy(
         .hold_contract_changes_for_human_review
         .or(canonical.hold_contract_changes_for_human_review);
     repo.issue_budget = repo.issue_budget.merged_with(canonical.issue_budget);
+    repo.spend_budget = repo.spend_budget.or(canonical.spend_budget);
     repo
 }
 

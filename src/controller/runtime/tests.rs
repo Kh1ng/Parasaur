@@ -291,6 +291,7 @@ pub(super) fn empty_snapshot() -> StatusSnapshot {
         open_managed_mr_count: 0,
         inflight_implementation_count: 0,
         implementation_intake_paused: false,
+        spend_budget: None,
         backend_configured: std::collections::HashMap::new(),
         backend_instances: vec![],
         export_health: Default::default(),

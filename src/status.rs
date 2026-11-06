@@ -144,6 +144,9 @@ pub struct StatusSnapshot {
     pub open_managed_mr_count: u32,
     pub inflight_implementation_count: u32,
     pub implementation_intake_paused: bool,
+    /// Calendar-UTC factory ledger spend and cost coverage. Absent when no
+    /// ceiling is configured; an incomplete enabled window holds new intake.
+    pub spend_budget: Option<crate::spend_budget::SpendBudgetStatus>,
     /// Compatibility projection keyed by logical backend name. `true` means
     /// the executable resolves with the same resolver dispatch uses.
     pub backend_configured: std::collections::HashMap<String, bool>,
@@ -1175,6 +1178,12 @@ fn build_snapshot_inner(
 
     let snapshot = StatusSnapshot {
         schema_version: 1,
+        spend_budget: crate::spend_budget::evaluate(
+            effective_routing.spend_budget.as_ref(),
+            profile_name,
+            entries,
+            now,
+        ),
         review_contract_version: crate::ledger::CURRENT_REVIEW_CONTRACT_VERSION,
         generated_at,
         profile: profile_identity,

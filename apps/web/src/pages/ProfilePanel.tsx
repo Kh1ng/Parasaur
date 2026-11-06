@@ -13,7 +13,7 @@ import { WorkerScalingSection } from '../components/WorkerScalingSection.js';
 import { LoginRepairPanel } from '../components/LoginRepairPanel.js';
 import { EnvironmentSourcesSection } from '../components/EnvironmentSourcesSection.js';
 import { WorkspaceChecksSection } from '../components/WorkspaceChecksSection.js';
-import { oldestFetchedAt } from '../lib/format.js';
+import { oldestFetchedAt, formatCost } from '../lib/format.js';
 import { backendInstancesApi, promptPoliciesApi, routingCandidatesApi, GahApiError, type BackendRunnerKind } from '../api/client.js';
 import type { BackendInstanceSummary, WakeAutonomyValue, SettingsConfigProfileSummary, RoutingCandidateSummary } from '@git-agent-harness/contracts';
 
@@ -394,6 +394,11 @@ export function ProfileConfigViewerSection({ selectedName, profileConfig, onRefr
             <p>Max implementation failures per ticket: {effective.max_implementation_failures_per_ticket}</p>
             <p>Max review cycles per ticket: {effective.max_review_cycles_per_ticket}</p>
             <p>Max paid reviews per ticket: {effective.max_paid_reviews_per_ticket}</p>
+            {effective.spend_budget === undefined ? <p>Factory spend ceilings: not reported by this node</p> : effective.spend_budget ? <>
+              <p>Daily spend ceiling: {effective.spend_budget.daily_usd == null ? 'Unlimited' : formatCost(effective.spend_budget.daily_usd)}</p>
+              <p>Monthly spend ceiling: {effective.spend_budget.monthly_usd == null ? 'Unlimited' : formatCost(effective.spend_budget.monthly_usd)}</p>
+              <p>Based on {effective.spend_budget.cost_basis === 'actual' ? 'reported actual cost' : 'API-equivalent estimates'} in the factory ledger.</p>
+            </> : <p>No factory spend ceiling configured.</p>}
           </div>
         </div>
 
