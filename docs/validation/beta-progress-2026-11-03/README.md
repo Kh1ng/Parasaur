@@ -1,15 +1,17 @@
 # Beta finishing pass: local validation
 
-Latest production compatibility evidence: public `88f27cf2` clears the native
-history-size blocker with bounded, hashed chunks. Actual central preparation
-passes with all 26,302 selected-profile entries in two chunks (249.6 MB). The
-exact context was transferred to Windows WSL, whose check correctly refuses
-differing runtime arguments before materializing a job ledger. Runtime
-compatibility, authority refresh and native execution remain unfinished. See
-[production version 2 evidence](native-worker-context.md#production-history-transfer--version-2).
-Eleven focused cases, the actual CLI check and all-target Clippy pass. Matched
-private `98f2e7e` also passes its complete assembly. Services, configurations
-and installed CLIs were unchanged; no model or real issue ran.
+Latest production compatibility evidence: public `448bab97` prepares and
+verifies the actual central history on Windows WSL for a pinned OpenCode/model
+route. All 26,365 snapshot entries survive the two-chunk transfer and are read
+through the worker's normal effective ledger path. Automatic routing still
+refuses the worker's missing OpenHands profile. Fresh authority, host admission
+and durable native execution remain unfinished. See
+[pinned production acceptance](native-worker-context.md#pinned-route-production-acceptance).
+Thirteen focused cases, the actual CLI check, 228 launcher cases, four explicit
+route cases and all-target Clippy pass. Matched private `1593ebe` also passes
+its complete assembly. The worker gained central's supported Claude safe-mode
+setting; all other configuration is preserved. Services and installed CLIs
+were not restarted/replaced; no model or real issue ran.
 
 The owner's usage screenshot was also rechecked against current live data:
 the tailnet HTML and all 30 assets match the corrected deployed build, and the

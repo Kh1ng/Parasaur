@@ -136,6 +136,52 @@ selected OpenCode backend. The earlier launcher regression run passes 228 cases
 and four explicit-route cases; its log is
 `/home/khing/.cache/parasaur-project-report.qy1ih6c9/native-runtime-argument-regressions.log`.
 
+## Pinned route production acceptance
+
+Public `448bab97` passes optimized release/context/zero-dollar-spend smokes,
+13 focused context cases, the actual CLI context case, formatting and
+all-target/all-feature Clippy with warnings denied. Its archive was checked
+against all 606 Rust/Cargo inputs. Staged binary SHA-256:
+`bfdcadbf0af4dd18a65d360c2b6073acaf250893ffe814ed8a1b864c79d9ad18`.
+Artifact: `artifacts/parasaur-native-context-448bab97/`; build log:
+`/home/khing/.cache/parasaur-native-context-release.m7le4sq8/build.log`.
+
+The fresh actual central request pins `opencode` and
+`tak-mistral-vibe/zai-glm-5-3`, with a diagnostic non-issue work ID and no
+execution. At 17:56 UTC on November 6, preparation produced all 26,365 profile
+snapshot entries in two chunks totaling 250,185,976 bytes. Its manifest digest
+is `89ce8a0deb75799bd9305e50b42fb92dfe83008b192f67aaf9edee90cdc41ba7`.
+The archive hash, safe member set, size, private permissions and exact bound
+backend/model/run/node were verified before checking on Windows WSL.
+
+At 17:58 UTC, the actual worker check passed and read the same 26,365 entries
+through the effective job ledger. Context digest and run identity match
+central. It explicitly reports `executionStarted: false` and
+`authorityRefreshRequired: true`. A separate actual check using this candidate
+still rejects the prior automatic-routing context on its unmatched
+`oh_profile`, creating no job directory. The profile provisioning refusal was
+also inspected: no OpenHands credential/configuration was written, and worker
+configuration still matches the earlier sole Claude safe-mode change.
+
+Central API 841661, worker API 352938, controller 666974 and observer 667504
+are unchanged. Both final probes verify unchanged configuration and installed
+CLI hashes for their duration. No service restart, real issue, agent model
+call, native execution admission or automatic broker completion is claimed.
+The exact context/snapshot remains point-in-time input, not current authority.
+
+Ignored reports under `artifacts/central-live-20261105/`:
+`native-context-448bab97-central.json`, `native-context-448bab97-worker.json`
+and `native-auto-runtime-refusal-448bab97.json`. Matched private `1593ebe`
+pins public `448bab97` and passes 1,158 server cases (38 explicit skips),
+17 mocks, production builds and artifact/input/credential/transport guards.
+Log: `/home/khing/.cache/parasaur-enterprise-current.f5ojf5gx/build.log`.
+Fixture Supabase values do not establish live SSO.
+
+The existing memory observation is still running at 420 samples over
+25,425.645 seconds with zero gaps or OOM kills. Its original controller and
+observer PIDs are preserved. Ten-hour and sustained-load acceptance remain
+open; no leak-fixed claim is supported by this compatibility check.
+
 ## Central preparation
 
 The private `native-handoff prepare` command accepts a trusted request file,
