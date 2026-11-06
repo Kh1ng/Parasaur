@@ -58,13 +58,15 @@ work and are not gates for this desktop/shared-web pass.
   now exclude proven unstarted reviews and reconsider only false budget holds.
   Tests and live same-head comparison pass; the CLI is deployed on both nodes.
   #1525 has moved from the false budget hold back to the genuine node-capacity
-  gate. The replacement memory observer is running; no ten-hour pass is claimed.
+  gate. The ten-hour observer has completed with no OOM kills, but includes one
+  delayed sampling interval and capacity-deferred work; full memory acceptance
+  remains open.
 - [Native reviewer readiness](validation/beta-progress-2026-11-03/native-review-readiness.md)
   verifies broken/repaired review packs through the real backend and production
   gate, and fixes an overlapping escalation entry bypassing routine cycle caps.
   The CLI fix is deployed on central and Windows; distributed factory
-  progression remains unverified. The current controller has a verified running
-  ten-hour memory observation; it is not yet a soak pass.
+  progression remains unverified. The current controller's ten-hour observation
+  is complete with a cadence limitation; it is not a sustained-load soak pass.
 - [Chat token breakdown](validation/beta-progress-2026-11-03/chat-token-breakdown.md)
   preserves reported cache/reasoning categories and prevents incomplete replies
   from yielding complete session totals. Focused protocol/history/UI checks and

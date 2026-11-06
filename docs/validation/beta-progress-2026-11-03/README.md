@@ -1,5 +1,12 @@
 # Beta finishing pass: local validation
 
+The original central memory observer has now completed ten hours on the same
+controller with no restarts or OOM kills. Its 597 samples include one delayed
+344-second interval, despite the report's empty explicit-gap list, and cgroup
+charge reached the existing cap. This is not sustained agent-load acceptance
+or a leak-fixed claim. See
+[completed observation](review-preflight-budget.md#completed-ten-hour-observation-with-a-cadence-limitation).
+
 Latest host admission: the private native command reserves actual worker
 capacity under the existing memory/CPU guards and transfers its lock to a
 separate systemd holder. The real Windows WSL check preserves capacity through

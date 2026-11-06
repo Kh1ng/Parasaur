@@ -86,7 +86,36 @@ measurements are recorded as gaps; completed-with-gaps and changed-process
 outcomes remain distinguishable from a complete run. A direct identity check
 passed before use.
 
-The new ten-hour observation is active as `gah-beta-memory-666974.service`,
+### Completed ten-hour observation, with a cadence limitation
+
+The existing observer finished at 20:52:43 UTC on November 6; its unit was
+collected normally with result success and exit status zero. Controller PID
+666974 retains process start ticks 117939675 and zero service restarts. Its
+597 samples span 36,000.003 seconds, with no cgroup OOM kills. The service's
+1,572,864,000-byte memory cap and zero swap limit are unchanged.
+
+The report says `complete` and has an empty `observationGaps` list, but that
+list records read failures rather than delayed samples. Direct cadence analysis
+finds one 344.081-second interval (between elapsed 7,500.175 and 7,844.256)
+against the configured 60 seconds; all other intervals are under 61 seconds.
+Consequently this is a completed-duration observation, not uninterrupted
+minute-by-minute coverage. The delayed interval's cause is not established.
+Do not infer a sampling pass from the report's status field alone.
+
+Peak observed process RSS is 835,952 KiB. Peak cgroup charge reaches the
+configured cap, including reclaimable file cache; process RSS, anonymous memory
+and total cgroup charge are different measurements. A subsequent read shows
+1,523,743 `memory.events:max` occurrences and zero `oom`/`oom_kill` events;
+no initial max-counter sample exists, so that total cannot be attributed wholly
+to this observation. The limit remains relevant despite absence of an OOM kill.
+
+Factory review attempts remained capacity-deferred. This observation does not
+prove sustained agent-load behavior, a leak fix, or Mac client acceptance and
+does not close #1681/#1680. Neither a replacement sampler nor a controller
+restart was started. The full numeric observation is retained locally at
+`artifacts/central-live-20261105/controller-memory-666974-completed.json`.
+
+At its initial checkpoint, the ten-hour observation was active as `gah-beta-memory-666974.service`,
 observer PID 667504, bound to controller PID 666974. It retains the 64 MiB
 observer cap and 36,600-second lifetime. Three initial samples and no gaps were
 verified at 10:54 UTC. The report is the private repair file
