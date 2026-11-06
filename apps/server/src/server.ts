@@ -221,7 +221,7 @@ type CreateServerOptions = Partial<ConfigEffectiveDeps> & {
 };
 
 const activityKinds = new Set<ActivityKind>([
-  'dispatch_completed', 'dispatch_failed', 'review_ready', 'chat_turn_completed',
+  'dispatch_completed', 'dispatch_failed', 'dispatch_deferred', 'review_ready', 'chat_turn_completed',
   'chat_turn_failed', 'chat_permission_requested', 'node_offline', 'node_back',
   'quota_near_limit', 'gateway_down', 'action_required'
 ]);

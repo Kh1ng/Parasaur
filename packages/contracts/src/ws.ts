@@ -45,6 +45,8 @@ export type DispatchLeaseState =
 export type ActivityKind =
   | "dispatch_completed"
   | "dispatch_failed"
+  /** A recorded pre-launch capacity refusal, retained without waking anyone. */
+  | "dispatch_deferred"
   | "review_ready"
   | "chat_turn_completed"
   | "chat_turn_failed"

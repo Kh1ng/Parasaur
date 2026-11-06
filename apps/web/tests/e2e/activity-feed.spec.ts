@@ -55,6 +55,26 @@ const chatFinished = {
   sessionId: 'session-7'
 };
 
+test('capacity waits remain readable in activity while real failures stay in notifications', async ({ page }) => {
+  const waiting = { ...failed, id: 'capacity-wait', kind: 'dispatch_deferred', severity: 'info', title: 'Waiting for capacity',
+    message: 'review: deferred_capacity: node admission deferred: 2509 MiB available, 2048 MiB safety floor', notificationMuted: true };
+  await page.route('**/api/activity/notifications', route => route.fulfill({ json: { events: [failed], unread: 1 } }));
+  await page.routeWebSocket('**/ws**', ws => {
+    ws.send(JSON.stringify(welcome));
+    ws.onMessage(raw => {
+      if (JSON.parse(String(raw)).type === 'client.hello') ws.send(JSON.stringify({ type: 'activity.replay', events: [waiting, failed] }));
+    });
+  });
+  await page.goto('/?page=events');
+  const main = page.getByRole('complementary', { name: 'Activity', exact: true });
+  await main.getByRole('tab', { name: 'All activity', exact: true }).click();
+  await expect(main.getByRole('list', { name: 'Operator activity' })).toContainText('Waiting for capacity');
+  await expect(main.getByRole('list', { name: 'Operator activity' })).toContainText('2509 MiB available');
+  await main.getByRole('tab', { name: /^Notifications/ }).click();
+  await expect(main.getByRole('list', { name: 'Notifications' })).toContainText('Work failed');
+  await expect(main.getByText('Waiting for capacity', { exact: true })).toHaveCount(0);
+});
+
 test('service worker always shows valid pushes and opens a window when navigation fails', async () => {
   const listeners = new Map<string, (event: never) => void>();
   const shown: unknown[][] = [];

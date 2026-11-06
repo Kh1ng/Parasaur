@@ -13,6 +13,7 @@ import { backgroundPushDeviceCount, backgroundPushStatus, setSystemNotifications
 const EVENT_ICON: Record<ActivityKind, LucideIcon> = {
   dispatch_completed: CheckCircle2,
   dispatch_failed: XCircle,
+  dispatch_deferred: Gauge,
   review_ready: ShieldAlert,
   chat_turn_completed: MessageCircle,
   chat_turn_failed: XCircle,
