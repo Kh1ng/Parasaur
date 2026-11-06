@@ -13,6 +13,7 @@ import { AsyncTtlCache } from './asyncTtlCache.js';
 import { diagnosticTail } from './diagnosticTail.js';
 import type {
   DispatchExecutionOptions,
+  DispatchUsageReport,
   StatusSnapshot,
   QuotaSnapshot,
   ControllerEvent,
@@ -277,6 +278,18 @@ export async function runReport(
     args.push('--config-path', options.config);
   }
   return runJsonCommand<ReportData>(args, options.config);
+}
+
+/** Read canonical dispatch usage without fetching or parsing the ledger in Node. */
+export async function runDispatchUsageReport(options: { since?: string; profile?: string; config?: string } = {}): Promise<DispatchUsageReport> {
+  const args = ['report', '--usage', '--json', '--since', options.since ?? '7d'];
+  if (options.profile) args.push('--profile', options.profile);
+  if (options.config) args.push('--config-path', options.config);
+  const report = await runJsonCommand<DispatchUsageReport>(args, options.config);
+  if (report.schema_version !== 1 || !Array.isArray(report.rows)) {
+    throw new Error('Unsupported dispatch usage report; update the node CLI');
+  }
+  return report;
 }
 
 /**

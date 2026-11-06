@@ -1,5 +1,6 @@
 export * from './ws.js';
 export * from './gah.js';
+export * from './usage-report.js';
 export * from './gitlab.js';
 export * from './registry.js';
 export * from './claims.js';

@@ -1188,7 +1188,7 @@ fn print_counts(counts: &BTreeMap<String, usize>) {
 }
 
 pub(crate) fn parse_since(input: &str) -> Result<String> {
-    let now = OffsetDateTime::now_utc();
+    let now = crate::clock::now_utc();
     let trimmed = input.trim();
     if let Some(days) = trimmed.strip_suffix('d') {
         let days = days.parse::<i64>()?;

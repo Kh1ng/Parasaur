@@ -328,6 +328,7 @@ pub fn run() -> Result<()> {
             group_by,
             json,
             series,
+            usage,
             bucket,
         } => commands::report::run(commands::report::Args {
             since,
@@ -336,6 +337,7 @@ pub fn run() -> Result<()> {
             group_by,
             json,
             series,
+            usage,
             bucket,
         })?,
 

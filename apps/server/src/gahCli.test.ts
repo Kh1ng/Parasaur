@@ -11,6 +11,7 @@ import {
   findGahBinary,
   loopSystemctlArgs,
   runDispatchCancellable,
+  runDispatchUsageReport,
   runConfigSet,
   runConfigShow,
   runDoctor,
@@ -35,6 +36,20 @@ function pinFakeGah(body: string): () => void {
     rmSync(dir, { recursive: true, force: true });
   };
 }
+
+test('canonical dispatch usage preserves scope arguments and rejects older report schemas', async () => {
+  let restore = pinFakeGah(`[ "$1" = report ] && [ "$2" = --usage ] && [ "$3" = --json ] && [ "$5" = 24h ] && [ "$7" = 'fixture profile' ] || exit 9
+printf '%s\\n' '{"schema_version":1,"profile":"fixture profile","since":"2026-11-05T12:00:00Z","generated_at":"2026-11-06T12:00:00Z","entries":0,"excluded_preflight_entries":2,"rows":[]}'`);
+  try {
+    const report = await runDispatchUsageReport({ since: '24h', profile: 'fixture profile' });
+    assert.equal(report.profile, 'fixture profile');
+    assert.equal(report.excluded_preflight_entries, 2);
+    assert.deepEqual(report.rows, []);
+  } finally { restore(); }
+  restore = pinFakeGah(`printf '%s\\n' '{"rows":[]}'`);
+  try { await assert.rejects(runDispatchUsageReport(), /Unsupported dispatch usage report/); }
+  finally { restore(); }
+});
 
 test('noisy dispatch stderr keeps a diagnostic tail without stopping stdout or changing failure status', async () => {
   const restore = pinFakeGah(`exec "${process.execPath}" -e 'process.stdout.write("still-streaming\\n"); process.stderr.write("old-prefix\\n" + "x".repeat(${MAX_DIAGNOSTIC_CHARS * 10}) + "\\nfinal-cause"); process.exitCode=7;'`);

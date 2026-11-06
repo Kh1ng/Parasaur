@@ -9,6 +9,7 @@ pub struct Args {
     pub group_by: crate::ledger::GroupBy,
     pub json: bool,
     pub series: bool,
+    pub usage: bool,
     pub bucket: String,
 }
 
@@ -20,6 +21,7 @@ pub fn run(args: Args) -> Result<()> {
         group_by: args.group_by,
         json: args.json,
         series: args.series,
+        usage: args.usage,
         bucket: args.bucket,
     })?;
     Ok(())

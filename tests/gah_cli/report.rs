@@ -36,6 +36,30 @@ fn project_and_work_item_grouping_reaches_real_report_and_ledger_cli() {
         format!("{}\n", serde_json::to_string(&entry).unwrap()),
     )
     .unwrap();
+    let usage = bin()
+        .args([
+            "report",
+            "--usage",
+            "--json",
+            "--since",
+            "7d",
+            "--config-path",
+            cfg.to_str().unwrap(),
+        ])
+        .env("GAH_LEDGER_PATH", &ledger_path)
+        .assert()
+        .success();
+    let usage: Value = serde_json::from_slice(&usage.get_output().stdout).unwrap();
+    assert_eq!(usage["schema_version"], 1);
+    assert_eq!(usage["rows"][0]["total_tokens"], 12);
+    assert_eq!(usage["rows"][0]["dispatch_attempts"], 1);
+    assert_eq!(usage["rows"][0]["legacy_dispatches"], 0);
+    assert_eq!(usage["rows"][0]["work_id"], "#42");
+    bin().args(["report", "--usage"]).assert().failure();
+    bin()
+        .args(["report", "--usage", "--json", "--series"])
+        .assert()
+        .failure();
     for (grouping, field, label) in [
         ("project", "grouped_by_project", "Project"),
         ("work-item", "grouped_by_work_item", "Work item"),

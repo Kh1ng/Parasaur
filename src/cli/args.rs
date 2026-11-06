@@ -486,6 +486,10 @@ pub enum Commands {
         /// aggregate behavior is unchanged when this is absent.
         #[arg(long, default_value_t = false)]
         series: bool,
+        /// Emit canonical per-project/account/model/day execution usage for
+        /// combination with chat usage. Does not read full history into memory.
+        #[arg(long, requires = "json", conflicts_with = "series")]
+        usage: bool,
         /// Bucket granularity for `--series`. Only `daily` is supported.
         #[arg(long, default_value = "daily")]
         bucket: String,

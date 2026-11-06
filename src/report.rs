@@ -13,6 +13,8 @@ use serde::Serialize;
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
+mod usage;
+
 /// Report command parameters
 pub struct ReportArgs {
     pub since: String,
@@ -24,6 +26,7 @@ pub struct ReportArgs {
     /// of the single aggregate-per-backend/model report. Additive flag: the
     /// non-series aggregate behavior is unchanged when this is false.
     pub series: bool,
+    pub usage: bool,
     /// Bucket granularity for `--series`. Currently only `daily` is
     /// supported; each bucket is keyed by calendar date (UTC).
     pub bucket: String,
@@ -100,11 +103,24 @@ pub fn run(args: ReportArgs) -> Result<()> {
         group_by,
         json,
         series,
+        usage,
         bucket,
     } = args;
 
     // Use the existing ledger summary functionality but with grouping
     let cfg = config::load(config_path.as_deref())?;
+
+    if usage {
+        anyhow::ensure!(
+            json && !series,
+            "--usage requires --json and cannot be combined with --series"
+        );
+        println!(
+            "{}",
+            serde_json::to_string(&usage::build(&cfg, &since, profile.as_deref())?)?
+        );
+        return Ok(());
+    }
 
     if series {
         let series_data = build_series(&cfg, &since, profile.as_deref(), &bucket)?;
