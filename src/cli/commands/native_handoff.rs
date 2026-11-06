@@ -34,6 +34,13 @@ pub enum Command {
         config_path: Option<String>,
     },
     #[cfg(target_os = "linux")]
+    WorkerStatus {
+        #[arg(long)]
+        work_dir: PathBuf,
+        #[arg(long)]
+        binding_file: PathBuf,
+    },
+    #[cfg(target_os = "linux")]
     HostReserve {
         #[arg(long)]
         context_dir: PathBuf,
@@ -63,6 +70,19 @@ pub enum Command {
 pub fn run(args: Args) -> Result<()> {
     match args.command {
         #[cfg(target_os = "linux")]
+        Command::WorkerStatus {
+            work_dir,
+            binding_file,
+        } => {
+            let binding = crate::native_handoff::worker::read_binding(&binding_file)?;
+            ensure!(
+                binding.node_id == crate::central_claims::resolve_node_id()?,
+                "Native journal belongs to a different worker"
+            );
+            let run = crate::native_handoff::worker::WorkerRun::open(&work_dir, &binding)?;
+            println!("{}", run.inspect()?);
+        }
+        #[cfg(target_os = "linux")]
         Command::HostReserve {
             context_dir,
             expected_context,
@@ -85,7 +105,10 @@ pub fn run(args: Args) -> Result<()> {
                 &node_id,
                 &work_dir,
             )?;
-            println!("{}", crate::native_handoff::host::reserve(&context)?);
+            println!(
+                "{}",
+                crate::native_handoff::host::reserve(&context, &work_dir)?
+            );
         }
         Command::CheckCurrentPolicy {
             check_work,

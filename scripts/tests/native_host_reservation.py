@@ -136,6 +136,43 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
             assert response['binding'] == binding
             assert response['capacity_reserved'] and response['execution_authorized'] is False
             assert response['holder_unit'] == holder
+            journal = json.loads((root / 'work' / 'worker.json').read_text())
+            assert journal['binding'] == binding and journal['phase'] == 'ready'
+            assert journal['holder_invocation'] == response['holder_invocation']
+            assert journal['start'] is None
+            expected = root / 'binding.json'
+            expected.write_text(json.dumps(binding))
+            expected.chmod(0o600)
+
+            def inspect():
+                return json.loads(run(str(binary), 'native-handoff', 'worker-status',
+                                      '--binding-file', str(expected), '--work-dir', str(root / 'work'),
+                                      env=environment).stdout)
+
+            observed = inspect()
+            assert observed['state'] == 'ready' and observed['capacity_held']
+            assert observed['start_offered'] is False and observed['execution_authorized'] is False
+            lock_ready = root / 'writer-ready'
+            lock_code = ('import fcntl,time\nfrom pathlib import Path\n'
+                         f'file=open({str(root / "work" / "worker.lock")!r},"r+")\n'
+                         'fcntl.flock(file,fcntl.LOCK_EX)\n'
+                         f'Path({str(lock_ready)!r}).write_text("locked")\n'
+                         'time.sleep(20)\n')
+            writer = subprocess.Popen(['/usr/bin/python3', '-c', lock_code],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                wait_for(lock_ready.exists)
+                busy = run(str(binary), 'native-handoff', 'worker-status', '--binding-file', str(expected),
+                           '--work-dir', str(root / 'work'), env=environment, check=False)
+                assert busy.returncode != 0 and 'already in progress' in busy.stderr
+                writer.kill()
+                writer.wait(timeout=3)
+                assert inspect()['state'] == 'ready'
+                assert json.loads((root / 'work' / 'worker.json').read_text()) == journal
+            finally:
+                if writer.poll() is None:
+                    writer.kill()
+                    writer.wait(timeout=3)
             leases = [path for path in set(registry.glob('*.lease')) - previous
                       if path.read_text() == '4294967296 2.000\n' and is_locked(path)]
             assert len(leases) == 1, 'Expected this real default admission lease'
@@ -159,8 +196,11 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
             assert empty(group) and is_locked(lease)
             ctl('stop', holder)
             assert not is_locked(lease)
+            observed = inspect()
+            assert observed['state'] == 'unknown' and observed['capacity_held'] is None
             assert not canary.exists(), 'Admission must never invoke a backend'
             print(json.dumps({'passed': True, 'realDefaultHostAdmission': True,
+                              'workerJournalWriterCrashRecovery': True,
                               'mainCrashWithLiveDescendantRetainsCapacity': True,
                               'jobStopDoesNotReleaseCapacity': True,
                               'holderExitReleasesKernelLock': True, 'agentInvoked': False}, indent=2))

@@ -37,21 +37,10 @@ fn validate_holder(
     own_cgroup: &str,
     stored: bool,
 ) -> Result<()> {
+    validate_contract(values, unit, invocation)?;
     for (key, expected) in [
-        ("Id", unit),
-        ("LoadState", "loaded"),
         ("ActiveState", "activating"),
         ("SubState", "start"),
-        ("Transient", "yes"),
-        ("Type", "oneshot"),
-        ("RemainAfterExit", "yes"),
-        ("FileDescriptorStoreMax", "1"),
-        ("FileDescriptorStorePreserve", "yes"),
-        ("NotifyAccess", "all"),
-        ("Restart", "no"),
-        ("KillMode", "control-group"),
-        ("StopWhenUnneeded", "no"),
-        ("InvocationID", invocation),
         ("ControlGroup", own_cgroup),
         ("NFileDescriptorStore", if stored { "1" } else { "0" }),
     ] {
@@ -67,12 +56,64 @@ fn validate_holder(
     Ok(())
 }
 
+fn validate_contract(
+    values: &BTreeMap<String, String>,
+    unit: &str,
+    invocation: &str,
+) -> Result<()> {
+    for (key, expected) in [
+        ("Id", unit),
+        ("LoadState", "loaded"),
+        ("Transient", "yes"),
+        ("Type", "oneshot"),
+        ("RemainAfterExit", "yes"),
+        ("FileDescriptorStoreMax", "1"),
+        ("FileDescriptorStorePreserve", "yes"),
+        ("NotifyAccess", "all"),
+        ("Restart", "no"),
+        ("KillMode", "control-group"),
+        ("StopWhenUnneeded", "no"),
+        ("InvocationID", invocation),
+    ] {
+        ensure!(
+            values.get(key).map(String::as_str) == Some(expected),
+            "Native capacity holder has an unsafe or changed {key}"
+        );
+    }
+    Ok(())
+}
+
+/// Re-observe the independent holder after its setup process has exited. A
+/// journal's Ready phase alone never proves the capacity lock still exists.
+pub(super) fn require_ready(run_id: &str, invocation: &str) -> Result<()> {
+    let run = uuid::Uuid::parse_str(run_id)?;
+    ensure!(
+        !run.is_nil() && run.to_string() == run_id,
+        "Invalid native holder run"
+    );
+    let unit = format!("gah-native-capacity-{run}.service");
+    let values = state(&unit)?;
+    validate_contract(&values, &unit, invocation)?;
+    for (key, expected) in [
+        ("ActiveState", "active"),
+        ("SubState", "exited"),
+        ("MainPID", "0"),
+        ("NFileDescriptorStore", "1"),
+    ] {
+        ensure!(
+            values.get(key).map(String::as_str) == Some(expected),
+            "Native capacity holder is no longer ready"
+        );
+    }
+    Ok(())
+}
+
 /// Reserve actual host capacity for a verified context and pass its locked
 /// descriptor to this run's systemd holder. The caller must wait for the holder
 /// to become active/exited with one stored FD before accepting this response.
 /// The future executor must keep the holder until its separate job cgroup is
 /// empty and its durable start state excludes a pending or concurrent launch.
-pub fn reserve(context: &WorkerContext) -> Result<serde_json::Value> {
+pub fn reserve(context: &WorkerContext, work: &std::path::Path) -> Result<serde_json::Value> {
     let run = uuid::Uuid::parse_str(&context.binding.run_id)?;
     ensure!(
         !run.is_nil() && run.to_string() == context.binding.run_id,
@@ -96,6 +137,7 @@ pub fn reserve(context: &WorkerContext) -> Result<serde_json::Value> {
         })
         .context("Native admission requires its own unified systemd cgroup")?;
     validate_holder(&state(&unit)?, &unit, &invocation, own_cgroup, false)?;
+    let mut worker = super::worker::WorkerRun::reserve(work, &context.binding, &invocation)?;
     let mut lease = match crate::controller::acquire_native_capacity(
         &context.binding.mode,
         context.config.defaults.node_capacity,
@@ -134,6 +176,7 @@ pub fn reserve(context: &WorkerContext) -> Result<serde_json::Value> {
         "Native reservation transfer was not confirmed; execution remains held"
     );
     validate_holder(&state(&unit)?, &unit, &invocation, own_cgroup, true)?;
+    worker.ready()?;
     Ok(serde_json::json!({
         "binding": context.binding, "holder_unit": unit, "holder_invocation": invocation,
         "capacity_reserved": true, "execution_authorized": false,

@@ -19,6 +19,8 @@ mod history;
 pub mod host;
 mod policy;
 mod work;
+#[cfg(target_os = "linux")]
+pub mod worker;
 pub use current::check_current_policy;
 pub use work::check_current_work;
 

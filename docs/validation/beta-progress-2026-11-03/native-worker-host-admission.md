@@ -40,7 +40,7 @@ uncertain recovery must remain accounted until reconciled.
 
 ## Verification
 
-- All 19 native-context/host tests, 17 host-capacity tests and two actual CLI
+- All 25 native-context/host/journal tests, 17 host-capacity tests and two actual CLI
   integration cases pass. The CLI case refuses admission outside its holder
   even with a valid prepared context. All-target/all-feature Clippy with
   warnings denied and Rust formatting pass.
@@ -62,3 +62,45 @@ uncertain recovery must remain accounted until reconciled.
 Nothing is installed or enabled. Production worker transport, durable
 start/recovery/release, fresh attempt/publication authority and the central
 controller caller remain required before real native jobs can execute.
+
+## Durable worker start fences and recovery inspection
+
+Host admission now writes private `worker.json` beside the verified job history.
+It synchronizes reservation intent before transferring the descriptor and Ready
+before emitting the response. A stable, non-renamed `worker.lock` excludes other
+stage/start/recovery writers across processes. Existing journals cannot be
+overwritten. Reopening requires the entire expected binding, including account,
+model, repository and context identity; private-file checks and input limits
+remain in force.
+
+`WorkerRun::offer_start` requires a current exact holder and matching unexpired
+grant before durably recording StartIntent. It stores only the token's SHA-256
+and expiry. Only after file and directory synchronization can the supplied
+launch callback run. Failed/lost replies, a replacement grant, reopen or a write
+error cannot offer a second start. Persistence failures latch the in-memory
+writer; recovery reads the actual committed journal. No timeout removes this
+fence, and this module supplies no release/reset operation.
+
+The local-only `native-handoff worker-status --binding-file ... --work-dir ...`
+checks the worker's configured node identity, acquires that same lock and
+combines the journal with current systemd state. Ready requires the exact
+active/exited holder invocation, retained descriptor and retention contract.
+Unavailable, stopped or replaced holders return unknown, with capacity held
+also unknown rather than falsely reporting released capacity. StartIntent is
+unknown until the future executor reconciles the real job and result.
+
+Six journal cases cover lost reply/cold reopen, replacement and invalid/expired
+grants, competing writer exclusion, reservation uncertainty, failed persistence,
+binding mismatch, malformed state, symlink locks and missing holders. Focused
+state tests substitute the holder check; the public start method rejects a
+missing real holder. The expanded real Windows WSL process check additionally
+verifies the compiled host's Ready journal, actual CLI recovery inspection,
+cross-process lock exclusion and writer-crash recovery without state changes.
+After the disposable holder stops, that CLI returns unknown. All focused checks
+and all-target/all-feature Clippy with warnings denied pass.
+
+The launch callback is still a library primitive, not a production executor.
+It must launch only the fixed verified wrapper, which consumes central's one-use
+grant and applies fresh later attempt/publication authority. No worker start
+endpoint or generic command launch was added. Actual wrapper launch, result
+spooling, reconciliation/release and central transport remain unfinished.
