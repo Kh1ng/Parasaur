@@ -49,6 +49,11 @@ work and are not gates for this desktop/shared-web pass.
 
 ## Evidence still required
 
+- [Review preflight budgets](validation/beta-progress-2026-11-03/review-preflight-budget.md)
+  now exclude proven unstarted reviews and reconsider only false budget holds.
+  Tests and live same-head comparison pass; the CLI is deployed on both nodes.
+  #1525 has moved from the false budget hold back to the genuine node-capacity
+  gate. The replacement memory observer is running; no ten-hour pass is claimed.
 - [Native reviewer readiness](validation/beta-progress-2026-11-03/native-review-readiness.md)
   verifies broken/repaired review packs through the real backend and production
   gate, and fixes an overlapping escalation entry bypassing routine cycle caps.

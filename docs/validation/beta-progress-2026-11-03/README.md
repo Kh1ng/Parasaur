@@ -85,11 +85,20 @@ Historical/billing reconciliation and provider quota availability remain open.
 Windows policy and packaged role agents, verifies real native reviews through
 the production gate, and fixes routine/escalation overlap that could bypass a
 review-cycle cap. The verified CLI is installed on Windows/WSL and central;
-84 review tests, Clippy and release build pass. Central's new controller PID has
-a verified running ten-hour memory observation. Real distributed factory
+84 review tests, Clippy and release build pass. Subsequent review-budget work
+records the current controller/observer identities. Real distributed factory
 progression and GitLab persistent-auth deployment remain open. The fresh #1525
 gate is now review-budget exhaustion; five current-generation records marked
 `no_attempt_started` are being counted and require a writer-lifecycle audit.
+
+That [review preflight audit and correction](review-preflight-budget.md) now
+establishes zero attempts and no contradictory execution evidence for all five
+records. Shared dispatch/status accounting removes the false hold without
+resetting history or changing caps. Native and private checks pass; the CLI is
+deployed on Windows and central, and the installed live same-head status is
+unheld. The factory now reaches context preparation and its real node-capacity
+gate. A sampler timeout was diagnosed separately; a corrected, PID-bound
+ten-hour observation is verified running against the current controller.
 
 [Factory admission evidence](factory-hang-recheck.md) now identifies the live
 node-memory wait on #1525. Shared web `c0668cae` exposes the exact recorded

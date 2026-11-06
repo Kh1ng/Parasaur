@@ -1,5 +1,10 @@
 # Native reviewer readiness and routine/escalation overlap
 
+Subsequent [review preflight budget work](review-preflight-budget.md) completes
+the writer audit below, removes the false live budget hold and records the
+replacement controller/memory observer. The original ten-hour sampler described
+here later failed on a status-query timeout; it is not a soak pass.
+
 Windows now has central's effective factory routing, review/paid-cycle caps,
 publishing and validation policy. The native configuration model checked the
 transfer while preserving node-local paths, credentials, CLI arguments and
