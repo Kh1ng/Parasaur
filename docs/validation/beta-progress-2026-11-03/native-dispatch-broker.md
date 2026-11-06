@@ -59,10 +59,11 @@ deduplicated hold notification behavior.
 
 The command returns the bound run and `policy_current: true` alongside
 `execution_authorized: false`. This is deliberately a prerequisite rather than
-an execution grant. The production authority must additionally check the live
-loop, exact claim, current work/review eligibility, account approvals and worker
-reservation, and repeat the appropriate checks before subsequent attempts or
-publication. No such production authority/executor is installed by this change.
+an execution grant. The staged broker/authority pair combines it with current
+work/route evidence, the live loop, exact claim and reservation identity.
+Actual host reservation ownership and fresh authority for later attempts or
+publication remain worker/executor requirements. Nothing is installed by this
+change.
 
 The trusted server wrapper `runCheckNativePolicy` uses fixed arguments and
 bounded output, verifies the returned context/node, and supports aborting the
@@ -102,7 +103,7 @@ journal rather than an unbounded in-memory grant map.
 `nativeDispatchAuthority` checks a managed, active controller instance before
 and after the actual current-work CLI check. Stopping/starting/missing units
 refuse permission; an unreadable or timed-out bus remains unavailable rather
-than being reported as a known pause. Both asynchronous authority queries and
+than being reported as a known pause. Both asynchronous systemd queries and
 the existing synchronous loop-status query are bounded to two seconds/16 KiB.
 One current-work snapshot runs at a time across profiles to bound transient
 memory. Abort, timeout and failure clear that busy state; no permission cache or
@@ -129,6 +130,19 @@ using controlled controller/provider/worker fixtures. It consumes a broker-minte
 grant during the start callback (without deadlock), loses the start reply,
 reloads, refuses replay and imports one failed result with cost unknown. Plain
 grant bytes do not appear in the journal. No model or real issue executes.
+
+Final matched private `bf75f1a` / public `aa8f7ad8` passes 1,199 server cases
+(38 existing skips), all 17 mock cases, production server/shared-web builds,
+and release/input/credential/transport guards. Log:
+`/home/khing/.cache/parasaur-enterprise-current.qhp6l2o3/build.log`.
+Its compiled grant router and actual owner-auth middleware also pass the
+disposable real Rust/server bridge over HTTP. Permission is consumed while the
+start call is pending, then cold replay is refused. The API build identifies
+both exact revisions; controller/provider/worker inputs remain fixtures.
+Rust inputs are unchanged from optimized candidate `8e5d08c5`, so it was reused
+without another binary build. Live API, controller and installed CLIs remain
+untouched. The production worker executor/transport and startup wiring remain
+unfinished.
 
 ### Current work and route revalidation
 

@@ -10,6 +10,11 @@ the real Rust/server bridge also passes with controlled runtime fixtures.
 Nothing is installed. Live startup, host admission, the worker executor and
 later attempt/publication authority remain unfinished. See
 [initial grants](native-dispatch-broker.md#one-use-initial-grants).
+Matched private `bf75f1a` / public `aa8f7ad8` passes 1,199 server cases (38
+existing skips), 17 mock cases, production builds and artifact/credential guards.
+The compiled HTTP consumer and real owner-auth middleware also pass the real
+Rust/server bridge with controlled runtime inputs. No services or installed
+CLIs were changed; the unchanged optimized Rust candidate was reused.
 
 Latest work revalidation: the private native check now re-observes the current
 controller action and exact route before accepting a queued intent. Changed
