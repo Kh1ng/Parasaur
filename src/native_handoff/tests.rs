@@ -480,7 +480,9 @@ fn a_worker_with_different_permission_arguments_cannot_silently_replace_central_
 #[test]
 fn ignored_opencode_agent_overrides_do_not_block_a_worker_but_model_and_runtime_rules_do() {
     let _guard = crate::test_support::ExecGuard::new();
-    let (tmp, mut central, mut worker, request) = fixture();
+    let (tmp, mut central, mut worker, mut request) = fixture();
+    request.args.backend = "opencode".into();
+    request.args.backend_instance = None;
     central.profiles.get_mut("test").unwrap().opencode_args = vec![
         "--agent".into(),
         "gah-reviewer".into(),
@@ -553,4 +555,52 @@ fn prelaunch_policy_refusal_does_not_invent_spend_but_possible_invocation_still_
             .unwrap()
             .intake_held
     );
+}
+
+#[test]
+fn pinned_jobs_match_their_runtime_while_auto_or_unpinned_jobs_require_all_runtimes() {
+    let _guard = crate::test_support::ExecGuard::new();
+    let (tmp, mut central, worker, request) = fixture();
+    central.profiles.get_mut("test").unwrap().oh_profile = Some("central-only".into());
+    central.profiles.get_mut("test").unwrap().claude_args =
+        vec!["--permission-mode".into(), "plan".into()];
+    for (index, (backend, model, succeeds)) in [
+        ("codex", Some("fixture-model"), true),
+        ("auto", Some("fixture-model"), false),
+        ("codex", None, false),
+        ("codex", Some("auto"), false),
+        ("codex", Some("default"), false),
+        ("codex", Some(" "), false),
+        ("unknown", Some("fixture-model"), false),
+        ("openhands", Some("fixture-model"), false),
+        ("cloud-coder", Some("fixture-model"), false),
+        ("claude", Some("fixture-model"), false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut request = request.clone();
+        request.args.backend = backend.into();
+        request.args.model = model.map(String::from);
+        request.args.backend_instance = None;
+        let input = tmp.path().join(format!("input-{index}"));
+        let expected = prepare(
+            &central,
+            &request,
+            "worker",
+            "https://central.invalid",
+            &input,
+        )
+        .unwrap();
+        let work = tmp.path().join(format!("job-{index}"));
+        let loaded = load(&worker, &input, &expected.context_sha256, "worker", &work);
+        assert_eq!(
+            loaded.is_ok(),
+            succeeds,
+            "backend {backend}, model {model:?}"
+        );
+        if !succeeds {
+            assert!(!work.exists());
+        }
+    }
 }

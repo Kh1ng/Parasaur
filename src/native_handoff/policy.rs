@@ -178,8 +178,9 @@ pub(super) fn prepare(cfg: &GahConfig, profile_name: &str) -> Result<PortablePol
 pub(super) fn apply(
     policy: &PortablePolicy,
     worker: &GahConfig,
-    profile_name: &str,
+    request: &crate::dispatch::DispatchArgs,
 ) -> Result<GahConfig> {
+    let profile_name = &request.profile;
     ensure!(
         policy.fields.len() == FIELDS.len()
             && FIELDS.iter().all(|key| policy.fields.contains_key(*key)),
@@ -206,7 +207,14 @@ pub(super) fn apply(
                 .all(|key| policy.runtime_rules.contains_key(key)),
         "Unsupported native runtime rules"
     );
+    // Explicit backend/model selections cannot use configured fallbacks, even
+    // on retries. A heterogeneous node need only match that selected runtime.
+    // Auto/unspecified routes must match every potentially reachable runtime.
+    let selected = pinned_runtime_rules(request);
     for (key, actual) in actual_rules {
+        if selected.is_some_and(|keys| !keys.contains(&key.as_str())) {
+            continue;
+        }
         ensure!(
             policy.runtime_rules.get(&key) == Some(&actual),
             "Worker runtime rule '{key}' differs from the prepared central policy"
@@ -289,4 +297,24 @@ pub(super) fn apply(
     result.defaults.notifications_enabled = Some(false);
     result.context = policy.context.clone();
     Ok(result)
+}
+
+fn pinned_runtime_rules(args: &crate::dispatch::DispatchArgs) -> Option<&'static [&'static str]> {
+    let model = args.model.as_deref()?.trim();
+    if model.is_empty()
+        || model.eq_ignore_ascii_case("auto")
+        || model.eq_ignore_ascii_case("default")
+    {
+        return None;
+    }
+    match crate::config::canonical_backend_name(&args.backend) {
+        "codex" => Some(&["codex_args"]),
+        "claude" => Some(&["claude_args"]),
+        "opencode" => Some(&["opencode_args"]),
+        "openhands" => Some(&["openhands_args", "oh_profile"]),
+        "vibe" => Some(&["vibe_args"]),
+        "hermes" => Some(&["hermes_args"]),
+        "agy" | "agy-main" | "agy-second" => Some(&[]),
+        _ => None,
+    }
 }

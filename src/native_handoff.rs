@@ -442,7 +442,7 @@ pub fn load(
         "Native request identity does not match its manifest"
     );
     let binding = binding(&request, node_id, &policy, expected)?;
-    let mut cfg = policy::apply(&policy, worker, &request.args.profile)?;
+    let mut cfg = policy::apply(&policy, worker, &request.args)?;
     let central_policy = manifest
         .files
         .get("repository-policy.toml")

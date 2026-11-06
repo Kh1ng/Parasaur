@@ -111,6 +111,31 @@ Twelve focused context cases, the actual CLI check and all-target/all-feature
 Clippy with warnings denied pass for the shared-filter change. Production
 context re-preparation and worker acceptance of this candidate remain required.
 
+The `69e2219d` optimized candidate passed real central preparation with 26,339
+rows (249,965,303 bytes in two chunks). With Claude aligned, the actual worker
+check next refused its missing OpenHands profile. Central's `nous-hy3` profile
+uses a central-only loopback endpoint, so the provisioning guard refused it
+before writing a credential or changing the worker configuration. This is not
+evidence that OpenHands is available on the worker.
+
+For a job with an explicit supported backend and non-default model, compatibility
+now compares the runtime that job can actually execute. Existing dispatch routing
+preserves both selections through initial routing and retries, including when
+fallbacks are configured. OpenHands jobs still require both OpenHands arguments
+and the profile to match; aliases retain that requirement. Auto, unknown-backend,
+missing-model and dynamic/default-model requests retain all runtime checks.
+The trusted manifest binds the exact request: a future executor must dispatch
+that request unchanged and cannot use this context to switch providers/models.
+This supports heterogeneous workers without requiring credentials for unrelated
+providers. It does not implement automatic central route selection or execution.
+
+The pinned-route cases also exercise refusal of a selected runtime's changed
+permission flags and show that automatic/unpinned jobs cannot take this path.
+The model/permission/output and ignored OpenCode-agent cases use the actual
+selected OpenCode backend. The earlier launcher regression run passes 228 cases
+and four explicit-route cases; its log is
+`/home/khing/.cache/parasaur-project-report.qy1ih6c9/native-runtime-argument-regressions.log`.
+
 ## Central preparation
 
 The private `native-handoff prepare` command accepts a trusted request file,
