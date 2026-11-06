@@ -59,6 +59,131 @@ fn fixture() -> (tempfile::TempDir, GahConfig, GahConfig, JobRequest) {
 }
 
 #[test]
+fn worker_reassembles_all_chunks_and_refuses_a_missing_middle_chunk() {
+    let _guard = crate::test_support::ExecGuard::new();
+    let (tmp, central, worker, request) = fixture();
+    let input = tmp.path().join("input");
+    prepare(
+        &central,
+        &request,
+        "worker",
+        "https://central.invalid",
+        &input,
+    )
+    .unwrap();
+    let mut manifest: Manifest =
+        serde_json::from_slice(&fs::read(input.join("manifest.json")).unwrap()).unwrap();
+    fs::remove_file(input.join(history::name(0))).unwrap();
+    manifest.files.remove(&history::name(0));
+
+    let mut row = crate::ledger::LedgerEntry::new(
+        "test",
+        &central.profiles["test"],
+        "codex",
+        "review",
+        "branch",
+        Some(uuid::Uuid::new_v4().to_string()),
+        None,
+    );
+    row.work_id = Some("#1525".into());
+    row.usage.actual_cost_usd = Some(0.6);
+    row.attempts_started = Some(1);
+    let mut rows = [row.clone(), row.clone(), row];
+    rows[1].mode = "paid_route_approval_grant".into();
+    rows[2].mode = "paid_route_approval_revoke".into();
+    let encoded: Vec<Vec<u8>> = rows
+        .iter()
+        .map(|row| serde_json::to_vec(row).unwrap())
+        .collect();
+    let limit = encoded
+        .iter()
+        .map(|bytes| bytes.len() as u64 + 1)
+        .max()
+        .unwrap();
+    let mut writer = history::Writer::new(&input, limit, MAX_HISTORY_CHUNKS);
+    for bytes in &encoded {
+        writer.append(bytes).unwrap();
+    }
+    let chunks = writer.finish().unwrap();
+    assert_eq!(chunks.len(), 3);
+    manifest.history_chunks = 3;
+    manifest.history_entries = 3;
+    manifest.files.extend(chunks);
+    let expected = write_blob(
+        &input,
+        "manifest.json",
+        &serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap()
+    .sha256;
+    let loaded = load(
+        &worker,
+        &input,
+        &expected,
+        "worker",
+        &tmp.path().join("job"),
+    )
+    .unwrap();
+    let actual = crate::ledger::read_entries(&loaded.config).unwrap();
+    assert_eq!(loaded.history_entries, 3);
+    assert_eq!(
+        actual
+            .iter()
+            .map(|row| row.mode.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "review",
+            "paid_route_approval_grant",
+            "paid_route_approval_revoke"
+        ]
+    );
+    assert!(actual.iter().all(
+        |row| row.work_id.as_deref() == Some("#1525") && row.usage.actual_cost_usd == Some(0.6)
+    ));
+
+    let first = fs::read(input.join(history::name(0))).unwrap();
+    let middle = fs::read(input.join(history::name(1))).unwrap();
+    fs::write(input.join(history::name(0)), &middle).unwrap();
+    fs::write(input.join(history::name(1)), &first).unwrap();
+    let reordered = tmp.path().join("reordered");
+    assert!(load(&worker, &input, &expected, "worker", &reordered).is_err());
+    assert!(!reordered.join("ledger.jsonl").exists());
+    fs::write(input.join(history::name(0)), &first).unwrap();
+    fs::write(input.join(history::name(1)), &middle).unwrap();
+
+    // Even an intact first/last chunk cannot hide a missing middle row.
+    fs::remove_file(input.join(history::name(1))).unwrap();
+    let rejected = tmp.path().join("missing-middle");
+    assert!(load(&worker, &input, &expected, "worker", &rejected).is_err());
+    assert!(!rejected.join("ledger.jsonl").exists());
+
+    // A claimed prefix, excess chunks or noncontiguous names are not complete history.
+    for count in [0, 2, MAX_HISTORY_CHUNKS + 1] {
+        manifest.history_chunks = count;
+        let expected = write_blob(
+            &input,
+            "manifest.json",
+            &serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap()
+        .sha256;
+        let rejected = tmp.path().join(format!("bad-count-{count}"));
+        assert!(load(&worker, &input, &expected, "worker", &rejected).is_err());
+        assert!(!rejected.exists());
+    }
+}
+
+#[test]
+fn history_storage_cannot_consume_the_dispatch_free_space_floor() {
+    let tmp = tempfile::tempdir().unwrap();
+    let missing = tmp.path().join("not-created");
+    let error = crate::dispatch::ensure_minimum_free_space(&missing, "native history", u64::MAX)
+        .unwrap_err();
+    assert!(error.to_string().contains("insufficient free space"));
+    assert!(!missing.exists());
+}
+
+#[test]
 fn policy_and_complete_profile_history_survive_without_central_credentials_or_capacity_overrides() {
     let _guard = crate::test_support::ExecGuard::new();
     let (tmp, central, worker, request) = fixture();
@@ -186,7 +311,7 @@ fn altered_missing_or_misdirected_context_never_becomes_an_empty_history() {
     )
     .is_err());
     worker.defaults.registry_central_url = Some("https://central.invalid".into());
-    fs::write(input.join("history.jsonl"), "altered").unwrap();
+    fs::write(input.join("history-0000.jsonl"), "altered").unwrap();
     assert!(load(
         &worker,
         &input,
@@ -195,7 +320,7 @@ fn altered_missing_or_misdirected_context_never_becomes_an_empty_history() {
         &tmp.path().join("altered")
     )
     .is_err());
-    fs::remove_file(input.join("history.jsonl")).unwrap();
+    fs::remove_file(input.join("history-0000.jsonl")).unwrap();
     assert!(load(
         &worker,
         &input,

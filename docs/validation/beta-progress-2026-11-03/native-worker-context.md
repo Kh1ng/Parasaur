@@ -5,6 +5,44 @@ factory job. It does not start a backend, refresh execution authority, transfer
 a live claim or enable automatic native handoff. The receiving boundary remains
 [native worker result ingestion](native-worker-result-import.md).
 
+## Bounded complete-history chunks
+
+The actual central probe below exposed the single-file history cap. Context
+version 2 now carries an explicit ordered chunk count and fixed names
+`history-0000.jsonl` through `history-0007.jsonl`. Each file retains the 128 MiB
+bound; eight chunks impose a 1 GiB total ceiling. Ledger rows stay intact and
+in append order. No row selection, review/spend reset, compression dependency
+or whole-history memory buffer is introduced.
+
+Each chunk is private, hashed, fsynced and committed without overwriting an
+existing file. The ready manifest is published only after the complete source
+scan succeeds. Exceeding the row/chunk limit fails with partial files retained
+for reconciliation, never a ready partial context. Version 1 contexts are
+rejected; that candidate was staged only and no live broker consumes it.
+
+The worker requires the exact contiguous chunk set and verifies each digest
+while streaming into an atomic job-ledger write. Missing, reordered, changed
+or extra chunks fail before a usable job ledger is committed. It then verifies
+the complete entry count/profile/schema through the normal history contract.
+
+The shared filesystem-capacity check also accounts for the additional write:
+central preparation checks the maximum 1 GiB context allowance, and worker
+materialization checks the manifest's actual history bytes. Both preserve the
+existing 10 GiB dispatch free-space floor. This is a preflight, not a space
+reservation or execution admission. Existing dispatch callers reserve zero
+additional bytes and retain their original floor.
+
+Verification passes 11 focused context/history cases, the actual CLI context
+case and all-target/all-feature Clippy with warnings denied. Cases include
+cross-chunk preservation of review and paid grant/revocation rows, missing and
+reordered chunks, invalid counts, overflow, no overwrite, private permissions
+and reservation arithmetic above the filesystem's available capacity. Logs:
+`/home/khing/.cache/parasaur-project-report.qy1ih6c9/native-handoff-context-final-checks.log`.
+The earlier chunk implementation also passed ledger, dispatch, capability,
+telemetry and daily/monthly rollover checks; the final disk-preflight changes
+were verified by the focused cases and all-target Clippy. The actual production
+rerun is still required before claiming that the size blocker is cleared.
+
 ## Central preparation
 
 The private `native-handoff prepare` command accepts a trusted request file,

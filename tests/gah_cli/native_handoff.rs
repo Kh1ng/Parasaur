@@ -112,7 +112,7 @@ fn native_context_cli_moves_history_and_verifies_the_expected_node_without_start
         1
     );
     assert!(!marker.exists());
-    fs::write(input.join("history.jsonl"), "PRIVATE_TAMPER_CANARY").unwrap();
+    fs::write(input.join("history-0000.jsonl"), "PRIVATE_TAMPER_CANARY").unwrap();
     let rejected = bin()
         .args([
             "native-handoff",

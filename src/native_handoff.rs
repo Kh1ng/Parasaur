@@ -13,10 +13,12 @@ use std::{
     path::Path,
 };
 
+mod history;
 mod policy;
 
 const MAX_JSON: u64 = 8 * 1024 * 1024;
 const MAX_HISTORY: u64 = 128 * 1024 * 1024;
+const MAX_HISTORY_CHUNKS: u32 = 8;
 const MAX_REPO_POLICY: u64 = 1024 * 1024;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -44,6 +46,7 @@ struct Manifest {
     profile: String,
     run_id: String,
     history_entries: u64,
+    history_chunks: u32,
     files: BTreeMap<String, Blob>,
 }
 
@@ -285,6 +288,11 @@ pub fn prepare(
             Ok(bytes)
         })
         .transpose()?;
+    crate::dispatch::ensure_minimum_free_space(
+        output,
+        "native context filesystem",
+        MAX_HISTORY * u64::from(MAX_HISTORY_CHUNKS),
+    )?;
     create_directory(output)?;
     let mut files = BTreeMap::new();
     files.insert(
@@ -295,33 +303,26 @@ pub fn prepare(
         "policy.json".into(),
         write_blob(output, "policy.json", &policy_bytes)?,
     );
-    let history = output.join("history.jsonl");
     let mut count = 0u64;
-    let mut total = 0u64;
-    crate::installer::files::replace_with(&history, 0o600, |file| {
-        crate::ledger::visit_entries(cfg, |entry| {
-            if entry.profile != request.args.profile {
-                return Ok(());
-            }
-            ensure!(
-                (1..=crate::ledger::LEDGER_SCHEMA_VERSION).contains(&entry.schema_version),
-                "Profile history contains an unsupported ledger schema"
-            );
-            let mut value = serde_json::to_value(&entry)?;
-            crate::redact::redact_json_value(&mut value);
-            let bytes = serde_json::to_vec(&value)?;
-            total += bytes.len() as u64 + 1;
-            ensure!(total <= MAX_HISTORY, "Native profile history exceeds its context limit; retain history for reconciliation");
-            file.write_all(&bytes)?;
-            file.write_all(b"\n")?;
-            count += 1;
-            Ok(())
-        })
+    let mut history = history::Writer::new(output, MAX_HISTORY, MAX_HISTORY_CHUNKS);
+    crate::ledger::visit_entries(cfg, |entry| {
+        if entry.profile != request.args.profile {
+            return Ok(());
+        }
+        ensure!(
+            (1..=crate::ledger::LEDGER_SCHEMA_VERSION).contains(&entry.schema_version),
+            "Profile history contains an unsupported ledger schema"
+        );
+        let mut value = serde_json::to_value(&entry)?;
+        crate::redact::redact_json_value(&mut value);
+        let bytes = serde_json::to_vec(&value)?;
+        history.append(&bytes)?;
+        count += 1;
+        Ok(())
     })?;
-    files.insert(
-        "history.jsonl".into(),
-        copy_blob(&history, None, MAX_HISTORY, std::io::sink())?,
-    );
+    let chunks = history.finish()?;
+    let history_chunks = chunks.len() as u32;
+    files.extend(chunks);
     if let Some(bytes) = repository_policy {
         files.insert(
             "repository-policy.toml".into(),
@@ -329,7 +330,7 @@ pub fn prepare(
         );
     }
     let manifest = Manifest {
-        version: 1,
+        version: 2,
         ledger_schema: crate::ledger::LEDGER_SCHEMA_VERSION,
         review_contract: crate::ledger::REVIEW_CONTRACT_VERSION,
         created_at: crate::clock::now_utc()
@@ -339,6 +340,7 @@ pub fn prepare(
         profile: request.args.profile.clone(),
         run_id: preliminary.run_id.clone(),
         history_entries: count,
+        history_chunks,
         files,
     };
     let blob = write_blob(output, "manifest.json", &serde_json::to_vec(&manifest)?)?;
@@ -380,7 +382,7 @@ pub fn load(
     );
     let manifest: Manifest = read_json(&manifest_bytes)?;
     ensure!(
-        manifest.version == 1
+        manifest.version == 2
             && manifest.ledger_schema == crate::ledger::LEDGER_SCHEMA_VERSION
             && manifest.review_contract == crate::ledger::REVIEW_CONTRACT_VERSION
             && manifest.node_id == node_id,
@@ -399,17 +401,29 @@ pub fn load(
         worker.defaults.factory_enabled != Some(false),
         "Factory execution is disabled on this worker"
     );
-    for name in ["request.json", "policy.json", "history.jsonl"] {
+    ensure!(
+        (1..=MAX_HISTORY_CHUNKS).contains(&manifest.history_chunks),
+        "Native context has an unsupported history chunk count"
+    );
+    let history_names: Vec<String> = (0..manifest.history_chunks).map(history::name).collect();
+    for name in ["request.json", "policy.json"]
+        .into_iter()
+        .chain(history_names.iter().map(String::as_str))
+    {
         ensure!(
             manifest.files.contains_key(name),
             "Native context is incomplete"
         );
     }
     ensure!(
-        manifest.files.keys().all(|name| matches!(
-            name.as_str(),
-            "request.json" | "policy.json" | "history.jsonl" | "repository-policy.toml"
-        )),
+        manifest
+            .files
+            .keys()
+            .all(|name| history_names.contains(name)
+                || matches!(
+                    name.as_str(),
+                    "request.json" | "policy.json" | "repository-policy.toml"
+                )),
         "Native context names an unsupported input"
     );
     let request: JobRequest = read_json(&read_blob(
@@ -456,15 +470,28 @@ pub fn load(
         })
         .transpose()?;
     let combined_policy = intersect_policy(central_policy.as_deref(), local_policy.as_deref())?;
+    let history_bytes = history_names
+        .iter()
+        .try_fold(0u64, |total, name| -> Result<u64> {
+            let bytes = manifest.files[name].bytes;
+            ensure!(
+                bytes <= MAX_HISTORY,
+                "Native history chunk exceeds its bounded input limit"
+            );
+            Ok(total + bytes)
+        })?;
+    crate::dispatch::ensure_minimum_free_space(work, "native job filesystem", history_bytes)?;
     create_directory(work)?;
     let history_path = work.join("ledger.jsonl");
     crate::installer::files::replace_with(&history_path, 0o600, |file| {
-        copy_blob(
-            &context.join("history.jsonl"),
-            manifest.files.get("history.jsonl"),
-            MAX_HISTORY,
-            file,
-        )?;
+        for name in &history_names {
+            copy_blob(
+                &context.join(name),
+                manifest.files.get(name),
+                MAX_HISTORY,
+                &mut *file,
+            )?;
+        }
         Ok(())
     })?;
     let mut count = 0;

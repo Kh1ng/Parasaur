@@ -1292,8 +1292,8 @@ pub fn merge_branch(
 }
 
 pub(super) fn ensure_dispatch_capacity(profile: &Profile, worktree_base: &Path) -> Result<()> {
-    ensure_minimum_free_space(worktree_base, "worktree filesystem")?;
-    ensure_minimum_free_space(&std::env::temp_dir(), "temporary filesystem")?;
+    ensure_minimum_free_space(worktree_base, "worktree filesystem", 0)?;
+    ensure_minimum_free_space(&std::env::temp_dir(), "temporary filesystem", 0)?;
     // Ensure the isolated-target parent exists before the first backend
     // inherits it; this also proves the configured artifact root is writable
     // early without sharing mutable Cargo outputs between worktrees.
@@ -1302,7 +1302,13 @@ pub(super) fn ensure_dispatch_capacity(profile: &Profile, worktree_base: &Path) 
     Ok(())
 }
 
-fn ensure_minimum_free_space(path: &Path, label: &str) -> Result<()> {
+/// Keep the dispatch filesystem floor available after an additional bounded
+/// write. This is a capacity preflight, not an allocation or execution grant.
+pub(crate) fn ensure_minimum_free_space(
+    path: &Path,
+    label: &str,
+    reserve_bytes: u64,
+) -> Result<()> {
     #[cfg(unix)]
     {
         use std::ffi::CString;
@@ -1326,18 +1332,19 @@ fn ensure_minimum_free_space(path: &Path, label: &str) -> Result<()> {
             });
         }
         let available = (stat.f_bavail as u128).saturating_mul(stat.f_frsize as u128);
-        if available < MIN_DISPATCH_FREE_BYTES as u128 {
+        let required = MIN_DISPATCH_FREE_BYTES as u128 + reserve_bytes as u128;
+        if available < required {
             anyhow::bail!(
                 "insufficient free space on {} ({}): {} GiB available; require at least {} GiB before dispatch",
                 label,
                 path.display(),
                 available / (1024 * 1024 * 1024),
-                MIN_DISPATCH_FREE_BYTES / (1024 * 1024 * 1024),
+                required.div_ceil(1024 * 1024 * 1024),
             );
         }
     }
     #[cfg(not(unix))]
-    let _ = (path, label);
+    let _ = (path, label, reserve_bytes);
     Ok(())
 }
 
