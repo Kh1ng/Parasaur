@@ -8,6 +8,11 @@ Thirty-one broker/HTTP cases, four concrete-authority cases, Rust checks and a
 real CLI/server bridge pass. Target/generation validation, the actual wrapper,
 attempt/publication workflow and production transport remain unfinished. See
 [continuation prerequisites](native-dispatch-broker.md#sequenced-continuation-prerequisites).
+Matched private `9aab13e` / public `eae15ab2` passes 1,206 server cases (38
+existing skips), 17 mock cases, production builds and release/credential guards.
+The optimized CLI verifies 611 source inputs and passes the real WSL crash
+check and matching compiled HTTP consumption/operation/result bridge. These
+remain staged candidates; no live services or installed CLIs were changed.
 
 Latest worker recovery: host admission now commits a private, per-run journal
 under a cross-process file lock. Initial start offers are fenced durably before

@@ -38,6 +38,28 @@ operations, rejects cold sequence replay, and retains unknown failed-result
 cost through canonical import. Its provider/controller/transport are controlled
 fixtures: no model or real issue runs. Production execution remains unfinished.
 
+Matched private `9aab13e` / public `eae15ab2` passes the complete assembly:
+1,206 server cases with 38 existing skips, all 17 mock cases, production
+server/shared-web builds and the input/artifact/credential/transport guards.
+Log: `/home/khing/.cache/parasaur-enterprise-current.wv3hzg7j/build.log`.
+
+The optimized `eae15ab2` CLI compares all 611 Rust/Cargo inputs against its
+immutable archive and passes release build, context/spend smokes and the real
+WSL host/journal/crash check with default capacity settings. Binary SHA-256:
+`de6892083610b3ddde64019f8ae34dadfd400edf65f845eae668f1f927aebb93`.
+The staged candidate is `artifacts/parasaur-native-context-eae15ab2/` (glibc
+2.39); build log:
+`/home/khing/.cache/parasaur-native-context-release.1gke6c1w/build.log`.
+
+That exact optimized binary and the newly compiled matching private API pass
+the real Rust/HTTP bridge, including both initial consumption and later
+operation checks through the real owner-auth middleware. Concrete route
+approval revocation and factory pause deny permission; cold replay cannot
+reuse a sequence. The bridge's initial accounting assertion was corrected to
+include its two new fixture approval-event rows in the pre-import baseline;
+canonical receipt import still adds exactly one terminal result. No model or
+real issue runs, and no installed CLI, API, worker or controller is replaced.
+
 This remains source-only orchestration. The broker, concrete initial authority
 check and conditional HTTP grant consumer exist, but runtime startup does not
 construct a native broker/worker transport or executor. The consumer route is
