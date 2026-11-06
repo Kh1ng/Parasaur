@@ -4,8 +4,9 @@ Latest live work: [central recovery and memory attribution](live-central-recover
 restored the tailnet dashboard/API, preserved credentials and sessions, and
 verified every deployed JavaScript chunk. An earlier 15-minute controller
 trial passed, but its extended trial reached the memory guard. The streamed
-recovery candidate is now deployed under the original cap, with a one-hour
-observation in progress. Native Windows Overview/Factory load with saved
+recovery build `befb656a` passed a 3,605-second observation under the original
+cap without restart, swap or OOM and remains running. This covered orchestration
+and capacity deferrals; sustained agent load remains unverified. Native Windows Overview/Factory load with saved
 owner access. Complete worker diagnostics, Git transport, UI clarity and
 long-soak acceptance remain open.
 
@@ -13,6 +14,20 @@ long-soak acceptance remain open.
 owner-token response with an ordinary revocable controller cookie. The public
 release installer and combined private build pass; live rollout and real
 GitLab SSO acceptance remain open.
+
+[Provider quota identity and freshness](provider-quota-freshness.md) is deployed
+as shared web `99f8cca1`: unrelated instance identities stay separate, failed or
+old readings stay historical, and native probe markers stay out of subscription
+accounts. Every served asset is verified. Persistent auth API rollout awaits
+the actual GitLab proxy inspection; its cookie-forwarding patch passes ten
+isolated nginx transport cases and has not been applied to production GitLab.
+
+Backlog rechecked 2026-11-06: 37 open core issues, one open enterprise issue
+and no open companion issues. Excluding mobile #1228/#936, parent items
+#1591/#1513/#1506/#1430/#1337/#935 and parked #1403/#1235/#863 leaves 27
+individual desktop/web tickets. Including the owner's two new usage/auth
+reports gives 29 scoped items. Those reports remain unfiled; deployed partial
+fixes are not closure evidence for the remaining live acceptance work.
 
 Windows follow-up: [worker recovery](windows-worker-recovery.md) updates the
 old worker, corrects its central origin, resumes its logon keepalive and verifies

@@ -56,10 +56,22 @@ work and are not gates for this desktop/shared-web pass.
   15-minute live controller trial passed under the original memory limit and
   authenticated Windows Overview/Factory pages load. The extended observer
   subsequently stopped the controller at its memory guard after about 23 minutes;
-  that trial left it stopped. A streamed-recovery candidate is now running
-  under the original cap with a new one-hour observation in progress.
+  that trial left it stopped. Streamed-recovery build `befb656a` subsequently
+  passed a 3,605-second observation under the original cap with the same PID,
+  no restarts, no swap and no OOM events; the controller remains running.
+  The observer distinguishes reclaimable file cache from working memory.
+  This covers orchestration/capacity deferrals, not sustained agent load.
   Extended memory validation, complete worker
   diagnostics, Git transport and real factory progression remain open.
+
+- [Provider quota identity and freshness](validation/beta-progress-2026-11-03/provider-quota-freshness.md)
+  is deployed as shared web `99f8cca1`. Unrelated provider instances remain
+  separate, failed/stale readings are historical, and internal probe markers
+  do not become subscription accounts. All 30 served assets pass byte checks.
+  Provider billing reconciliation and failed-login repair remain open.
+  [Persistent panel sessions](validation/beta-progress-2026-11-03/persistent-panel-session.md)
+  pass staged API/browser checks; API rollout awaits inspection of the actual
+  GitLab proxy. The tested cookie-forwarding patch has not been applied live.
 
 - [MacBook client update](validation/beta-progress-2026-11-03/mac-client-update.md)
   installed and launched native desktop/CLI 0.3.0. Native tests and a temporary

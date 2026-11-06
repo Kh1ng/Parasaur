@@ -50,10 +50,38 @@ The ready candidate and evidence were preserved. No package was transferred to t
 
 Deployment is pending. The public candidate is
 `artifacts/parasaur-central-acf34437/`; the live central API has not received
-this change. Keep the running memory observation separate from a service
+this change. Keep the completed memory observation separate from a service
 rollout and verify no active chat/dispatch would be interrupted first.
 
-The same-origin GitLab `/parasaur/` installation supports this cookie flow.
+The same-origin GitLab `/parasaur/` installation requires cookie forwarding
+as described below to support this flow.
 Cross-origin extension installs still depend on browser third-party cookie
 policy; do not promise persistence when the browser blocks those cookies.
 A real signed-in GitLab-to-Parasaur acceptance run remains required.
+
+
+## GitLab proxy prerequisite
+
+The companion repository's current Omnibus snippet (base blob
+`d4fd79ce9e5d2d1ff44b7147649f67ba1e9045a1`) sets `Cookie` to an empty value.
+That default would discard both the controller session and browser-bound
+pairing-request cookie. The installed GitLab config has not been inspected;
+its management login is not available yet. The central's configured GitLab
+origin is `https://gitlab.coltonspurgin.tech`, and its running Caddy gate uses
+GitLab upstream `192.168.5.150:80`. The gate/API/Hermes services were not changed.
+
+[Cookie forwarding patch](gitlab-cookie-forwarding.patch) selectively forwards
+`gah_device` and `gah_pairing_request`, preserves empty invalid credentials,
+omits absent credentials, rejects duplicate credential names and continues to
+send the GitLab session only as the gate header. Ten isolated native-nginx
+transport cases and syntax validation pass with Debian nginx 1.26.3. These
+are fixture-cookie transport tests, not a real signed-in GitLab run. Docker
+validation initially timed out before creating a container; the native package
+was extracted into an owned test directory instead. The fixture listeners were
+stopped after testing; no system nginx was installed or started.
+
+The auth API rollout remains pending a check/update of that proxy. Live web
+`99f8cca1` accepts both the older tab-only response and the new device-cookie
+response, allowing the quota correction to deploy independently. Existing
+sign-in behavior is preserved until the staged API is rolled out. No owner
+credential is newly persisted beyond its existing tab-scoped storage.

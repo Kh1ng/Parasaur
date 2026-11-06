@@ -218,12 +218,12 @@ It is installed on the VM, with the previous CLI backed up at
 The API PID and deployment were preserved.
 
 The controller was restarted under its original 1,572,864,000-byte limit.
-A one-hour observation is running in the separate transient user unit
+A one-hour observation was started in the separate transient user unit
 `parasaur-streamed-recovery-observer-v2-20261106.service`, with a conservative
 1,450 MiB working-set-plus-swap guard. Its metadata-only samples/result use the prefix
 `streamed-recovery-controller` in the existing VM evidence directory. The
-trial is not yet a pass; inspect its live unit and result before claiming
-completion or restarting it. An early five-minute sample had the same PID,
+trial was pending at this checkpoint; its completed result follows below.
+An early five-minute sample had the same PID,
 zero restarts and zero cgroup OOM events. This is not long-run acceptance.
 
 
@@ -236,5 +236,34 @@ as normal reclaimable cache filled the cgroup. V2 subtracts `inactive_file`,
 adds `memory.swap.current`, and still fails on a PID change, restart or OOM kill.
 Production `MemoryMax` is unchanged. Existing samples and the original trial
 start time are retained; this is a changed diagnostic guard, not an unchanged
-threshold comparison with the prior failed trial. The full one-hour result is
-still pending.
+threshold comparison with the prior failed trial. The full one-hour result
+was pending at this checkpoint and is recorded below.
+
+
+## One-hour streamed-recovery result and live usage update (2026-11-06 UTC)
+
+The resumed observation completed 3,605.47 seconds with controller PID 437234,
+zero restarts, no cgroup OOM events and no swap use. The original
+1,572,864,000-byte cap was retained. Final cgroup memory was 1,328,001,024 bytes,
+including 810,975,232 inactive-file bytes; final working set plus swap was
+517,025,792 bytes. Peak process RSS was 540,976 KiB. The controller is left
+running. The VM's `streamed-recovery-controller-result.json` records a pass;
+this is an orchestration trial with capacity-deferred review launches, not
+sustained agent execution or proof of the Mac client's memory behavior.
+
+Shared web `88e5d16d` is deployed. All 30 served asset files (29 JavaScript
+chunks and CSS) match its immutable-archive build manifest. Bootstrap injection,
+API PID 302122 and the streamed-recovery CLI bytes were preserved. The deployment
+report is `provider-usage-web-deployment.json`; it completed at
+2026-11-06T05:55:42Z. Old chunks and an index backup remain available for rollback.
+[Provider quota freshness](provider-quota-freshness.md) records the identity,
+check-status and observation-age correction. Native visual acceptance was not
+performed. The API remains `6b101b98`; persistent-cookie handoff `acf34437`
+remains staged while the GitLab proxy configuration is checked/updated.
+
+Follow-up shared web `99f8cca1` superseded `88e5d16d` at
+2026-11-06T06:07:39Z. All 30 served assets match the follow-up manifest;
+bootstrap, API PID and CLI bytes remain unchanged. It removes native quota
+probe markers from subscription accounts and orders observations by timestamp
+instant. `provider-usage-probes-web-deployment.json` records the deployment
+and separate rollback backups. No client restart or native visual check ran.
