@@ -269,7 +269,10 @@ test('quiet capacity receipts reach capable clients without breaking an already-
     });
     await new Promise<void>(resolve => ws.once('open', resolve));
     ws.send(JSON.stringify({ type: 'client.hello', clientVersion: 'test', profile: 'gah', capabilities: capable ? { supportsCapacityWaitActivity: true } : {} }));
-    await replay;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([replay, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Capacity receipt replay timed out')), 3000); })]);
+    } finally { clearTimeout(timer); }
     return { ws, messages };
   };
   try {
