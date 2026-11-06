@@ -7,6 +7,12 @@ spend refuse admission. Sixteen context cases, capability/actual CLI checks,
 Clippy, server typechecking and the actual CLI/server bridge pass. It explicitly
 does not grant execution; live work/account/claim/host authority and the worker
 executor remain unfinished. See [current policy checks](native-dispatch-broker.md#current-central-policy-prerequisite).
+Matched private `e5b7610` / public `94ef7b38` passes 1,185 server cases (38
+existing skips), 17 mock cases, production builds and release/credential guards.
+The optimized `2ddcf9db` CLI has identical current Rust inputs and passes the
+real policy/context/import bridge. It is staged, not installed. An ACP test's
+Linux zombie/PID-presence ambiguity was corrected; no production cleanup or
+memory-fix claim follows from that test correction.
 
 Latest broker: [durable native orchestration](native-dispatch-broker.md) records
 stage/start intent per run, retains results through failed canonical import and

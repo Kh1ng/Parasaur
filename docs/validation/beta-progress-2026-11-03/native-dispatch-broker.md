@@ -106,6 +106,31 @@ security-sensitive.
   policy, then retains unknown imported cost as a live budget hold. The
   transport/grant generator remains controlled test code, not production
   authority. No backend or real issue runs.
+- Optimized Rust candidate `2ddcf9db` compares all 607 Rust/Cargo source inputs
+  against its immutable source archive. Release build, context checks and
+  zero-spend/current-policy refusal smokes pass. The exact optimized binary
+  also passes the real CLI/server broker bridge. SHA-256:
+  `fed503c7c8b2188ec0be7f00080226737fbbe464a44e6b3400269c0f380a7551`.
+  It is staged at `artifacts/parasaur-native-context-2ddcf9db/`, not installed.
+  Public `94ef7b38` changes only a server test relative to that candidate;
+  its Rust/Cargo inputs are identical.
+- Initial private `34ecfc1` / public `2ddcf9db` assembly stopped on the ACP
+  archive test's PID-presence assertion (1,184 passed, one failed, 38 skips).
+  Twenty diagnostic isolated archive runs passed and observed absent fixture
+  processes. The test's `kill(pid, 0)` predicate could count an already-exited
+  Linux zombie as alive, unlike the existing production termination contract.
+  Public `94ef7b38` corrects the test to distinguish executable processes from
+  exited zombies, preserving errors when process state cannot be read. The
+  corrected targeted archive test passes. This changes test interpretation,
+  not production cleanup, and does not prove the reported memory issue fixed.
+- Final matched private `e5b7610` / public `94ef7b38` assembly passes all
+  1,185 server cases (38 existing skips), all 17 mock cases, production
+  server/shared-web builds, release/input guards and credential-route/transport
+  checks. Log:
+  `/home/khing/.cache/parasaur-enterprise-current.cmur17qb/build.log`.
+  This supersedes the initial failed assembly for release verification, while
+  retaining that failure above. No live API, controller or installed CLI was
+  changed by the current-policy increment.
 
 Local logs: `artifacts/native-broker-windows-tests.log`,
 `artifacts/native-broker-linux-tests.log` and
