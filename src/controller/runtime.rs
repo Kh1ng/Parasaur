@@ -52,7 +52,8 @@ mod node_capacity;
 pub(crate) use node_capacity::test_lease as test_node_lease;
 #[cfg(target_os = "linux")]
 pub(crate) use node_capacity::{
-    try_acquire as acquire_node_capacity, LiveAdmission as NodeCapacityAdmission,
+    try_acquire as acquire_node_capacity, try_acquire_native as acquire_native_capacity,
+    LiveAdmission as NodeCapacityAdmission,
 };
 #[path = "runtime/node_reprobe.rs"]
 mod node_reprobe;

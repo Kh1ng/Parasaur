@@ -33,6 +33,17 @@ pub enum Command {
         #[arg(long)]
         config_path: Option<String>,
     },
+    #[cfg(target_os = "linux")]
+    HostReserve {
+        #[arg(long)]
+        context_dir: PathBuf,
+        #[arg(long)]
+        expected_context: String,
+        #[arg(long)]
+        work_dir: PathBuf,
+        #[arg(long)]
+        config_path: Option<String>,
+    },
     CheckCurrentPolicy {
         #[arg(long)]
         check_work: bool,
@@ -51,6 +62,31 @@ pub enum Command {
 
 pub fn run(args: Args) -> Result<()> {
     match args.command {
+        #[cfg(target_os = "linux")]
+        Command::HostReserve {
+            context_dir,
+            expected_context,
+            work_dir,
+            config_path,
+        } => {
+            for key in [
+                "GAH_LEDGER_PATH",
+                "GAH_EVENTS_PATH",
+                "GAH_RECONCILIATION_PATH",
+            ] {
+                std::env::remove_var(key);
+            }
+            let cfg = crate::config::load(config_path.as_deref())?;
+            let node_id = crate::central_claims::resolve_node_id()?;
+            let context = crate::native_handoff::load(
+                &cfg,
+                &context_dir,
+                &expected_context,
+                &node_id,
+                &work_dir,
+            )?;
+            println!("{}", crate::native_handoff::host::reserve(&context)?);
+        }
         Command::CheckCurrentPolicy {
             check_work,
             context_dir,

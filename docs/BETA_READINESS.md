@@ -49,6 +49,11 @@ work and are not gates for this desktop/shared-web pass.
 
 ## Evidence still required
 
+- [Native host admission](validation/beta-progress-2026-11-03/native-worker-host-admission.md)
+  now uses the actual worker capacity guard and an independent systemd-held
+  lock that survives job crashes. The compiled Windows WSL process check passes
+  with default limits. Production transport, durable execution/recovery/release
+  and later authority remain unfinished; no real native job is enabled.
 - [Review preflight budgets](validation/beta-progress-2026-11-03/review-preflight-budget.md)
   now exclude proven unstarted reviews and reconsider only false budget holds.
   Tests and live same-head comparison pass; the CLI is deployed on both nodes.

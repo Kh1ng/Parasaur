@@ -15,6 +15,8 @@ use std::{
 
 mod current;
 mod history;
+#[cfg(target_os = "linux")]
+pub mod host;
 mod policy;
 mod work;
 pub use current::check_current_policy;

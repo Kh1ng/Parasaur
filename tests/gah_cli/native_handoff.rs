@@ -259,6 +259,30 @@ fn native_context_cli_moves_history_and_verifies_the_expected_node_without_start
         1
     );
     assert!(!marker.exists());
+    #[cfg(target_os = "linux")]
+    {
+        // A verified context still cannot reserve outside its owned holder,
+        // much less start a backend. Ambient manager identity is insufficient.
+        bin()
+            .args([
+                "native-handoff",
+                "host-reserve",
+                "--context-dir",
+                input.to_str().unwrap(),
+                "--expected-context",
+                binding["context_sha256"].as_str().unwrap(),
+                "--work-dir",
+                tmp.path().join("outside-holder").to_str().unwrap(),
+                "--config-path",
+                worker_config.to_str().unwrap(),
+            ])
+            .env("GAH_COORDINATOR_IDENTITY_PATH", &identity)
+            .env_remove("INVOCATION_ID")
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("requires a systemd holder"));
+        assert!(!marker.exists());
+    }
     fs::write(input.join("history-0000.jsonl"), "PRIVATE_TAMPER_CANARY").unwrap();
     let rejected = bin()
         .args([

@@ -1,5 +1,14 @@
 # Beta finishing pass: local validation
 
+Latest host admission: the private native command reserves actual worker
+capacity under the existing memory/CPU guards and transfers its lock to a
+separate systemd holder. The real Windows WSL check preserves capacity through
+a disposable job's main-process crash and full stop, without an agent or a
+resident reservation process. Context/capacity/CLI tests, formatting and Clippy
+pass. This is staged; production transport, durable worker execution/recovery
+and later authority remain required. See
+[native worker host admission](native-worker-host-admission.md).
+
 Latest initial grants: broker-minted tokens are private, expire within ten
 seconds and can be consumed once after fresh controller/work/claim checks.
 Lost replies, restart, expiry and uncertain disk commits never authorize a
@@ -7,7 +16,7 @@ second start or release ownership. A conditional internal HTTP exchange checks
 service ownership and worker/profile registration, including revocation during
 the check. Windows broker/HTTP cases and WSL concrete-authority checks pass;
 the real Rust/server bridge also passes with controlled runtime fixtures.
-Nothing is installed. Live startup, host admission, the worker executor and
+Nothing is installed. Live startup, host admission transport, the worker executor and
 later attempt/publication authority remain unfinished. See
 [initial grants](native-dispatch-broker.md#one-use-initial-grants).
 Matched private `bf75f1a` / public `aa8f7ad8` passes 1,199 server cases (38
