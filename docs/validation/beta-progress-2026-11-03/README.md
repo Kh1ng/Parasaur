@@ -1,10 +1,16 @@
 # Beta finishing pass: local validation
 
+Latest connection correction: [WebSocket welcome](websocket-welcome.md)
+removes the duplicate status query and keeps absent work observations absent.
+The live TLS initial connection/reconnect, browser unavailable-state checks
+and matching private build pass. Shared web is `6c473dd6`; the API receives
+only the tested welcome backport, retaining the earlier server fixes.
+
 Latest API correction: [provider startup](provider-startup.md) removes the
 pre-listen status query, with honest pending/failure/recovery readiness. Public
 and private regressions pass; the live node answered while initialization was
-pending and subsequently became healthy. The separate WebSocket welcome
-status barrier remains open.
+pending and subsequently became healthy. The separate welcome status barrier
+was subsequently removed by the correction above.
 
 Latest deployment: [capacity notifications](capacity-notifications.md) makes
 pre-launch waits quiet history, corrects matching old false failure alerts,

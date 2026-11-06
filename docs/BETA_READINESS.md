@@ -49,12 +49,18 @@ work and are not gates for this desktop/shared-web pass.
 
 ## Evidence still required
 
+- [WebSocket welcome](validation/beta-progress-2026-11-03/websocket-welcome.md)
+  now omits unobserved work fields and avoids the duplicate full-status query.
+  Pending/failed REST observations remain unavailable, including in the
+  navbar. Real-handler, browser, private-build and live TLS reconnect checks
+  pass. Physical capacity and full factory progression remain unresolved.
+
 - [Provider startup](validation/beta-progress-2026-11-03/provider-startup.md)
   now opens health/info before the provider-status read finishes and reports
   pending, failed and recovered readiness. The entrypoint regression and
   matching private build pass; one live restart verifies pending then healthy
-  state with sessions and credentials preserved. The separate full-status
-  WebSocket welcome barrier and full factory acceptance remain unresolved.
+  state with sessions and credentials preserved. The welcome barrier is
+  separately corrected above; full factory acceptance remains unresolved.
 
 - [Capacity notification correction](validation/beta-progress-2026-11-03/capacity-notifications.md)
   is live in shared web `0ce6e7fb` and a notification-only API backport.

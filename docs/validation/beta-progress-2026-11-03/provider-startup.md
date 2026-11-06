@@ -68,9 +68,9 @@ reports `provider-startup-api-deployment.json` and
 `provider-startup-readiness.json` are copied into ignored
 `artifacts/central-live-20261105/`.
 
-The WebSocket welcome path separately awaits a full status snapshot before
-sending its handshake. That connection barrier remains to be addressed, with
-missing work/status observations kept distinct from empty observations. Physical
+The WebSocket welcome path separately awaited a full status snapshot before
+sending its handshake. [Welcome correction](websocket-welcome.md) subsequently
+removes that barrier while retaining missing/empty distinctions. Physical
 capacity, complete factory progression, real GitLab sign-in and Mac memory
 acceptance also remain open. Rebuild the old staged auth package from current
 source before its eventual rollout, retaining both server corrections.

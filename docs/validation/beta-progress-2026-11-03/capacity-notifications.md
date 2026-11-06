@@ -77,6 +77,7 @@ and `capacity-notification-protocol.json` in local ignored
 
 The physical capacity wait remains. [Provider startup](provider-startup.md)
 subsequently removes the pre-listen refresh barrier in a separate deployment;
-the notification deployment itself did not make that correction. The full-status
-WebSocket welcome barrier remains. Real pipeline progression, persistent GitLab sign-in,
+the notification deployment itself did not make that correction. The
+[WebSocket welcome barrier](websocket-welcome.md) is separately corrected.
+Real pipeline progression, persistent GitLab sign-in,
 provider billing reconciliation and Mac memory acceptance remain open.
