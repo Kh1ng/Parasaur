@@ -44,7 +44,7 @@ test('windows are named and sized from the provider names, and projected to rese
   expect(projectedPercent({ ...claude.windows[0], resetAt: '2026-10-05T03:55:00Z' }, NOW)).toBeNull();
   expect(formatUntil('2026-10-04T23:20:00Z', NOW)).toBe('20 min');
   expect(formatUntil('2026-10-07T13:00:00Z', NOW)).toBe('2d 14h');
-  expect(formatUntil('2026-10-04T22:00:00Z', NOW)).toBe('now');
+  expect(formatUntil('2026-10-04T22:00:00Z', NOW)).toBeNull();
 
   // Only exact executing accounts can light a ring; a transport name cannot.
   const subscriptions = [claude, codex, vibe];

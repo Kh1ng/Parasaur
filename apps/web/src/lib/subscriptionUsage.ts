@@ -230,25 +230,37 @@ export function busySubscriptionIds(input: {
   return busy;
 }
 
+/** A passed or invalid reset cannot confirm the current allowance. No reset
+ * is allowed for providers that report usage without a scheduled window. */
+export function usageWindowIsCurrent(window: UsageWindow, now: number): boolean {
+  return window.resetAt === null || Date.parse(window.resetAt) > now;
+}
+
+/** Historical readings remain available, but cannot select the current limit. */
+export function currentTightestWindow(usage: SubscriptionUsage, now: number): UsageWindow | null {
+  return usage.windows.filter(window => window.usedPercent !== null && usageWindowIsCurrent(window, now))
+    .reduce<UsageWindow | null>((max, window) => !max || window.usedPercent! > max.usedPercent! ? window : max, null);
+}
+
 /** Where the window will be at reset if use keeps its pace so far: used%
  * scaled from the elapsed part of the window to all of it. Null until a
  * meaningful slice of the window has passed. */
 export function projectedPercent(window: UsageWindow, now: number): number | null {
   if (window.usedPercent === null || !window.windowMs || !window.resetAt) return null;
   const remaining = Date.parse(window.resetAt) - now;
-  if (!Number.isFinite(remaining) || remaining < 0 || remaining > window.windowMs) return null;
+  if (!Number.isFinite(remaining) || remaining <= 0 || remaining > window.windowMs) return null;
   const elapsed = window.windowMs - remaining;
   // The first tenth of a window says little about the pace; a fresh session would read 100%.
   if (elapsed < window.windowMs * 0.1) return null;
   return Math.min(100, Math.round((window.usedPercent * window.windowMs) / elapsed));
 }
 
-/** `20 min`, `2d 14h`, `3h 05m`, or `now`. */
+/** Time until a future reset. Past resets do not predict the next window. */
 export function formatUntil(iso: string | null, now: number): string | null {
   if (!iso) return null;
   const ms = Date.parse(iso) - now;
   if (!Number.isFinite(ms)) return null;
-  if (ms <= 0) return 'now';
+  if (ms <= 0) return null;
   const minutes = Math.round(ms / 60_000);
   if (minutes < 60) return `${minutes} min`;
   const hours = Math.floor(minutes / 60);

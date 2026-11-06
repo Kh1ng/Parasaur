@@ -1,4 +1,4 @@
-import { busySubscriptionIds, recordedCostLabel, subscriptionUsage } from './subscriptionUsage.js';
+import { currentTightestWindow, formatUntil, projectedPercent, usageWindowIsCurrent, busySubscriptionIds, recordedCostLabel, subscriptionUsage } from './subscriptionUsage.js';
 
 const candidate = (instance: string, model: string, cost: number) => ({
   backend: 'codex', backend_instance: instance, provider: 'openai', model,
@@ -74,4 +74,24 @@ test('only fresh running worker observations identify factory account activity',
   for (const patch of [{ state: 'stale' }, { node_id: 'remote' }, { last_activity_at: 'invalid' }, { last_activity_at: new Date(now - 31_000).toISOString() }, { backend_instance: 'missing' }]) {
     expect(busySubscriptionIds({ ...input, runningWorkers: [{ ...worker, ...patch }] } as never).size).toBe(0);
   }
+});
+
+
+test('expired monthly readings remain historical without claiming a reset or a new allowance', () => {
+  const now = Date.parse('2026-11-05T20:00:00Z');
+  const account = subscriptionUsage({ candidates: [{ ...candidate('opencode', 'mistral', 0), quota_observations: [
+    { quota_window: 'monthly', quota_remaining_percent: 0, quota_reset_at: '2026-10-25T12:04:00Z', observed_at: '2026-10-24T12:00:00Z' },
+    { quota_window: 'daily', quota_remaining_percent: 75, quota_reset_at: '2026-11-06T00:00:00Z' },
+  ] }] } as never)[0];
+  const expired = account.windows.find(window => window.label === 'Monthly')!;
+  expect(expired.usedPercent).toBe(100);
+  expect(usageWindowIsCurrent(expired, now)).toBe(false);
+  expect(formatUntil(expired.resetAt, now)).toBeNull();
+  expect(projectedPercent(expired, now)).toBeNull();
+  expect(currentTightestWindow(account, now)?.usedPercent).toBe(25);
+  expect(currentTightestWindow({ ...account, windows: [expired] }, now)).toBeNull();
+  expect(usageWindowIsCurrent({ ...expired, resetAt: new Date(now).toISOString() }, now)).toBe(false);
+  expect(usageWindowIsCurrent({ ...expired, resetAt: 'invalid' }, now)).toBe(false);
+  expect(usageWindowIsCurrent({ ...expired, resetAt: null }, now)).toBe(true);
+  expect(formatUntil('2026-11-06T00:00:00Z', now)).toBe('4h 00m');
 });

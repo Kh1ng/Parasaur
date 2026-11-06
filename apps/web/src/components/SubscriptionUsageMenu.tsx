@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { formatUntil, projectedPercent, recordedCostLabel, usageTone, type SubscriptionUsage, type UsageWindow } from '../lib/subscriptionUsage.js';
+import { currentTightestWindow, usageWindowIsCurrent, formatUntil, projectedPercent, recordedCostLabel, usageTone, type SubscriptionUsage, type UsageWindow } from '../lib/subscriptionUsage.js';
 import { formatLocalTime } from '../lib/format.js';
 import { UsageRing } from './UsageRing.js';
 
@@ -7,16 +7,17 @@ const BAR_CLASS = { good: 'bg-accent', warning: 'bg-warning', critical: 'bg-crit
 
 /** A window's name, time to reset and used share, with a thin bar and the pace projection under it. */
 export function UsageWindowRow({ window, now, compact = false, unconfirmed = false }: { window: UsageWindow; now: number; compact?: boolean; unconfirmed?: boolean }) {
+  unconfirmed ||= !usageWindowIsCurrent(window, now);
   const until = unconfirmed ? null : formatUntil(window.resetAt, now);
   const projected = unconfirmed ? null : projectedPercent(window, now);
-  const tone = usageTone(window.usedPercent);
+  const tone = unconfirmed ? 'unknown' : usageTone(window.usedPercent);
   const id = `usage-${window.key.replace(/[^a-z0-9]+/gi, '-')}`;
   return (
     <div className="flex flex-col">
       <div className="flex items-baseline justify-between gap-2 text-xs">
         <span id={id} className="truncate text-primary">{window.label}</span>
         <span className="flex shrink-0 items-baseline gap-1.5 tabular-nums text-muted">
-          {until && <span>{until === 'now' ? 'Resets now' : `Resets in ${until}`}</span>}
+          {until && <span>{`Resets in ${until}`}</span>}
           <span className={window.usedPercent === null ? '' : 'text-primary'}>{window.usedPercent === null ? 'no data' : `${unconfirmed ? 'last recorded ' : ''}${Math.round(window.usedPercent)}%`}</span>
         </span>
       </div>
@@ -37,12 +38,14 @@ export function UsageWindowRow({ window, now, compact = false, unconfirmed = fal
 
 /** One subscription's windows, headed by the tightest one in plain words. */
 export function SubscriptionDetail({ usage, now, unavailable = false }: { usage: SubscriptionUsage; now: number; unavailable?: boolean }) {
-  const tight = usage.tightest;
+  const current = currentTightestWindow(usage, now);
+  const tight = current ?? usage.tightest;
+  unavailable ||= !!tight && !current;
   const until = tight ? formatUntil(tight.resetAt, now) : null;
   return (
     <div className="flex flex-col gap-2 px-3 py-2">
       <div className="flex items-center gap-2">
-        <UsageRing usage={usage} size={22} unconfirmed={unavailable} />
+        <UsageRing usage={usage} size={22} unconfirmed={unavailable} now={now} />
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-primary">{usage.providerLabel} <span className="font-normal text-muted">· {usage.id}</span></p>
           {usage.model && <p className="truncate text-[11px] text-muted">{usage.model}</p>}
@@ -78,10 +81,9 @@ export function SubscriptionUsageMenu({ subscriptions, busy, onOpenQuota, unavai
   const menu = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!openId) return;
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(timer);
-  }, [openId]);
+  }, []);
 
   useEffect(() => {
     if (!openId) return;
@@ -99,15 +101,17 @@ export function SubscriptionUsageMenu({ subscriptions, busy, onOpenQuota, unavai
     <div className="relative flex items-center" ref={menu} onMouseLeave={() => { if (!pinned) setOpenId(null); }}>
       <div className="flex items-center gap-0.5" role="group" aria-label="Subscription usage">
         {subscriptions.map((usage) => {
-          const tight = usage.tightest;
+          const current = currentTightestWindow(usage, now);
+          const tight = current ?? usage.tightest;
+          const unconfirmed = unavailable || (!!tight && !current);
           const working = !unavailable && (busy?.has(usage.id) ?? false);
-          const label = `${usage.providerLabel} ${usage.id} ${unavailable ? 'usage unavailable; last recorded' : 'usage'}${tight && tight.usedPercent !== null ? `: ${Math.round(tight.usedPercent)}% of ${tight.label.toLowerCase()} used` : ''}${working ? ', working now' : ''}`;
+          const label = `${usage.providerLabel} ${usage.id} ${unconfirmed ? 'usage unavailable; last recorded' : 'usage'}${tight && tight.usedPercent !== null ? `: ${Math.round(tight.usedPercent)}% of ${tight.label.toLowerCase()} used` : ''}${working ? ', working now' : ''}`;
           return (
             <button key={usage.id} type="button" aria-label={label} aria-expanded={openId === usage.id} aria-haspopup="true"
               onMouseEnter={() => { if (!pinned) { setOpenId(usage.id); setNow(Date.now()); } }}
               onClick={() => { setPinned(openId !== usage.id || !pinned); setOpenId(usage.id); setNow(Date.now()); }}
               className={`flex h-9 w-9 items-center justify-center rounded-md hover:bg-overlay/5 ${openId === usage.id ? 'bg-overlay/5' : ''}`}>
-              <UsageRing usage={usage} working={working} unconfirmed={unavailable} />
+              <UsageRing usage={usage} working={working} unconfirmed={unavailable} now={now} />
             </button>
           );
         })}

@@ -1,5 +1,5 @@
 import type { ActiveClaim, AvailableTicket, Blocker, ControllerActivity, DeviceAgent, MergeRequest, QuotaSnapshot, StatusSnapshot } from '@git-agent-harness/contracts';
-import { formatUntil, providerLabel, subscriptionUsage } from './subscriptionUsage.js';
+import { currentTightestWindow, formatUntil, providerLabel, subscriptionUsage } from './subscriptionUsage.js';
 import { workKey } from './workKey.js';
 import { reviewWaitReason } from './reviewLabels.js';
 
@@ -549,7 +549,8 @@ function buildAgents(input: KanbanInput, cards: KanbanCard[], factoryAgents: Dev
       existing.unavailable ??= unavailable;
       continue;
     }
-    const window = usage.get(id)?.tightest ?? null;
+    const subscription = usage.get(id);
+    const window = subscription ? currentTightestWindow(subscription, now) : null;
     agents.set(id, {
       id,
       backend: candidate.backend,
