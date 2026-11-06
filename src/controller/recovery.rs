@@ -10,6 +10,9 @@ use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+mod history;
+pub(super) use history::{read_recovery_reports, read_stuck_loop};
+
 /// A route-only capacity refusal launched no backend and cannot become
 /// actionable while the observed routing state is unchanged. Suppress that
 /// work item for a bounded interval so one unroutable repair cannot monopolize
@@ -166,8 +169,7 @@ pub(crate) fn reconcile_abandoned_dispatches(
     profile_name: &str,
     entries: &mut Vec<crate::ledger::LedgerEntry>,
 ) -> Result<usize> {
-    let events = crate::events::read_events(cfg)?;
-    let mut orphans = crate::events::orphaned_dispatch_runs(&events, profile_name);
+    let mut orphans = crate::events::read_orphaned_dispatch_runs(cfg, profile_name)?;
     if orphans.is_empty() {
         return Ok(0);
     }
@@ -237,6 +239,7 @@ const STUCK_LOOP_THRESHOLD: usize = 3;
 /// Returns `Some(reason)` if the last `STUCK_LOOP_THRESHOLD` decisions for
 /// this action's work_id all match its current fingerprint. Reads the
 /// existing event stream (TICKET-083) rather than new storage.
+#[cfg(test)]
 pub(super) fn detect_stuck_loop(
     events: &[crate::events::ControllerEvent],
     profile_name: &str,

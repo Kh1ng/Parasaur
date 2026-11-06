@@ -385,6 +385,7 @@ fn read_matching_events(
 /// by `run_id`, matching the dashboard's `deriveControllerActivity`
 /// (apps/server/src/controllerActivity.ts) so Rust and the dashboard agree
 /// on what "still running" means.
+#[cfg(test)]
 pub(crate) fn orphaned_dispatch_runs(
     events: &[ControllerEvent],
     profile: &str,
@@ -412,6 +413,31 @@ pub(crate) fn orphaned_dispatch_runs(
         .collect()
 }
 
+/// Read lifecycle identities without keeping historical event payloads alive.
+/// Validate the complete journal before a caller records any reconciliation.
+pub(crate) fn read_orphaned_dispatch_runs(
+    cfg: &GahConfig,
+    profile: &str,
+) -> Result<Vec<(String, Option<String>)>> {
+    let mut started = Vec::new();
+    let mut finished = std::collections::HashSet::new();
+    visit_events(cfg, |event| {
+        if event.profile.as_deref() != Some(profile) {
+            return;
+        }
+        let Some(run_id) = event.run_id else { return };
+        match event.event_type.as_str() {
+            "dispatch_started" => started.push((run_id, event.work_id)),
+            "dispatch_finished" | "duplicate_guard_triggered" | "review_budget_exhausted" => {
+                finished.insert(run_id);
+            }
+            _ => {}
+        }
+    })?;
+    started.retain(|(run_id, _)| !finished.contains(run_id));
+    Ok(started)
+}
+
 /// Close out every `dispatch_started` for `profile` that never got a
 /// terminal event -- i.e. whatever process started it (a `gah loop`
 /// daemon) was killed/restarted before recording completion. Call once,
@@ -424,8 +450,7 @@ pub(crate) fn orphaned_dispatch_runs(
 /// Returns the number of orphans reconciled.
 #[allow(dead_code)] // controller reconciliation also persists a ledger record
 pub fn reconcile_abandoned_dispatches(cfg: &GahConfig, profile_name: &str) -> Result<usize> {
-    let events = read_events(cfg)?;
-    let orphans = orphaned_dispatch_runs(&events, profile_name);
+    let orphans = read_orphaned_dispatch_runs(cfg, profile_name)?;
     for (run_id, work_id) in &orphans {
         record_with_run_id(
             cfg,

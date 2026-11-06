@@ -1,10 +1,11 @@
 use super::decision::decide_next_action;
 use super::human_required_reason::HumanRequiredReason;
 use super::recovery::{
-    defer_if_branch_attached, detect_stuck_loop, human_required_already_reported,
-    human_required_report_identity, latest_clear_attempts_timestamp, no_admission_diagnostics,
-    recently_capacity_deferred_work_ids, reconcile_abandoned_dispatches, record_action_events,
-    remediation_plan_for_action, report_blocked_work_items_once, retain_snapshot_candidates,
+    defer_if_branch_attached, human_required_already_reported, human_required_report_identity,
+    latest_clear_attempts_timestamp, no_admission_diagnostics, read_recovery_reports,
+    read_stuck_loop, recently_capacity_deferred_work_ids, reconcile_abandoned_dispatches,
+    record_action_events, remediation_plan_for_action, report_blocked_work_items_once,
+    retain_snapshot_candidates,
 };
 use super::NextAction;
 use anyhow::Result;
@@ -338,7 +339,7 @@ fn run_pass(
         None,
         format!("profile={profile_name}"),
     )?;
-    let history = crate::events::read_events(cfg)?;
+    let history = read_recovery_reports(cfg, profile_name)?;
     let capacity_deferred_work_ids = suppress_recent_capacity_deferrals(
         cfg,
         &mut snapshot,
@@ -351,13 +352,13 @@ fn run_pass(
     // Issue #1381: blocked items are reported once even when other work is
     // dispatched this tick.
     report_blocked_work_items_once(cfg, profile_name, &snapshot, &history)?;
+    drop(history);
 
     // For parallel > 1, we need to decide multiple actions
     if parallel > 1 {
         // Parallel admission rebuilds fresh evidence for each slot. Its
         // initial observations need not remain resident while workers run.
         drop(ledger_entries);
-        drop(history);
         run_parallel_once(
             cfg,
             profile_name,
@@ -369,15 +370,12 @@ fn run_pass(
     } else {
         // Original single action behavior, moving past work another worker
         // or loop holds (issue #1430).
-        let mut initial_evidence = Some((history, ledger_entries));
+        let mut initial_evidence = Some(ledger_entries);
         let (action, outcome) =
             run_moving_past_held_work(&snapshot, &capacity_deferred_work_ids, |view, excluded| {
-                let (history, entries) = match initial_evidence.take() {
-                    Some(evidence) => evidence,
-                    None => (
-                        crate::events::read_events(cfg)?,
-                        crate::ledger::read_entries(cfg)?,
-                    ),
+                let entries = match initial_evidence.take() {
+                    Some(entries) => entries,
+                    None => crate::ledger::read_entries(cfg)?,
                 };
                 run_selected_action(
                     cfg,
@@ -385,7 +383,6 @@ fn run_pass(
                     &claim_scope,
                     view,
                     excluded,
-                    history,
                     entries,
                     skip_validation_gate,
                 )
@@ -485,7 +482,6 @@ fn run_selected_action(
     claim_scope: &str,
     snapshot: &crate::status::StatusSnapshot,
     excluded_work_ids: &HashSet<String>,
-    history: Vec<crate::events::ControllerEvent>,
     ledger_entries: Vec<crate::ledger::LedgerEntry>,
     skip_validation_gate: bool,
 ) -> Result<(NextAction, String)> {
@@ -500,13 +496,13 @@ fn run_selected_action(
             work_id,
         )
     });
-    if let Some(reason) = detect_stuck_loop(
-        &history,
+    if let Some(reason) = read_stuck_loop(
+        cfg,
         profile_name,
         &original_action,
         reset_after,
         original_review_generation.as_deref(),
-    ) {
+    )? {
         // Persist a work-item-scoped durable human gate so that
         // subsequent loop iterations see human_required=true for this
         // work_id via ledger_lookup_for_ticket and skip it, rather than
@@ -572,7 +568,6 @@ fn run_selected_action(
 
     let prior_attempt_context = action_prior_context(cfg, profile_name, &action, &ledger_entries)?;
     drop(ledger_entries);
-    drop(history);
     let outcome = if let Some(work_id) = action
         .work_id()
         .map(crate::work_claim::normalize_work_identity)
@@ -636,7 +631,7 @@ fn record_stop_event(
     stop_event_type: crate::events::EventType,
     outcome: &str,
 ) -> Result<bool> {
-    let history = crate::events::read_events(cfg)?;
+    let history = read_recovery_reports(cfg, profile_name)?;
     if human_required_already_reported(&history, profile_name, action) {
         return Ok(false);
     }
@@ -766,7 +761,7 @@ fn run_parallel_once(
                 // another process or spawned earlier in this refill cycle.
                 retain_unclaimed_work(&mut fresh_snapshot, &claimed_work_ids, &executed_work_ids);
 
-                let history = crate::events::read_events(cfg)?;
+                let history = read_recovery_reports(cfg, profile_name)?;
                 let capacity_deferred_work_ids = suppress_recent_capacity_deferrals(
                     cfg,
                     &mut fresh_snapshot,
@@ -775,6 +770,7 @@ fn run_parallel_once(
                     profile_name,
                     &crate::config::get_profile(cfg, profile_name)?.repo_id,
                 );
+                drop(history);
 
                 let original_action = decide_next_action(&fresh_snapshot);
                 let original_review_generation =
@@ -789,13 +785,13 @@ fn run_parallel_once(
                         work_id,
                     )
                 });
-                if let Some(reason) = detect_stuck_loop(
-                    &history,
+                if let Some(reason) = read_stuck_loop(
+                    cfg,
                     profile_name,
                     &original_action,
                     reset_after,
                     original_review_generation.as_deref(),
-                ) {
+                )? {
                     if let Some(wid) = original_action.work_id() {
                         if let Err(error) = append_stuck_loop_gate_if_transition(
                             cfg,
