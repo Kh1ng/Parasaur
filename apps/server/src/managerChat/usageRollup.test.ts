@@ -10,6 +10,51 @@ import { appendEvents } from './sessionLog.js';
 const NOW = Date.parse('2026-08-30T12:00:00Z');
 const DAY = 86_400_000;
 
+test('partial, absent and overlapping categories never manufacture complete totals', () => {
+  const stateDir = fixture();
+  try {
+    sessionLog(stateDir, 'repo', 'partial');
+    const usage = { input_tokens: 10, output_tokens: 5, total_tokens: 100, cache_read_tokens: 80,
+      cache_write_tokens: 0, reasoning_tokens: 3, estimated_cost_usd: 0, duration_seconds: 1 };
+    appendEvents('repo', [
+      { type: 'assistant/message', seq: 1, turn: 1, text: 'known', backend: 'codex', model: 'complete', usage, timestamp: NOW },
+      { type: 'assistant/message', seq: 2, turn: 2, text: 'partial', backend: 'codex', model: 'partial', usage: { ...usage, input_tokens: null, total_tokens: null }, timestamp: NOW },
+      { type: 'assistant/message', seq: 3, turn: 3, text: 'known', backend: 'codex', model: 'mixed', usage, timestamp: NOW },
+      { type: 'assistant/message', seq: 4, turn: 4, text: 'unknown', backend: 'codex', model: 'mixed', usage: null, timestamp: NOW },
+      { type: 'assistant/message', seq: 5, turn: 5, text: 'future', backend: 'codex', model: 'future', usage, timestamp: NOW + 1000 },
+      { type: 'assistant/message', seq: 6, turn: 6, text: 'cost only', backend: 'codex', model: 'cost-only', usage: { input_tokens: null, output_tokens: null, total_tokens: null, estimated_cost_usd: 0.25, duration_seconds: 1 }, timestamp: NOW },
+      { type: 'assistant/message', seq: 7, turn: 7, text: 'invalid', backend: 'codex', model: 'invalid', usage: { ...usage, input_tokens: -1, total_tokens: Infinity, estimated_cost_usd: -1 }, timestamp: NOW }
+    ], { stateDir, sessionId: 'partial' });
+    const rollup = usageRollup('repo', 7, { stateDir, now: () => NOW });
+    const complete = rollup.rows.find(row => row.model === 'complete')!;
+    assert.equal(complete.total_tokens, 100);
+    assert.equal(complete.cache_read_tokens, 80);
+    assert.equal(complete.cache_write_tokens, 0);
+    assert.equal(complete.reasoning_tokens, 3);
+    assert.equal(complete.estimated_cost_usd, 0);
+    const partial = rollup.rows.find(row => row.model === 'partial')!;
+    assert.equal(partial.total_tokens, null);
+    assert.equal(partial.input_tokens, null);
+    assert.equal(partial.output_tokens, 5);
+    assert.equal(partial.cache_read_tokens, 80);
+    const mixed = rollup.rows.find(row => row.model === 'mixed')!;
+    assert.equal(mixed.turns, 2);
+    assert.equal(mixed.total_tokens, null);
+    assert.equal(mixed.estimated_cost_usd, null);
+    assert.equal(rollup.rows.some(row => row.model === 'future'), false);
+    assert.equal(rollup.rows.find(row => row.model === 'cost-only')?.estimated_cost_usd, 0.25);
+    assert.equal(rollup.rows.find(row => row.model === 'invalid')?.input_tokens, null);
+    assert.equal(rollup.rows.find(row => row.model === 'invalid')?.total_tokens, null);
+    assert.equal(rollup.rows.find(row => row.model === 'invalid')?.estimated_cost_usd, null);
+    assert.equal(rollup.tickets[0].turns, 6);
+    assert.equal(rollup.tickets[0].total_tokens, null);
+    assert.equal(rollup.tickets[0].backends.codex, null);
+  } finally {
+    setChatSessionStoreOptions({ stateDir: undefined });
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 function fixture(): string {
   const stateDir = join(tmpdir(), `gah-usage-rollup-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(stateDir, { recursive: true });
@@ -85,11 +130,12 @@ test('rollup counts usage-less turns as unattributed and honors the window', () 
     ], { stateDir, sessionId: 'b' });
 
     const week = usageRollup('repo', 7, { stateDir, now: () => NOW });
-    assert.equal(week.rows.length, 0, 'the 8-day-old turn is outside the window');
+    assert.equal(week.rows.length, 1, 'the unknown turn remains visible; the old measured turn is outside the window');
+    assert.equal(week.rows[0].total_tokens, null);
     assert.equal(week.unattributed_turns, 1);
 
     const month = usageRollup('repo', 30, { stateDir, now: () => NOW });
-    assert.equal(month.rows.length, 1);
+    assert.equal(month.rows.length, 2);
     assert.equal(month.unattributed_turns, 1);
   } finally {
     setChatSessionStoreOptions({ stateDir: undefined });
@@ -97,7 +143,7 @@ test('rollup counts usage-less turns as unattributed and honors the window', () 
   }
 });
 
-test('rollup keeps prior backend usage and identifies later turns with unavailable counters', () => {
+test('rollup retains measured backend usage alongside unknown backend rows', () => {
   const stateDir = fixture();
   try {
     sessionLog(stateDir, 'repo', 'mixed');
@@ -107,8 +153,10 @@ test('rollup keeps prior backend usage and identifies later turns with unavailab
     ], { stateDir, sessionId: 'mixed' });
 
     const rollup = usageRollup('repo', 7, { stateDir, now: () => NOW });
-    assert.equal(rollup.rows.length, 1);
-    assert.equal(rollup.rows[0]?.backend, 'claude');
+    assert.equal(rollup.rows.length, 2);
+    assert.equal(rollup.rows.find(row => row.backend === 'claude')?.total_tokens, 150);
+    assert.equal(rollup.rows.find(row => row.backend === 'codex')?.total_tokens, null);
+    assert.equal(rollup.tickets[0]?.total_tokens, null);
     assert.deepEqual(rollup.usage_unavailable, [{
       session_id: 'mixed',
       backend: 'codex',

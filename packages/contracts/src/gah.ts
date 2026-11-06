@@ -734,7 +734,8 @@ export type ReportGroupBy = typeof REPORT_GROUP_BY_VALUES[number];
 /**
  * Actual token/cost burn observed by GAH itself, aggregated from the
  * manager-chat session logs (#940): every assistant message the backends
- * reported usage for, grouped by backend + model + UTC day. Unlike the
+ * logged, grouped by backend + account + model + UTC day. Unknown readings
+ * remain in their groups and invalidate complete sums. Unlike the
  * dispatch-ledger comparison above, this covers manager-chat turns --
  * where nearly all work happens now -- so subscription-burn questions
  * ("how much of the codex plan did yesterday cost?") have a real answer.
@@ -748,9 +749,14 @@ export interface UsageRollupRow {
   /** UTC day the turn's assistant message was logged, e.g. 2026-08-30. */
   day: string;
   turns: number;
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
+  /** A sum requires a valid reading from every included turn. */
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  /** Independent provider categories; they may overlap other counters. */
+  cache_read_tokens?: number | null;
+  cache_write_tokens?: number | null;
+  reasoning_tokens?: number | null;
   /** null when any included turn did not report cost. */
   estimated_cost_usd: number | null;
 }
@@ -787,11 +793,11 @@ export interface UsageRollupTicketRow {
   /** The session's title, when one was set. */
   title: string | null;
   turns: number;
-  total_tokens: number;
+  total_tokens: number | null;
   /** null when any included turn did not report cost. */
   estimated_cost_usd: number | null;
   /** tokens per backend, e.g. { codex: 1500 }. */
-  backends: Record<string, number>;
+  backends: Record<string, number | null>;
 }
 
 export interface ReportData {

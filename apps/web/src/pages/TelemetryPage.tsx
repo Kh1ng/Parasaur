@@ -13,6 +13,8 @@ import { EmptyState, LoadingState, ErrorState } from '../components/ui/EmptyStat
 import { StatusBadge, type StatusTone } from '../components/ui/StatusBadge.js';
 import { TrendChart } from '../components/TrendChart.js';
 import { formatCost, formatDuration, formatPercent, formatTokens, formatCount, formatAge, oldestFetchedAt } from '../lib/format.js';
+import { aggregateUsageRows } from '../lib/usageRollup.js';
+import { summarizeChatUsage } from '../lib/chatUsage.js';
 
 const TELEMETRY_REFRESH_MS = 60 * 1000;
 
@@ -92,7 +94,7 @@ type SortKey = keyof Pick<
 /** Actual burn GAH itself observed, aggregated from manager-chat session
  * logs (#940): the dispatch-ledger tables above only cover gah-dispatched
  * work, while nearly all work now happens in manager chat. */
-function ChatUsageRollupCard({ profile }: { profile: string | undefined }) {
+export function ChatUsageRollupCard({ profile }: { profile: string | undefined }) {
   const [days, setDays] = useState<7 | 30>(7);
   const [rollup, setRollup] = useState<UsageRollupSummary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -113,53 +115,15 @@ function ChatUsageRollupCard({ profile }: { profile: string | undefined }) {
 
   const rows = rollup?.rows ?? [];
   const usageUnavailable = rollup?.usage_unavailable ?? [];
-  const byBackend = useMemo(() => {
-    const map = new Map<string, {
-      turns: number;
-      inputTokens: number;
-      outputTokens: number;
-      totalTokens: number;
-      apiCostUsd: number;
-      costedTurns: number;
-      models: Map<string, { turns: number; totalTokens: number }>;
-    }>();
-    for (const row of rows) {
-      const account = row.backend_instance ? `${row.backend} · ${row.backend_instance}` : row.backend;
-      const agg = map.get(account) ?? {
-        turns: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-        apiCostUsd: 0,
-        costedTurns: 0,
-        models: new Map()
-      };
-      agg.turns += row.turns;
-      agg.inputTokens += row.input_tokens;
-      agg.outputTokens += row.output_tokens;
-      agg.totalTokens += row.total_tokens;
-      if (row.estimated_cost_usd !== null) {
-        agg.apiCostUsd += row.estimated_cost_usd;
-        agg.costedTurns += row.turns;
-      }
-      const model = row.model ?? 'default';
-      const modelTotal = agg.models.get(model) ?? { turns: 0, totalTokens: 0 };
-      modelTotal.turns += row.turns;
-      modelTotal.totalTokens += row.total_tokens;
-      agg.models.set(model, modelTotal);
-      map.set(account, agg);
-    }
-    return [...map.entries()].sort((a, b) => b[1].totalTokens - a[1].totalTokens);
-  }, [rows]);
+  const byBackend = useMemo(() => aggregateUsageRows(rows), [rows]);
 
   const reportedTurns = byBackend.reduce((sum, [, row]) => sum + row.turns, 0);
-  const reportedTokens = byBackend.reduce((sum, [, row]) => sum + row.totalTokens, 0);
-  const apiCostUsd = byBackend.reduce((sum, [, row]) => sum + row.apiCostUsd, 0);
-  const costedTurns = byBackend.reduce((sum, [, row]) => sum + row.costedTurns, 0);
+  const totals = summarizeChatUsage(rows.map(row => ({ ...row, duration_seconds: null })));
+  const tokenLabel = (value: number | null | undefined) => value == null ? 'Not reported' : formatTokens(value);
   const usageSeries = byBackend.flatMap(([backend, aggregate]) =>
-    [...aggregate.models.entries()].map(([model, modelUsage]) => ({ backend, model, ...modelUsage }))
-  ).sort((a, b) => b.totalTokens - a.totalTokens);
-  const maxSeriesTokens = Math.max(...usageSeries.map((series) => series.totalTokens), 1);
+    [...aggregate.models.entries()].map(([model, modelUsage]) => ({ backend, model: model ?? 'Unreported model', id: JSON.stringify([aggregate.id, model]), ...modelUsage }))
+  ).sort((a, b) => (b.totalTokens ?? -1) - (a.totalTokens ?? -1));
+  const maxSeriesTokens = Math.max(...usageSeries.flatMap(series => series.totalTokens === null ? [] : [series.totalTokens]), 1);
 
   return (
     <section className="card-padded">
@@ -193,28 +157,28 @@ function ChatUsageRollupCard({ profile }: { profile: string | undefined }) {
           {rows.length > 0 && (
             <>
               <p className="mb-3 text-xs tabular-nums text-secondary">
-                {formatCount(reportedTurns)} usage-reported turns · {formatTokens(reportedTokens)} tokens ·{' '}
-                {costedTurns > 0 ? formatCost(apiCostUsd) : 'Unmeasured'} API equivalent
-                {costedTurns > 0 && costedTurns < reportedTurns ? ` on ${formatCount(costedTurns)} of ${formatCount(reportedTurns)} turns` : ''}
+                {formatCount(reportedTurns)} completed {reportedTurns === 1 ? 'turn' : 'turns'} · {totals.totalTokens === null ? 'Token total incomplete' : `${formatTokens(totals.totalTokens)} total tokens`} ·{' '}
+                {totals.estimatedCostUsd === null ? 'API equivalent not reported' : `${formatCost(totals.estimatedCostUsd)} API equivalent`}
               </p>
+              <p className="mb-3 text-xs text-muted">Totals require a reading from every included turn. Cache and reasoning counters are provider-reported and may overlap other categories.</p>
               <div className="mb-4 rounded-md border border-subtle bg-raised/40 p-3" aria-labelledby="manager-usage-chart-title">
                 <h4 id="manager-usage-chart-title" className="text-xs font-semibold text-secondary">
                   Tokens by backend and model
                 </h4>
                 <div className="mt-3 space-y-3">
                   {usageSeries.map((series) => (
-                    <div key={`${series.backend}-${series.model}`} className="grid min-w-0 grid-cols-1 gap-1.5 sm:grid-cols-[minmax(8rem,12rem)_1fr_auto] sm:items-center sm:gap-3">
+                    <div key={series.id} className="grid min-w-0 grid-cols-1 gap-1.5 sm:grid-cols-[minmax(8rem,12rem)_1fr_auto] sm:items-center sm:gap-3">
                       <span className="truncate text-xs text-primary" title={`${series.backend} / ${series.model}`}>
                         {series.backend} / {series.model}
                       </span>
-                      <progress
+                      {series.totalTokens !== null ? <progress
                         className="usage-progress"
                         max={maxSeriesTokens}
                         value={series.totalTokens}
                         aria-label={`${series.backend} ${series.model}: ${formatTokens(series.totalTokens)} tokens across ${formatCount(series.turns)} turns`}
-                      />
+                      /> : <span className="text-xs text-muted">Incomplete readings</span>}
                       <span className="text-xs tabular-nums text-muted sm:text-right">
-                        {formatTokens(series.totalTokens)} · {formatCount(series.turns)} turns
+                        {tokenLabel(series.totalTokens)} · {formatCount(series.turns)} turns
                       </span>
                     </div>
                   ))}
@@ -228,33 +192,36 @@ function ChatUsageRollupCard({ profile }: { profile: string | undefined }) {
                   <th className="py-2 pr-4 font-medium">Turns</th>
                   <th className="hidden py-2 pr-4 font-medium sm:table-cell">Input</th>
                   <th className="hidden py-2 pr-4 font-medium sm:table-cell">Output</th>
-                  <th className="hidden py-2 pr-4 font-medium sm:table-cell" title="Total minus reported input and output tokens">Cache / other</th>
+                  <th className="hidden py-2 pr-4 font-medium sm:table-cell">Cache read</th>
+                  <th className="hidden py-2 pr-4 font-medium sm:table-cell">Cache write</th>
+                  <th className="hidden py-2 pr-4 font-medium sm:table-cell">Reasoning</th>
                   <th className="py-2 pr-4 font-medium">Total</th>
                   <th className="py-2 font-medium">API equivalent</th>
                 </tr>
               </thead>
               <tbody>
                 {byBackend.map(([backend, agg]) => {
-                  const models = [...agg.models.entries()].sort((a, b) => b[1].totalTokens - a[1].totalTokens);
-                  const cacheOrOtherTokens = Math.max(0, agg.totalTokens - agg.inputTokens - agg.outputTokens);
+                  const models = [...agg.models.entries()].sort((a, b) => (b[1].totalTokens ?? -1) - (a[1].totalTokens ?? -1));
                   return (
-                    <tr key={backend} className="border-b border-subtle/50">
+                    <tr key={agg.id} className="border-b border-subtle/50">
                       <td className="py-2 pr-4 text-primary">
                         <span className="block font-medium">{backend}</span>
                         <span className="mt-0.5 block text-muted">
-                          {models.map(([model, usage]) => `${model} · ${formatTokens(usage.totalTokens)} · ${formatCount(usage.turns)} turns`).join(' · ')}
+                          {models.map(([model, usage]) => `${model ?? 'Unreported model'} · ${tokenLabel(usage.totalTokens)} · ${formatCount(usage.turns)} turns`).join(' · ')}
                         </span>
                       </td>
                       <td className="py-2 pr-4">{formatCount(agg.turns)}</td>
-                      <td className="hidden py-2 pr-4 sm:table-cell">{formatTokens(agg.inputTokens)}</td>
-                      <td className="hidden py-2 pr-4 sm:table-cell">{formatTokens(agg.outputTokens)}</td>
-                      <td className="hidden py-2 pr-4 sm:table-cell">{formatTokens(cacheOrOtherTokens)}</td>
-                      <td className="py-2 pr-4 font-medium text-primary">{formatTokens(agg.totalTokens)}</td>
+                      <td className="hidden py-2 pr-4 sm:table-cell">{tokenLabel(agg.inputTokens)}</td>
+                      <td className="hidden py-2 pr-4 sm:table-cell">{tokenLabel(agg.outputTokens)}</td>
+                      <td className="hidden py-2 pr-4 sm:table-cell">{tokenLabel(agg.cacheReadTokens)}</td>
+                      <td className="hidden py-2 pr-4 sm:table-cell">{tokenLabel(agg.cacheWriteTokens)}</td>
+                      <td className="hidden py-2 pr-4 sm:table-cell">{tokenLabel(agg.reasoningTokens)}</td>
+                      <td className="py-2 pr-4 font-medium text-primary">{tokenLabel(agg.totalTokens)}</td>
                       <td className="py-2 whitespace-nowrap">
-                        {agg.costedTurns === 0 ? (
-                          <span className="text-muted">unmeasured</span>
+                        {agg.estimatedCostUsd === null ? (
+                          <span className="text-muted">Not reported</span>
                         ) : (
-                          <span>{formatCost(agg.apiCostUsd)}{agg.costedTurns < agg.turns ? ` · ${agg.costedTurns}/${agg.turns} turns` : ''}</span>
+                          <span>{formatCost(agg.estimatedCostUsd)}</span>
                         )}
                       </td>
                     </tr>
@@ -286,10 +253,10 @@ function ChatUsageRollupCard({ profile }: { profile: string | undefined }) {
                         <td className="py-2 pr-4 text-primary">{ticket.ticket}</td>
                         <td className="hidden py-2 pr-4 text-muted sm:table-cell">{ticket.title ?? '—'}</td>
                         <td className="py-2 pr-4">{formatCount(ticket.turns)}</td>
-                        <td className="py-2 pr-4">{formatTokens(ticket.total_tokens)}</td>
+                        <td className="py-2 pr-4">{tokenLabel(ticket.total_tokens)}</td>
                         <td className="py-2 pr-4">{ticket.estimated_cost_usd === null ? <span className="text-muted">unmeasured</span> : formatCost(ticket.estimated_cost_usd)}</td>
                         <td className="hidden py-2 text-muted sm:table-cell">
-                          {Object.entries(ticket.backends).sort((a, b) => b[1] - a[1]).map(([backend, tokens]) => `${backend}: ${formatTokens(tokens)}`).join(' · ')}
+                          {Object.entries(ticket.backends).sort((a, b) => (b[1] ?? -1) - (a[1] ?? -1)).map(([backend, tokens]) => `${backend}: ${tokenLabel(tokens)}`).join(' · ')}
                         </td>
                       </tr>
                     ))}
@@ -304,7 +271,7 @@ function ChatUsageRollupCard({ profile }: { profile: string | undefined }) {
                 Usage unavailable ({formatCount(usageUnavailable.length)})
               </h4>
               <p className="mt-1 text-xs text-muted">
-                These completed turns did not report token counters. Existing measured rows are unchanged.
+                These completed turns did not report token counters. Their account and ticket totals remain unknown.
               </p>
               <div className="mt-2 overflow-x-auto">
                 <table className="w-full text-xs">

@@ -50,10 +50,11 @@ test('GET /api/usage/rollup aggregates session-log usage and bounds the window',
       usage_unavailable: { session_id: string; backend: string; model: string | null; day: string }[];
     };
     assert.equal(body.profile, 'gah');
-    assert.equal(body.rows.length, 1);
-    assert.equal(body.rows[0].backend, 'codex');
-    assert.equal(body.rows[0].turns, 1);
-    assert.equal(body.rows[0].total_tokens, 1500);
+    assert.equal(body.rows.length, 2);
+    const measured = body.rows.find(row => row.backend === 'codex');
+    assert.equal(measured?.turns, 1);
+    assert.equal(measured?.total_tokens, 1500);
+    assert.equal(body.rows.find(row => row.backend === 'agy')?.total_tokens, null);
     assert.equal(body.unattributed_turns, 1);
     assert.deepEqual(body.usage_unavailable, [{
       session_id: 'live1',
