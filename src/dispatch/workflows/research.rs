@@ -62,7 +62,7 @@ pub(crate) fn research(
         None,
         ledger,
     )?;
-    apply_route_to_ledger(ledger, &route);
+    apply_route_to_ledger(ledger, &route)?;
     preflight_identity(profile, &route.identity)?;
     let llm = resolve_llm(
         cfg,

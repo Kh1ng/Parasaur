@@ -1,5 +1,15 @@
 # Beta finishing pass: local validation
 
+Latest dispatch guards: verified process authority now gates backend attempts
+and fix/review/PM publication. Main attempt counters are behind the permission
+check, changed route identity cannot overwrite ledger attribution, and uncertain
+completion preserves actual exit/usage evidence while preventing further work.
+Profile env loading cannot redirect native history. Thirty-eight native cases,
+573 dispatch cases, 76 provider cases, two actual CLI cases, formatting and
+all-target/all-feature Clippy pass in Windows WSL. These are source/fixture
+checks; no production wrapper installs the authority yet and no live service
+was changed. See [process-scoped guards](native-worker-host-admission.md#process-scoped-dispatch-guards).
+
 Latest worker consumer: initial consumption and operation intent are now
 durably fenced before bounded, stdin-credential control requests. Replies must
 match the full scope and validity window, and the job's actual service/PID/

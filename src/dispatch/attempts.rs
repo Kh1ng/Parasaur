@@ -327,23 +327,25 @@ pub(super) fn run_backend(
         effective_model,
         None::<String>,
     );
-    run_backend_with_reserved_route(
-        &identity,
-        profile,
-        wt,
-        task,
-        session_dir,
-        cargo_target,
-        llm,
-        env_path,
-        cfg,
-        profile_name,
-        work_id,
-        false,
-        hard_timeout_seconds,
-        runner::WriteIntent::Implementation,
-        None,
-    )
+    super::native_guard::attempt(&identity, || {
+        run_backend_with_reserved_route(
+            &identity,
+            profile,
+            wt,
+            task,
+            session_dir,
+            cargo_target,
+            llm,
+            env_path,
+            cfg,
+            profile_name,
+            work_id,
+            false,
+            hard_timeout_seconds,
+            runner::WriteIntent::Implementation,
+            None,
+        )
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -363,23 +365,25 @@ pub(super) fn run_backend_for_identity(
     write_intent: runner::WriteIntent,
     ledger: Option<&mut LedgerEntry>,
 ) -> Result<runner::RunResult> {
-    run_backend_with_reserved_route(
-        identity,
-        profile,
-        wt,
-        task,
-        session_dir,
-        cargo_target,
-        llm,
-        env_path,
-        cfg,
-        profile_name,
-        work_id,
-        false,
-        hard_timeout_seconds,
-        write_intent,
-        ledger,
-    )
+    super::native_guard::attempt(identity, || {
+        run_backend_with_reserved_route(
+            identity,
+            profile,
+            wt,
+            task,
+            session_dir,
+            cargo_target,
+            llm,
+            env_path,
+            cfg,
+            profile_name,
+            work_id,
+            false,
+            hard_timeout_seconds,
+            write_intent,
+            ledger,
+        )
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -916,7 +920,8 @@ pub(super) fn ensure_bin(bin: &str) -> Result<()> {
     }
 }
 
-pub(super) fn apply_route_to_ledger(ledger: &mut LedgerEntry, route: &RouteDecision) {
+pub(super) fn apply_route_to_ledger(ledger: &mut LedgerEntry, route: &RouteDecision) -> Result<()> {
+    super::native_guard::verify_identity(&route.identity)?;
     ledger.backend = route.effective_backend.clone();
     ledger.requested_backend = route.requested_backend.clone();
     ledger.effective_backend = route.effective_backend.clone();
@@ -928,6 +933,7 @@ pub(super) fn apply_route_to_ledger(ledger: &mut LedgerEntry, route: &RouteDecis
     ledger.human_required_reason_code = None;
     ledger.human_required = route.human_required;
     ledger.routing_diagnostics = route.routing_diagnostics.clone();
+    Ok(())
 }
 
 /// Live-observed bug: `worktree::create`/`create_existing` failures (e.g. a

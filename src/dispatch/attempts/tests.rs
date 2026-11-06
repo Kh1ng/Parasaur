@@ -855,7 +855,7 @@ fn apply_route_to_ledger_records_effective_model() {
         None,
     );
 
-    apply_route_to_ledger(&mut entry, &route);
+    apply_route_to_ledger(&mut entry, &route).unwrap();
 
     assert_eq!(entry.effective_model.as_deref(), Some("claude-sonnet-4"));
     assert_eq!(entry.effective_backend, "codex");
@@ -892,7 +892,7 @@ fn apply_route_to_ledger_leaves_null_when_no_model() {
         None,
     );
 
-    apply_route_to_ledger(&mut entry, &route);
+    apply_route_to_ledger(&mut entry, &route).unwrap();
 
     assert_eq!(entry.effective_model, None);
     assert_eq!(entry.effective_backend, "openhands");

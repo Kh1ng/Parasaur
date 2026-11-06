@@ -24,6 +24,7 @@ mod identity;
 mod issue_claim;
 mod issues;
 mod metrics;
+pub(crate) mod native_guard;
 mod prior_attempts;
 mod prompts;
 mod publish;
@@ -154,8 +155,10 @@ pub struct DispatchArgs {
 }
 
 pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
+    native_guard::verify(cfg, args)?;
     let profile = config::get_profile(cfg, &args.profile)?;
     environment::export_profile_env(profile, args.prod);
+    native_guard::verify_environment()?;
 
     println!("Profile: {}", profile.display_name);
     println!("Repo:    {}", profile.repo);
@@ -187,12 +190,15 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
     // The guard is kept alive for the rest of `run()` via this binding;
     // its `Drop` releases the claim on every exit path below, including
     // the many early returns.
-    let (_central_claim_guard, claimed_work_id) =
-        if JobKind::parse(&args.mode).map(|kind| kind.family()) == Ok(JobFamily::ImproveLike) {
-            claims::acquire_claim(cfg, profile, args, &session_dir)?
-        } else {
-            (None, None)
-        };
+    let (_central_claim_guard, claimed_work_id) = if native_guard::active() {
+        // The verified native wrapper already owns central's durable hold.
+        // Never acquire/release a second, ordinary expiring lease over it.
+        (None, args.work_id.clone())
+    } else if JobKind::parse(&args.mode).map(|kind| kind.family()) == Ok(JobFamily::ImproveLike) {
+        claims::acquire_claim(cfg, profile, args, &session_dir)?
+    } else {
+        (None, None)
+    };
 
     let mut ledger = LedgerEntry::new(
         &args.profile,
@@ -228,6 +234,7 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
         }
         Err(_) => anyhow::bail!("unknown mode: {}", args.mode),
     };
+    let result = result.and_then(|()| native_guard::finish());
     ledger.duration_seconds = Some(started.elapsed().as_secs_f64());
     claims::stamp_claimed_work_id(&mut ledger, claimed_work_id);
     if !usage_has_observation(&ledger.usage) {

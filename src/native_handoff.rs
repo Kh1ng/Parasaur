@@ -14,6 +14,8 @@ use std::{
 };
 
 mod current;
+#[cfg(target_os = "linux")]
+pub mod execution;
 mod history;
 #[cfg(target_os = "linux")]
 pub mod host;
@@ -362,16 +364,9 @@ pub fn prepare(
     Ok(binding)
 }
 
-/// Verify an expected context and materialize its history in a new private job
-/// directory. Local credentials, executables and node capacity are preserved.
-/// This is preparation only; it neither starts a backend nor refreshes authority.
-pub fn load(
-    worker: &GahConfig,
-    context: &Path,
-    expected: &str,
-    node_id: &str,
-    work: &Path,
-) -> Result<WorkerContext> {
+/// Check again after profile environment loading: a dotenv file must not
+/// redirect the verified job's history to unrelated local state.
+fn verify_history_environment(work: &Path) -> Result<()> {
     for (key, file) in [
         ("GAH_LEDGER_PATH", "ledger.jsonl"),
         ("GAH_EVENTS_PATH", "events.jsonl"),
@@ -382,6 +377,20 @@ pub fn load(
             "An inherited state override would bypass the native job context"
         );
     }
+    Ok(())
+}
+
+/// Verify an expected context and materialize its history in a new private job
+/// directory. Local credentials, executables and node capacity are preserved.
+/// This is preparation only; it neither starts a backend nor refreshes authority.
+pub fn load(
+    worker: &GahConfig,
+    context: &Path,
+    expected: &str,
+    node_id: &str,
+    work: &Path,
+) -> Result<WorkerContext> {
+    verify_history_environment(work)?;
     private_directory(context)?;
     let manifest_bytes = read_blob(&context.join("manifest.json"), None, MAX_JSON)?;
     ensure!(

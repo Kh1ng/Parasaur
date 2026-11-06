@@ -495,17 +495,19 @@ pub fn set_review_state_labels(profile: &Profile, branch: &str, labels: &[&str])
             "delivery_mode=handoff: set_review_state_labels is disallowed in handoff mode"
         );
     }
-    match ProviderKind::parse(&profile.provider) {
-        Ok(ProviderKind::Gitlab) => {
-            let mr = gitlab_find_mr_by_branch(profile, branch)?;
-            gitlab_set_review_state_labels(profile, &mr.id, labels)
+    crate::dispatch::native_guard::publication(profile, || {
+        match ProviderKind::parse(&profile.provider) {
+            Ok(ProviderKind::Gitlab) => {
+                let mr = gitlab_find_mr_by_branch(profile, branch)?;
+                gitlab_set_review_state_labels(profile, &mr.id, labels)
+            }
+            Ok(ProviderKind::Github) => {
+                let pr_number = github_find_pr_number_by_branch(profile, branch)?;
+                github_set_review_state_labels(profile, &pr_number, labels)
+            }
+            Err(_) => anyhow::bail!("unsupported provider: {}", profile.provider),
         }
-        Ok(ProviderKind::Github) => {
-            let pr_number = github_find_pr_number_by_branch(profile, branch)?;
-            github_set_review_state_labels(profile, &pr_number, labels)
-        }
-        Err(_) => anyhow::bail!("unsupported provider: {}", profile.provider),
-    }
+    })
 }
 
 pub fn find_review_target_by_branch(profile: &Profile, branch: &str) -> Result<ReviewTarget> {
@@ -778,15 +780,17 @@ pub fn github_close_issue(profile: &Profile, issue_number: &str) -> Result<()> {
     if profile.delivery_mode == crate::config::DeliveryMode::Handoff {
         anyhow::bail!("delivery_mode=handoff: github_close_issue is disallowed in handoff mode");
     }
-    let out = provider_command("gh")
-        .args(["issue", "close", issue_number, "--repo", &profile.repo])
-        .output()
-        .context("gh issue close")?;
+    crate::dispatch::native_guard::publication(profile, || {
+        let out = provider_command("gh")
+            .args(["issue", "close", issue_number, "--repo", &profile.repo])
+            .output()
+            .context("gh issue close")?;
 
-    if !out.status.success() {
-        anyhow::bail!("gh issue close failed: {}", redacted_stderr(&out));
-    }
-    Ok(())
+        if !out.status.success() {
+            anyhow::bail!("gh issue close failed: {}", redacted_stderr(&out));
+        }
+        Ok(())
+    })
 }
 
 /// Close a GitLab issue by number.
@@ -794,11 +798,13 @@ pub fn gitlab_close_issue(profile: &Profile, issue_number: &str) -> Result<()> {
     if profile.delivery_mode == crate::config::DeliveryMode::Handoff {
         anyhow::bail!("delivery_mode=handoff: gitlab_close_issue is disallowed in handoff mode");
     }
-    let project_id = gitlab_project_id(profile)?;
-    let endpoint = format!("projects/{project_id}/issues/{issue_number}");
-    gitlab_api(profile, &endpoint, "PUT", &[("state_event", "close")])?;
+    crate::dispatch::native_guard::publication(profile, || {
+        let project_id = gitlab_project_id(profile)?;
+        let endpoint = format!("projects/{project_id}/issues/{issue_number}");
+        gitlab_api(profile, &endpoint, "PUT", &[("state_event", "close")])?;
 
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Get the state of a GitHub issue.

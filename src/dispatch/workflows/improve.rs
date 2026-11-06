@@ -106,7 +106,7 @@ pub(crate) fn improve(
         ticket_meta.as_ref(),
         ledger,
     )?;
-    apply_route_to_ledger(ledger, &route);
+    apply_route_to_ledger(ledger, &route)?;
     preflight_identity(profile, &route.identity)?;
     let mut llm = resolve_llm(
         cfg,
@@ -362,7 +362,6 @@ pub(crate) fn improve(
             crate::ledger::FailureStage::AgentRun,
             worktree::state_snapshot(&wt),
         )?;
-        ledger.attempts_started = Some(ledger.attempts_started.unwrap_or(0) + 1);
         let attempt_start = std::time::Instant::now();
         let env_path = if !resolved_env.is_empty() {
             Some(resolved_env)
@@ -408,25 +407,28 @@ pub(crate) fn improve(
         task = context;
         let admission_guard =
             issue_claim.admit_in(&wt, repo, profile, &route.identity, args, attempt, ledger)?;
-        record_route_attempt(ledger, &route)?;
-        gitlab_fix::start_attempt(&mut gitlab_fix, ledger);
-        let result = run_backend_with_reserved_route(
-            &route.identity,
-            profile,
-            &wt,
-            &task,
-            &attempt_session,
-            &cargo_target,
-            &llm,
-            env_path,
-            cfg,
-            &args.profile,
-            ledger.work_id.clone().as_deref(),
-            true,
-            None,
-            crate::runner::WriteIntent::Implementation,
-            Some(ledger),
-        );
+        let result = crate::dispatch::native_guard::attempt(&route.identity, || {
+            ledger.attempts_started = Some(ledger.attempts_started.unwrap_or(0) + 1);
+            record_route_attempt(ledger, &route)?;
+            gitlab_fix::start_attempt(&mut gitlab_fix, ledger);
+            run_backend_with_reserved_route(
+                &route.identity,
+                profile,
+                &wt,
+                &task,
+                &attempt_session,
+                &cargo_target,
+                &llm,
+                env_path,
+                cfg,
+                &args.profile,
+                ledger.work_id.clone().as_deref(),
+                true,
+                None,
+                crate::runner::WriteIntent::Implementation,
+                Some(ledger),
+            )
+        });
         drop(admission_guard);
         let result = match result {
             Ok(r) => r,
@@ -721,7 +723,7 @@ pub(crate) fn improve(
                             parsed.kind
                         );
                         route = rerouted;
-                        apply_route_to_ledger(ledger, &route);
+                        apply_route_to_ledger(ledger, &route)?;
                         preflight_identity(profile, &route.identity)?;
                         llm = resolve_llm(
                             cfg,
@@ -913,7 +915,7 @@ pub(crate) fn improve(
                             parsed.kind
                         );
                         route = rerouted;
-                        apply_route_to_ledger(ledger, &route);
+                        apply_route_to_ledger(ledger, &route)?;
                         preflight_identity(profile, &route.identity)?;
                         llm = resolve_llm(
                             cfg,
@@ -1309,7 +1311,7 @@ pub(crate) fn improve(
                             ),
                         );
                         route = rerouted;
-                        apply_route_to_ledger(ledger, &route);
+                        apply_route_to_ledger(ledger, &route)?;
                         preflight_identity(profile, &route.identity)?;
                         llm = resolve_llm(
                             cfg,

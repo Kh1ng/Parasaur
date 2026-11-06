@@ -298,7 +298,7 @@ impl WorkerRun {
         }
     }
 
-    fn require_execution(&self) -> Result<()> {
+    pub(crate) fn require_execution(&self) -> Result<()> {
         let execution = self
             .journal
             .execution

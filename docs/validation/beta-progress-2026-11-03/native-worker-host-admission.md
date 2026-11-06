@@ -183,6 +183,46 @@ controlled fixtures in this bridge. It runs no model or real issue. The host
 crash check independently uses actual WSL systemd, kernel locks and default
 capacity settings. Neither check installs the staged CLI.
 
+## Process-scoped dispatch guards
+
+The native execution module now installs authority once per dedicated process,
+only after checking an entered worker journal against the actual job service,
+PID/start ticks and separate holder. Serialized dispatch arguments and ambient
+environment variables cannot activate it. The complete dispatch configuration
+and request must match the verified context. History overrides are checked again
+after loading the profile environment file.
+
+Existing backend entry points and fix/review/PM workflow calls now request an
+operation permission before invoking a backend. Attempt counters and route
+records for the main fix/review loops are written inside that permission gate;
+denial cannot consume those counters. A different account/model cannot replace
+the bound identity in the ledger. Ordinary dispatch keeps its existing claim
+path; an installed native process uses the already-held native claim.
+
+Fix push/MR publication, review comments/findings/labels, source issue comments
+and closure, and PM plan publication use the publication gate. Nested provider
+helpers share only the current thread's logical publication and still verify
+the profile. A caught nested failure prevents the outer operation fence from
+being completed. A soft failed findings publication also retains uncertainty.
+
+Explicit completion requires the job cgroup to contain only its wrapper PID.
+Unconfirmed cleanup or journal completion blocks later operations while keeping
+the actual backend exit/usage result available for ledger recording. Final
+dispatch cannot report success while completion is unconfirmed.
+
+These are source-level guards. Their focused fixtures demonstrate denial before
+callback/bookkeeping, preservation of real results when completion fails,
+identity mismatch rejection, nested-failure fencing and refusal to install from
+an unentered journal. They do not demonstrate a successful installed native
+process or a real model/forge transaction. No production CLI entry point installs
+this authority yet; the wrapper, secure credential delivery, production transport
+and full result/release lifecycle remain required before rollout.
+
+Windows WSL validation passes: 38 native library cases, 573 dispatch cases,
+76 provider cases, two native CLI integration cases, formatting and
+`cargo clippy --all-targets --all-features -- -D warnings`. Local full log:
+`/home/khing/.cache/parasaur-project-report.qy1ih6c9/native-dispatch-checks.log`.
+
 The launch callback is still a library primitive, not a production executor.
 It must launch only the fixed verified wrapper, which consumes central's one-use
 grant and applies fresh later attempt/publication authority. No worker start

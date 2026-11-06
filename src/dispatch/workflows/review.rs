@@ -462,7 +462,7 @@ pub(in crate::dispatch) fn review(
         &route,
         ledger.review_generation.as_deref(),
     )? {
-        mark_review_budget_exhausted(ledger, &route, &block.reason);
+        mark_review_budget_exhausted(ledger, &route, &block.reason)?;
         notify_event(
             cfg,
             profile,
@@ -518,8 +518,6 @@ pub(in crate::dispatch) fn review(
         // never advances `attempt_number` and never consumes one of the
         // MAX_REVIEW_ATTEMPTS reroute-across-review_candidates slots.
         loop {
-            ledger.attempts_started = Some(ledger.attempts_started.unwrap_or(0) + 1);
-            apply_route_to_ledger(ledger, &route);
             let mut prompt = format!("{capability_prefix}{prompt_suffix}");
             let reviewer_tier = derive_reviewer_tier(cfg, profile, &route);
             crate::prompt_policy::append_untrusted_section(
@@ -574,7 +572,6 @@ pub(in crate::dispatch) fn review(
             fs::create_dir_all(&attempt_session)?;
             let attempt = (attempt_index - 1) as u32;
             let review_slot = pr_claim.admit(profile, &route.identity, args, attempt, ledger)?;
-            record_route_attempt(ledger, &route)?;
             let mut attempt_env_vars =
                 review_attempt_environment(profile, &route.identity, &env_vars)?;
             attempt_env_vars = review_external_env::filter_attempt_env_vars(
@@ -600,14 +597,19 @@ pub(in crate::dispatch) fn review(
                 &attempt_session,
                 &prompt,
             )?;
-            let attempt = runner::run_review_backend_for_identity(
-                profile,
-                &route.identity,
-                repo,
-                &prompt,
-                &attempt_session,
-                &attempt_env_vars,
-            );
+            let attempt = crate::dispatch::native_guard::review(&route.identity, || {
+                ledger.attempts_started = Some(ledger.attempts_started.unwrap_or(0) + 1);
+                apply_route_to_ledger(ledger, &route)?;
+                record_route_attempt(ledger, &route)?;
+                Ok(runner::run_review_backend_for_identity(
+                    profile,
+                    &route.identity,
+                    repo,
+                    &prompt,
+                    &attempt_session,
+                    &attempt_env_vars,
+                ))
+            })?;
             // The slot covers the backend invocation itself. Release it before
             // parsing/rerouting so another worker can use the reviewer as soon as
             // capacity is genuinely free.
@@ -1206,8 +1208,12 @@ const REVIEW_MR_TITLE_MAX_BYTES: usize = 1_024;
 const REVIEW_MR_BODY_MAX_BYTES: usize = 16_384;
 const REVIEW_PRIOR_STATE_MAX_BYTES: usize = 8_192;
 const REVIEW_PROJECT_BRIEF_MAX_BYTES: usize = 4_096;
-fn mark_review_budget_exhausted(ledger: &mut LedgerEntry, route: &RouteDecision, reason: &str) {
-    apply_route_to_ledger(ledger, route);
+fn mark_review_budget_exhausted(
+    ledger: &mut LedgerEntry,
+    route: &RouteDecision,
+    reason: &str,
+) -> Result<()> {
+    apply_route_to_ledger(ledger, route)?;
     ledger.set_failure(
         crate::ledger::FailureClass::HumanBlocked,
         crate::ledger::FailureStage::Review,
@@ -1220,6 +1226,7 @@ fn mark_review_budget_exhausted(ledger: &mut LedgerEntry, route: &RouteDecision,
             .to_string(),
     );
     ledger.error_summary = Some(reason.to_string());
+    Ok(())
 }
 
 fn mark_review_shutdown_cancelled(ledger: &mut LedgerEntry, signal: i32) {
