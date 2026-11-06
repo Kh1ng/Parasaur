@@ -846,6 +846,7 @@ pub(crate) mod telemetry_tests {
     // Helper function to create a test ledger entry
     pub(crate) fn create_test_ledger_entry() -> LedgerEntry {
         LedgerEntry {
+            remote_execution: None,
             skills: Vec::new(),
             timestamp: "2026-07-10T12:00:00Z".to_string(),
             schema_version: crate::ledger::LEDGER_SCHEMA_VERSION,

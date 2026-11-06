@@ -240,6 +240,74 @@ pub fn append(cfg: &GahConfig, entry: &LedgerEntry) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Import one terminal native result under the canonical ledger lock. A replay
+/// compares the immutable source receipt digest, not a second sidecar whose
+/// acknowledgement could be lost after the ledger append. History is streamed
+/// and fully validated before any write, including unrelated discarded rows.
+pub(super) fn append_received_dispatch(
+    cfg: &GahConfig,
+    entry: &LedgerEntry,
+) -> Result<super::remote_dispatch::ReceiveOutcome> {
+    use super::remote_dispatch::ReceiveOutcome;
+    let path = cfg.defaults.ledger_path();
+    let lock = locking::exclusive(&path)?;
+    let mut found = false;
+    match fs::File::open(&path) {
+        Ok(file) => {
+            visit_jsonl_reader(BufReader::new(file), &path, 0, |existing| {
+                // Local claim/administrative records may share the native run
+                // id. Another terminal dispatch may not impersonate this run.
+                if existing.session_id == entry.session_id
+                    && (crate::job_kind::JobKind::parse(&existing.mode).is_ok()
+                        || existing.mode == "handoff"
+                        || existing.remote_execution.is_some())
+                {
+                    // Central review backfill can legitimately update business
+                    // fields after import. The original received digest remains
+                    // immutable, so that update cannot break lost-ack replay.
+                    anyhow::ensure!(
+                        existing.remote_execution == entry.remote_execution,
+                        "A different terminal result already owns this native run"
+                    );
+                    anyhow::ensure!(
+                        !found,
+                        "The canonical ledger contains duplicate native results"
+                    );
+                    found = true;
+                }
+                Ok(())
+            })?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("reading canonical dispatch history"),
+    }
+    if !found {
+        append_locked(&path, entry)?;
+    }
+    // A retry also flushes an existing record: the first delivery may have
+    // failed after writing it but before confirming durability to its caller.
+    let durable_path = fs::canonicalize(&path)?;
+    OpenOptions::new()
+        .write(true)
+        .open(&durable_path)?
+        .sync_all()?;
+    let parent = durable_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    fs::File::open(parent)?.sync_all()?;
+    drop(lock);
+    sync_mirror(cfg);
+    if !found {
+        super::dispatch_notify::notify_if_genuine_failure(cfg, entry);
+    }
+    Ok(if found {
+        ReceiveOutcome::AlreadyRecorded
+    } else {
+        ReceiveOutcome::Recorded
+    })
+}
+
 /// Record a validated external approval without racing another transition.
 /// Returns the persisted grant, including bounds inherited from its request.
 pub use super::gates::{

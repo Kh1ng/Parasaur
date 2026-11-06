@@ -1626,6 +1626,13 @@ export interface AttemptRoutingRecord {
 }
 
 export interface LedgerEntry {
+  /** Observed worker CLI termination, independent of validation or publication. */
+  remote_execution?: {
+    node_id: string;
+    termination: { reason: 'exited' | 'cancelled'; exit_code: number | null; signal: string | null };
+    receipt_sha256: string;
+    context_sha256: string;
+  };
   skills?: SkillVersion[];
   timestamp: string;
   session_id: string | null;

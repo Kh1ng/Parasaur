@@ -900,6 +900,16 @@ pub fn parse_delivery_mode(value: &str) -> anyhow::Result<crate::config::Deliver
 
 #[derive(Subcommand)]
 pub enum LedgerCommands {
+    /// Import one terminal worker result against a separately prepared central
+    /// binding. Replaying the identical result never counts another attempt.
+    ReceiveDispatch {
+        #[arg(long)]
+        binding_file: PathBuf,
+        #[arg(long)]
+        receipt_file: PathBuf,
+        #[arg(long, name = "config")]
+        config_path: Option<String>,
+    },
     /// Back up and remove one torn, unterminated final JSONL record. Refuses
     /// to alter any mid-file or newline-terminated corruption.
     RepairTail {

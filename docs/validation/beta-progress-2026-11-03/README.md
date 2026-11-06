@@ -1,5 +1,15 @@
 # Beta finishing pass: local validation
 
+Latest native increment: [worker result ingestion](native-worker-result-import.md)
+adds a local-only CLI boundary for importing a worker's terminal native ledger
+result against a separately prepared central job binding. Identical delivery
+counts once across retries; changed results are refused, and process exit is
+kept separate from validation/publication. It is source-only. Central
+policy/history preparation and automatic native execution remain open.
+Verification passes 132 ledger, nine capability, 43 telemetry and seven CLI
+ledger cases, plus all-target/all-feature Clippy, formatting, TypeScript
+contracts build and server typechecking.
+
 Latest replay correction: [request binding](worker-execution-results.md#request-binding-follow-up)
 rejects changed work, routes and execution controls on a reused dispatch request
 or active-work join. Both APIs run the `5328f873` backport; independent central

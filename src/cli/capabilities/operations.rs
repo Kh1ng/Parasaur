@@ -360,6 +360,22 @@ pub(super) fn add_ledger_operations(manifest: &mut CapabilityManifest) {
         is_stable: true,
     });
 
+    manifest.add_operation(OperationDefinition {
+        operation_id: "ledger.receive_dispatch".into(),
+        display_name: "Receive Native Worker Result".into(),
+        class: OperationClass::Admin,
+        profile_scope: ProfileScope::Global,
+        request_schema: None,
+        response_schema: None,
+        streaming: StreamingBehavior::None,
+        idempotency: Idempotency::Idempotent,
+        secret_fields: vec![],
+        remote_disposition: RemoteDisposition::LocalOnly,
+        local_only_reason: Some(LocalOnlyReason::SecuritySensitive),
+        documentation: Some("Imports a terminal native result using the central caller's separately prepared binding; never expose worker-selected binding paths through generic remote commands.".into()),
+        cli_command_path: "gah ledger receive-dispatch".into(),
+        is_stable: false,
+    });
     // gah ledger repair-tail
     manifest.add_operation(OperationDefinition {
         operation_id: "ledger.repair_tail".to_string(),
