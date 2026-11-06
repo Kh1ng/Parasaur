@@ -167,3 +167,30 @@ Private assembly `875f7d6` pins core `d0722750`; 1,106 server tests passed with
 38 explicit skips, plus 16 mock cases, production build/typechecks, packaging
 input guards and transport tests. The enterprise build has not been deployed
 as a live GitLab SSO service.
+
+
+## Expired quota display repair (2026-11-05 local / 2026-11-06 UTC)
+
+Shared web source `c648ce94` is deployed. Passed or invalid reset dates no
+longer select the current quota limit, fill a current usage ring, or produce a
+reset countdown. Their original percentages and reset dates remain explicitly
+last recorded. Valid sibling windows retain their own percentages; no new
+allowance or zero is inferred. The navbar clock advances without requiring a
+hover or new API snapshot. Recorded ledger costs retain their independent
+actual/estimated/unknown labels. The Kanban usage summary uses the same rule.
+
+Validation: 18 focused unit tests, three component tests, three subscription
+end-to-end tests, web typecheck and production build passed. The component
+regressions cover the reported expired Mistral monthly window and expiry of a
+mounted navbar. Existing account, pool, recorded-cost, and live-activity checks
+remain covered. The deployed HTML retains its server bootstrap and all 30
+asset files match the manifest; API PID and CLI bytes are unchanged. Native
+visual acceptance was not performed. Evidence is in the local ignored
+`artifacts/parasaur-web-c648ce94/` manifest and the VM's
+`expired-quota-web-deployment.json`; deployment completed at
+2026-11-06T04:24:45Z. Retained old chunks and a backed-up index permit rollback.
+
+This repairs the expired-window presentation, not full usage reconciliation.
+Provider refresh/identity/pool correctness still requires live acceptance, and
+persistent client authentication plus the deployed GitLab SSO path remain
+unfinished. The two new user reports have not been filed or counted as closed.
