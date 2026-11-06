@@ -1,4 +1,5 @@
 import { runningWorkers } from './runningWorkers.js';
+import { parseDispatchExecutionOptions } from './dispatchExecutionOptions.js';
 /**
  * WebSocket server handler
  * Inspired by t3code's wsServer.ts
@@ -432,6 +433,10 @@ async function handleClientMessage(ws: WebSocket, message: ClientMessage) {
 
 async function handleStartSession(ws: WebSocket, message: Extract<ClientMessage, { type: 'session.start' }>, requestId: string) {
   try {
+    const executionOptions = parseDispatchExecutionOptions(message);
+    if (executionOptions === 'invalid') {
+      throw new GAHError('Execution options require booleans and retries must be an unsigned 32-bit integer', 'INVALID_DISPATCH_OPTIONS');
+    }
     // The GitLab context arrives over the network: validate it with the same
     // runtime validator as POST /api/dispatch before it is stored on a session.
     const gitlab = parseGitLabDispatchContext(message.gitlab);
@@ -456,7 +461,7 @@ async function handleStartSession(ws: WebSocket, message: Extract<ClientMessage,
       backendInstance: message.backendInstance,
       model: message.model,
       budget: message.budget,
-      manualWorker: message.manualWorker,
+      ...executionOptions,
       reasoningEffort: message.reasoningEffort,
       gitlab: gitlab ?? undefined
     });

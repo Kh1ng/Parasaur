@@ -440,6 +440,8 @@ export interface StatusSnapshot {
   display_name?: string;
   /** Server supports exact node-local factory account selection. Absent on older servers. */
   dispatch_backend_instances?: boolean;
+  /** Absent on workers that silently ignore dispatch execution controls. */
+  dispatch_execution_options?: boolean;
   /** Host role added in #938; absent on older CLIs. */
   node?: NodeRoleStatus;
   node_capacity?: NodeCapacitySettings;

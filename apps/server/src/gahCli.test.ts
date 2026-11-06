@@ -49,13 +49,15 @@ test('noisy dispatch stderr keeps a diagnostic tail without stopping stdout or c
   } finally { restore(); }
 });
 
-test('manual worker and per-launch reasoning reach the actual dispatch CLI argv', async () => {
+test('execution controls and per-launch reasoning reach the actual dispatch CLI argv', async () => {
   const restore = pinFakeGah('printf "%s\\n" "$@"');
   const lines: string[] = [];
   try {
-    const result = await runDispatchCancellable({ profile: 'repo', mode: 'improve', backend: 'codex', backendInstance: 'work', model: 'gpt-6.1-sol', target: 'ticket.md', manualWorker: true, reasoningEffort: 'high' }, (line) => lines.push(line)).promise;
+    const result = await runDispatchCancellable({ profile: 'repo', mode: 'improve', backend: 'codex', backendInstance: 'work', model: 'gpt-6.1-sol', target: 'ticket.md', manualWorker: true, reasoningEffort: 'high', dryRun: true, retries: 0, allowDraftFail: true, prod: true, allowUnknownRedBaseline: true, escalate: true }, (line) => lines.push(line)).promise;
     assert.equal(result.exitCode, 0);
     assert.ok(lines.includes('--manual-worker'));
+    for (const flag of ['--dry-run', '--allow-draft-fail', '--prod', '--allow-unknown-red-baseline', '--escalate']) assert.ok(lines.includes(flag), flag);
+    assert.equal(lines[lines.indexOf('--retries') + 1], '0');
     assert.equal(lines[lines.indexOf('--backend-instance') + 1], 'work');
     const effortFlag = lines.indexOf('--reasoning-effort');
     assert.equal(lines[effortFlag + 1], 'high');

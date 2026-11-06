@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { requiresDispatchExecutionOptions } from './dispatchExecutionOptions.js';
 import http from 'node:http';
 import https from 'node:https';
 import WebSocket from 'ws';
@@ -1098,6 +1099,9 @@ export class FleetDispatchCoordinator {
       const pinned = candidates.find((candidate) => candidate.nodeId === pin);
       if (!pinned) {
         const snapshot = nodes.find(node => node.node_id === pin);
+        if (snapshot && pin !== coordinatorId && requiresDispatchExecutionOptions(options) && snapshot.dispatch_execution_options !== true) {
+          throw new GAHError(`Update worker ${pin} before using dispatch execution options. It does not advertise support.`, 'DISPATCH_OPTIONS_UNSUPPORTED');
+        }
         if (options.backendInstance && snapshot && pin !== coordinatorId && snapshot.dispatch_backend_instances !== true) {
           throw new GAHError(`Update worker ${pin} before dispatching to a named account. It does not advertise exact account routing.`, 'BACKEND_INSTANCE_UNSUPPORTED');
         }
@@ -1148,6 +1152,7 @@ export class FleetDispatchCoordinator {
   }
 
   private isSnapshotEligible(snapshot: NodeObservationSnapshot, options: RoutedSessionOptions): boolean {
+    if (snapshot.node_id !== this.coordinatorIdentity.node_id && requiresDispatchExecutionOptions(options) && snapshot.dispatch_execution_options !== true) return false;
     if (options.backendInstance && (
       snapshot.node_id !== this.coordinatorIdentity.node_id && snapshot.dispatch_backend_instances !== true
       || !this.relevantBackendInstances(snapshot, options).some(instance => instance.enabled

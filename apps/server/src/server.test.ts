@@ -15,6 +15,17 @@ import { withFixtureServer } from './fixtureGahHarness.js';
 
 const gitFixtures = resolve(dirname(fileURLToPath(import.meta.url)), '../tests/fixtures');
 
+test('HTTP dispatch rejects malformed execution controls before starting work', async () => {
+  await withFixtureServer(async base => {
+    for (const options of [{ dryRun: 'true' }, { retries: -1 }, { manualWorker: 'false' }]) {
+      const response = await fetch(`${base}/api/dispatch`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: 'gah', providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'review', ...options }) });
+      assert.equal(response.status, 400);
+      assert.match((await response.json() as { error: string }).error, /Execution options/);
+    }
+  });
+});
+
 test('all API routes require remote authentication while health and trusted local access remain usable', async () => {
   const saved = { COORDINATOR_TOKEN: process.env.COORDINATOR_TOKEN, GAH_ALLOW_INSECURE_HTTP: process.env.GAH_ALLOW_INSECURE_HTTP };
   process.env.COORDINATOR_TOKEN = 'test-api-token';

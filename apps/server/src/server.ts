@@ -1,4 +1,5 @@
 import { notificationChannelFailure } from './notifyDelivery.js';
+import { parseDispatchExecutionOptions } from './dispatchExecutionOptions.js';
 import { requestFailure } from './requestFailure.js';
 import { chatAccounts } from './chatAccounts.js';
 import { gitLabEventsRouter, type GitLabRouteDeps } from './integrations/gitlab/route.js';
@@ -1204,6 +1205,7 @@ export function createServer(
         ...status,
         running_workers: runningWorkers(status, nodes, identity.node_id),
         dispatch_backend_instances: true,
+        dispatch_execution_options: true,
         node: {
           ...node,
           central_claim_observation: node.central_url && status.node?.central_url === node.central_url
@@ -1645,6 +1647,11 @@ export function createServer(
       res.status(400).json({ error: 'gitlab must be a valid context: project, kind (issue|merge_request), iid, webUrl' });
       return;
     }
+    const executionOptions = parseDispatchExecutionOptions(body);
+    if (executionOptions === 'invalid') {
+      res.status(400).json({ error: 'Execution options require booleans and retries must be an unsigned 32-bit integer' });
+      return;
+    }
     const options: SessionOptions & { requestId?: string; nodeId?: string; coordinatorNodeId?: string } = {
       profile,
       providerKind: providerKind as SessionOptions['providerKind'],
@@ -1658,13 +1665,7 @@ export function createServer(
       backendInstance: body.backendInstance,
       model: typeof body.model === 'string' ? body.model : undefined,
       budget: typeof body.budget === 'number' ? body.budget : undefined,
-      dryRun: body.dryRun === true,
-      retries: typeof body.retries === 'number' ? body.retries : undefined,
-      allowDraftFail: body.allowDraftFail === true,
-      prod: body.prod === true,
-      allowUnknownRedBaseline: body.allowUnknownRedBaseline === true,
-      escalate: body.escalate === true,
-      manualWorker: body.manualWorker === true,
+      ...executionOptions,
       reasoningEffort: typeof body.reasoningEffort === 'string' ? body.reasoningEffort : undefined,
       gitlab: gitlab ?? undefined,
       requestId: typeof body.requestId === 'string' ? body.requestId : undefined,

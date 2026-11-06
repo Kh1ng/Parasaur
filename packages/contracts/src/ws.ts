@@ -397,6 +397,18 @@ export type ServerMessage =
 
 export type ManagerChatTurn = ChatTranscriptTurn;
 
+/** Execution controls shared by local dispatch and the worker transport. */
+export interface DispatchExecutionOptions {
+  dryRun?: boolean;
+  retries?: number;
+  allowDraftFail?: boolean;
+  prod?: boolean;
+  allowUnknownRedBaseline?: boolean;
+  escalate?: boolean;
+  /** Explicit extra job outside automatic node/worker admission. */
+  manualWorker?: boolean;
+}
+
 export type ClientMessage = 
   | {
       type: "client.hello";
@@ -406,10 +418,8 @@ export type ClientMessage =
       activityCursor?: string;
       capabilities: ClientCapabilities;
     }
-  | {
+  | (DispatchExecutionOptions & {
       type: "session.start";
-      /** Explicit extra job outside automatic node/worker admission. */
-      manualWorker?: boolean;
       reasoningEffort?: string;
       requestId: string;
       /** Optional explicit node pin for fleet routing. */
@@ -435,7 +445,7 @@ export type ClientMessage =
       /** GitLab page context for dispatches started from GitLab events
        * (#1595); forwarded to the owning node with the session. */
       gitlab?: GitLabDispatchContext;
-    }
+    })
   | {
       type: "session.stop";
       requestId: string;

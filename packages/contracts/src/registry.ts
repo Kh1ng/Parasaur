@@ -180,6 +180,8 @@ export interface NodeObservationSnapshot {
   backend_instances: BackendInstanceSummary[];
   /** Only new servers advertise exact-account forwarding; absent means unsupported. */
   dispatch_backend_instances?: boolean;
+  /** Absent on workers that silently ignore dispatch execution controls. */
+  dispatch_execution_options?: boolean;
   availability: AvailabilityScope[];
   recent_ledger: RecentLedgerSummary | null;
   active_claims: ActiveClaim[];

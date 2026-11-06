@@ -426,11 +426,11 @@ test('session.start validates the GitLab context with the same validator as the 
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   try {
     await nextWelcome(ws);
-    const sendStart = (gitlab: unknown, requestId: string) => {
+    const sendStart = (gitlab: unknown, requestId: string, executionOptions: Record<string, unknown> = {}) => {
       const reply = new Promise<ServerMessage>(resolve => ws.once('message', data => resolve(JSON.parse(data.toString()))));
       ws.send(JSON.stringify({
         type: 'session.start', requestId, profile: 'gl-profile', providerKind: 'gitlab', instanceId: 'gitlab-0',
-        repo: 'team/project', mode: 'review', gitlab
+        repo: 'team/project', mode: 'review', gitlab, ...executionOptions
       }));
       return reply;
     };
@@ -449,10 +449,16 @@ test('session.start validates the GitLab context with the same validator as the 
     }
     // A valid context passes through to the session like the HTTP route's.
     const context = { project: 'team/project', kind: 'merge_request' as const, iid: 42, webUrl: 'https://gitlab.example.com/team/project' };
-    const response = await sendStart(context, 'valid');
+    for (const invalid of [{ dryRun: 'true' }, { retries: -1 }, { manualWorker: 'false' }]) {
+      assert.equal((await sendStart(context, 'invalid-options', invalid)).type, 'error');
+      assert.equal(start.mock.callCount(), 0);
+    }
+    const executionOptions = { dryRun: true, retries: 0, allowDraftFail: true, prod: true, allowUnknownRedBaseline: true, escalate: true, manualWorker: false };
+    const response = await sendStart(context, 'valid', executionOptions);
     assert.equal(response.type, 'session.started');
     assert.equal(started.length, 1);
     assert.deepEqual((started[0] as { gitlab: unknown }).gitlab, context);
+    for (const [key, value] of Object.entries(executionOptions)) assert.equal((started[0] as Record<string, unknown>)[key], value, key);
   } finally {
     ws.terminate();
     await new Promise<void>(resolve => wss.close(() => resolve()));

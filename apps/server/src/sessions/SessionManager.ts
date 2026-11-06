@@ -13,6 +13,7 @@ import { diagnosticTail } from '../diagnosticTail.js';
 import { runDispatchCancellable, type DispatchOptions, type DispatchResult, type CancellableDispatch, type CancellationResult } from '../gahCli.js';
 import type {
   Session,
+  DispatchExecutionOptions,
   SessionId,
   ProviderKind,
   ProviderInstanceId,
@@ -20,7 +21,7 @@ import type {
   GitLabDispatchContext
 } from '@git-agent-harness/contracts';
 
-export type SessionOptions = {
+export type SessionOptions = DispatchExecutionOptions & {
   // GAH profile id (config.toml's [profiles.<id>]) -- NOT a backend name.
   // Required: there's no sane default to guess from providerKind/repo.
   profile: string;
@@ -35,13 +36,6 @@ export type SessionOptions = {
   backendInstance?: string;
   model?: string;
   budget?: number;
-  dryRun?: boolean;
-  retries?: number;
-  allowDraftFail?: boolean;
-  prod?: boolean;
-  allowUnknownRedBaseline?: boolean;
-  escalate?: boolean;
-  manualWorker?: boolean;
   reasoningEffort?: string;
   requestId?: string;
   /** GitLab page context (#1595): recorded on the session so the runs feed

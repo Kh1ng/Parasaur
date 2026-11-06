@@ -323,6 +323,28 @@ function createCoordinatorHarness(options: {
   });
 }
 
+test('execution overrides require worker support before a pinned transport starts', async () => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'gah-fleet-options-'));
+  const transports = new Map<string, FakeTransport>();
+  const snapshot = makeSnapshot('worker', 'http://127.0.0.1:9998', 0, 0, 0);
+  const registryService = { getNode: () => undefined, getNodeObservations: async () => [snapshot] } as unknown as RegistryService;
+  const coordinator = createCoordinatorHarness({ leaseStorePath: resolve(dir, 'leases.json'), registryService,
+    coordinatorNodeId: 'central', coordinatorUrl: 'http://127.0.0.1:9999', transportMap: transports, published: [] });
+  const options = { profile: 'gah', providerKind: 'codex' as const, instanceId: 'codex-0', repo: 'owner/repo', mode: 'review', nodeId: 'worker' };
+  try {
+    for (const override of [{ dryRun: true }, { retries: 0 }, { allowDraftFail: true }, { prod: true }, { allowUnknownRedBaseline: true }, { escalate: true }]) {
+      await assert.rejects(coordinator.startSession({ ...options, ...override }), /Update worker.*execution options/);
+      assert.equal(transports.size, 0, 'no remote or local fallback may execute the request');
+    }
+    snapshot.dispatch_execution_options = true;
+    const session = await coordinator.startSession({ ...options, dryRun: true, requestId: 'preview' });
+    assert.equal(session.nodeId, 'worker');
+    assert.equal(transports.get('worker')?.startCalls, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('fleet dispatch wait resolves from the terminal push event', async () => {
   const leaseDir = mkdtempSync(resolve(tmpdir(), 'gah-fleet-wait-'));
   const leaseStorePath = resolve(leaseDir, 'dispatch-leases.json');

@@ -12,6 +12,7 @@ import { accessSync, constants } from 'node:fs';
 import { AsyncTtlCache } from './asyncTtlCache.js';
 import { diagnosticTail } from './diagnosticTail.js';
 import type {
+  DispatchExecutionOptions,
   StatusSnapshot,
   QuotaSnapshot,
   ControllerEvent,
@@ -476,7 +477,7 @@ function runVoidCommand(args: string[], config: string | undefined, label: strin
  * Streams stdout to the onLine callback as lines arrive
  * Returns when the process exits
  */
-export interface DispatchOptions {
+export interface DispatchOptions extends DispatchExecutionOptions {
   profile: string;
   mode: string;
   backend?: string;
@@ -486,15 +487,8 @@ export interface DispatchOptions {
   mr?: string;
   model?: string;
   budget?: number;
-  dryRun?: boolean;
   configPath?: string;
   currentBranch?: boolean;
-  retries?: number;
-  allowDraftFail?: boolean;
-  prod?: boolean;
-  allowUnknownRedBaseline?: boolean;
-  escalate?: boolean;
-  manualWorker?: boolean;
   reasoningEffort?: string;
 }
 
