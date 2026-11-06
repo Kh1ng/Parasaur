@@ -111,37 +111,13 @@ pub(in crate::dispatch) fn check_review_budget(
     };
     let routing = profile.effective_routing(&cfg.defaults);
     let entries = ledger::entries_for_work_id(cfg, work_id)?;
-    // `clear-attempts` is an operator reset for this work item's bounded
-    // automation budgets. Keep the append-only history, but do not let review
-    // calls from before the latest matching tombstone permanently block the
-    // ticket. Scope the reset to this profile/repository just like the review
-    // records themselves so an identically-numbered issue elsewhere cannot
-    // reset this budget.
-    let active_entries = entries
-        .iter()
-        .rposition(|entry| {
-            entry.profile == profile_name
-                && entry.repo_id == profile.repo_id
-                && entry.mode == "clear_attempts"
-        })
-        .map_or(entries.as_slice(), |index| &entries[index + 1..]);
-    let reviews: Vec<_> = active_entries
-        .iter()
-        .filter(|entry| {
-            entry.profile == profile_name
-                && entry.repo_id == profile.repo_id
-                && JobKind::parse(&entry.mode) == Ok(JobKind::Review)
-                && entry.review_contract_version == Some(ledger::CURRENT_REVIEW_CONTRACT_VERSION)
-                && super::head::same_head(entry, review_generation)
-                && !matches!(
-                    entry.validation_result.as_deref(),
-                    Some("review_budget_exhausted")
-                        | Some("skipped_duplicate_review")
-                        | Some("deferred_capacity")
-                        | Some("cancelled_shutdown")
-                )
-        })
-        .collect();
+    let reviews = counted_review_entries(
+        &entries,
+        profile_name,
+        &profile.repo_id,
+        work_id,
+        review_generation,
+    );
 
     let cycle_count = reviews.len() as u32;
     let cycle_cap = routing.max_review_cycles_per_ticket();
@@ -182,6 +158,120 @@ pub(in crate::dispatch) fn check_review_budget(
     }
 
     Ok(None)
+}
+
+/// A terminal preflight error is not a review cycle. Require explicit zero
+/// counters and the persisted non-invocation marker; missing or contradictory
+/// evidence must retain its budget charge.
+fn review_stopped_before_attempt(entry: &LedgerEntry) -> bool {
+    if entry.attempts_started != Some(0)
+        || entry.attempts_completed != Some(0)
+        || !entry.attempts.is_empty()
+        || !entry.attempt_routing.is_empty()
+        || entry.backend_exit_code.is_some()
+        || entry.validation_result.is_some()
+        || entry.review_verdict.is_some()
+        || entry.usage.usage_unknown_reason != Some(ledger::UsageUnknownReason::NoAttemptStarted)
+    {
+        return false;
+    }
+    let usage = ledger::LedgerUsage {
+        usage_unknown_reason: None,
+        ..entry.usage.clone()
+    };
+    !crate::usage_attribution::usage_has_observation(&usage)
+}
+
+fn counted_review_entries<'a>(
+    entries: &'a [LedgerEntry],
+    profile_name: &str,
+    repo_id: &str,
+    work_id: &str,
+    review_generation: Option<&str>,
+) -> Vec<&'a LedgerEntry> {
+    let aliases = ledger::work_id_aliases(work_id);
+    let in_scope = |entry: &LedgerEntry| {
+        entry.profile == profile_name
+            && entry.repo_id == repo_id
+            && entry
+                .work_id
+                .as_ref()
+                .is_some_and(|id| aliases.contains(id))
+    };
+    // Preserve history while honoring only this work item's latest reset.
+    let active = entries
+        .iter()
+        .rposition(|entry| in_scope(entry) && entry.mode == "clear_attempts")
+        .map_or(entries, |index| &entries[index + 1..]);
+    active
+        .iter()
+        .filter(|entry| {
+            in_scope(entry)
+                && JobKind::parse(&entry.mode) == Ok(JobKind::Review)
+                && entry.review_contract_version == Some(ledger::CURRENT_REVIEW_CONTRACT_VERSION)
+                && super::head::same_head(entry, review_generation)
+                && !review_stopped_before_attempt(entry)
+                && !matches!(
+                    entry.validation_result.as_deref(),
+                    Some(
+                        "review_budget_exhausted"
+                            | "skipped_duplicate_review"
+                            | "deferred_capacity"
+                            | "cancelled_shutdown"
+                    )
+                )
+        })
+        .collect()
+}
+
+/// Reevaluate only a recorded review-budget refusal. A corrected receipt
+/// count or owner-raised limit can release the projection without resetting
+/// history; unrelated approvals and genuinely spent budgets stay held.
+pub(crate) fn review_budget_gate_is_resolved(
+    cfg: &GahConfig,
+    profile_name: &str,
+    profile: &Profile,
+    entries: &[LedgerEntry],
+    work_id: &str,
+    gate: &ledger::EffectiveHumanGate,
+) -> bool {
+    if gate.mode != "review"
+        || gate.review_generation.is_none()
+        || gate.review_contract_version != Some(ledger::CURRENT_REVIEW_CONTRACT_VERSION)
+        || gate.reason_code.as_deref() != Some("retry_budget_exhausted")
+    {
+        return false;
+    }
+    let aliases = ledger::work_id_aliases(work_id);
+    let refusal = entries.iter().rev().find(|entry| {
+        entry.profile == profile_name
+            && entry.repo_id == profile.repo_id
+            && entry.timestamp == gate.timestamp
+            && entry
+                .work_id
+                .as_ref()
+                .is_some_and(|id| aliases.contains(id))
+    });
+    if !refusal.is_some_and(|entry| {
+        entry.validation_result.as_deref() == Some("review_budget_exhausted")
+            && entry.review_generation == gate.review_generation
+    }) {
+        return false;
+    }
+    let reviews = counted_review_entries(
+        entries,
+        profile_name,
+        &profile.repo_id,
+        work_id,
+        gate.review_generation.as_deref(),
+    );
+    let routing = profile.effective_routing(&cfg.defaults);
+    reviews.len() < routing.max_review_cycles_per_ticket() as usize
+        && reviews
+            .iter()
+            .filter(|entry| entry.usage.usage_classification.as_deref() == Some("api_key_backed"))
+            .count()
+            < routing.max_paid_reviews_per_ticket() as usize
 }
 
 /// The routine reviewer (`review_backend`, e.g. Vibe/Mistral) is fast and

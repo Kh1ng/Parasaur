@@ -761,7 +761,7 @@ fn build_snapshot_inner(
         ) else {
             continue;
         };
-        if !gates::policy_approval_still_required(
+        if !gates::execution_gate_still_required(
             cfg,
             profile_name,
             profile,

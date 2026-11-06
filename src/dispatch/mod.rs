@@ -39,6 +39,7 @@ mod validation;
 mod workflows;
 
 pub use self::review::policy::review_budget_exhausted_error;
+pub(crate) use self::review::policy::review_budget_gate_is_resolved;
 pub(crate) use self::text::utf8_safe_prefix;
 
 /// Explicitly publish a previously validated PM plan. Planning itself never

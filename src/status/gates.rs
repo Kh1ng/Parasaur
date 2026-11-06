@@ -5,7 +5,7 @@ use crate::job_kind::JobKind;
 use crate::ledger::{self, LedgerEntry};
 use crate::sync;
 
-pub(super) fn policy_approval_still_required(
+pub(super) fn execution_gate_still_required(
     cfg: &GahConfig,
     profile_name: &str,
     profile: &Profile,
@@ -13,6 +13,16 @@ pub(super) fn policy_approval_still_required(
     work_id: &str,
     gate: &ledger::EffectiveHumanGate,
 ) -> bool {
+    if crate::dispatch::review_budget_gate_is_resolved(
+        cfg,
+        profile_name,
+        profile,
+        entries,
+        work_id,
+        gate,
+    ) {
+        return false;
+    }
     if gate.reason_code.as_deref() != Some(HumanRequiredReason::PolicyApproval.as_str()) {
         return true;
     }
@@ -211,7 +221,7 @@ pub(super) fn project_effective_mr_gates(
         {
             continue;
         }
-        if !policy_approval_still_required(cfg, profile_name, profile, entries, work_id, &gate) {
+        if !execution_gate_still_required(cfg, profile_name, profile, entries, work_id, &gate) {
             continue;
         }
         let reason_code = gate.reason_code.clone();
@@ -256,6 +266,7 @@ pub(super) fn project_effective_mr_gates(
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod review_budget;
     use crate::availability::{AvailabilityRecord, AvailabilityState, Reason, Source, Status};
     use std::fs;
     use tempfile::TempDir;
@@ -336,7 +347,7 @@ default_target_branch = "main"
                 "#1544",
             )
             .unwrap();
-            assert!(policy_approval_still_required(
+            assert!(execution_gate_still_required(
                 &cfg,
                 "test",
                 profile,
@@ -348,7 +359,7 @@ default_target_branch = "main"
                 let mut route_gate = gate.clone();
                 route_gate.dispatch_reason = Some("review".into());
                 assert!(
-                    !policy_approval_still_required(
+                    !execution_gate_still_required(
                         &cfg,
                         "test",
                         profile,
@@ -598,7 +609,7 @@ requires_approval = true
         let _availability_guard =
             crate::test_support::AvailabilityEnvGuard::set(&availability_path);
 
-        assert!(!policy_approval_still_required(
+        assert!(!execution_gate_still_required(
             &cfg,
             "test",
             profile,
@@ -635,7 +646,7 @@ requires_approval = true
         )
         .unwrap();
 
-        assert!(policy_approval_still_required(
+        assert!(execution_gate_still_required(
             &cfg,
             "test",
             profile,
@@ -652,7 +663,7 @@ requires_approval = true
             Some("nous/other-model"),
             true,
         );
-        assert!(policy_approval_still_required(
+        assert!(execution_gate_still_required(
             &cfg,
             "test",
             profile,
@@ -669,7 +680,7 @@ requires_approval = true
             Some("nous/glm-5.2"),
             true,
         );
-        assert!(!policy_approval_still_required(
+        assert!(!execution_gate_still_required(
             &cfg,
             "test",
             profile,
@@ -800,7 +811,7 @@ included_in_quota = true
             review_generation: None,
         };
 
-        assert!(!policy_approval_still_required(
+        assert!(!execution_gate_still_required(
             &cfg,
             "test",
             profile,
@@ -814,7 +825,7 @@ included_in_quota = true
         failed.effective_backend = "claude".into();
         failed.effective_model = Some("sonnet".into());
         failed.failure_class = Some("agent_failure".into());
-        assert!(policy_approval_still_required(
+        assert!(execution_gate_still_required(
             &cfg,
             "test",
             profile,
@@ -838,7 +849,7 @@ included_in_quota = true
             routing_diagnostics: None,
         };
 
-        assert!(!policy_approval_still_required(
+        assert!(!execution_gate_still_required(
             &cfg,
             "test",
             &profile,
@@ -868,7 +879,7 @@ included_in_quota = true
             routing_diagnostics: None,
         };
 
-        assert!(policy_approval_still_required(
+        assert!(execution_gate_still_required(
             &cfg,
             "test",
             &profile,
