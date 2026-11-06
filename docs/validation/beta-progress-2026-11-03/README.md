@@ -1,5 +1,11 @@
 # Beta finishing pass: local validation
 
+Latest coordination correction: [central claim participation](central-claim-participation.md)
+lets central and registered workers arbitrate the same leases without a
+self-polling registry entry. Live cross-host claim tests pass. Central's
+controller now loads the existing API credential and shared claim URL under
+its original memory cap. Matching Windows factory policy remains next.
+
 Latest reviewer check: [Windows review-provider readiness](review-worker-readiness.md)
 provisions central's existing configured provider and completes a real worker
 chat with the exact routine-review model. No new login or factory policy change

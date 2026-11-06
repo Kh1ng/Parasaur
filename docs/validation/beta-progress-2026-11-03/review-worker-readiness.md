@@ -1,5 +1,9 @@
 # Configured reviewer on the Windows worker
 
+Subsequent [central claim participation](central-claim-participation.md) fixes
+the central membership/configuration gap recorded below and verifies live
+cross-host arbitration. Matching Windows factory policy remains open.
+
 At 2026-11-06T08:23Z the effective gah profile on central has implementation
 and review candidates, a routine reviewer and escalation requirements. The
 Windows worker's effective profile has empty candidate lists, no routine

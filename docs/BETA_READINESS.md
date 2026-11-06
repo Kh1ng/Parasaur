@@ -49,6 +49,12 @@ work and are not gates for this desktop/shared-web pass.
 
 ## Evidence still required
 
+- [Central claim participation](validation/beta-progress-2026-11-03/central-claim-participation.md)
+  fixes central's missing membership path without registering it as a worker.
+  Live cross-host acquire/conflict/renew/release checks pass, including the
+  controller's actual credential/URL context. Matching Windows factory policy
+  and complete dispatch-to-review progression remain open.
+
 - [Windows review-provider readiness](validation/beta-progress-2026-11-03/review-worker-readiness.md)
   verifies central's exact configured routine-review model on the worker using
   the existing account. Portable factory policy, coordinated claims and full
