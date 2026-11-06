@@ -75,7 +75,11 @@ fixes are not closure evidence for the remaining live acceptance work.
 [Chat token categories](chat-token-breakdown.md) now survive ACP conversion and
 durable history, and the session drawer refuses complete totals when replies
 have missing measurements. Focused protocol, replay, unit and rendered component
-checks pass. This source change is not yet deployed.
+checks and the final private build pass. Central's adapter and shared web are
+deployed with verified compiled preimages and served asset hashes. Central is
+healthy; the Windows worker is updated. Fresh Codex and exact Mistral route
+samples reconcile the apparent token gap through reported cache-read tokens.
+Historical/billing reconciliation and provider quota availability remain open.
 
 [Factory admission evidence](factory-hang-recheck.md) now identifies the live
 node-memory wait on #1525. Shared web `c0668cae` exposes the exact recorded

@@ -52,8 +52,10 @@ work and are not gates for this desktop/shared-web pass.
 - [Chat token breakdown](validation/beta-progress-2026-11-03/chat-token-breakdown.md)
   preserves reported cache/reasoning categories and prevents incomplete replies
   from yielding complete session totals. Focused protocol/history/UI checks and
-  the final private build pass. Deployment and fresh live counter reconciliation
-  remain required.
+  the final private build pass. Central's adapter/shared web and the Windows
+  worker are updated and healthy. Fresh Codex/Mistral samples account for the
+  token gap through cache reads; full historical/billing reconciliation and
+  provider quota accuracy remain required.
 - [Central claim participation](validation/beta-progress-2026-11-03/central-claim-participation.md)
   fixes central's missing membership path without registering it as a worker.
   Live cross-host acquire/conflict/renew/release checks pass, including the

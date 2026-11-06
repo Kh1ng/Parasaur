@@ -39,8 +39,36 @@ Verification on 2026-11-06:
   artifact/input guards and browser credential-transport checks. Its build log
   is `/home/khing/.cache/parasaur-enterprise-current.ihts5hya/build.log`.
 
-This source change is not yet deployed. It does not resolve provider quota
+The central API module and shared web are deployed from `bd63be30`. The adapter's
+compiled preimage exactly matched the installed archive-lifecycle fix. An idle
+preflight checked 100 sessions with no active chats/jobs before the API restart.
+API PID 628728 serves the updated module; controller PID 604933, node identity,
+owner/config/CLI hashes, chat index and 268 real notifications are preserved.
+All 30 served JavaScript chunks match the immutable public build. Initial
+provider discovery waited on disk I/O, then completed: `/health` reports healthy
+with providerRegistry ready. Backups and metadata-only reports are under the
+existing central repair state directory.
+
+Windows worker PID 178252 now runs the same adapter module. Its restart
+preflight confirmed no active sessions, controller, running workers or claims.
+Configuration, credential and node identity are preserved. Two disposable
+live worker chats then completed without tools/permission requests and were
+archived:
+
+- Codex `gpt-6-astra`: input 3,236, output 10, cache read 12,032, total 15,278;
+  reasoning is explicitly zero, cache write and cost remain unknown.
+- OpenCode `tak-mistral-vibe/zai-glm-5-3`: input 6,315, output 81, cache read
+  2,240, total 8,636; reasoning, cache write and cost remain unknown.
+
+In these samples input + output + cache read equals the independently reported
+total. This explains the analogous missing category without imposing an additive
+identity on other providers. The live records are ignored
+`artifacts/central-live-20261105/chat-usage-live-smoke.json` and
+`chat-usage-mistral-live-smoke.json`; no private prompt/config/credential content
+is retained in those metadata reports.
+
+This does not resolve provider quota
 availability, historical readings, cross-node factory/chat reconciliation,
 GitLab persistent auth, or memory soak acceptance. The prior live Codex/Mistral
-token discrepancy is not attributed to cache without observing the raw counters
-on a newly deployed adapter.
+historical token discrepancies cannot be reconstructed from records that
+discarded those categories. The new samples establish the fresh readings only.
