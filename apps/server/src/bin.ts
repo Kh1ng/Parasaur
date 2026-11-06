@@ -171,8 +171,6 @@ async function main() {
   // Initialize provider registry with default profile
   const providerRegistry = getProviderRegistry();
   providerRegistry.setDefaultProfile('gah');
-  await providerRegistry.refreshAllFromGah();
-  markReadinessCheck('providerRegistry', true);
   
   // Set up WebSocket handler
   createWebSocketHandler(wss, {
@@ -230,6 +228,11 @@ async function main() {
   // Start HTTP server
   server.listen(PORT, HOST, () => {
     logLifecycle(`Parasaur server listening on ${HOST}:${PORT}`);
+    // A slow ledger/availability read must not hide health and repair APIs.
+    // The registry owns its pending, failed and recovered readiness state.
+    void providerRegistry.refreshAllFromGah().catch(() => {
+      markReadinessCheck('providerRegistry', false, 'Provider status initialization failed');
+    });
     // Model prices: checked a few seconds after start when a day old, then daily.
     if (process.env.GAH_DISABLE_PRICE_REFRESH !== '1') startModelPriceRefresh(helperPriceExtractor('gah'), logLifecycle);
     console.log(`WebSocket server available on ws://${HOST}:${PORT}`);

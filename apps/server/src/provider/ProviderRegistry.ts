@@ -9,6 +9,7 @@
 
 import { generateProviderInstanceId, getSupportedProviders } from '@git-agent-harness/shared';
 import { runStatus, type StatusSnapshot } from '../gahCli.js';
+import { markReadinessCheck } from '../serverReadiness.js';
 import type { AvailabilityScope, ProviderKind, ProviderStatus, ProviderInstanceId } from '@git-agent-harness/contracts';
 
 interface CachedStatus {
@@ -131,10 +132,12 @@ class ProviderRegistryImpl {
       
       // Update provider statuses from the availability data
       this.updateFromSnapshot(snapshot);
+      markReadinessCheck('providerRegistry', true);
       
       console.log(`Refreshed provider statuses from Parasaur CLI (${snapshot.availability.length} backends)`);
       
     } catch (error) {
+      markReadinessCheck('providerRegistry', false, 'Provider status refresh failed');
       console.error('Failed to refresh provider statuses from Parasaur CLI:', error);
       // Fall back to default behavior
       this.updateDefaultStatuses();
