@@ -1,5 +1,16 @@
 # Beta finishing pass: local validation
 
+Latest initial grants: broker-minted tokens are private, expire within ten
+seconds and can be consumed once after fresh controller/work/claim checks.
+Lost replies, restart, expiry and uncertain disk commits never authorize a
+second start or release ownership. A conditional internal HTTP exchange checks
+service ownership and worker/profile registration, including revocation during
+the check. Windows broker/HTTP cases and WSL concrete-authority checks pass;
+the real Rust/server bridge also passes with controlled runtime fixtures.
+Nothing is installed. Live startup, host admission, the worker executor and
+later attempt/publication authority remain unfinished. See
+[initial grants](native-dispatch-broker.md#one-use-initial-grants).
+
 Latest work revalidation: the private native check now re-observes the current
 controller action and exact route before accepting a queued intent. Changed
 work purpose, targets, review generations, incomplete evidence and unavailable

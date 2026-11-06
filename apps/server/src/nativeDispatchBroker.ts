@@ -1,6 +1,6 @@
 /** Central native dispatch orchestration. One service owns this root; completed
  * runs stay on disk rather than in an ever-growing in-memory receipt map. */
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { NativeClaimBinding, NativeResultAcknowledgement } from '@git-agent-harness/contracts';
@@ -20,8 +20,11 @@ export interface NativeHostReservation extends NativeClaimBinding {
 export interface NativeStartGrant extends NativeClaimBinding {
   reservation_id: string; expires_at: string; token: string;
 }
-export type NativeAuthorization = { allowed: true; grant: NativeStartGrant }
-  | { allowed: false; reason: 'factory_paused' | 'policy_changed' | 'budget_held' | 'claim_lost' | 'authority_unavailable' };
+const authorityReasons = ['factory_paused','controller_changed','policy_changed','budget_held','claim_lost','authority_unavailable','authority_busy'] as const;
+export type NativeAuthorization = { allowed: true }
+  | { allowed: false; reason: typeof authorityReasons[number] };
+export type NativeGrantConsumption = (NativeClaimBinding & { allowed: true; reservation_id: string; expires_at: string; consumed_at: string })
+  | { allowed: false; reason: 'invalid_grant' | 'expired' | 'already_consumed' | 'consumption_in_progress' | Exclude<NativeAuthorization, {allowed:true}>['reason'] };
 export type NativeWorkerObservation = NativeClaimBinding & (
   { state: 'waiting_capacity' } | { state: 'ready'; reservation: NativeHostReservation }
   | { state: 'running' } | { state: 'unknown' } | { state: 'terminal'; receipt_json: string }
@@ -38,8 +41,9 @@ interface Journal {
   version: 1; binding: NativeDispatchBinding; binding_sha256: string; phase: Phase; stage_offered: boolean; start_offered: boolean; terminal_observed: boolean;
   updated_at: string; reason?: string; receipt_file?: string; receipt_sha256?: string;
   acknowledgement?: NativeResultAcknowledgement; history_cleaned?: boolean;
+  start_grant?: { reservation: NativeHostReservation; issued_at: string; expires_at: string; token_sha256: string; consumed_at?: string };
 }
-export type NativeDispatchView = Pick<Journal, 'phase' | 'updated_at' | 'reason' | 'acknowledgement'> & { binding: NativeDispatchBinding };
+export type NativeDispatchView = Pick<Journal, 'phase' | 'updated_at' | 'reason' | 'acknowledgement'> & { binding: NativeDispatchBinding; grant_consumed_at?: string };
 type Deps = {
   root: string; centralUrl: string; coordinatorNodeId: string; claims: ClaimsService; transport: NativeWorkerTransport;
   authorizeStart: (binding: NativeDispatchBinding, reservation: NativeHostReservation, signal?: AbortSignal) => Promise<NativeAuthorization>;
@@ -50,7 +54,7 @@ type Deps = {
 const MAX_JSON = 8 * 1024 * 1024;
 const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
 const same = (left: NativeClaimBinding, right: NativeClaimBinding) => left?.run_id === right.run_id && left.node_id === right.node_id && left.context_sha256 === right.context_sha256;
-const uuid = (value: string) => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value) && value !== '00000000-0000-0000-0000-000000000000';
+export const isNativeRunId = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value) && value !== '00000000-0000-0000-0000-000000000000';
 const digest = (value: string) => /^[a-f0-9]{64}$/.test(value);
 const phases: Phase[] = ['prepared', 'reserved', 'stage_offered', 'waiting_capacity', 'authorization_deferred', 'start_offered', 'running', 'reconciling', 'result_pending', 'terminal'];
 const bindingFields = ['run_id', 'node_id', 'context_sha256', 'profile', 'repo_id', 'repo', 'work_id', 'mode', 'backend', 'backend_instance', 'model', 'branch', 'review_generation', 'dispatch_reason'] as const;
@@ -77,6 +81,7 @@ function readPrivate(path: string): Buffer {
 const readJson = <T>(path: string): T => JSON.parse(readPrivate(path).toString('utf8')) as T;
 function view(journal: Journal): NativeDispatchView {
   return structuredClone({ binding: journal.binding, phase: journal.phase, updated_at: journal.updated_at,
+    ...(journal.start_grant?.consumed_at ? { grant_consumed_at: journal.start_grant.consumed_at } : {}),
     ...(journal.reason ? { reason: journal.reason } : {}), ...(journal.acknowledgement ? { acknowledgement: journal.acknowledgement } : {}) });
 }
 
@@ -84,6 +89,7 @@ export class NativeDispatchBroker {
   private readonly root: string;
   private readonly now: () => number;
   private readonly active = new Map<string, Promise<NativeDispatchView>>();
+  private readonly consuming = new Set<string>();
   private persistenceUncertain = false;
   private readonly timeout: number;
 
@@ -105,7 +111,7 @@ export class NativeDispatchBroker {
    * root/<run UUID>/context. Changed requests/policies produce another digest
    * and cannot replace this run. No caller supplies an arbitrary binding path. */
   offerPrepared(runId: string, contextSha256: string): Promise<NativeDispatchView> {
-    if (!uuid(runId) || !digest(contextSha256)) return Promise.reject(Error('Invalid native run binding'));
+    if (!isNativeRunId(runId) || !digest(contextSha256)) return Promise.reject(Error('Invalid native run binding'));
     return this.serial(runId, async () => {
       const prepared = this.prepared(runId, contextSha256);
       const path = this.journalPath(runId);
@@ -129,10 +135,65 @@ export class NativeDispatchBroker {
   /** Poll the same durable run. A missing roster item, timeout or restart is
    * never permission to repeat stage/start or invent a terminal result. */
   reconcile(runId: string): Promise<NativeDispatchView> {
-    if (!uuid(runId)) return Promise.reject(Error('Invalid native run identity'));
+    if (!isNativeRunId(runId)) return Promise.reject(Error('Invalid native run identity'));
     return this.serial(runId, () => this.reconcileRun(this.read(runId)));
   }
   get(runId: string): NativeDispatchView { return view(this.read(runId)); }
+
+  /** A worker wrapper exchanges its secret before entering dispatch. This
+   * cannot take the offer lock: transport.start may await this very callback.
+   * After the asynchronous fresh check, re-read and commit synchronously so
+   * only one caller can receive permission. A lost reply is never replayed as
+   * permission; the wrapper must stop and retain its result for reconciliation.
+   * This receipt grants no later attempt or publication authority. */
+  async consumeStartGrant(grant: NativeStartGrant): Promise<NativeGrantConsumption> {
+    if (!grant || !isNativeRunId(grant.run_id) || !digest(grant.context_sha256) || typeof grant.token !== 'string'
+      || !/^[a-f0-9]{64}$/.test(grant.token)) return { allowed: false, reason: 'invalid_grant' };
+    if (this.consuming.has(grant.run_id)) return { allowed: false, reason: 'consumption_in_progress' };
+    this.consuming.add(grant.run_id);
+    try {
+      let journal = this.read(grant.run_id);
+      const refusal = this.grantRefusal(journal, grant);
+      if (refusal) return { allowed: false, reason: refusal };
+      if (!this.owns(journal.binding)) return { allowed: false, reason: 'claim_lost' };
+      let decision: NativeAuthorization;
+      try { decision = await this.deadline(signal => this.deps.authorizeStart(journal.binding, journal.start_grant!.reservation, signal)); }
+      catch { return { allowed: false, reason: 'authority_unavailable' }; }
+      if (decision?.allowed !== true) return { allowed: false, reason: this.denialReason(decision) };
+      // Fresh permission cannot revive an expired/consumed grant or replace
+      // ownership that changed while policy/provider checks were running.
+      journal = this.read(grant.run_id);
+      const changed = this.grantRefusal(journal, grant);
+      if (changed) return { allowed: false, reason: changed };
+      if (!this.owns(journal.binding)) return { allowed: false, reason: 'claim_lost' };
+      if (bindingHash(this.prepared(grant.run_id, grant.context_sha256)) !== journal.binding_sha256) return { allowed: false, reason: 'invalid_grant' };
+      const consumedTime = this.now();
+      if (consumedTime >= Date.parse(journal.start_grant!.expires_at)) return { allowed: false, reason: 'expired' };
+      const consumed_at = new Date(consumedTime).toISOString();
+      this.update(journal, { start_grant: { ...journal.start_grant!, consumed_at } });
+      if (this.now() >= Date.parse(grant.expires_at)) return { allowed: false, reason: 'expired' };
+      return { allowed: true, run_id: grant.run_id, node_id: grant.node_id, context_sha256: grant.context_sha256,
+        reservation_id: grant.reservation_id, expires_at: grant.expires_at, consumed_at };
+    } catch { return { allowed: false, reason: 'authority_unavailable' }; }
+    finally { this.consuming.delete(grant.run_id); }
+  }
+
+  private denialReason(decision: NativeAuthorization): Exclude<NativeAuthorization, { allowed: true }>['reason'] {
+    return decision?.allowed === false && authorityReasons.includes(decision.reason)
+      ? decision.reason : 'authority_unavailable';
+  }
+  private owns(binding: NativeDispatchBinding): boolean {
+    const held = this.deps.claims.getLease(binding.profile, binding.work_id);
+    return held?.node_id === this.deps.coordinatorNodeId && !!held.native_handoff && same(held.native_handoff, binding);
+  }
+  private grantRefusal(journal: Journal, grant: NativeStartGrant): 'invalid_grant' | 'expired' | 'already_consumed' | undefined {
+    const stored = journal.start_grant;
+    if (!journal.start_offered || journal.phase === 'terminal' || journal.terminal_observed || !stored || !same(grant, journal.binding)
+      || grant.reservation_id !== stored.reservation.id || grant.expires_at !== stored.expires_at
+      || !timingSafeEqual(Buffer.from(hash(grant.token), 'hex'), Buffer.from(stored.token_sha256, 'hex'))) return 'invalid_grant';
+    if (stored.consumed_at) return 'already_consumed';
+    if (this.now() < Date.parse(stored.issued_at) || Date.parse(stored.expires_at) <= this.now() || Date.parse(stored.reservation.expires_at) <= this.now()) return 'expired';
+  }
 
   /** Abort only the network observation. The recorded worker operation may
    * still have happened; deadlines never cancel or re-offer the native run. */
@@ -157,7 +218,7 @@ export class NativeDispatchBroker {
     return current;
   }
   private runPath(run: string): string {
-    if (!uuid(run)) throw Error('Invalid native run identity');
+    if (!isNativeRunId(run)) throw Error('Invalid native run identity');
     const path = join(this.root, run); directory(path); return path;
   }
   private contextPath(run: string): string { const path = join(this.runPath(run), 'context'); directory(path); return path; }
@@ -195,9 +256,16 @@ export class NativeDispatchBroker {
   private read(run: string): Journal {
     if (this.persistenceUncertain) throw Error('Native broker persistence is uncertain; inspect and reload its journal');
     const journal = readJson<Journal>(this.journalPath(run));
+    const grant = journal.start_grant;
     if (journal.version !== 1 || journal.binding?.run_id !== run || !digest(journal.binding.context_sha256)
       || !phases.includes(journal.phase) || typeof journal.stage_offered !== 'boolean' || typeof journal.start_offered !== 'boolean'
       || typeof journal.terminal_observed !== 'boolean' || journal.binding_sha256 !== bindingHash(journal.binding)
+      || (grant && (!journal.start_offered || !same(grant.reservation, journal.binding) || !grant.reservation.id || !digest(grant.token_sha256)
+        || !Number.isFinite(Date.parse(grant.issued_at)) || !Number.isFinite(Date.parse(grant.expires_at)) || !Number.isFinite(Date.parse(grant.reservation.expires_at))
+        || Date.parse(grant.expires_at) <= Date.parse(grant.issued_at) || Date.parse(grant.expires_at) - Date.parse(grant.issued_at) > 10_000
+        || Date.parse(grant.expires_at) > Date.parse(grant.reservation.expires_at)
+        || (grant.consumed_at !== undefined && (!Number.isFinite(Date.parse(grant.consumed_at))
+          || Date.parse(grant.consumed_at) < Date.parse(grant.issued_at) || Date.parse(grant.consumed_at) >= Date.parse(grant.expires_at)))))
       || (journal.start_offered && !journal.stage_offered) || (journal.phase === 'terminal' && (!journal.terminal_observed || !journal.acknowledgement
         || !same(journal.acknowledgement, journal.binding) || journal.acknowledgement.profile !== journal.binding.profile
         || journal.acknowledgement.work_id !== journal.binding.work_id || !digest(journal.acknowledgement.receipt_sha256)
@@ -245,6 +313,7 @@ export class NativeDispatchBroker {
     if (observation.state === 'unknown') return journal.receipt_file ? this.importResult(journal) : this.uncertain(journal, 'worker_state_unconfirmed');
     if (observation.state === 'running') {
       if (!journal.start_offered) return this.uncertain(journal, 'execution_without_start_intent');
+      if (!journal.start_grant?.consumed_at) return this.uncertain(journal, 'execution_without_start_authority');
       this.deps.claims.observeNative(this.deps.coordinatorNodeId, binding.profile, binding.work_id, binding, 'running');
       return view(this.update(journal, { phase: 'running', reason: undefined }));
     }
@@ -253,7 +322,8 @@ export class NativeDispatchBroker {
     if (observation.state === 'waiting_capacity') return view(this.update(journal, { phase: 'waiting_capacity', reason: 'host_capacity' }));
     if (observation.state !== 'ready') return this.uncertain(journal, 'worker_state_unconfirmed');
     const reservation = observation.reservation;
-    if (!same(reservation, binding) || !reservation.id || Date.parse(reservation.expires_at) <= this.now()
+    if (!same(reservation, binding) || typeof reservation.id !== 'string' || !reservation.id || reservation.id.length > 4096
+      || /[\x00-\x1f\x7f]/.test(reservation.id) || typeof reservation.expires_at !== 'string' || reservation.expires_at.length > 64 || Date.parse(reservation.expires_at) <= this.now()
       || !Number.isFinite(Date.parse(reservation.expires_at))) return this.uncertain(journal, 'host_reservation_invalid');
     if (bindingHash(this.prepared(binding.run_id, binding.context_sha256)) !== journal.binding_sha256) return this.uncertain(journal, 'prepared_context_changed');
     let decision: NativeAuthorization;
@@ -262,20 +332,23 @@ export class NativeDispatchBroker {
     journal = this.read(binding.run_id);
     if (journal.phase === 'terminal') return view(journal);
     if (journal.start_offered) return this.reconcileRun(journal);
-    const grant = decision?.allowed ? decision.grant : undefined;
-    const until = grant ? Date.parse(grant.expires_at) : NaN;
-    const valid = grant && same(grant, binding) && grant.reservation_id === reservation.id && typeof grant.token === 'string' && /^[A-Za-z0-9_.-]{32,4096}$/.test(grant.token)
-      && Number.isFinite(until) && until > this.now() && until <= this.now() + 30_000 && until <= Date.parse(reservation.expires_at);
-    if (!valid) {
+    if (decision?.allowed !== true || Date.parse(reservation.expires_at) <= this.now()) {
       try { await this.deadline(signal => this.deps.transport.releaseReservation(binding, reservation, signal)); } catch { /* host reservation still expires without authorizing a start */ }
-      const reason = decision?.allowed ? 'authority_expired_or_mismatched'
-        : ['factory_paused','policy_changed','budget_held','claim_lost','authority_unavailable'].includes(decision?.reason) ? decision.reason : 'authority_unavailable';
+      const reason = decision?.allowed ? 'host_reservation_expired' : this.denialReason(decision);
       return view(this.update(journal, { phase: 'authorization_deferred', reason }));
     }
-    const held = this.deps.claims.getLease(binding.profile, binding.work_id);
-    if (held?.node_id !== this.deps.coordinatorNodeId || !held.native_handoff || !same(held.native_handoff, binding)) return this.uncertain(journal, 'claim_lost');
+    if (!this.owns(binding)) return this.uncertain(journal, 'claim_lost');
+    if (bindingHash(this.prepared(binding.run_id, binding.context_sha256)) !== journal.binding_sha256) return this.uncertain(journal, 'prepared_context_changed');
+    const issued = this.now();
+    const issued_at = new Date(issued).toISOString();
+    const until = Math.min(issued + 10_000, Date.parse(reservation.expires_at));
+    if (until <= issued) return view(this.update(journal, { phase: 'authorization_deferred', reason: 'host_reservation_expired' }));
+    const grant: NativeStartGrant = { run_id: binding.run_id, node_id: binding.node_id, context_sha256: binding.context_sha256,
+      reservation_id: reservation.id, expires_at: new Date(until).toISOString(), token: randomBytes(32).toString('hex') };
     // The grant is passed only to the worker, never written into public state.
-    journal = this.update(journal, { phase: 'start_offered', start_offered: true, reason: undefined });
+    journal = this.update(journal, { phase: 'start_offered', start_offered: true, reason: undefined,
+      start_grant: { reservation: { run_id: binding.run_id, node_id: binding.node_id, context_sha256: binding.context_sha256,
+        id: reservation.id, expires_at: reservation.expires_at }, issued_at, expires_at: grant.expires_at, token_sha256: hash(grant.token) } });
     if (until <= this.now()) return this.uncertain(journal, 'authority_expired_before_start');
     try { return await this.observed(journal, await this.deadline(signal => this.deps.transport.start(binding, grant, signal))); }
     catch { return this.uncertain(journal, 'start_unconfirmed'); }

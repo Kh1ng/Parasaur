@@ -4,7 +4,7 @@
  * Replaces the broken stdin/stdout bridge in rustBackend.ts
  */
 
-import { spawn, spawnSync, SpawnOptions, ChildProcess } from 'node:child_process';
+import { execFile, spawn, spawnSync, SpawnOptions, ChildProcess } from 'node:child_process';
 import { userInfo } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1816,17 +1816,21 @@ interface SystemdUnitStatus {
   startedAt?: string;
 }
 
+function loopStatusArgs(profile: string): string[] {
+  return ['--user', 'show', loopServiceName(profile), '--property=LoadState', '--property=ActiveState', '--property=MainPID', '--property=ActiveEnterTimestamp', '--no-pager'];
+}
 function readSystemdLoopStatus(profile: string): SystemdUnitStatus | undefined {
-  const service = loopServiceName(profile);
   const result = spawnSync(
     'systemctl',
-    ['--user', 'show', service, '--property=LoadState', '--property=ActiveState', '--property=MainPID', '--property=ActiveEnterTimestamp', '--no-pager'],
-    { encoding: 'utf8', env: systemdUserEnv() }
+    loopStatusArgs(profile),
+    { encoding: 'utf8', env: systemdUserEnv(), timeout: 2000, maxBuffer: 16 * 1024 }
   );
   if (result.error || result.status !== 0) return undefined;
-
+  return parseSystemdUnitStatus(result.stdout ?? '');
+}
+function parseSystemdUnitStatus(stdout: string): SystemdUnitStatus {
   const values = new Map<string, string>();
-  for (const line of (result.stdout ?? '').split('\n')) {
+  for (const line of stdout.split('\n')) {
     const separator = line.indexOf('=');
     if (separator > 0) values.set(line.slice(0, separator), line.slice(separator + 1));
   }
@@ -1837,6 +1841,23 @@ function readSystemdLoopStatus(profile: string): SystemdUnitStatus | undefined {
     mainPid: Number.isFinite(mainPid) && mainPid > 0 ? mainPid : undefined,
     startedAt: values.get('ActiveEnterTimestamp') || undefined
   };
+}
+
+/** Native start authority needs an active managed controller, not merely a
+ * still-present stopping process. Bound the bus query without blocking the
+ * API event loop, and expose its instance identity for checks across I/O. */
+export type LoopExecutionState = { state: 'active'; pid: number; startedAt: string } | { state: 'paused' | 'unavailable' };
+export function readLoopExecutionState(profile: string, signal?: AbortSignal): Promise<LoopExecutionState> {
+  const args = loopStatusArgs(profile);
+  return new Promise(resolvePromise => {
+    execFile('systemctl', args, { encoding: 'utf8', env: systemdUserEnv(), timeout: 2000, maxBuffer: 16 * 1024, ...(signal ? { signal } : {}) }, (error, stdout) => {
+      if (error) return resolvePromise({ state: 'unavailable' });
+      const state = parseSystemdUnitStatus(stdout);
+      if (state.loadState === 'not-found' || ['activating','deactivating','inactive','failed'].includes(state.activeState ?? '')) return resolvePromise({state:'paused'});
+      resolvePromise(state.loadState === 'loaded' && state.activeState === 'active' && state.mainPid && state.startedAt
+        ? { state: 'active', pid: state.mainPid, startedAt: state.startedAt } : {state:'unavailable'});
+    });
+  });
 }
 
 export function loopSystemctlArgs(enabled: boolean, profile: string): string[] {

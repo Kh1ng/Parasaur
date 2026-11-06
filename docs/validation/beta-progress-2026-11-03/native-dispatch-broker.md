@@ -1,10 +1,12 @@
 # Durable native dispatch broker
 
-This is source-only orchestration. `NativeDispatchBroker` has no production
-constructor, HTTP route, permissive authorization fallback or worker executor.
-Live services and installed CLIs were not changed. Fresh central policy/budget
-authorization, actual-host reservations and the worker execution transport must
-still be implemented and verified before it can dispatch real work.
+This remains source-only orchestration. The broker, concrete initial authority
+check and conditional HTTP grant consumer exist, but runtime startup does not
+construct a native broker/worker transport or executor. The consumer route is
+mounted only on central when an owned broker is explicitly supplied. There is
+no permissive authorization fallback. Actual-host reservations, native worker
+execution, per-attempt/publication authority and live startup/reconciliation
+must still be implemented and verified before real native work can run.
 
 The broker joins the existing context and claim boundaries with private
 `<root>/<run UUID>/broker.json` journals. It validates the prepared manifest,
@@ -17,7 +19,7 @@ not repeat either operation. A missing journal alongside held ownership refuses
 recreation. Concurrent calls for one run serialize; completed promises leave the
 in-memory map, while run identity remains on disk.
 
-An idle host reservation and a fresh, exact, at-most-30-second start grant are
+An idle host reservation and a fresh, exact, at-most-ten-second start grant are
 required. Expired/mismatched/denied grants cannot launch and release only the
 idle reservation. Grants are passed to the transport and never stored in the
 journal or returned view. They authorize the verified wrapper's initial start,
@@ -70,6 +72,63 @@ operation. Capability tests keep all native context commands local-only and
 security-sensitive.
 
 ## Verification on November 6
+
+### One-use initial grants
+
+The broker now owns grant creation. Its mandatory authority callback returns a
+fresh decision rather than inventing a bearer token. After affirmative checks
+and the exact held claim, the broker creates 256 random bits, bounds expiry by
+ten seconds and the host reservation, and durably records only the token hash,
+reservation and expiry beside the start intent before transport.
+
+`consumeStartGrant` rechecks current authority and the exact claim/context,
+then durably records consumption before returning permission. Concurrent
+consumers, cold replay, forged fields, expired grants, policy/loop revocation
+and claim replacement cannot produce another permission. An uncertain commit
+never returns permission, even when the consumed marker reached disk. A lost
+reply burns the grant: a wrapper must stop/reconcile rather than infer approval
+from a replay. No hold is released by grant expiry or consumption. Fresh running
+observations without recorded consumption remain unconfirmed. The returned
+view contains consumption time, never the token or token hash; consumption is
+not evidence that a backend started or exited.
+
+Consumption intentionally does not wait for the offer/start lock: the worker's
+start request may be waiting on this callback. A bounded in-flight consumer set
+and a synchronous re-read/commit after asynchronous authority checks prevent
+double permission without that reentrant deadlock. Entries leave the set after
+success, refusal or timeout; durable state remains in the existing per-run
+journal rather than an unbounded in-memory grant map.
+
+`nativeDispatchAuthority` checks a managed, active controller instance before
+and after the actual current-work CLI check. Stopping/starting/missing units
+refuse permission; an unreadable or timed-out bus remains unavailable rather
+than being reported as a known pause. Both asynchronous authority queries and
+the existing synchronous loop-status query are bounded to two seconds/16 KiB.
+One current-work snapshot runs at a time across profiles to bound transient
+memory. Abort, timeout and failure clear that busy state; no permission cache or
+snapshot queue is retained.
+
+The conditional `POST /api/native-dispatch/consume` requires an owner/service
+principal and current worker/profile registration. It accepts only six grant
+fields, no paths or dispatch arguments. Registration is checked again after
+the asynchronous policy check; revocation can burn a grant but cannot deliver
+permission. The exchange is rate limited, returns no token and cannot issue a
+new grant. Default startup still has no broker to mount it; this is an internal
+connection point for the forthcoming worker transport, not a live feature.
+
+These grants authorize only the verified wrapper's initial transition into
+dispatch. Later attempts/publication require their own fresh authority; this
+increment does not implement or bypass those checks, actual host reservation
+ownership, worker process lifetime or production transport.
+
+Windows passes all 25 broker/HTTP cases. Concrete authority checks pass on WSL,
+including unavailable systemd, controller replacement, missing current-work
+evidence and bounded/cancelled concurrent snapshots. The real Rust/server bridge
+also passes with the optimized `8e5d08c5` CLI and the concrete authority callback,
+using controlled controller/provider/worker fixtures. It consumes a broker-minted
+grant during the start callback (without deadlock), loses the start reply,
+reloads, refuses replay and imports one failed result with cost unknown. Plain
+grant bytes do not appear in the journal. No model or real issue executes.
 
 ### Current work and route revalidation
 

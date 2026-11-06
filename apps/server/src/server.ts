@@ -99,6 +99,8 @@ import { resolveChatProject } from './projectCatalog.js';
 import { RegistryService, NodeDoctorError } from './registryService.js';
 import { ClaimsService } from './claimsService.js';
 import { claimsRouter } from './claimsRouter.js';
+import { nativeGrantRouter } from './nativeGrantRouter.js';
+import type { NativeDispatchBroker } from './nativeDispatchBroker.js';
 import { backendForProfile, helperRouteFor, readSettings as readManagerChatSettings, setBackendForProfile, validHelperRoute, writeSettings as writeManagerChatSettings } from './managerChat/settingsStore.js';
 import { gatewayBaseUrl, gatewayApiKey, gatewayHealth, recall } from './managerChat/memoryGatewayClient.js';
 import { readGatewaySettings, writeGatewaySettings } from './gatewaySettingsStore.js';
@@ -186,6 +188,7 @@ type CreateServerOptions = Partial<ConfigEffectiveDeps> & {
   runProfileAdd?: (options: ProfileAddOptions) => Promise<void>;
   registryService?: RegistryService;
   claimsService?: ClaimsService;
+  nativeDispatchBroker?: NativeDispatchBroker;
   coordinatorPort?: number;
   deviceAccess?: DeviceAccess;
   node?: NodeRoleStatus;
@@ -1183,6 +1186,9 @@ export function createServer(
     profiles: listProfiles,
     node: id => registryService.getNode(id)
   }));
+  if (node.role === 'central' && configDeps.nativeDispatchBroker) {
+    app.use('/api/native-dispatch', nativeGrantRouter({broker:configDeps.nativeDispatchBroker,worker:id=>registryService.getNode(id)}));
+  }
 
   // Pull-data REST endpoints (TICKET-productization): these are on-demand
   // fetches -- report parameters, one work item's timeline -- that don't

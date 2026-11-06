@@ -6,9 +6,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
+import express from 'express';
+import type { AddressInfo } from 'node:net';
+import { nativeGrantRouter } from './nativeGrantRouter.js';
 import type { NativeResultAcknowledgement } from '@git-agent-harness/contracts';
 import { ClaimsService, ClaimConflictError } from './claimsService.js';
-import { NativeDispatchBroker, type NativeAuthorization, type NativeDispatchBinding, type NativeHostReservation, type NativeWorkerObservation } from './nativeDispatchBroker.js';
+import { NativeDispatchBroker, type NativeAuthorization, type NativeDispatchBinding, type NativeHostReservation, type NativeWorkerObservation, type NativeStartGrant } from './nativeDispatchBroker.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 function fixture() {
@@ -27,27 +30,42 @@ function fixture() {
   let stages = 0; let starts = 0; let releases = 0; let imports = 0;
   const reservation = (): NativeHostReservation => ({ ...binding, id: 'reservation', expires_at: new Date(now + 20_000).toISOString() });
   let observation: NativeWorkerObservation = { ...binding, state: 'ready', reservation: reservation() };
-  let authorize: () => Promise<NativeAuthorization> = async () => ({ allowed: true, grant: { ...binding, reservation_id: 'reservation', expires_at: new Date(now + 10_000).toISOString(), token: 's'.repeat(64) } });
+  let authorize: () => Promise<NativeAuthorization> = async () => ({ allowed: true });
+  let grant: NativeStartGrant | undefined; let consume = true;
   let stageFails = false; let startFails = false; let importFails = false; let observeFails = false; let stageHangs = false; let timeout=5000;
   const ack: NativeResultAcknowledgement = { ...binding, profile: 'gah', work_id: '#1525', receipt_sha256: 'b'.repeat(64), outcome: 'recorded' };
   const deps = () => ({ root, centralUrl: 'https://central.invalid', coordinatorNodeId: 'central', claims, now: () => now, observationTimeoutMs:timeout,
     authorizeStart: () => authorize(),
     transport: {
       async stage() { stages++; assert.equal(JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8')).stage_offered,true); if (stageHangs) return new Promise<NativeWorkerObservation>(() => undefined); if (stageFails) throw Error('PRIVATE_STAGE_TOKEN'); return observation; },
-      async start() { starts++; assert.equal(JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8')).start_offered,true); if (startFails) throw Error('PRIVATE_START_TOKEN'); observation = { ...binding,state: 'running' }; return observation; },
+      async start(_binding: NativeDispatchBinding, offered: NativeStartGrant) { starts++; grant = offered; assert.equal(JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8')).start_offered,true); if (startFails) throw Error('PRIVATE_START_TOKEN'); if (consume && !(await broker.consumeStartGrant(offered)).allowed) throw Error('Start authority refused'); observation = { ...binding,state: 'running' }; return observation; },
       async observe() { if (observeFails) throw Error('PRIVATE_OBSERVATION_TOKEN'); return observation; },
       async releaseReservation() { releases++; },
     },
     async recordCanonicalResult({ receiptFile }: { receiptFile: string }) { imports++; if (importFails) throw Error('PRIVATE_IMPORT_TOKEN'); return { ...ack, receipt_sha256: hash(readFileSync(receiptFile,'utf8')), outcome: imports > 1 ? 'already_recorded' as const : 'recorded' as const }; },
   });
-  let broker = new NativeDispatchBroker(deps());
+  let broker: NativeDispatchBroker = new NativeDispatchBroker(deps());
   return { root, run, runPath, context, binding, ack, request,
     get broker() { return broker; }, get claims() { return claims; }, get stages() { return stages; }, get starts() { return starts; }, get imports() { return imports; }, get releases() { return releases; },
+    get grant() { assert.ok(grant); return structuredClone(grant); }, skipConsumption() { consume = false; },
     observe(value: NativeWorkerObservation) { observation = value; },
     failStage() { stageFails = true; }, failStart() { startFails = true; }, failImport() { importFails = true; }, recoverImport() { importFails = false; }, failObserve() { observeFails = true; },
     hangStage() { stageHangs=true; timeout=5; broker=new NativeDispatchBroker(deps()); },
+    shortDeadline() { timeout=5; broker=new NativeDispatchBroker(deps()); },
     authorize(value: () => Promise<NativeAuthorization>) { authorize = value; }, advance() { now += 24 * 60 * 60_000; },
     reload() { claims = new ClaimsService(claimsPath, () => now); broker = new NativeDispatchBroker(deps()); return broker; },
+  };
+}
+
+async function grantEndpoint(broker: NativeDispatchBroker, worker: (id: string)=>{profiles?:string[]}|undefined) {
+  const app=express();app.use(express.json());
+  app.use((req,res,next)=>{res.locals.authPrincipal=req.headers['x-test-principal']==='owner'?{kind:'owner'}:{kind:'device',id:'paired-browser'};next();});
+  app.use('/api/native-dispatch',nativeGrantRouter({broker,worker}));
+  const server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));
+  const url=`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/native-dispatch/consume`;
+  return {
+    post:(body:unknown,owner=true)=>fetch(url,{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify(body)}),
+    close:()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())),
   };
 }
 
@@ -57,7 +75,9 @@ test('concurrent exact requests persist intent before transport and stage/start 
   assert.ok(results.every(result => result.phase === 'running'));
   assert.equal(f.stages, 1); assert.equal(f.starts, 1);
   assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
-  assert.equal(readFileSync(join(f.runPath,'broker.json'),'utf8').includes('s'.repeat(64)), false);
+  assert.equal(readFileSync(join(f.runPath,'broker.json'),'utf8').includes(f.grant.token), false);
+  assert.ok(results.every(result => result.grant_consumed_at));
+  assert.equal(JSON.stringify(f.broker.get(f.run)).includes('token_sha256'),false);
 });
 
 test('lost start acknowledgement, expiry, restart and stale ready observations never cause another launch', async () => {
@@ -79,14 +99,13 @@ test('lost staging acknowledgement and an absent worker preserve ownership witho
   assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
 });
 
-test('denied, expired, mismatched and unbounded grants never start and release idle host reservations', async () => {
-  for (const kind of ['denied','expired','wrong-context','too-long'] as const) {
-    const f = fixture(); f.authorize(async () => kind === 'denied' ? { allowed:false, reason:'budget_held' } : { allowed:true, grant: {
-      ...f.binding, context_sha256: kind === 'wrong-context' ? 'c'.repeat(64) : f.binding.context_sha256,
-      reservation_id:'reservation',token:'s'.repeat(64),expires_at:kind === 'expired' ? '2026-11-06T18:00:00Z' : kind === 'too-long' ? '2026-11-06T20:00:00Z' : '2026-11-06T19:00:10Z',
-    } });
-    assert.equal((await f.broker.offerPrepared(f.run,f.binding.context_sha256)).phase,'authorization_deferred');
-    assert.equal(f.starts,0); assert.equal(f.releases,1);
+test('denied authority or invalid host reservations cannot issue a start grant', async () => {
+  for (const kind of ['denied','expired','wrong-context','malformed-id'] as const) {
+    const f = fixture();
+    if (kind==='denied') f.authorize(async () => ({allowed:false,reason:'budget_held'}));
+    else f.observe({...f.binding,state:'ready',reservation:{...f.binding,id:kind==='malformed-id'?'bad\nreservation':'reservation',context_sha256:kind==='wrong-context'?'c'.repeat(64):f.binding.context_sha256,expires_at:kind==='expired'?'2026-11-06T18:00:00Z':'2026-11-06T19:00:20Z'}});
+    assert.equal((await f.broker.offerPrepared(f.run,f.binding.context_sha256)).phase,kind==='denied'?'authorization_deferred':'reconciling');
+    assert.equal(f.starts,0); assert.equal(f.releases,kind==='denied'?1:0);
     assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
   }
 });
@@ -213,4 +232,122 @@ test('uncertain receipt persistence retains ownership and reload recovers the sa
   } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
   assert.equal((await f.reload().reconcile(f.run)).phase,'terminal');
   assert.equal(f.imports,1); assert.equal(f.starts,1);
+});
+
+test('concurrent consumption and cold replay can authorize a grant only once', async () => {
+  const f=fixture(); f.failStart(); await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  const grant=f.grant;
+  const consumed=await Promise.all([f.broker.consumeStartGrant(grant),f.broker.consumeStartGrant(grant)]);
+  assert.equal(consumed.filter(result=>result.allowed).length,1);
+  assert.ok(f.broker.get(f.run).grant_consumed_at);
+  assert.deepEqual(await f.reload().consumeStartGrant(grant),{allowed:false,reason:'already_consumed'});
+  await f.broker.reconcile(f.run);
+  assert.equal(f.starts,1); assert.equal(f.stages,1);
+  assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+  assert.equal(readFileSync(join(f.runPath,'broker.json'),'utf8').includes(grant.token),false);
+});
+
+test('forged identity, reservation, expiry or token cannot consume a grant, and expired grants stay held', async () => {
+  const f=fixture(); f.failStart(); await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  const grant=f.grant;
+  for(const changes of [{node_id:'other'},{context_sha256:'b'.repeat(64)},{reservation_id:'other'},{expires_at:'2026-11-06T19:00:11Z'},{token:'0'.repeat(64)}]) {
+    assert.deepEqual(await f.broker.consumeStartGrant({...grant,...changes}),{allowed:false,reason:'invalid_grant'});
+  }
+  assert.equal(f.broker.get(f.run).grant_consumed_at,undefined);
+  f.advance(); f.reload();
+  assert.deepEqual(await f.broker.consumeStartGrant(grant),{allowed:false,reason:'expired'});
+  assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+});
+
+test('authority revoked between offer and consumption cannot authorize execution', async () => {
+  const f=fixture(); f.failStart(); await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  f.authorize(async()=>({allowed:false,reason:'factory_paused'}));
+  assert.deepEqual(await f.broker.consumeStartGrant(f.grant),{allowed:false,reason:'factory_paused'});
+  assert.equal(f.broker.get(f.run).grant_consumed_at,undefined);
+  assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+});
+
+test('a grant expiring during the fresh check cannot be consumed or release its ownership',async()=>{
+  const f=fixture();f.failStart();await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  f.authorize(async()=>{f.advance();return {allowed:true};});
+  assert.deepEqual(await f.broker.consumeStartGrant(f.grant),{allowed:false,reason:'expired'});
+  assert.equal(f.broker.get(f.run).grant_consumed_at,undefined);
+  assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+});
+
+test('an authority timeout during consumption neither burns permission nor keeps an in-memory consumer', async () => {
+  const f=fixture(); f.failStart(); await f.broker.offerPrepared(f.run,f.binding.context_sha256); f.shortDeadline();
+  f.authorize(()=>new Promise(()=>undefined));
+  assert.deepEqual(await f.broker.consumeStartGrant(f.grant),{allowed:false,reason:'authority_unavailable'});
+  assert.equal(f.broker.get(f.run).grant_consumed_at,undefined);
+  f.authorize(async()=>({allowed:true}));
+  assert.equal((await f.broker.consumeStartGrant(f.grant)).allowed,true);
+});
+
+test('claim replacement during asynchronous authority checks refuses consumption and preserves the new owner', async () => {
+  const f=fixture(); f.failStart(); await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  f.authorize(async()=>{
+    await f.claims.completeNative('central','gah','#1525',f.binding,async()=>f.ack);
+    f.claims.acquire('new-owner','gah','#1525');
+    return {allowed:true};
+  });
+  assert.deepEqual(await f.broker.consumeStartGrant(f.grant),{allowed:false,reason:'claim_lost'});
+  assert.equal(f.broker.get(f.run).grant_consumed_at,undefined);
+  assert.equal(f.claims.getLease('gah','#1525')?.node_id,'new-owner');
+});
+
+test('an uncertain consumed-grant commit never returns permission and cold reload refuses replay', async t => {
+  const f=fixture(); f.failStart(); await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  const grant=f.grant,rename=fs.renameSync;
+  t.mock.method(fs,'renameSync',(source: fs.PathLike,destination: fs.PathLike)=>{
+    rename(source,destination);
+    if(String(destination)===join(f.runPath,'broker.json'))throw Error('Injected consumed grant sync failure');
+  });syncBuiltinESMExports();
+  try {
+    assert.deepEqual(await f.broker.consumeStartGrant(grant),{allowed:false,reason:'authority_unavailable'});
+    assert.throws(()=>f.broker.get(f.run),/persistence is uncertain/);
+  } finally {t.mock.restoreAll();syncBuiltinESMExports();}
+  assert.deepEqual(await f.reload().consumeStartGrant(grant),{allowed:false,reason:'already_consumed'});
+  assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+});
+
+test('a worker running observation without durable grant consumption remains unconfirmed', async () => {
+  const f=fixture();f.skipConsumption();
+  const result=await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  assert.equal(result.phase,'reconciling');assert.equal(result.reason,'execution_without_start_authority');
+  assert.equal(result.grant_consumed_at,undefined);
+  assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+});
+
+test('HTTP consumption requires owner service auth and current registered profile membership', async()=>{
+  const f=fixture();f.failStart();await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  let registered=true,declared=true;
+  const endpoint=await grantEndpoint(f.broker,id=>registered && id==='worker'?{profiles:declared?['gah']:[]}:undefined);
+  const {post}=endpoint;
+  try {
+    const grant=f.grant;
+    assert.equal((await post(grant,false)).status,403);
+    assert.equal((await post({...grant,contextDirectory:'/untrusted'})).status,400);
+    registered=false;assert.equal((await post(grant)).status,403);
+    registered=true;declared=false;assert.equal((await post(grant)).status,403);
+    assert.equal(f.broker.get(f.run).grant_consumed_at,undefined);
+    declared=true;
+    const consumed=await post(grant);assert.equal(consumed.status,200);
+    const receipt=await consumed.json() as Record<string,unknown>;assert.equal(receipt.allowed,true);assert.equal(receipt.token,undefined);
+    const replay=await post(grant);assert.equal(replay.status,409);assert.equal((await replay.json() as Record<string,unknown>).reason,'already_consumed');
+    assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+  } finally {await endpoint.close();}
+});
+
+test('registry revocation during a grant check never delivers permission or allows replay',async()=>{
+  const f=fixture();f.failStart();await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  let registered=true;
+  const endpoint=await grantEndpoint(f.broker,()=>registered?{profiles:['gah']}:undefined);
+  try {
+    f.authorize(async()=>{registered=false;return {allowed:true};});
+    assert.equal((await endpoint.post(f.grant)).status,403);
+    assert.ok(f.broker.get(f.run).grant_consumed_at);
+    registered=true;assert.equal((await endpoint.post(f.grant)).status,409);
+    assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+  } finally {await endpoint.close();}
 });
