@@ -728,7 +728,7 @@ export interface BackendModelComparison {
 }
 
 /** Clap values shared by `gah report` and `gah ledger summary` (ledger::GroupBy). */
-export const REPORT_GROUP_BY_VALUES = ['none', 'backend', 'model', 'skill', 'difficulty', 'backend-difficulty'] as const;
+export const REPORT_GROUP_BY_VALUES = ['none', 'backend', 'model', 'skill', 'difficulty', 'backend-difficulty', 'project', 'work-item'] as const;
 export type ReportGroupBy = typeof REPORT_GROUP_BY_VALUES[number];
 
 /**
@@ -1714,6 +1714,10 @@ export interface LedgerSummary {
   grouped_by_skill?: LedgerGroupSummary[];
   grouped_by_difficulty?: LedgerGroupSummary[];
   grouped_by_backend_difficulty?: LedgerGroupSummary[];
+  /** JSON tuple keys [profile, provider, repository]. */
+  grouped_by_project?: LedgerGroupSummary[];
+  /** Project tuple plus nullable work id. */
+  grouped_by_work_item?: LedgerGroupSummary[];
 }
 
 /** `ledger::summary::GroupSummary`; unknown observations remain null. */

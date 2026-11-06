@@ -307,6 +307,8 @@ fn transform_to_report_format(
         LedgerGroupBy::Backend => (&data.grouped_by_backend, false, "Backend"),
         LedgerGroupBy::Model => (&data.grouped_by_model, true, "Model"),
         LedgerGroupBy::Skill => (&data.grouped_by_skill, false, "Skill"),
+        LedgerGroupBy::Project => (&data.grouped_by_project, false, "Project"),
+        LedgerGroupBy::WorkItem => (&data.grouped_by_work_item, false, "Work item"),
         LedgerGroupBy::Difficulty => (&data.grouped_by_difficulty, false, "Difficulty"),
         LedgerGroupBy::BackendDifficulty => (
             &data.grouped_by_backend_difficulty,
@@ -522,6 +524,8 @@ fn display_report(
         LedgerGroupBy::Backend => ("Backend", &data.grouped_by_backend),
         LedgerGroupBy::Model => ("Model", &data.grouped_by_model),
         LedgerGroupBy::Skill => ("Skill", &data.grouped_by_skill),
+        LedgerGroupBy::Project => ("Project", &data.grouped_by_project),
+        LedgerGroupBy::WorkItem => ("Work item", &data.grouped_by_work_item),
         LedgerGroupBy::Difficulty => ("Difficulty", &data.grouped_by_difficulty),
         LedgerGroupBy::BackendDifficulty => {
             ("Backend x Difficulty", &data.grouped_by_backend_difficulty)
@@ -810,6 +814,8 @@ mod tests {
             grouped_by_backend_difficulty: None,
             grouped_by_model: None,
             grouped_by_skill: None,
+            grouped_by_project: None,
+            grouped_by_work_item: None,
         }
     }
 
