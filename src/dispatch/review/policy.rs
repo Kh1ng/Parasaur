@@ -837,6 +837,16 @@ pub(in crate::dispatch) fn derive_reviewer_tier(
         .routing
         .effective_routine_reviewer()
         .or_else(|| cfg.defaults.routing.effective_routine_reviewer());
+    // An exact routine identity stays first-line even when an escalation
+    // entry covers the same backend. Otherwise it gains the untried-escalation
+    // cycle-budget exemption without actually selecting a different reviewer.
+    if let Some(routine) = &routine {
+        if routine.model.is_some()
+            && selected(Some(routine.backend.as_str()), routine.model.as_deref())
+        {
+            return ReviewerTier::Strong;
+        }
+    }
     let escalatory = profile
         .routing
         .escalatory_reviewers

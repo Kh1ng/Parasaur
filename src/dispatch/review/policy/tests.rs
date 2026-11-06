@@ -13,6 +13,7 @@ mod format_retry;
 mod head;
 mod parsing;
 mod reset;
+mod routine_overlap;
 
 const TEST_REVIEW_GENERATION: &str = "review-v1:reviewed-sha:sha256:test";
 
