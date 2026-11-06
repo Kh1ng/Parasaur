@@ -84,6 +84,7 @@ pub(crate) struct IssueIntakeDiscovery {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IssueDisposition {
     OwnerDecision,
+    HumanRequired,
     Blocked,
     Planning,
 }
@@ -92,6 +93,7 @@ impl IssueDisposition {
     fn reason_code(self) -> &'static str {
         match self {
             Self::OwnerDecision => "owner_decision",
+            Self::HumanRequired => "human_required",
             Self::Blocked => "blocked",
             Self::Planning => "planning",
         }
@@ -100,6 +102,7 @@ impl IssueDisposition {
     fn reason(self) -> &'static str {
         match self {
             Self::OwnerDecision => "owner-decision label present",
+            Self::HumanRequired => "human-required label present",
             Self::Blocked => "blocked label present",
             Self::Planning => "planning label present",
         }
@@ -396,7 +399,7 @@ fn issue_author_is_trusted(profile: &Profile, author: &IssueAuthorIdentity) -> b
     }
 }
 
-fn issue_disposition_from_labels(profile: &Profile, labels: &[String]) -> Option<IssueDisposition> {
+fn manual_issue_disposition(labels: &[String]) -> Option<IssueDisposition> {
     let normalized = labels
         .iter()
         .map(|label| label.trim().to_ascii_lowercase())
@@ -411,16 +414,29 @@ fn issue_disposition_from_labels(profile: &Profile, labels: &[String]) -> Option
     }
     if normalized
         .iter()
+        .any(|label| label == "exec:human-required")
+    {
+        return Some(IssueDisposition::HumanRequired);
+    }
+    if normalized
+        .iter()
         .any(|label| matches!(label.as_str(), "blocked" | "gah:blocked"))
     {
         return Some(IssueDisposition::Blocked);
     }
-    if normalized.iter().any(|label| {
+    None
+}
+
+fn issue_disposition_from_labels(profile: &Profile, labels: &[String]) -> Option<IssueDisposition> {
+    if let Some(disposition) = manual_issue_disposition(labels) {
+        return Some(disposition);
+    }
+    if labels.iter().any(|label| {
         profile
             .publishing
             .pm_decomposition_labels()
             .iter()
-            .any(|configured| label.eq_ignore_ascii_case(configured.trim()))
+            .any(|configured| label.trim().eq_ignore_ascii_case(configured.trim()))
     }) {
         return Some(IssueDisposition::Planning);
     }
@@ -1408,18 +1424,14 @@ fn append_unique_strings(target: &mut Vec<String>, source: Vec<String>) {
 /// a managed issue before this runs; the managed label is kept here so a
 /// caller outside discovery gets the same answer.
 pub(super) fn issue_is_auto_dispatch_blocked(labels: &[String]) -> bool {
-    labels.iter().any(|label| {
-        issue_label_is_managed(label)
-            || matches!(
-                label.trim().to_ascii_lowercase().as_str(),
-                "executive:owner-decision"
-                    | "exec:owner-decision"
-                    | "blocked"
-                    | "planning"
-                    | "plan"
-                    | "gah:blocked"
-            )
-    })
+    manual_issue_disposition(labels).is_some()
+        || labels.iter().any(|label| {
+            issue_label_is_managed(label)
+                || matches!(
+                    label.trim().to_ascii_lowercase().as_str(),
+                    "planning" | "plan"
+                )
+        })
 }
 
 pub(super) fn resolve_target_to_issue_or_string(

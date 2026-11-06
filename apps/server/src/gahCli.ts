@@ -198,15 +198,16 @@ export function runReceiveNativeResult(options: { bindingFile: string; receiptFi
 /** Trusted central prerequisite, not an execution grant. The caller owns the
  * context directory and must separately check loop/claim/work/host authority. */
 export async function runCheckNativePolicy(options: {
-  contextDirectory: string; contextSha256: string; nodeId: string; centralUrl: string; config?: string; signal?: AbortSignal;
+  contextDirectory: string; contextSha256: string; nodeId: string; centralUrl: string; config?: string; signal?: AbortSignal; checkWork?: boolean;
 }): Promise<import('./nativeDispatchBroker.js').NativeDispatchBinding> {
   const config = getConfigPath(options.config ?? process.env.GAH_CONFIG_PATH ?? process.env.GAH_CANONICAL_CONFIG);
   const args = ['native-handoff', 'check-current-policy', '--context-dir', options.contextDirectory,
     '--expected-context', options.contextSha256, '--node-id', options.nodeId, '--central-url', options.centralUrl,
-    ...(config ? ['--config-path', config] : [])];
-  const result = await runJsonCommand<{ binding: import('./nativeDispatchBroker.js').NativeDispatchBinding; policy_current: boolean; execution_authorized: boolean }>(
+    ...(config ? ['--config-path', config] : []), ...(options.checkWork ? ['--check-work'] : [])];
+  const result = await runJsonCommand<{ binding: import('./nativeDispatchBroker.js').NativeDispatchBinding; policy_current: boolean; execution_authorized: boolean; work_current?: boolean | null }>(
     args, config, false, undefined, 64 * 1024, options.signal);
   if (result.policy_current !== true || result.execution_authorized !== false
+    || options.checkWork && result.work_current !== true
     || result.binding?.node_id !== options.nodeId || result.binding.context_sha256 !== options.contextSha256) {
     throw new Error('Current native policy check returned a mismatched binding');
   }

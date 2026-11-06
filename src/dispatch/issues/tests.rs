@@ -852,6 +852,36 @@ fn conflicting_disposition_labels_resolve_to_owner_decision_regardless_of_order(
 }
 
 #[test]
+fn human_required_blocks_legacy_and_canonical_intake_even_with_autonomous_label_or_override() {
+    let tmp = tempfile::tempdir().unwrap();
+    let author = IssueAuthorIdentity {
+        login: "owner".into(),
+        kind: IssueAuthorKind::Human,
+    };
+    for mode in [
+        IssueIntakeMode::Legacy,
+        IssueIntakeMode::CanonicalAutonomousOnly,
+    ] {
+        let mut profile = profile(tmp.path());
+        profile.publishing.issue_intake_mode = mode;
+        for labels in [
+            vec!["exec:human-required".into()],
+            vec!["exec:autonomous".into(), " EXEC:HUMAN-REQUIRED ".into()],
+        ] {
+            assert!(issue_is_auto_dispatch_blocked(&labels));
+            for allow_override in [false, true] {
+                assert_eq!(
+                    evaluate_issue_intake(&profile, Some(&author), &labels, allow_override, None),
+                    Err(IntakeRejection::Disposition(
+                        IssueDisposition::HumanRequired
+                    ))
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn configured_pm_decomposition_label_is_a_planning_disposition() {
     let tmp = tempfile::tempdir().unwrap();
     let mut profile = profile(tmp.path());

@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::{BackendInstanceConfig, CandidateConfig, SpendBudget};
 
-fn fixture() -> (tempfile::TempDir, GahConfig, GahConfig, JobRequest) {
+pub(super) fn fixture() -> (tempfile::TempDir, GahConfig, GahConfig, JobRequest) {
     let (tmp, mut central) = crate::ledger::test_util::test_config();
     let mut profile = crate::ledger::test_util::profile();
     profile.local_path = "/central/repo".into();

@@ -71,6 +71,46 @@ security-sensitive.
 
 ## Verification on November 6
 
+### Current work and route revalidation
+
+The private `check-current-policy --check-work` path now reads current central
+ledger/provider evidence and asks the existing controller for its next action.
+It does not filter out other work, active claims, incomplete evidence, higher
+priority lifecycle work, backpressure or budget gates to make a request fit.
+The prepared work identity, purpose, target, branch and selected review/repair
+generation must match. Numeric issue targets `1` and `#1` use the existing
+canonical identity; repository-relative ticket targets retain their paths.
+Review, implementation, retry, escalation, repair and PM intents are distinct.
+Provider-only merge/publication actions cannot authorize a native wrapper.
+
+The exact backend/account/model is also checked through the existing route
+engine using current ledger approvals and routing state. Standard controller
+restrictions remain in force: a prepared request cannot add an MR override,
+production/validation/intake overrides or change the controller retry shape.
+PM's separate zero-retry shape is retained. PM source-depth and publication
+contracts still require their normal checks during execution.
+
+The server wrapper's `checkWork: true` requires affirmative `work_current`
+evidence; a policy-only response cannot satisfy it. Both CLI forms continue to
+return `execution_authorized: false`. This is still source-only: no live
+broker caller, start grant issuer/consumer, worker transport/executor or
+per-attempt/publication authority has been installed. The future controller
+handoff must occur before acquiring a competing legacy/local claim. Ownership,
+loop state and host reservation still need their separate live checks.
+
+The actual CLI fixture found that legacy intake ignored `exec:human-required`.
+The shared intake disposition now rejects it in legacy and canonical modes,
+including alongside `exec:autonomous` and with a canonical-label override.
+Discovery/direct-fetch dispositions and the fallback scan share that rule and
+report `human_required` rather than silently selecting the issue.
+
+Verification: 18 native context cases, 61 intake cases and 91 controller decision
+cases pass; all-target/all-feature Clippy with warnings denied passes. The
+actual CLI fixture first accepts a fake autonomous issue, then rejects it after
+the human-required label appears; its backend canary is never invoked and its
+forge log shows no mutations by either check. The existing context CLI case
+also passes. The server flag/response test and server typecheck pass.
+
 - Server `npm run --workspace=apps/server typecheck` passes.
 - Windows: 37 of 39 combined broker/claim cases pass; two existing POSIX-only
   claim cases skip. All 15 broker cases pass.

@@ -12,6 +12,7 @@ import {
   loopSystemctlArgs,
   runDispatchCancellable,
   runDispatchUsageReport,
+  runCheckNativePolicy,
   runConfigSet,
   runConfigShow,
   runDoctor,
@@ -20,6 +21,19 @@ import {
   startLoop,
   stopLoop,
 } from './gahCli.js';
+
+test('native work checks require the explicit CLI flag and affirmative work evidence', async () => {
+  const binding = {run_id:'11111111-1111-4111-8111-111111111111',node_id:'worker',context_sha256:'a'.repeat(64),profile:'fixture',repo_id:'fixture',repo:'fixture/repo',work_id:'#1',mode:'fix',backend:'codex',backend_instance:null,model:'fixture-model',branch:null,review_generation:null,dispatch_reason:'initial'};
+  const options = { contextDirectory:'/private/context', contextSha256:binding.context_sha256, nodeId:binding.node_id, centralUrl:'https://central.invalid', checkWork:true };
+  for (const current of [true,null]) {
+    const response = JSON.stringify({binding,policy_current:true,execution_authorized:false,work_current:current});
+    const restore = pinFakeGah(`case " $* " in *" --check-work "*) ;; *) exit 91 ;; esac\nprintf '%s\\n' '${response}'`);
+    try {
+      if (current) assert.deepEqual(await runCheckNativePolicy(options),binding);
+      else await assert.rejects(runCheckNativePolicy(options),/mismatched binding/);
+    } finally { restore(); }
+  }
+});
 
 /** Writes a fake `gah` shell script, pins GAH_BINARY to it, and returns a
  * cleanup that restores the previous override. */

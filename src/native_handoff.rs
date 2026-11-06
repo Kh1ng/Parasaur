@@ -16,7 +16,9 @@ use std::{
 mod current;
 mod history;
 mod policy;
+mod work;
 pub use current::check_current_policy;
+pub use work::check_current_work;
 
 const MAX_JSON: u64 = 8 * 1024 * 1024;
 const MAX_HISTORY: u64 = 128 * 1024 * 1024;

@@ -1,5 +1,15 @@
 # Beta finishing pass: local validation
 
+Latest work revalidation: the private native check now re-observes the current
+controller action and exact route before accepting a queued intent. Changed
+work purpose, targets, review generations, incomplete evidence and unavailable
+or unapproved routes cannot be accepted through a policy-only response. An
+actual CLI fixture also exposed and now verifies the shared intake correction
+for `exec:human-required`, including legacy mode. Context/intake/decision checks,
+the CLI fixture, server wrapper checks and Clippy pass. This remains staged;
+the live broker caller, grant lifecycle and worker executor are unfinished.
+See [current work revalidation](native-dispatch-broker.md#current-work-and-route-revalidation).
+
 Latest current-policy prerequisite: the private native CLI/server path checks
 current central policy, permissions, factory enablement and live spend after
 context preparation. Changed restrictions and newly recorded unknown/exhausted
