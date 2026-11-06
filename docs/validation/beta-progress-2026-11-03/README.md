@@ -72,6 +72,12 @@ individual desktop/web tickets. Including the owner's two new usage/auth
 reports gives 29 scoped items. Those reports remain unfiled; deployed partial
 fixes are not closure evidence for the remaining live acceptance work.
 
+[Remote dispatch execution controls](remote-dispatch-options.md) fixes a worker
+WebSocket omission that could turn a requested dry-run into normal execution.
+The central API and Windows WSL worker are updated; an owned pinned dry-run
+completed. The current combined private build passes. Native factory handoff,
+live GitLab auth acceptance and the ten-hour memory soak remain outstanding.
+
 [Chat token categories](chat-token-breakdown.md) now survive ACP conversion and
 durable history, and the session drawer refuses complete totals when replies
 have missing measurements. Focused protocol, replay, unit and rendered component
