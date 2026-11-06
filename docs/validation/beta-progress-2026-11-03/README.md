@@ -1,5 +1,11 @@
 # Beta finishing pass: local validation
 
+Latest API correction: [provider startup](provider-startup.md) removes the
+pre-listen status query, with honest pending/failure/recovery readiness. Public
+and private regressions pass; the live node answered while initialization was
+pending and subsequently became healthy. The separate WebSocket welcome
+status barrier remains open.
+
 Latest deployment: [capacity notifications](capacity-notifications.md) makes
 pre-launch waits quiet history, corrects matching old false failure alerts,
 and preserves real alerts and their receipts. Shared web `0ce6e7fb` and the

@@ -75,7 +75,8 @@ were injected. Reports are `capacity-notification-{web,api}-deployment.json`
 and `capacity-notification-protocol.json` in local ignored
 `artifacts/central-live-20261105/` and the corresponding VM evidence directory.
 
-The physical capacity wait remains. The pre-listen provider-status refresh
-also warrants startup hardening; this deployment does not claim that cold-start
-blocking is resolved. Real pipeline progression, persistent GitLab sign-in,
+The physical capacity wait remains. [Provider startup](provider-startup.md)
+subsequently removes the pre-listen refresh barrier in a separate deployment;
+the notification deployment itself did not make that correction. The full-status
+WebSocket welcome barrier remains. Real pipeline progression, persistent GitLab sign-in,
 provider billing reconciliation and Mac memory acceptance remain open.
