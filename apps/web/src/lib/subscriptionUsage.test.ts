@@ -145,3 +145,22 @@ test('a fresh successful check does not rejuvenate stale, undated or future obse
   expect(account.windows[0].usedPercent).toBe(25);
   expect(currentTightestWindow(account, now)).toBeNull();
 });
+
+
+test('native probe markers do not become accounts or execution identities', () => {
+  const row = (instance: string) => ({ backend: 'agy', provider: 'antigravity', backend_instance: instance, status: 'failed', quota_observations: [] });
+  const subscriptions = subscriptionUsage({ quota_checks: [row('agy:usage-probe'), row('agy-second:usage-probe'), { ...row('agy:external'), status: 'data' }, { ...row('credential:usage-probe'), credential_id: 'named' }] } as never);
+  expect(subscriptions.map(account => account.id)).toEqual(['agy', 'named']);
+  expect(subscriptions[0].executionScopes).toEqual([{ backend: 'agy', backendInstance: 'agy:external' }]);
+  expect(busySubscriptionIds({ subscriptions, sessions: [{ backend: 'agy', backendInstance: 'agy:usage-probe', status: 'running' }] } as never).size).toBe(0);
+});
+
+test('the newest reading is selected by instant rather than ISO text ordering', () => {
+  const observations = [
+    { backend: 'codex', quota_window: 'daily', quota_remaining_percent: 80, observed_at: '2026-11-06T04:00:00Z' },
+    { backend: 'codex', quota_window: 'daily', quota_remaining_percent: 40, observed_at: '2026-11-05T23:01:00-05:00' },
+  ];
+  const account = subscriptionUsage({ candidates: [{ ...candidate('work', 'a', 0), quota_observations: observations }] } as never)[0];
+  expect(account.windows).toHaveLength(1);
+  expect(account.windows[0].usedPercent).toBe(60);
+});

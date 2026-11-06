@@ -83,13 +83,18 @@ function usedPercent(observation: QuotaObservation): number | null {
   return null;
 }
 
+type AccountScope = Pick<QuotaCheck, 'backend' | 'provider' | 'backend_instance' | 'credential_id' | 'quota_pool'>;
+
+function isAntigravityScope(source: AccountScope): boolean {
+  return source.provider === 'antigravity' || ['agy', 'agy-main', 'agy-second'].includes(source.backend);
+}
+
 /** A named credential wins. Only Antigravity's documented pool suffixes
  * describe one account; generic runners may host unrelated providers. */
-export function accountId(source: { backend: string; provider?: string | null; backend_instance?: string | null; credential_id?: string | null }): string {
+export function accountId(source: AccountScope): string {
   if (source.credential_id != null) return source.credential_id;
   const instance = source.backend_instance ?? source.backend;
-  const antigravity = source.provider === 'antigravity' || ['agy', 'agy-main', 'agy-second'].includes(source.backend);
-  return antigravity ? instance.replace(/:(external|google-native)$/, '') : instance;
+  return isAntigravityScope(source) ? instance.replace(/:(external|google-native)$/, '') : instance;
 }
 
 const POOL_LABELS: Record<string, string> = {
@@ -166,6 +171,8 @@ export function subscriptionUsage(snapshot: Partial<Pick<QuotaSnapshot, 'candida
   for (const scope of scopes) {
     const id = accountId(scope);
     if (id.startsWith('cli-router')) continue;
+    // Native refresh markers report a check, not another installed account.
+    if (!scope.credential_id && isAntigravityScope(scope) && scope.backend_instance?.endsWith(':usage-probe')) continue;
     const entry = accounts.get(id) ?? { scopes: [], candidates: [] };
     entry.scopes.push(scope);
     if (candidates.includes(scope as QuotaCandidateStatus)) entry.candidates.push(scope as QuotaCandidateStatus);
@@ -180,7 +187,9 @@ export function subscriptionUsage(snapshot: Partial<Pick<QuotaSnapshot, 'candida
       const key = `${window.pool}|${observation.quota_window}|${window.model}`;
       const previous = byWindow.get(key);
       // A candidate and its account check report the same reading; keep the newest.
-      if (!previous || (window.observedAt ?? '') > (previous.observedAt ?? '')) byWindow.set(key, window);
+      const observed = Date.parse(window.observedAt ?? '');
+      const previousObserved = Date.parse(previous?.observedAt ?? '');
+      if (!previous || (Number.isFinite(observed) && (!Number.isFinite(previousObserved) || observed > previousObserved))) byWindow.set(key, window);
     }));
     // An account-wide reading repeated under each pool is shown once, per pool.
     const pooled = new Set([...byWindow.values()].filter((window) => window.pool).map((window) => window.windowMs ?? window.label));
