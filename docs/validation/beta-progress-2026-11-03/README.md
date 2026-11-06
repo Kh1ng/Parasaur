@@ -9,6 +9,10 @@ context/host/journal cases, 17 capacity cases, two CLI cases, Clippy and the
 expanded real process check pass. This remains staged; the verified wrapper,
 result/release lifecycle and production transport still need implementation.
 See [worker start fences](native-worker-host-admission.md#durable-worker-start-fences-and-recovery-inspection).
+Optimized `09504779` verifies 611 source inputs and passes the real WSL
+host/journal/crash check plus the real Rust/compiled HTTP grant/result bridge.
+Unchanged server/contracts source permits reuse of the prior compiled API;
+this is not a newly built enterprise assembly or installed worker rollout.
 
 The original central memory observer has now completed ten hours on the same
 controller with no restarts or OOM kills. Its 597 samples include one delayed

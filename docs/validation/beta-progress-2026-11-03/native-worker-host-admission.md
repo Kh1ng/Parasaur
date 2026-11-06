@@ -104,6 +104,24 @@ local-only capability operations. Host reservation is marked non-idempotent;
 no generic remote operation exposes these paths. All 12 capability integration
 checks and all-target/all-feature Clippy with warnings denied pass.
 
+Optimized candidate `09504779` verifies all 611 Rust/Cargo inputs against its
+immutable archive. Formatting, release build, context/current-spend smokes and
+the expanded real host/journal/crash check pass with that exact release binary.
+SHA-256 is
+`df58ffcfeece167407dca286a986a71870446e4225dfd256f3655474b7179019`;
+the staged artifact is `artifacts/parasaur-native-context-09504779/` and requires
+glibc 2.39. Build log:
+`/home/khing/.cache/parasaur-native-context-release.nziiyi2e/build.log`.
+
+That same optimized binary passes the real Rust/compiled HTTP broker bridge,
+including one-use grants across restart, failed-result/unknown-cost import and
+canonical history cleanup. Server/contracts source is verified unchanged since
+`aa8f7ad8`, so its already-built private `bf75f1a` API runtime is reused; no new
+full enterprise assembly is claimed. Provider/controller/worker transport are
+controlled fixtures in this bridge. It runs no model or real issue. The host
+crash check independently uses actual WSL systemd, kernel locks and default
+capacity settings. Neither check installs the staged CLI.
+
 The launch callback is still a library primitive, not a production executor.
 It must launch only the fixed verified wrapper, which consumes central's one-use
 grant and applies fresh later attempt/publication authority. No worker start
