@@ -9,7 +9,7 @@
  # and removes the header before Parasaur sees the request.
  #
  # Set PARASAUR_GATE below (host:port of the gate; firewall it so only GitLab can reach it). Test before reconfigure:
-@@ -28,7 +28,15 @@
+@@ -28,6 +28,14 @@
      proxy_set_header X-Forwarded-Prefix /parasaur;
      proxy_set_header X-Forwarded-Proto https;      # set to $scheme if GitLab's nginx terminates TLS itself
      proxy_set_header X-Gitlab-Session $cookie__gitlab_session;
@@ -25,4 +25,3 @@
 +    proxy_set_header Cookie $parasaur_cookies;
      proxy_read_timeout 3600s;
    }
- 
