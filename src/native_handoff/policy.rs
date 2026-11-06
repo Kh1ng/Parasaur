@@ -96,7 +96,9 @@ pub(super) struct PortablePolicy {
 
 // These vectors can include permission flags as well as runtime options. Do
 // not silently discard a central restriction or merge opposing CLI switches.
-// Pin their exact node-local values by digest; paths and credentials stay local.
+// Pin their node-local values by digest; paths and credentials stay local.
+// The only exception is OpenCode's ignored agent override: both launch paths
+// select that from the job role. Model pins still affect routing and stay pinned.
 fn runtime_rules(value: &Value) -> Result<BTreeMap<String, String>> {
     [
         "openhands_args",
@@ -109,16 +111,21 @@ fn runtime_rules(value: &Value) -> Result<BTreeMap<String, String>> {
     ]
     .into_iter()
     .map(|key| {
+        let raw = value
+            .get(key)
+            .context("Runtime rule field is unavailable")?;
+        let canonical = if key == "opencode_args" {
+            let args: Vec<String> = serde_json::from_value(raw.clone())
+                .context("OpenCode runtime arguments are not a string vector")?;
+            serde_json::to_value(crate::runner::resolve::without_opencode_agent_override(
+                &args,
+            ))?
+        } else {
+            raw.clone()
+        };
         Ok((
             key.into(),
-            format!(
-                "{:x}",
-                Sha256::digest(serde_json::to_vec(
-                    value
-                        .get(key)
-                        .context("Runtime rule field is unavailable")?
-                )?)
-            ),
+            format!("{:x}", Sha256::digest(serde_json::to_vec(&canonical)?)),
         ))
     })
     .collect()

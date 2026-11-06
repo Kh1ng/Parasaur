@@ -478,6 +478,52 @@ fn a_worker_with_different_permission_arguments_cannot_silently_replace_central_
 }
 
 #[test]
+fn ignored_opencode_agent_overrides_do_not_block_a_worker_but_model_and_runtime_rules_do() {
+    let _guard = crate::test_support::ExecGuard::new();
+    let (tmp, mut central, mut worker, request) = fixture();
+    central.profiles.get_mut("test").unwrap().opencode_args = vec![
+        "--agent".into(),
+        "gah-reviewer".into(),
+        "--agent=ignored".into(),
+    ];
+    let input = tmp.path().join("input");
+    let expected = prepare(
+        &central,
+        &request,
+        "worker",
+        "https://central.invalid",
+        &input,
+    )
+    .unwrap();
+    load(
+        &worker,
+        &input,
+        &expected.context_sha256,
+        "worker",
+        &tmp.path().join("job"),
+    )
+    .unwrap();
+    for (index, args) in [
+        vec!["--model", "other-model"],
+        vec!["--permission", "changed"],
+        vec!["--format", "json"],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        worker.profiles.get_mut("test").unwrap().opencode_args =
+            args.into_iter().map(String::from).collect();
+        let work = tmp.path().join(format!("changed-{index}"));
+        let error = load(&worker, &input, &expected.context_sha256, "worker", &work)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("opencode_args"));
+        assert!(!work.exists());
+    }
+}
+
+#[test]
 fn prelaunch_policy_refusal_does_not_invent_spend_but_possible_invocation_still_holds_budget() {
     let _guard = crate::test_support::ExecGuard::new();
     let (_tmp, central, _worker, _request) = fixture();

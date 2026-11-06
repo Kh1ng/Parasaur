@@ -86,6 +86,31 @@ guards and browser credential/transport checks. Log:
 `/home/khing/.cache/parasaur-enterprise-current.dmqcov66/build.log`.
 Its Supabase values are fixtures, not live SSO evidence.
 
+## Runtime argument compatibility
+
+The launch-code trace confirms that both OpenCode implementation and review
+select their agent from the job role and remove profile `--agent` overrides.
+The native policy now uses that same shared removal helper before hashing
+OpenCode runtime arguments. It still hashes model pins, which can influence
+routing before launch, and all other runtime/permission flags. Other runners
+retain their exact argument-vector checks. No broad normalization or unknown
+flag removal was added. Context cases accept ignored agent overrides and
+refuse differing model, permission and output arguments before job creation.
+
+Both installed Claude CLIs expose central's `--safe-mode` in their own `--help`.
+With the real worker WebSocket roster at zero active sessions and its native
+loop inactive, the worker's empty `claude_args` was set to `["--safe-mode"]`.
+An in-memory full TOML comparison verifies every other configuration value
+remains unchanged. The original config is backed up privately under
+`~/.local/state/gah/worker-recovery-20261106/native-runtime-safe-mode/`.
+The API remains PID 352938 and its CLI hash is unchanged; no service restart
+or model/job execution was used. Ignored metadata report:
+`artifacts/central-live-20261105/worker-native-safe-mode-alignment.json`.
+
+Twelve focused context cases, the actual CLI check and all-target/all-feature
+Clippy with warnings denied pass for the shared-filter change. Production
+context re-preparation and worker acceptance of this candidate remain required.
+
 ## Central preparation
 
 The private `native-handoff prepare` command accepts a trusted request file,
