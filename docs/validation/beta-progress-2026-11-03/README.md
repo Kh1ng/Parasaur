@@ -3,7 +3,12 @@
 Latest worker correction: [execution ownership and results](worker-execution-results.md)
 keeps unknown cancellations, disconnects and lost acknowledgements from
 releasing work prematurely. Offered receipts survive coordinator restart, and
-fresh terminal states require an observed result. Native remote handoff still
+fresh terminal states require an observed result. Public `b27bdf55` is deployed
+to both APIs and the shared web; a pinned Windows WSL dry-run returned its
+observed exit code and the worker subsequently had zero active sessions.
+The matched private assembly passes 1,155 server and 17 mock cases. The
+unchanged memory observer has reached 4.38 hours without OOM; ten hours and
+sustained agent load remain unverified. Native remote handoff still
 needs central ledger/policy transfer; this is its execution boundary.
 
 Latest staged control: [factory spend ceilings](factory-spend-ceilings.md)
