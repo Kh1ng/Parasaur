@@ -13,6 +13,72 @@ fn entry() -> LedgerEntry {
 }
 
 #[test]
+fn account_auth_bindings_and_quota_pools_do_not_merge_under_one_instance_name() {
+    let _clock = crate::clock::set_for_test(
+        OffsetDateTime::parse("2026-11-06T12:00:00Z", &Rfc3339).unwrap(),
+    );
+    let (_tmp, cfg) = test_config();
+    for (auth, pool, tokens) in [
+        ("auth-a", "pool-a", 10),
+        ("auth-b", "pool-a", 20),
+        ("auth-a", "pool-b", 30),
+    ] {
+        let mut entry = entry();
+        entry.attempts = vec![AttemptRecord {
+            backend: "codex".into(),
+            attempt_number: 1,
+            usage: LedgerUsage {
+                backend_instance: Some("work".into()),
+                auth_source_label: Some(auth.into()),
+                quota_pool: Some(pool.into()),
+                total_tokens: Some(tokens),
+                ..Default::default()
+            },
+            ..Default::default()
+        }];
+        append(&cfg, &entry).unwrap();
+    }
+    let report = build(&cfg, "7d", Some("test")).unwrap();
+    assert_eq!(report.rows.len(), 3);
+    assert_eq!(
+        report
+            .rows
+            .iter()
+            .filter_map(|row| row.total_tokens)
+            .sum::<u64>(),
+        60
+    );
+}
+
+#[test]
+fn mixed_readings_keep_the_measured_subtotal_and_missing_count() {
+    let identity = identity(
+        &entry(),
+        &LedgerUsage::default(),
+        "codex",
+        None,
+        None,
+        "2026-11-06",
+    );
+    let mut row = Row::new(identity);
+    row.add(
+        &LedgerUsage {
+            total_tokens: Some(70),
+            actual_cost_usd: Some(0.25),
+            ..Default::default()
+        },
+        true,
+    );
+    row.add(&LedgerUsage::default(), true);
+    assert_eq!(row.total_tokens, None);
+    assert_eq!(row.actual_cost_usd, None);
+    assert_eq!(row.measurements.total_tokens.reported_total, Some(70));
+    assert_eq!(row.measurements.total_tokens.measured_observations, 1);
+    assert_eq!(row.measurements.total_tokens.unmeasured_observations, 1);
+    assert_eq!(row.measurements.actual_cost_usd.reported_total, Some(0.25));
+}
+
+#[test]
 fn legacy_summary_readings_survive_when_attempt_usage_was_never_recorded() {
     let _clock = crate::clock::set_for_test(
         OffsetDateTime::parse("2026-11-06T12:00:00Z", &Rfc3339).unwrap(),

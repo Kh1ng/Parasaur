@@ -17,6 +17,9 @@ export interface DispatchUsageRow {
   work_id: string | null;
   backend: string;
   backend_instance: string | null;
+  account_label: string | null;
+  auth_source_label: string | null;
+  quota_pool: string | null;
   requested_model: string | null;
   effective_model: string | null;
   actual_model: string | null;
@@ -37,4 +40,42 @@ export interface DispatchUsageRow {
   reasoning_tokens: number | null;
   actual_cost_usd: number | null;
   estimated_cost_usd: number | null;
+  measurements: UsageMeasurements;
+}
+
+export const USAGE_METRIC_FIELDS = ['input_tokens', 'output_tokens', 'total_tokens', 'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens', 'actual_cost_usd', 'estimated_cost_usd'] as const;
+export type UsageMetricField = typeof USAGE_METRIC_FIELDS[number];
+
+/** A measured subtotal is not a complete total when readings or a source are missing. */
+export interface UsageMeasurement {
+  reported_total: number | null;
+  measured_observations: number;
+  unmeasured_observations: number;
+}
+export type UsageMeasurements = Record<UsageMetricField, UsageMeasurement>;
+
+export interface RecordedUsageRow extends Omit<DispatchUsageRow, UsageMetricField | 'project_provider' | 'repo'> {
+  source: 'chat' | 'dispatch';
+  chat_turns: number;
+  node_id: string | null;
+  /** Historical chat logs do not record repository/forge identity. */
+  project_provider: string | null;
+  repo: string | null;
+}
+
+export interface UsageSourceCoverage {
+  status: 'available' | 'unavailable';
+  message?: string;
+  excluded_preflight_entries?: number;
+}
+
+export interface RecordedUsageReport {
+  schema_version: 1;
+  scope: 'recorded-ledger-and-chat';
+  profile: string | null;
+  since: string;
+  generated_at: string;
+  sources: { chat: UsageSourceCoverage; dispatch: UsageSourceCoverage };
+  rows: RecordedUsageRow[];
+  totals: UsageMeasurements;
 }

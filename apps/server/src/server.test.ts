@@ -34,7 +34,7 @@ test('all API routes require remote authentication while health and trusted loca
   try {
     await withFixtureServer(async base => {
       // Start with a harmless fixture read so the pre-fix negative control has no side effects.
-      for (const path of ['/api/profiles', '/api/config', '/api/manager-chat/sessions', '/api/dispatch', '/api/loop/start', '/api/ledger/clear-attempts', '/api/hold/set', '/api/availability/clear', '/api/git/pr', '/api/git/pull-request/update', '/api/not-yet-implemented']) {
+      for (const path of ['/api/profiles', '/api/config', '/api/manager-chat/sessions', '/api/usage/report', '/api/dispatch', '/api/loop/start', '/api/ledger/clear-attempts', '/api/hold/set', '/api/availability/clear', '/api/git/pr', '/api/git/pull-request/update', '/api/not-yet-implemented']) {
         const response = await fetch(base + path, { headers: remote });
         assert.equal(response.status, 401, path);
       }

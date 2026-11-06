@@ -15,6 +15,9 @@ struct Identity {
     work_id: Option<String>,
     backend: String,
     backend_instance: Option<String>,
+    account_label: Option<String>,
+    auth_source_label: Option<String>,
+    quota_pool: Option<String>,
     requested_model: Option<String>,
     effective_model: Option<String>,
     actual_model: Option<String>,
@@ -37,6 +40,46 @@ struct Row {
     reasoning_tokens: Option<u64>,
     actual_cost_usd: Option<f64>,
     estimated_cost_usd: Option<f64>,
+    measurements: Measurements,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct Measurement<T> {
+    reported_total: Option<T>,
+    measured_observations: u64,
+    unmeasured_observations: u64,
+}
+
+impl<T: Copy> Measurement<T> {
+    fn record(&mut self, reading: Option<T>, add: impl FnOnce(T, T) -> Option<T>) -> Option<T> {
+        if let Some(value) = reading {
+            self.reported_total = if self.measured_observations == 0 {
+                Some(value)
+            } else {
+                self.reported_total.and_then(|total| add(total, value))
+            };
+            self.measured_observations += 1;
+        } else {
+            self.unmeasured_observations += 1;
+        }
+        if self.unmeasured_observations == 0 {
+            self.reported_total
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Default, Serialize)]
+struct Measurements {
+    input_tokens: Measurement<u64>,
+    output_tokens: Measurement<u64>,
+    total_tokens: Measurement<u64>,
+    cache_read_tokens: Measurement<u64>,
+    cache_write_tokens: Measurement<u64>,
+    reasoning_tokens: Measurement<u64>,
+    actual_cost_usd: Measurement<f64>,
+    estimated_cost_usd: Measurement<f64>,
 }
 
 impl Row {
@@ -53,6 +96,7 @@ impl Row {
             reasoning_tokens: Some(0),
             actual_cost_usd: Some(0.0),
             estimated_cost_usd: Some(0.0),
+            measurements: Measurements::default(),
         }
     }
 
@@ -64,24 +108,59 @@ impl Row {
         }
         // Provider fields are independent: neither caches nor reasoning are
         // added to a reported total. Any missing reading invalidates its sum.
-        for (total, reading) in [
-            (&mut self.input_tokens, usage.input_tokens),
-            (&mut self.output_tokens, usage.output_tokens),
-            (&mut self.total_tokens, usage.total_tokens),
-            (&mut self.cache_read_tokens, usage.cache_read_tokens),
-            (&mut self.cache_write_tokens, usage.cache_write_tokens),
-            (&mut self.reasoning_tokens, usage.reasoning_tokens),
+        for (total, measurement, reading) in [
+            (
+                &mut self.input_tokens,
+                &mut self.measurements.input_tokens,
+                usage.input_tokens,
+            ),
+            (
+                &mut self.output_tokens,
+                &mut self.measurements.output_tokens,
+                usage.output_tokens,
+            ),
+            (
+                &mut self.total_tokens,
+                &mut self.measurements.total_tokens,
+                usage.total_tokens,
+            ),
+            (
+                &mut self.cache_read_tokens,
+                &mut self.measurements.cache_read_tokens,
+                usage.cache_read_tokens,
+            ),
+            (
+                &mut self.cache_write_tokens,
+                &mut self.measurements.cache_write_tokens,
+                usage.cache_write_tokens,
+            ),
+            (
+                &mut self.reasoning_tokens,
+                &mut self.measurements.reasoning_tokens,
+                usage.reasoning_tokens,
+            ),
         ] {
-            *total = total.zip(reading).and_then(|(a, b)| a.checked_add(b));
+            *total = measurement.record(reading, u64::checked_add);
         }
-        for (total, reading) in [
-            (&mut self.actual_cost_usd, usage.actual_cost_usd),
-            (&mut self.estimated_cost_usd, usage.estimated_cost_usd),
+        for (total, measurement, reading) in [
+            (
+                &mut self.actual_cost_usd,
+                &mut self.measurements.actual_cost_usd,
+                usage.actual_cost_usd,
+            ),
+            (
+                &mut self.estimated_cost_usd,
+                &mut self.measurements.estimated_cost_usd,
+                usage.estimated_cost_usd,
+            ),
         ] {
-            *total = total.zip(reading).and_then(|(a, b)| {
-                let sum = a + b;
-                (b.is_finite() && b >= 0.0 && sum.is_finite()).then_some(sum)
-            });
+            *total = measurement.record(
+                reading.filter(|value| value.is_finite() && *value >= 0.0),
+                |a, b| {
+                    let sum = a + b;
+                    sum.is_finite().then_some(sum)
+                },
+            );
         }
     }
 }
@@ -162,6 +241,19 @@ pub(super) fn build(cfg: &GahConfig, since: &str, profile: Option<&str>) -> Resu
                 if identity.backend_instance.is_none() {
                     identity.backend_instance = route.map(|route| route.backend_instance.clone());
                 }
+                if let Some(route) = route.and_then(|route| route.identity.as_ref()) {
+                    if identity.account_label.is_none() {
+                        identity.account_label.clone_from(&route.account_label);
+                    }
+                    if identity.auth_source_label.is_none() {
+                        identity
+                            .auth_source_label
+                            .clone_from(&route.auth_source_label);
+                    }
+                    if identity.quota_pool.is_none() {
+                        identity.quota_pool.clone_from(&route.quota_pool);
+                    }
+                }
                 groups
                     .entry(identity.clone())
                     .or_insert_with(|| Row::new(identity))
@@ -196,6 +288,9 @@ fn identity(
         work_id: entry.work_id.clone(),
         backend: backend.into(),
         backend_instance: usage.backend_instance.clone(),
+        account_label: usage.account_label.clone(),
+        auth_source_label: usage.auth_source_label.clone(),
+        quota_pool: usage.quota_pool.clone(),
         requested_model,
         effective_model,
         actual_model: usage.actual_model.clone(),

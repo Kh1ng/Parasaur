@@ -6,9 +6,26 @@ import { fileURLToPath } from 'node:url';
 
 import ts from 'typescript';
 import { WebSocket } from 'ws';
-import type { ClientMessage, ProjectImportResult, ServerMessage, PairingAccessRequest, PairedDevice } from '@git-agent-harness/contracts';
+import type { ClientMessage, ProjectImportResult, ServerMessage, PairingAccessRequest, PairedDevice, RecordedUsageReport } from '@git-agent-harness/contracts';
 import { createMockControlPlane, MOCK_SCENARIOS } from './controlPlane.js';
 import type { ComputeOutputCatalog, ComputeOutputDownload, ComputeJournalReview, NodeFactorySnapshot } from '@git-agent-harness/contracts';
+
+test('sample recorded usage combines chat and factory readings with explicit coverage', async () => {
+  const running = await createMockControlPlane().listen(0);
+  try {
+    const response = await fetch(`${running.baseUrl}/api/usage/report?profile=sample&days=30`);
+    assert.equal(response.status, 200);
+    const report = await response.json() as RecordedUsageReport;
+    assert.equal(report.profile, 'sample');
+    assert.equal(report.rows.reduce((sum: number, row: { chat_turns: number }) => sum + row.chat_turns, 0), 4);
+    assert.equal(report.rows.reduce((sum: number, row: { dispatch_attempts: number }) => sum + row.dispatch_attempts, 0), 1);
+    assert.equal(report.totals.total_tokens.reported_total, 3400);
+    assert.equal(report.totals.actual_cost_usd.reported_total, 0.12);
+    assert.equal(report.totals.actual_cost_usd.unmeasured_observations, 4);
+    assert.equal(Date.parse(report.generated_at) - Date.parse(report.since), 30 * 86_400_000);
+    assert.equal((await fetch(`${running.baseUrl}/api/usage/report?days=0`)).status, 400);
+  } finally { await running.close(); }
+});
 
 test('sample worker factory observations are source-scoped and do not run the central controller', async () => {
   const running = await createMockControlPlane().listen(0);

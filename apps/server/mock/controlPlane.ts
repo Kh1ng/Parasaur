@@ -7,6 +7,8 @@
  * mutable data is the in-memory MockState below.
  */
 import { readFileSync } from 'node:fs';
+import type { RecordedUsageReport, RecordedUsageRow } from '@git-agent-harness/contracts';
+import { addUsageMeasurements, emptyUsageMeasurements, observeUsage } from '@git-agent-harness/shared';
 import { createHash } from 'node:crypto';
 import type { ComputeOutputCatalog, ComputeOutputEntry } from '@git-agent-harness/contracts';
 import { createServer } from 'node:http';
@@ -1761,6 +1763,29 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
   });
   app.get('/api/usage/rollup', (req, res) => {
     res.json({ ...MOCK_USAGE_ROLLUP, profile: bodyString(req.query.profile) ?? 'fixture' } satisfies UsageRollupSummary);
+  });
+  app.get('/api/usage/report', (req, res) => {
+    const profile = bodyString(req.query.profile) ?? 'fixture';
+    const days = req.query.days === undefined ? 7 : Number(req.query.days);
+    if (!Number.isInteger(days) || days < 1 || days > 90) return res.status(400).json({ error: 'Invalid day window' });
+    const rows: RecordedUsageRow[] = MOCK_USAGE_ROLLUP.rows.map(row => {
+      const measurements = observeUsage(row);
+      for (const reading of Object.values(measurements)) {
+        reading.measured_observations *= row.turns;
+        reading.unmeasured_observations *= row.turns;
+      }
+      return { source: 'chat', profile, project_provider: null, repo: null, work_id: '#1087', backend: row.backend,
+        backend_instance: row.backend_instance, account_label: null, auth_source_label: null, quota_pool: null, node_id: 'mock-worker', requested_model: null, effective_model: row.model,
+        actual_model: null, model_provider: null, usage_classification: null, day: row.day, chat_turns: row.turns,
+        dispatch_attempts: 0, legacy_dispatches: 0, measurements };
+    });
+    rows.push({ ...rows[0], source: 'dispatch', project_provider: 'github', repo: 'fixture/mock-control-plane', node_id: null,
+      chat_turns: 0, dispatch_attempts: 1, measurements: observeUsage({ total_tokens: 400, cache_read_tokens: 80, actual_cost_usd: 0.12, estimated_cost_usd: 0.15 }) });
+    const totals = emptyUsageMeasurements();
+    for (const row of rows) addUsageMeasurements(totals, row.measurements);
+    res.json({ schema_version: 1, scope: 'recorded-ledger-and-chat', profile: bodyString(req.query.profile) ?? null,
+      since: new Date(FIXED_NOW - days * 86_400_000).toISOString(), generated_at: new Date(FIXED_NOW).toISOString(),
+      sources: { chat: { status: 'available' }, dispatch: { status: 'available' } }, rows, totals } satisfies RecordedUsageReport);
   });
   app.get('/api/manager-chat/helper-usage', (_req, res) => {
     res.json({ records: [{

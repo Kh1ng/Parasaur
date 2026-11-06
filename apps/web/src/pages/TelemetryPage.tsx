@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { ArrowUpDown, FlaskConical } from 'lucide-react';
-import type { BackendModelComparison, ExportHealth, HelperUsageRecord, QuotaSnapshot, ReportGroupBy, UsageRollupSummary } from '@git-agent-harness/contracts';
+import type { BackendModelComparison, ExportHealth, HelperUsageRecord, QuotaSnapshot, ReportGroupBy } from '@git-agent-harness/contracts';
 import { useWebSocket } from '../ws/WebSocketContext.js';
 import { useUiStore } from '../store/uiStore.js';
 import { useGahStore } from '../store/gahStore.js';
@@ -13,8 +13,7 @@ import { EmptyState, LoadingState, ErrorState } from '../components/ui/EmptyStat
 import { StatusBadge, type StatusTone } from '../components/ui/StatusBadge.js';
 import { TrendChart } from '../components/TrendChart.js';
 import { formatCost, formatDuration, formatPercent, formatTokens, formatCount, formatAge, oldestFetchedAt } from '../lib/format.js';
-import { aggregateUsageRows } from '../lib/usageRollup.js';
-import { summarizeChatUsage } from '../lib/chatUsage.js';
+import { RecordedUsageCard } from '../components/RecordedUsageCard.js';
 
 const TELEMETRY_REFRESH_MS = 60 * 1000;
 
@@ -90,218 +89,6 @@ type SortKey = keyof Pick<
   BackendModelComparison,
   'entries' | 'success_rate' | 'average_duration_seconds' | 'total_tokens' | 'memory_gateway_capture_l0_recorded' | 'actual_cost_usd' | 'estimated_cost_usd'
 >;
-
-/** Actual burn GAH itself observed, aggregated from manager-chat session
- * logs (#940): the dispatch-ledger tables above only cover gah-dispatched
- * work, while nearly all work now happens in manager chat. */
-export function ChatUsageRollupCard({ profile }: { profile: string | undefined }) {
-  const [days, setDays] = useState<7 | 30>(7);
-  const [rollup, setRollup] = useState<UsageRollupSummary | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [retry, setRetry] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    gahApi.getUsageRollup(profile, days)
-      .then((data) => { if (!cancelled) setRollup(data); })
-      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : String(err)); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [profile, days, retry]);
-  useWsReconnectRefresh(() => setRetry(value => value + 1));
-
-  const rows = rollup?.rows ?? [];
-  const usageUnavailable = rollup?.usage_unavailable ?? [];
-  const byBackend = useMemo(() => aggregateUsageRows(rows), [rows]);
-
-  const reportedTurns = byBackend.reduce((sum, [, row]) => sum + row.turns, 0);
-  const totals = summarizeChatUsage(rows.map(row => ({ ...row, duration_seconds: null })));
-  const tokenLabel = (value: number | null | undefined) => value == null ? 'Not reported' : formatTokens(value);
-  const usageSeries = byBackend.flatMap(([backend, aggregate]) =>
-    [...aggregate.models.entries()].map(([model, modelUsage]) => ({ backend, model: model ?? 'Unreported model', id: JSON.stringify([aggregate.id, model]), ...modelUsage }))
-  ).sort((a, b) => (b.totalTokens ?? -1) - (a.totalTokens ?? -1));
-  const maxSeriesTokens = Math.max(...usageSeries.flatMap(series => series.totalTokens === null ? [] : [series.totalTokens]), 1);
-
-  return (
-    <section className="card-padded">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-        <div>
-          <h3 className="text-sm font-semibold text-primary">Manager chat usage</h3>
-          <p className="text-xs text-muted mt-0.5">
-            Source: manager-chat session logs. API equivalent is an estimate, not your subscription bill.
-          </p>
-        </div>
-        <div className="flex rounded-md border border-subtle overflow-hidden text-xs">
-          {([7, 30] as const).map((d) => (
-            <button
-              key={d}
-              onClick={() => setDays(d)}
-              className={`px-3 py-1.5 ${days === d ? 'bg-accent-fill text-on-fill' : 'text-secondary hover:bg-overlay/5'}`}
-            >
-              {d}d
-            </button>
-          ))}
-        </div>
-      </div>
-      {loading && !rollup ? (
-        <LoadingState label="Rolling up session usage…" />
-      ) : error ? (
-        <ErrorState message={`Usage rollup failed: ${error}`} onRetry={() => setRetry((current) => current + 1)} />
-      ) : rows.length === 0 && usageUnavailable.length === 0 ? (
-        <EmptyState icon={FlaskConical} title="No usage recorded" description={`No manager-chat usage in the last ${days} days.`} />
-      ) : (
-        <>
-          {rows.length > 0 && (
-            <>
-              <p className="mb-3 text-xs tabular-nums text-secondary">
-                {formatCount(reportedTurns)} completed {reportedTurns === 1 ? 'turn' : 'turns'} · {totals.totalTokens === null ? 'Token total incomplete' : `${formatTokens(totals.totalTokens)} total tokens`} ·{' '}
-                {totals.estimatedCostUsd === null ? 'API equivalent not reported' : `${formatCost(totals.estimatedCostUsd)} API equivalent`}
-              </p>
-              <p className="mb-3 text-xs text-muted">Totals require a reading from every included turn. Cache and reasoning counters are provider-reported and may overlap other categories.</p>
-              <div className="mb-4 rounded-md border border-subtle bg-raised/40 p-3" aria-labelledby="manager-usage-chart-title">
-                <h4 id="manager-usage-chart-title" className="text-xs font-semibold text-secondary">
-                  Tokens by backend and model
-                </h4>
-                <div className="mt-3 space-y-3">
-                  {usageSeries.map((series) => (
-                    <div key={series.id} className="grid min-w-0 grid-cols-1 gap-1.5 sm:grid-cols-[minmax(8rem,12rem)_1fr_auto] sm:items-center sm:gap-3">
-                      <span className="truncate text-xs text-primary" title={`${series.backend} / ${series.model}`}>
-                        {series.backend} / {series.model}
-                      </span>
-                      {series.totalTokens !== null ? <progress
-                        className="usage-progress"
-                        max={maxSeriesTokens}
-                        value={series.totalTokens}
-                        aria-label={`${series.backend} ${series.model}: ${formatTokens(series.totalTokens)} tokens across ${formatCount(series.turns)} turns`}
-                      /> : <span className="text-xs text-muted">Incomplete readings</span>}
-                      <span className="text-xs tabular-nums text-muted sm:text-right">
-                        {tokenLabel(series.totalTokens)} · {formatCount(series.turns)} turns
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs tabular-nums">
-              <thead>
-                <tr className="text-left text-muted border-b border-subtle">
-                  <th className="py-2 pr-4 font-medium">Backend</th>
-                  <th className="py-2 pr-4 font-medium">Turns</th>
-                  <th className="hidden py-2 pr-4 font-medium sm:table-cell">Input</th>
-                  <th className="hidden py-2 pr-4 font-medium sm:table-cell">Output</th>
-                  <th className="hidden py-2 pr-4 font-medium sm:table-cell">Cache read</th>
-                  <th className="hidden py-2 pr-4 font-medium sm:table-cell">Cache write</th>
-                  <th className="hidden py-2 pr-4 font-medium sm:table-cell">Reasoning</th>
-                  <th className="py-2 pr-4 font-medium">Total</th>
-                  <th className="py-2 font-medium">API equivalent</th>
-                </tr>
-              </thead>
-              <tbody>
-                {byBackend.map(([backend, agg]) => {
-                  const models = [...agg.models.entries()].sort((a, b) => (b[1].totalTokens ?? -1) - (a[1].totalTokens ?? -1));
-                  return (
-                    <tr key={agg.id} className="border-b border-subtle/50">
-                      <td className="py-2 pr-4 text-primary">
-                        <span className="block font-medium">{backend}</span>
-                        <span className="mt-0.5 block text-muted">
-                          {models.map(([model, usage]) => `${model ?? 'Unreported model'} · ${tokenLabel(usage.totalTokens)} · ${formatCount(usage.turns)} turns`).join(' · ')}
-                        </span>
-                      </td>
-                      <td className="py-2 pr-4">{formatCount(agg.turns)}</td>
-                      <td className="hidden py-2 pr-4 sm:table-cell">{tokenLabel(agg.inputTokens)}</td>
-                      <td className="hidden py-2 pr-4 sm:table-cell">{tokenLabel(agg.outputTokens)}</td>
-                      <td className="hidden py-2 pr-4 sm:table-cell">{tokenLabel(agg.cacheReadTokens)}</td>
-                      <td className="hidden py-2 pr-4 sm:table-cell">{tokenLabel(agg.cacheWriteTokens)}</td>
-                      <td className="hidden py-2 pr-4 sm:table-cell">{tokenLabel(agg.reasoningTokens)}</td>
-                      <td className="py-2 pr-4 font-medium text-primary">{tokenLabel(agg.totalTokens)}</td>
-                      <td className="py-2 whitespace-nowrap">
-                        {agg.estimatedCostUsd === null ? (
-                          <span className="text-muted">Not reported</span>
-                        ) : (
-                          <span>{formatCost(agg.estimatedCostUsd)}</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-                </table>
-              </div>
-            </>
-          )}
-          {rollup && rollup.tickets.length > 0 && (
-            <div className="mt-4">
-              <h4 className="text-xs font-semibold text-secondary mb-2">Cost per ticket</h4>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-left text-muted border-b border-subtle">
-                      <th className="py-2 pr-4 font-medium">Ticket</th>
-                      <th className="hidden py-2 pr-4 font-medium sm:table-cell">Session</th>
-                      <th className="py-2 pr-4 font-medium">Turns</th>
-                      <th className="py-2 pr-4 font-medium">Tokens</th>
-                      <th className="py-2 pr-4 font-medium">API equivalent</th>
-                      <th className="hidden py-2 font-medium sm:table-cell">Backends</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rollup.tickets.map((ticket) => (
-                      <tr key={ticket.ticket} className="border-b border-subtle/50">
-                        <td className="py-2 pr-4 text-primary">{ticket.ticket}</td>
-                        <td className="hidden py-2 pr-4 text-muted sm:table-cell">{ticket.title ?? '—'}</td>
-                        <td className="py-2 pr-4">{formatCount(ticket.turns)}</td>
-                        <td className="py-2 pr-4">{tokenLabel(ticket.total_tokens)}</td>
-                        <td className="py-2 pr-4">{ticket.estimated_cost_usd === null ? <span className="text-muted">unmeasured</span> : formatCost(ticket.estimated_cost_usd)}</td>
-                        <td className="hidden py-2 text-muted sm:table-cell">
-                          {Object.entries(ticket.backends).sort((a, b) => (b[1] ?? -1) - (a[1] ?? -1)).map(([backend, tokens]) => `${backend}: ${tokenLabel(tokens)}`).join(' · ')}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-          {usageUnavailable.length > 0 && (
-            <div className={rows.length > 0 ? 'mt-4' : ''}>
-              <h4 className="text-xs font-semibold text-warning">
-                Usage unavailable ({formatCount(usageUnavailable.length)})
-              </h4>
-              <p className="mt-1 text-xs text-muted">
-                These completed turns did not report token counters. Their account and ticket totals remain unknown.
-              </p>
-              <div className="mt-2 overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-left text-muted border-b border-subtle">
-                      <th className="py-2 pr-4 font-medium">Session</th>
-                      <th className="py-2 pr-4 font-medium">Backend</th>
-                      <th className="py-2 pr-4 font-medium">Model</th>
-                      <th className="py-2 font-medium">Day</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {usageUnavailable.map((turn, index) => (
-                      <tr key={`${turn.session_id}-${turn.backend}-${turn.day}-${index}`} className="border-b border-subtle/50">
-                        <td className="py-2 pr-4 font-mono text-primary">{turn.session_id}</td>
-                        <td className="py-2 pr-4">{turn.backend}</td>
-                        <td className="py-2 pr-4 text-muted">{turn.model ?? 'default'}</td>
-                        <td className="py-2 text-muted">{turn.day}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
 
 /** #1339: resolve one account quota reading for a comparison row from the
  * quota snapshot's checks. Each check is the latest reading of one source
@@ -471,7 +258,7 @@ export function TelemetryPage() {
     <div className="space-y-6">
       <PageHeader
         title="Telemetry"
-        description="Manager-chat usage and dispatch-ledger performance"
+        description="Chat and factory usage, recorded costs, and dispatch performance"
         onRefresh={refreshAll}
         refreshing={report.loading}
         lastUpdated={lastUpdated}
@@ -573,7 +360,7 @@ export function TelemetryPage() {
 
       {sorted.length > 0 && <UsageSummary rows={sorted} />}
 
-      <ChatUsageRollupCard profile={profile ?? undefined} />
+      <RecordedUsageCard profile={profile ?? undefined} />
 
       <HelperUsageCard profile={profile ?? undefined} />
 

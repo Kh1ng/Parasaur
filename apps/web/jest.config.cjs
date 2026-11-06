@@ -9,7 +9,8 @@ module.exports = {
       tsconfig: { module: 'CommonJS', isolatedModules: true, composite: false },
     }],
   },
-  moduleNameMapper: { '^(\\.{1,2}/.*)\\.js$': '$1' },
+  moduleNameMapper: {
+    '^@git-agent-harness/(contracts|shared)$': '<rootDir>/../../packages/$1/src/index.ts', '^(\\.{1,2}/.*)\\.js$': '$1' },
   collectCoverageFrom: [
     'src/store/gahStore.ts',
     'src/lib/{format,starMapLayout,skillFrontMatter,icons,workKey,planningTarget,reviewLabels}.ts',

@@ -30,6 +30,7 @@ import type {
   StatusSnapshot,
   QuotaSnapshot,
   UsageRollupSummary,
+  RecordedUsageReport,
   ReportData,
   ReportSeriesData,
   ReportGroupBy,
@@ -340,6 +341,7 @@ export interface GahDataSource {
   getStatus(profile?: string): Promise<StatusSnapshot>;
   getQuota(params?: { profile?: string; since?: string }): Promise<QuotaSnapshot>;
   getUsageRollup(profile?: string, days?: number): Promise<UsageRollupSummary>;
+  getRecordedUsage(profile?: string, days?: number): Promise<RecordedUsageReport>;
   getDoctor(profile?: string): Promise<DoctorSnapshot>;
   getReport(params?: { profile?: string; since?: string; groupBy?: ReportGroupBy }): Promise<ReportData>;
   getReportSeries(params?: { profile?: string; since?: string; bucket?: string }): Promise<ReportSeriesData>;
@@ -574,6 +576,9 @@ export const gahApi: GahDataSource = {
   },
   getUsageRollup(profile?: string, days = 7) {
     return getJson<UsageRollupSummary>('/api/usage/rollup', { profile, days: String(days) });
+  },
+  getRecordedUsage(profile, days = 7) {
+    return getJson<RecordedUsageReport>('/api/usage/report', { profile, days: String(days) });
   },
   getDoctor(profile) {
     return getJson<DoctorSnapshot>('/api/doctor', { profile });

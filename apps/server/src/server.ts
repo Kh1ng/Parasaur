@@ -1,4 +1,5 @@
 import { notificationChannelFailure } from './notifyDelivery.js';
+import { recordedUsageReport } from './recordedUsage.js';
 import { parseDispatchExecutionOptions } from './dispatchExecutionOptions.js';
 import { requestFailure } from './requestFailure.js';
 import { chatAccounts } from './chatAccounts.js';
@@ -179,6 +180,7 @@ type ConfigEffectiveDeps = {
 };
 
 type CreateServerOptions = Partial<ConfigEffectiveDeps> & {
+  usageReport?: Parameters<typeof recordedUsageReport>[1];
   runProfileChecks?: typeof runProfileChecks;
   runProfileList?: () => Promise<ProfileSummary[]>;
   runProfileAdd?: (options: ProfileAddOptions) => Promise<void>;
@@ -1405,6 +1407,17 @@ export function createServer(
         message: error instanceof Error ? error.message : String(error)
       });
     }
+  });
+
+  app.get('/api/usage/report', async (req, res) => {
+    const profile = req.query.profile;
+    const days = req.query.days === undefined ? 7 : Number(req.query.days);
+    if ((profile !== undefined && (typeof profile !== 'string' || !profile.trim() || profile.length > 256))
+      || !Number.isInteger(days) || days < 1 || days > 90) {
+      res.status(400).json({ error: 'Usage requires a profile name and an integer day window from 1 to 90' });
+      return;
+    }
+    res.json(await recordedUsageReport({ profile: profile as string | undefined, days }, configDeps.usageReport));
   });
 
   app.get('/api/doctor', async (req, res) => {
