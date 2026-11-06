@@ -8,13 +8,21 @@ use super::*;
 // Operation definitions for each CLI command module
 
 pub(super) fn add_native_handoff_operations(manifest: &mut CapabilityManifest) {
-    for action in ["prepare", "check", "check-current-policy"] {
+    for action in [
+        "prepare",
+        "check",
+        "check-current-policy",
+        #[cfg(target_os = "linux")]
+        "host-reserve",
+        #[cfg(target_os = "linux")]
+        "worker-status",
+    ] {
         manifest.add_operation(OperationDefinition {
-            operation_id: format!("native-handoff.{action}"), display_name: format!("Native Context {action}"),
+            operation_id: format!("native-handoff.{action}"), display_name: format!("Native Handoff {action}"),
             class: OperationClass::Admin, profile_scope: ProfileScope::Global, request_schema: None, response_schema: None,
-            streaming: StreamingBehavior::None, idempotency: Idempotency::Conditional, secret_fields: vec![],
+            streaming: StreamingBehavior::None, idempotency: if action == "host-reserve" { Idempotency::NonIdempotent } else { Idempotency::Conditional }, secret_fields: vec![],
             remote_disposition: RemoteDisposition::LocalOnly, local_only_reason: Some(LocalOnlyReason::SecuritySensitive),
-            documentation: Some("Private context preparation/verification and current central policy/spend checks. Does not authorize execution. Never expose caller-selected input/output paths through a generic remote operation.".into()),
+            documentation: Some("Private native context, central policy/spend checks and host admission/recovery inspection. Does not authorize execution. Never expose caller-selected input/output paths through a generic remote operation.".into()),
             cli_command_path: format!("gah native-handoff {action}"), is_stable: false,
         });
     }

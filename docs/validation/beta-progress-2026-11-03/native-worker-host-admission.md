@@ -99,6 +99,11 @@ cross-process lock exclusion and writer-crash recovery without state changes.
 After the disposable holder stops, that CLI returns unknown. All focused checks
 and all-target/all-feature Clippy with warnings denied pass.
 
+Both Linux host commands are explicitly listed as security-sensitive,
+local-only capability operations. Host reservation is marked non-idempotent;
+no generic remote operation exposes these paths. All 12 capability integration
+checks and all-target/all-feature Clippy with warnings denied pass.
+
 The launch callback is still a library primitive, not a production executor.
 It must launch only the fixed verified wrapper, which consumes central's one-use
 grant and applies fresh later attempt/publication authority. No worker start

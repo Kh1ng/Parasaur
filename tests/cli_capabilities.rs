@@ -7,7 +7,15 @@ use git_agent_harness::cli::capabilities::*;
 #[test]
 fn native_context_and_current_policy_paths_remain_private() {
     let manifest = generate_manifest();
-    for name in ["prepare", "check", "check-current-policy"] {
+    for name in [
+        "prepare",
+        "check",
+        "check-current-policy",
+        #[cfg(target_os = "linux")]
+        "host-reserve",
+        #[cfg(target_os = "linux")]
+        "worker-status",
+    ] {
         let id = format!("native-handoff.{name}");
         let operation = &manifest.operations[&id];
         assert_eq!(operation.remote_disposition, RemoteDisposition::LocalOnly);
@@ -16,6 +24,9 @@ fn native_context_and_current_policy_paths_remain_private() {
             Some(LocalOnlyReason::SecuritySensitive)
         );
         assert!(!manifest.is_remote_available(&id));
+        if name == "host-reserve" {
+            assert_eq!(operation.idempotency, Idempotency::NonIdempotent);
+        }
     }
 }
 
