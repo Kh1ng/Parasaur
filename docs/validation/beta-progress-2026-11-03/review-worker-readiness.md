@@ -2,7 +2,10 @@
 
 Subsequent [central claim participation](central-claim-participation.md) fixes
 the central membership/configuration gap recorded below and verifies live
-cross-host arbitration. Matching Windows factory policy remains open.
+cross-host arbitration. Subsequent [native reviewer checks](native-review-readiness.md)
+transfer matching factory policy, install the missing packaged agents, verify
+real native reviews through the production gate and correct routine/escalation
+classification. The historical setup observations below precede those checks.
 
 At 2026-11-06T08:23Z the effective gah profile on central has implementation
 and review candidates, a routine reviewer and escalation requirements. The
@@ -48,16 +51,12 @@ Neither that backup nor the credential is a repository artifact.
 
 ## Remaining factory gates
 
-The worker's factory policy was not replaced, and no factory loop or real
-issue/PR dispatch was started. Central claims are configured on the worker,
-while central's current `registry_central_url` is unset. Claim participation
-must be verified across all executing controllers before simultaneous loops
-can be treated as coordinated. Assignment alone is not a claim or execution
-receipt.
+The worker's factory policy now matches central through a checked native-model
+transfer. Central's shared-claims URL and controller credential are configured,
+and cross-host arbitration is verified. No second factory loop or real issue/PR
+dispatch has been started. Assignment alone is not a claim or execution receipt.
 
-Next work must establish how central's execution/review requirements reach
-the destination while retaining node-local paths and credentials, preserve
-the configured review/escalation requirements and central claim arbitration,
-and validate claim-to-validation-to-review progression. Provider connectivity
-alone does not prove any of those requirements. Production publication and
-the existing GitLab authentication/proxy gates remain separate.
+Next work must preserve central attempt history and review budgets while routing
+actual factory work to the destination, then validate complete claim, validation,
+review and publication progression. Native reviewer readiness alone does not
+prove that integration. GitLab authentication/proxy gates remain separate.

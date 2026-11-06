@@ -81,6 +81,16 @@ healthy; the Windows worker is updated. Fresh Codex and exact Mistral route
 samples reconcile the apparent token gap through reported cache-read tokens.
 Historical/billing reconciliation and provider quota availability remain open.
 
+[Native reviewer readiness](native-review-readiness.md) provisions matching
+Windows policy and packaged role agents, verifies real native reviews through
+the production gate, and fixes routine/escalation overlap that could bypass a
+review-cycle cap. The verified CLI is installed on Windows/WSL and central;
+84 review tests, Clippy and release build pass. Central's new controller PID has
+a verified running ten-hour memory observation. Real distributed factory
+progression and GitLab persistent-auth deployment remain open. The fresh #1525
+gate is now review-budget exhaustion; five current-generation records marked
+`no_attempt_started` are being counted and require a writer-lifecycle audit.
+
 [Factory admission evidence](factory-hang-recheck.md) now identifies the live
 node-memory wait on #1525. Shared web `c0668cae` exposes the exact recorded
 refusal in Waiting and stops clipping it on Overview. Production capacity

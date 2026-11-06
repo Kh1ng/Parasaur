@@ -68,6 +68,8 @@ and `central-claims-post-health.json`. The reproducible artifact is
 `artifacts/parasaur-claims-02edaeb8/`. Private config/environment backups stay
 on central under `~/.local/state/gah/central-repair-20261105/`.
 
-Windows still needs matching factory execution/review policy. These lease
+Subsequent [native reviewer readiness](native-review-readiness.md) transfers
+matching Windows factory execution/review policy and verifies the native gate.
+These lease
 checks do not prove simultaneous real dispatch, full factory progression,
 publication, provider billing reconciliation or the Mac memory report.

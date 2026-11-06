@@ -49,6 +49,12 @@ work and are not gates for this desktop/shared-web pass.
 
 ## Evidence still required
 
+- [Native reviewer readiness](validation/beta-progress-2026-11-03/native-review-readiness.md)
+  verifies broken/repaired review packs through the real backend and production
+  gate, and fixes an overlapping escalation entry bypassing routine cycle caps.
+  The CLI fix is deployed on central and Windows; distributed factory
+  progression remains unverified. The current controller has a verified running
+  ten-hour memory observation; it is not yet a soak pass.
 - [Chat token breakdown](validation/beta-progress-2026-11-03/chat-token-breakdown.md)
   preserves reported cache/reasoning categories and prevents incomplete replies
   from yielding complete session totals. Focused protocol/history/UI checks and
