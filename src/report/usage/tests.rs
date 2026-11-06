@@ -13,6 +13,34 @@ fn entry() -> LedgerEntry {
 }
 
 #[test]
+fn legacy_summary_readings_survive_when_attempt_usage_was_never_recorded() {
+    let _clock = crate::clock::set_for_test(
+        OffsetDateTime::parse("2026-11-06T12:00:00Z", &Rfc3339).unwrap(),
+    );
+    let (_tmp, cfg) = test_config();
+    let mut entry = entry();
+    entry.schema_version = 9;
+    entry.usage.total_tokens = Some(70);
+    entry.attempts = vec![
+        AttemptRecord {
+            backend: "codex".into(),
+            attempt_number: 1,
+            ..Default::default()
+        },
+        AttemptRecord {
+            backend: "codex".into(),
+            attempt_number: 2,
+            ..Default::default()
+        },
+    ];
+    append(&cfg, &entry).unwrap();
+    let row = build(&cfg, "7d", None).unwrap().rows.pop().unwrap();
+    assert_eq!(row.dispatch_attempts, 2);
+    assert_eq!(row.total_tokens, Some(70));
+    assert_eq!(row.legacy_dispatches, 1);
+}
+
+#[test]
 fn unstarted_marker_cannot_hide_execution_result_evidence() {
     let mut entry = entry();
     entry.usage.usage_unknown_reason = Some(UsageUnknownReason::NoAttemptStarted);

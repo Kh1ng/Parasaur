@@ -25,7 +25,8 @@ export interface DispatchUsageRow {
   /** UTC date of the dispatch record, not an invented per-attempt timestamp. */
   day: string;
   dispatch_attempts: number;
-  /** Historical records with no per-attempt breakdown; not an attempt count. */
+  /** Dispatches with no per-attempt usage breakdown. Their known attempt count
+   * is still included above; this is not a second set of attempts. */
   legacy_dispatches: number;
   /** Each sum requires a reading from every included attempt/legacy record. */
   input_tokens: number | null;

@@ -1127,7 +1127,7 @@ pub struct UsageObservation<'a> {
     pub usage: &'a LedgerUsage,
 }
 
-fn usage_has_observation(usage: &LedgerUsage) -> bool {
+pub(crate) fn usage_has_observation(usage: &LedgerUsage) -> bool {
     usage.usage_unknown_reason.is_some()
         || usage.usage_source.is_some()
         || usage.input_tokens.is_some()

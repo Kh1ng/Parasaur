@@ -121,7 +121,12 @@ pub(super) fn build(cfg: &GahConfig, since: &str, profile: Option<&str>) -> Resu
         }
         entries += 1;
         let day = timestamp.to_offset(UtcOffset::UTC).date().to_string();
-        if entry.attempts.is_empty() {
+        if entry.attempts.is_empty()
+            || !entry
+                .attempts
+                .iter()
+                .any(|attempt| ledger::summary::usage_has_observation(&attempt.usage))
+        {
             let identity = identity(
                 &entry,
                 &entry.usage,
@@ -130,10 +135,11 @@ pub(super) fn build(cfg: &GahConfig, since: &str, profile: Option<&str>) -> Resu
                 entry.effective_model.clone(),
                 &day,
             );
-            groups
+            let row = groups
                 .entry(identity.clone())
-                .or_insert_with(|| Row::new(identity))
-                .add(&entry.usage, false);
+                .or_insert_with(|| Row::new(identity));
+            row.add(&entry.usage, false);
+            row.dispatch_attempts += entry.attempts.len() as u64;
         } else {
             // Attempt records supersede the dispatch-wide mirrored summary,
             // including attempts whose provider reported no usage at all.
