@@ -267,8 +267,10 @@ export function EmbedApp() {
         if (handoff) {
           const result = await pairingApi.claimHandoff(handoff.code, handoff.verifier);
           if (stopped) return;
-          if (result.device) {
-            saveCoordinatorToken('');
+          if (result.device || (typeof result.token === 'string' && result.token.length > 0)) {
+            // An older central can still return its legacy credential. Keep
+            // it tab-scoped; a device-cookie response always takes precedence.
+            saveCoordinatorToken(result.device ? '' : result.token!);
             handoff = null;
             setHandoffCode(null);
           }

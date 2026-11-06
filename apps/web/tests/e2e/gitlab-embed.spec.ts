@@ -211,3 +211,22 @@ test('the signed-out embed view keeps re-checking the auth endpoint and picks up
   signedIn = true;
   await expect(page.getByRole('dialog', { name: 'Sign in to Parasaur' })).toHaveCount(0, { timeout: 8_000 });
 });
+
+
+test('an older central handoff remains tab-scoped during a separate web rollout', async ({ page, context }) => {
+  const legacy = 'older-central-owner-fixture';
+  await context.route('**/api/pairing/session', route => route.request().headers().authorization === `Bearer ${legacy}`
+    ? route.fulfill({ json: { principal: { kind: 'owner' } } })
+    : route.fulfill({ status: 401, json: { message: 'Sign in required' } }));
+  await page.route('**/api/pairing/handoff', route => route.fulfill({ json: { code: 'a'.repeat(43), verifier: 'b'.repeat(43), expires_in: 60 } }));
+  await page.route('**/api/pairing/handoff/claim', route => route.fulfill({ json: { token: legacy } }));
+  await page.goto(issueContext);
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem('gah.coordinatorToken'))).toBe(legacy);
+  await expect(page.getByRole('dialog', { name: 'Sign in to Parasaur' })).toHaveCount(0);
+  expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('gah.coordinatorToken')))).toEqual([]);
+  const otherTab = await context.newPage();
+  try {
+    await otherTab.goto('/');
+    expect(await otherTab.evaluate(() => sessionStorage.getItem('gah.coordinatorToken'))).toBeNull();
+  } finally { await otherTab.close(); }
+});
