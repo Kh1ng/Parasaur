@@ -910,6 +910,9 @@ pub enum LedgerCommands {
         binding_file: PathBuf,
         #[arg(long)]
         receipt_file: PathBuf,
+        /// Return the durable canonical acknowledgement used by native handoff.
+        #[arg(long, default_value_t = false)]
+        acknowledgement: bool,
         #[arg(long, name = "config")]
         config_path: Option<String>,
     },

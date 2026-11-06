@@ -20,6 +20,29 @@ export interface ClaimLease {
   claimed_at: string;
   renewed_at: string;
   expires_at: string;
+  /** A remote execution with unconfirmed completion keeps ownership even
+   * after lease expiry. Only canonical result reconciliation can release it. */
+  native_handoff?: NativeClaimHold;
+}
+
+export interface NativeClaimBinding {
+  run_id: string;
+  node_id: string;
+  context_sha256: string;
+}
+
+export interface NativeClaimHold extends NativeClaimBinding {
+  phase: 'reserved' | 'offered' | 'running' | 'reconciling' | 'result_pending';
+  held_at: string;
+}
+
+/** Emitted by the native ledger receiver only after its append/replay is
+ * durable. Process exit and worker-provided success flags are not this proof. */
+export interface NativeResultAcknowledgement extends NativeClaimBinding {
+  profile: string;
+  work_id: string;
+  receipt_sha256: string;
+  outcome: 'recorded' | 'already_recorded';
 }
 
 export interface ClaimConflictResponse {

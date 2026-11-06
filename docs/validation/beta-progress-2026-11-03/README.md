@@ -1,5 +1,14 @@
 # Beta finishing pass: local validation
 
+Latest native ownership: [durable holds and canonical acknowledgements](native-worker-ownership.md)
+keep work reserved across expiry, disconnect, import failure and restart until
+the exact native result is durably recorded. Unknown cancellation cannot release
+ownership. An actual Rust/server bridge proves refused unconfirmed termination,
+failed-result/unknown-cost preservation, single import and safe late replay.
+Focused Windows/Linux checks, ledger/CLI checks, formatting and Clippy pass.
+This is source-only: fresh authority, actual-host admission and the durable
+per-run broker/executor are still required before agent work can launch.
+
 Latest production compatibility evidence: public `448bab97` prepares and
 verifies the actual central history on Windows WSL for a pinned OpenCode/model
 route. All 26,365 snapshot entries survive the two-chunk transfer and are read

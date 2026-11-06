@@ -115,6 +115,61 @@ fn concurrent_terminal_delivery_counts_once_and_retains_unknown_usage_and_job_fa
 }
 
 #[test]
+fn acknowledged_import_binds_the_durable_original_receipt_and_replay() {
+    let (_tmp, cfg, binding, receipt) = fixture();
+    let bytes = serde_json::to_vec(&receipt).unwrap();
+    for outcome in [ReceiveOutcome::Recorded, ReceiveOutcome::AlreadyRecorded] {
+        let ack = super::receive_acknowledged(&cfg, &binding, &bytes).unwrap();
+        assert_eq!(ack.outcome, outcome);
+        assert_eq!(ack.run_id, binding.run_id);
+        assert_eq!(ack.node_id, binding.node_id);
+        assert_eq!(ack.profile, binding.profile);
+        assert_eq!(ack.work_id, binding.work_id);
+        assert_eq!(ack.context_sha256, binding.context_sha256);
+        let entries = crate::ledger::read_entries(&cfg).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].remote_execution.as_ref().unwrap().receipt_sha256,
+            ack.receipt_sha256
+        );
+    }
+}
+
+#[test]
+fn a_cancel_request_without_observed_process_death_cannot_acknowledge_or_release_ownership() {
+    let (_tmp, cfg, binding, mut receipt) = fixture();
+    receipt.execution.termination.reason = TerminationReason::Cancelled;
+    receipt.execution.termination.exit_code = None;
+    let bytes = serde_json::to_vec(&receipt).unwrap();
+    assert!(super::receive_acknowledged(&cfg, &binding, &bytes).is_err());
+    assert!(crate::ledger::read_entries(&cfg).unwrap().is_empty());
+    receipt.execution.termination.signal = Some("SIGTERM".into());
+    let ack = super::receive_acknowledged(&cfg, &binding, &serde_json::to_vec(&receipt).unwrap())
+        .unwrap();
+    assert_eq!(ack.outcome, ReceiveOutcome::Recorded);
+    let entries = crate::ledger::read_entries(&cfg).unwrap();
+    assert_eq!(
+        entries[0]
+            .remote_execution
+            .as_ref()
+            .unwrap()
+            .termination
+            .reason,
+        TerminationReason::Cancelled
+    );
+    assert_eq!(
+        entries[0]
+            .remote_execution
+            .as_ref()
+            .unwrap()
+            .termination
+            .signal
+            .as_deref(),
+        Some("SIGTERM")
+    );
+}
+
+#[test]
 fn mismatched_identity_or_unconfirmed_exit_never_changes_central_history() {
     let (_tmp, cfg, binding, receipt) = fixture();
     for change in 0..13 {

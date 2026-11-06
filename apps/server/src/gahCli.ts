@@ -185,6 +185,16 @@ export async function runQuota(
   return runJsonCommand<QuotaSnapshot>(args, options.config);
 }
 
+/** Central-only broker plumbing. Both paths are coordinator-owned artifacts;
+ * never accept worker-supplied binding files or expose this as a generic RPC.
+ * The CLI verifies/imports the receipt and fsyncs canonical history before ack. */
+export function runReceiveNativeResult(options: { bindingFile: string; receiptFile: string; config?: string }): Promise<import('@git-agent-harness/contracts').NativeResultAcknowledgement> {
+  const config = getConfigPath(options.config ?? process.env.GAH_CONFIG_PATH ?? process.env.GAH_CANONICAL_CONFIG);
+  const args = ['ledger', 'receive-dispatch', '--acknowledgement', '--binding-file', options.bindingFile, '--receipt-file', options.receiptFile,
+    ...(config ? ['--config-path', config] : [])];
+  return runJsonCommand(args, config, false, undefined, 64 * 1024);
+}
+
 /**
  * Shared plumbing for the `--json` subcommands -- same spawn/parse/error
  * shape, factored out so callers don't duplicate it. Fail closed: stdout

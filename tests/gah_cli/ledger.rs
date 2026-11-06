@@ -93,6 +93,32 @@ fn ledger_receive_dispatch_replays_once_and_refuses_a_changed_worker_result() {
     assert_eq!(stored["validation_result"], "failed");
     assert_eq!(stored["remote_execution"]["termination"]["exit_code"], 1);
     assert_eq!(stored["usage"]["actual_cost_usd"], Value::Null);
+    let acknowledged = bin()
+        .args([
+            "ledger",
+            "receive-dispatch",
+            "--acknowledgement",
+            "--binding-file",
+            binding_file.to_str().unwrap(),
+            "--receipt-file",
+            receipt_file.to_str().unwrap(),
+            "--config-path",
+            cfg_path.to_str().unwrap(),
+        ])
+        .env("GAH_LEDGER_PATH", &ledger_path)
+        .assert()
+        .success();
+    let ack: Value = serde_json::from_slice(&acknowledged.get_output().stdout).unwrap();
+    assert_eq!(ack["outcome"], "already_recorded");
+    assert_eq!(ack["run_id"], binding.run_id);
+    assert_eq!(ack["profile"], binding.profile);
+    assert_eq!(ack["work_id"], binding.work_id);
+    assert_eq!(ack["node_id"], binding.node_id);
+    assert_eq!(ack["context_sha256"], binding.context_sha256);
+    assert_eq!(
+        ack["receipt_sha256"],
+        stored["remote_execution"]["receipt_sha256"]
+    );
     receipt.ledger.usage.actual_cost_usd = Some(20.0);
     fs::write(&receipt_file, serde_json::to_vec(&receipt).unwrap()).unwrap();
     bin()

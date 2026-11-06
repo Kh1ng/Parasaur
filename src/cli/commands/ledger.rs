@@ -12,6 +12,7 @@ pub fn run(command: LedgerCommands) -> Result<()> {
         LedgerCommands::ReceiveDispatch {
             binding_file,
             receipt_file,
+            acknowledgement,
             config_path,
         } => {
             use std::io::Read;
@@ -30,8 +31,16 @@ pub fn run(command: LedgerCommands) -> Result<()> {
             let binding = serde_json::from_slice(&read(&binding_file)?).map_err(|_| {
                 anyhow::anyhow!("Native dispatch input does not match the supported schema")
             })?;
-            let outcome = ledger::remote_dispatch::receive(&cfg, &binding, &read(&receipt_file)?)?;
-            println!("{}", serde_json::to_string(&outcome)?);
+            let outcome = ledger::remote_dispatch::receive_acknowledged(
+                &cfg,
+                &binding,
+                &read(&receipt_file)?,
+            )?;
+            if acknowledgement {
+                println!("{}", serde_json::to_string(&outcome)?);
+            } else {
+                println!("{}", serde_json::to_string(&outcome.outcome)?);
+            }
         }
         LedgerCommands::RepairTail {
             config_path,

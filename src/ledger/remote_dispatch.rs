@@ -76,6 +76,19 @@ pub enum ReceiveOutcome {
     AlreadyRecorded,
 }
 
+/// Proof returned only after canonical append/replay has been synchronized.
+/// A coordinator uses this exact run fence to release its remote claim hold.
+#[derive(Debug, Serialize)]
+pub struct ReceiveAcknowledgement {
+    pub outcome: ReceiveOutcome,
+    pub run_id: String,
+    pub node_id: String,
+    pub profile: String,
+    pub work_id: String,
+    pub context_sha256: String,
+    pub receipt_sha256: String,
+}
+
 /// Preserve the worker's actual job outcome and unknown telemetry after checking
 /// its exact prepared identity. A successful process exit does not imply that
 /// validation passed, a branch published, or a merge happened.
@@ -84,6 +97,14 @@ pub fn receive(
     binding: &DispatchBinding,
     receipt_json: &[u8],
 ) -> Result<ReceiveOutcome> {
+    Ok(receive_acknowledged(cfg, binding, receipt_json)?.outcome)
+}
+
+pub fn receive_acknowledged(
+    cfg: &GahConfig,
+    binding: &DispatchBinding,
+    receipt_json: &[u8],
+) -> Result<ReceiveAcknowledgement> {
     ensure!(
         receipt_json.len() <= MAX_RECEIPT_BYTES,
         "Native dispatch input exceeds 8 MiB; retain it for reconciliation"
@@ -235,9 +256,7 @@ pub fn receive(
                     && signal[3..]
                         .bytes()
                         .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()))
-            && (termination.reason == TerminationReason::Cancelled
-                || termination.exit_code.is_some()
-                || termination.signal.is_some()),
+            && (termination.exit_code.is_some() || termination.signal.is_some()),
         "Worker process termination is unconfirmed or malformed"
     );
     let mut entry = entry.clone();
@@ -246,9 +265,18 @@ pub fn receive(
         node_id: receipt.execution.node_id.clone(),
         termination: receipt.execution.termination.clone(),
         context_sha256: binding.context_sha256.clone(),
-        receipt_sha256,
+        receipt_sha256: receipt_sha256.clone(),
     });
-    super::jsonl::append_received_dispatch(cfg, &entry)
+    let outcome = super::jsonl::append_received_dispatch(cfg, &entry)?;
+    Ok(ReceiveAcknowledgement {
+        outcome,
+        run_id: binding.run_id.clone(),
+        node_id: binding.node_id.clone(),
+        profile: binding.profile.clone(),
+        work_id: binding.work_id.clone(),
+        context_sha256: binding.context_sha256.clone(),
+        receipt_sha256,
+    })
 }
 
 #[cfg(test)]
