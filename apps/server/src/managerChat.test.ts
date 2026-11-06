@@ -167,6 +167,8 @@ test('ACP retains cache and reasoning deltas without rewriting the reported tota
   assert.equal(toChatUsage({ ...after, cachedReadTokens: null }, before, null, 0, 1000)?.cache_read_tokens, null);
   assert.equal(toChatUsage({ ...after, cachedReadTokens: NaN }, before, null, 0, 1000)?.cache_read_tokens, null);
   assert.equal(toChatUsage(before, after, null, 0, 1000)?.cache_read_tokens, 300);
+  assert.equal(toChatUsage(after, undefined, null, 0, 1000)?.total_tokens, null);
+  assert.equal(toChatUsage(after, undefined, null, 0, 1000)?.cache_read_tokens, null);
 });
 
 test('ACP model config drives the existing model picker', () => {

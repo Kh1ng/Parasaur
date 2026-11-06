@@ -35,8 +35,12 @@ function respond(message) {
 
 lines.on('line', (line) => {
   const request = JSON.parse(line);
-  if (request.method === 'session/prompt' && mode === 'usage-breakdown') {
+  if (request.method === 'session/prompt' && (mode === 'usage-breakdown' || mode === 'usage-gap')) {
     usageTurns++;
+    if (mode === 'usage-gap' && usageTurns === 2) {
+      respond({ jsonrpc: '2.0', id: request.id, result: { stopReason: 'end_turn' } });
+      return;
+    }
     respond({ jsonrpc: '2.0', id: request.id, result: { stopReason: 'end_turn', usage: {
       inputTokens: usageTurns * 10, outputTokens: usageTurns * 5, totalTokens: usageTurns * 100,
       cachedReadTokens: usageTurns * 80, cachedWriteTokens: 0, thoughtTokens: usageTurns * 3
@@ -181,6 +185,20 @@ test('ACP replies preserve cache and reasoning categories across real protocol t
         estimated_cost_usd: null, duration_seconds: result.usage?.duration_seconds
       });
       history.push({ role: 'user', text: 'usage fixture', timestamp: 1 }, { role: 'assistant', text: result.reply, timestamp: 2 });
+    }
+  } finally { backend.dispose(); rmSync(fake.dir, { recursive: true, force: true }); }
+});
+
+test('a missing ACP usage report cannot charge several turns to the next reply', async () => {
+  const fake = fakeAcpScript();
+  const backend = createAcpBackend('Usage gap', () => ({ command: process.execPath, args: [fake.path, 'usage-gap'] }));
+  try {
+    const history: ChatTranscriptTurn[] = [];
+    for (const total of [100, null, null, 100]) {
+      const result = await backend.runTurn({ key: 'usage-gap', profile: 'fixture' }, { ...emptyTurnInput, history: [...history] });
+      assert.equal(result.usage?.total_tokens ?? null, total);
+      assert.equal(result.usage?.cache_read_tokens ?? null, total === null ? null : 80);
+      history.push({ role: 'user', text: emptyTurnInput.prompt, timestamp: 1 }, { role: 'assistant', text: result.reply, timestamp: 2 });
     }
   } finally { backend.dispose(); rmSync(fake.dir, { recursive: true, force: true }); }
 });

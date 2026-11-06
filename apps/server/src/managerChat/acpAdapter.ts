@@ -98,7 +98,9 @@ class AcpClient implements acp.Client {
   permissionRequest?: (request: PermissionAsk) => Promise<string>;
   toolCalls = new Map<string, acp.ToolCallUpdate>();
   usageUpdate: acp.UsageUpdate | null = null;
-  cumulativeUsage: acp.Usage | null = null;
+  // null starts a new session; undefined means a completed/failed turn left
+  // no baseline, so the next cumulative report cannot be charged to one turn.
+  cumulativeUsage: acp.Usage | null | undefined = null;
   sessionCostUsd = 0;
   configOptions: acp.SessionConfigOption[] = [];
 
@@ -173,7 +175,7 @@ class AcpClient implements acp.Client {
 
 export function toChatUsage(
   usage: acp.Usage | null | undefined,
-  previousUsage: acp.Usage | null,
+  previousUsage: acp.Usage | null | undefined,
   update: acp.UsageUpdate | null,
   costBeforeUsd: number,
   durationMs: number
@@ -183,12 +185,12 @@ export function toChatUsage(
     ? Math.max(0, update.cost.amount - costBeforeUsd)
     : null;
   return {
-    input_tokens: counterDelta(usage?.inputTokens, previousUsage ? previousUsage.inputTokens : 0),
-    output_tokens: counterDelta(usage?.outputTokens, previousUsage ? previousUsage.outputTokens : 0),
-    total_tokens: counterDelta(usage?.totalTokens, previousUsage ? previousUsage.totalTokens : 0),
-    cache_read_tokens: counterDelta(usage?.cachedReadTokens, previousUsage ? previousUsage.cachedReadTokens : 0),
-    cache_write_tokens: counterDelta(usage?.cachedWriteTokens, previousUsage ? previousUsage.cachedWriteTokens : 0),
-    reasoning_tokens: counterDelta(usage?.thoughtTokens, previousUsage ? previousUsage.thoughtTokens : 0),
+    input_tokens: counterDelta(usage?.inputTokens, previousUsage === null ? 0 : previousUsage?.inputTokens),
+    output_tokens: counterDelta(usage?.outputTokens, previousUsage === null ? 0 : previousUsage?.outputTokens),
+    total_tokens: counterDelta(usage?.totalTokens, previousUsage === null ? 0 : previousUsage?.totalTokens),
+    cache_read_tokens: counterDelta(usage?.cachedReadTokens, previousUsage === null ? 0 : previousUsage?.cachedReadTokens),
+    cache_write_tokens: counterDelta(usage?.cachedWriteTokens, previousUsage === null ? 0 : previousUsage?.cachedWriteTokens),
+    reasoning_tokens: counterDelta(usage?.thoughtTokens, previousUsage === null ? 0 : previousUsage?.thoughtTokens),
     estimated_cost_usd: cost,
     duration_seconds: durationMs / 1000
   };
@@ -707,6 +709,7 @@ export function createAcpBackend(
       result = await activePrompt;
       state.consecutiveFailures = 0;
     } catch (error) {
+      state.client.cumulativeUsage = undefined;
       state.consecutiveFailures += 1;
       const threshold = options.consecutiveFailureReconnectThreshold;
       const evicted = threshold !== undefined && state.consecutiveFailures >= threshold;
@@ -751,7 +754,7 @@ export function createAcpBackend(
       costBeforeUsd,
       Date.now() - startedAt
     );
-    state.client.cumulativeUsage = result.usage ?? state.client.cumulativeUsage;
+    state.client.cumulativeUsage = result.usage ?? undefined;
     return {
       reply,
       model: state.currentModelId,

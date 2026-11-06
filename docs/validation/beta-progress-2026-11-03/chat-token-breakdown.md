@@ -12,6 +12,8 @@ reasoning_tokens through durable events, history and live replies. The adapter
 differences each counter separately. Missing or invalid counters remain null.
 An optional cumulative counter without a previous reading cannot establish a
 turn delta. Explicit zero remains zero, and a counter reset uses the new reading.
+An absent report or failed turn invalidates the session baseline: the next
+report reestablishes it without attributing several turns to one reply.
 The independently reported total is unchanged. Existing logs remain compatible;
 discarded historical categories cannot be reconstructed.
 
@@ -23,9 +25,9 @@ text. No quota, price, billing class or provider allowance is inferred.
 
 Verification on 2026-11-06:
 
-- 59 focused server tests pass in Ubuntu-24.04, including two protocol turns
-  over a real child-process ACP connection and durable JSONL replay.
-- 42 adapter/conversion tests also pass on Windows. The existing session-log
+- 60 focused server tests pass in Ubuntu-24.04, including cumulative and
+  missing-report recovery over child-process ACP connections and durable replay.
+- 43 adapter/conversion tests also pass on Windows. The existing session-log
   suite's POSIX path-suffix assertion fails on Windows and passes in WSL.
 - 17 web unit cases pass, including subscription identity/freshness regressions
   and missing-reply/category aggregation.
