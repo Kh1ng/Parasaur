@@ -3,7 +3,7 @@ import { Radio } from 'lucide-react';
 import type { RunningWorker, ActiveClaim, BackendInstanceSummary, ControllerActivity, DeviceAgent, LedgerEntry, QuotaCandidateStatus, Session } from '@git-agent-harness/contracts';
 import { backendInstancesApi, gahApi } from '../api/client.js';
 import { formatLocalTime } from '../lib/format.js';
-import { controllerActivityStatus } from '../lib/controllerActivity.js';
+import { controllerActivityStatus, controllerCapacityDeferral } from '../lib/controllerActivity.js';
 
 /** What an agent account is doing right now, in the order the rows sort. */
 export type LiveState = 'working' | 'gates' | 'stale' | 'paused' | 'down' | 'halted' | 'idle' | 'unknown';
@@ -416,6 +416,7 @@ export function LiveAgentsCard({ profile, sessions, controllerRuns, claims, cand
   const idle = rows.filter((row) => row.state === 'idle');
   const lastRun = controllerRuns.filter((run) => run.status !== 'running')
     .sort((a, b) => Date.parse(b.finished_at ?? b.started_at) - Date.parse(a.finished_at ?? a.started_at))[0];
+  const lastDeferral = controllerCapacityDeferral(lastRun);
   return (
     <section className="card-padded" aria-labelledby="live-agents-title">
       <div className="mb-2 flex items-center justify-between gap-3">
@@ -450,9 +451,10 @@ export function LiveAgentsCard({ profile, sessions, controllerRuns, claims, cand
         </>
       )}
       {lastRun && (
-        <p className="mt-2 truncate text-xs text-muted" title={lastRun.outcome ?? lastRun.action}>
+        <p className="mt-2 break-words border-t border-subtle pt-2 text-xs text-secondary" title={lastRun.outcome ?? lastRun.action}>
           {controllerActivityStatus(lastRun) === 'deferred' ? 'Last decision:' : 'Last run:'} {lastRun.work_id ? <span className="font-mono">{lastRun.work_id}</span> : null} {lastRun.action.split(':')[0]} · {controllerActivityStatus(lastRun)}
           {lastRun.finished_at ? ` ${formatDuration(now - Date.parse(lastRun.finished_at))} ago` : ''}{lastRun.outcome ? ` · ${lastRun.outcome}` : ''}
+          {lastDeferral && <span className="mt-1 block">{lastDeferral.nextStep}</span>}
         </p>
       )}
     </section>

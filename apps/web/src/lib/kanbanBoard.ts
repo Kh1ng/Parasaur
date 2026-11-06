@@ -2,6 +2,7 @@ import type { ActiveClaim, AvailableTicket, Blocker, ControllerActivity, DeviceA
 import { currentTightestWindow, formatUntil, providerLabel, subscriptionUsage } from './subscriptionUsage.js';
 import { workKey } from './workKey.js';
 import { reviewWaitReason } from './reviewLabels.js';
+import { controllerCapacityDeferral } from './controllerActivity.js';
 
 /**
  * The Kanban page's board, derived from records the server already serves:
@@ -336,6 +337,7 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
     const cardRuns = runsByKey.get(key) ?? [];
     const runningRun = cardRuns.find((run) => run.status === 'running');
     const lastRun = cardRuns.find((run) => run.status !== 'running');
+    const deferral = controllerCapacityDeferral(lastRun);
     const claim = claimByKey.get(key);
     const workers = workersByKey.get(key) ?? [];
     const worker = workers.find((item) => item.state === 'running') ?? workers[0];
@@ -354,6 +356,7 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
     if (input.statusUnavailable) blocks.push('Factory state could not refresh. These are last recorded observations; refresh successfully before assigning work or assuming a worker stopped.');
     if (claim && !mergeRequest?.merged) blocks.push(`Claimed by ${claim.hostname || 'an unknown machine'} at ${claim.claimed_at}. Inspect this machine's worker activity and recovery state before retrying; claim ownership alone does not confirm execution.`);
     if (worker?.state === 'stale' && !mergeRequest?.merged) blocks.push(`Worker activity last reported at ${worker.last_activity_at}${worker.node_id ? ` on ${worker.node_id}` : ''}. Check the worker connection and recovery state; stale activity does not prove the process stopped.`);
+    if (deferral && !mergeRequest?.merged) blocks.push(`Last attempt${lastRun?.finished_at ? ` at ${lastRun.finished_at}` : ''}: ${deferral.detail}`, `Next step: ${deferral.nextStep}`);
 
     let column: KanbanColumnKey;
     let reason: string;
@@ -422,9 +425,9 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
           break;
         case 'NEEDS_FIX':
         case 'CI_FAILED':
-          column = 'fixing';
+          column = deferral && !runningRun ? 'waiting' : 'fixing';
           job = 'fix';
-          reason = lastOutcome ?? `${mergeRequest.classification === 'CI_FAILED' ? 'CI failed' : 'Review asked for changes'}; waiting for a fixer${waitingOn}`;
+          reason = (!runningRun && deferral?.summary) || lastOutcome || `${mergeRequest.classification === 'CI_FAILED' ? 'CI failed' : 'Review asked for changes'}; waiting for a fixer${waitingOn}`;
           tone = 'warning';
           break;
         case 'CLOSED_UNMERGED':
@@ -437,9 +440,9 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
           tone = 'warning';
           break;
         default:
-          column = 'review';
+          column = deferral && !runningRun ? 'waiting' : 'review';
           job = 'review';
-          reason = lastOutcome ?? `Waiting for a reviewer${waitingOn}`;
+          reason = (!runningRun && deferral?.summary) || lastOutcome || `Waiting for a reviewer${waitingOn}`;
           tone = 'warning';
           if (mergeRequest.review_gate_reason) blocks.push(sentence(mergeRequest.review_gate_reason));
       }
@@ -458,6 +461,10 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
       } else if (policy && !policy.dispatchable_now) {
         column = 'waiting';
         reason = sentence(policy.exclusion_reason ?? humanize(policy.exclusion_reason_code ?? 'not dispatchable now'));
+        tone = 'warning';
+      } else if (deferral && !runningRun) {
+        column = 'waiting';
+        reason = deferral.summary;
         tone = 'warning';
       } else if (attempts > 0) {
         column = 'waiting';

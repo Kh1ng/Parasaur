@@ -120,8 +120,9 @@ test('every job sits in the column its records put it in, with a reason in plain
   await expect(column('Ready')).toContainText("Next in line: starts on the loop's next pass");
   await expect(column('Waiting')).toContainText('Retry refused: saved work from an earlier attempt is still in the way');
   await expect(column('Waiting')).toContainText('attempt 3');
-  await expect(column('In review')).toContainText('Waiting for a reviewer: Claude at its job limit, Codex sign-in failed');
-  await expect(column('In review')).toContainText('built by Antigravity · Gemini 3.1 Pro (High)');
+  await expect(column('Waiting')).toContainText('Last attempt waited for provider capacity');
+  await expect(column('Waiting')).toContainText('built by Antigravity · Gemini 3.1 Pro (High)');
+  await expect(column('In review')).toContainText('Nothing here');
   await expect(column('Fixing')).toContainText('An agent is fixing what review or CI flagged');
   await expect(column('Fixing')).toContainText('Claude · opus[1m] · attempt 2 · fix 1 of 2 · working 17m');
   await expect(column('Needs you')).toContainText('Stuck: the same step repeated with no change, so it was stopped');

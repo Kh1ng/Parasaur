@@ -68,6 +68,23 @@ test('an unchanged reviewed head waits for a push instead of claiming a reviewer
   expect(board(status({ merge_requests: [{ ...review, source_sha: 'head-two' }] })).cards[0].column).toBe('review');
 });
 
+test('the latest capacity refusal explains waiting work without overriding execution or human gates', () => {
+  const review = { work_id: '#7', branch: 'gah/7', classification: 'NEEDS_REVIEW', merged: false } as StatusSnapshot['merge_requests'][number];
+  const run: ControllerActivity = { run_id: 'deferred', profile: 'gah', work_id: '#7', action: 'review: gah/7', started_at: '2026-11-05T10:01:00Z', finished_at: '2026-11-05T10:02:00Z', status: 'failed', outcome: 'review: deferred_capacity: node admission deferred: 2527 MiB available; 2048 MiB safety floor route_state=abc' };
+  const input = { status: status({ merge_requests: [review] }), quota: null, controllerRuns: [run], factoryAgents: [], loopRunning: true, now: Date.now() };
+  const card = buildKanban(input).cards[0];
+  expect(card).toMatchObject({ working: false, column: 'waiting', job: 'review', reason: 'Last attempt waited for node capacity' });
+  expect(card.blocks.join(' ')).toContain('Last attempt at 2026-11-05T10:02:00Z: node admission deferred: 2527 MiB available');
+  expect(card.blocks.join(' ')).toContain('worker reservations');
+  expect(card.blocks.join(' ')).not.toContain('route_state');
+  expect(buildKanban({ ...input, status: status({ merge_requests: [review], running_workers: [worker] }) }).cards[0].working).toBe(true);
+  expect(buildKanban({ ...input, status: status({ merge_requests: [review], blocked_work_items: [{ kind: 'human_required', source_reference: '#7', reason_code: 'stuck_loop_gate' }] }) }).cards[0].column).toBe('needs_you');
+  const recovered = { ...run, run_id: 'recovered', started_at: '2026-11-05T10:03:00Z', finished_at: '2026-11-05T10:04:00Z', status: 'finished' as const, outcome: 'review: success' };
+  expect(buildKanban({ ...input, controllerRuns: [run, recovered] }).cards[0].reason).toBe('Waiting for a reviewer');
+  const retrying = { ...recovered, run_id: 'retrying', finished_at: null, status: 'running' as const, outcome: null };
+  expect(buildKanban({ ...input, controllerRuns: [run, retrying] }).cards[0].reason).toBe('Waiting for a reviewer');
+});
+
 test('managedIssues keys only the managed rejections by work key', () => {
   const managed = managedIssues(status({ issue_intake_rejections: [
     rejection('#7', 'managed', 'managed: assigned to colton, who is not this loop'),

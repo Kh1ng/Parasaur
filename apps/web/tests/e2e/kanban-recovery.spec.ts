@@ -1,5 +1,27 @@
 import { expect, test } from '@playwright/test';
 
+test('a recorded node admission wait explains the review card without claiming execution', async ({ page }) => {
+  await page.route('**/api/status**', async route => {
+    const snapshot = await (await route.fetch()).json();
+    await route.fulfill({ json: { ...snapshot, available_tickets: [], active_claims: [], blocked_work_items: [], running_workers: [], merge_requests: [{ work_id: '#1525', id: '42', branch: 'gah/1525', title: 'Capacity-limited review', classification: 'NEEDS_REVIEW', merged: false }] } });
+  });
+  await page.route('**/api/controller-activity**', route => route.fulfill({ json: [{
+    run_id: 'admission-refused', profile: 'fixture', work_id: '#1525', started_at: new Date(Date.now() - 10_000).toISOString(), finished_at: new Date().toISOString(), action: 'review: gah/1525', status: 'failed',
+    outcome: 'review: deferred_capacity: node admission deferred: node memory reserve would be crossed (2509 MiB available, 1024 MiB reserved, 2048 MiB safety floor) route_state=fixture'
+  }] }));
+  await page.goto('/?page=kanban&profile=fixture');
+  const main = page.locator('#main-content');
+  const waiting = main.getByRole('region', { name: /^Waiting, / });
+  await expect(waiting).toContainText('Last attempt waited for node capacity');
+  await expect(main.getByRole('img', { name: 'Running now' })).toHaveCount(0);
+  await waiting.getByRole('button', { name: /Capacity-limited review/ }).click();
+  const why = main.getByRole('region', { name: "Why isn't #1525 running?" });
+  await expect(why).toContainText('2509 MiB available');
+  await expect(why).toContainText('2048 MiB safety floor');
+  await expect(why).toContainText('Check the execution node’s resources and worker reservations');
+  await expect(why).not.toContainText('route_state=');
+});
+
 test('failed and pending status refreshes retain context without claiming live execution', async ({ page }, testInfo) => {
   let failing = false;
   let stale = false;

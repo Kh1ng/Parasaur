@@ -68,6 +68,20 @@ test('a deferred fallback is not shown as a newly failed agent run', async ({ mo
   }
 });
 
+test('an idle factory exposes the full admission refusal at narrow widths', async ({ mount, page }) => {
+  await page.route('**/api/**', route => route.fulfill({ json: { models: [], aliases: [], backend_instances: [] } }));
+  const outcome = 'review: deferred_capacity: node admission deferred: node memory reserve would be crossed (2527 MiB available, 1024 MiB reserved for active/new workers, 2048 MiB safety floor)';
+  const component = await mount(<LiveAgentsCard profile={null} sessions={[]} controllerRuns={[{ ...deferred, outcome }]} claims={[]} candidates={[]} workers={[]} />);
+  const receipt = component.getByText(outcome, { exact: false }).filter({ hasText: 'Last decision:' });
+  for (const width of [960, 360]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(receipt).toBeVisible();
+    await expect(receipt).toContainText('2048 MiB safety floor');
+    await expect(receipt).toContainText('Check the execution node’s resources and worker reservations');
+    expect(await receipt.evaluate(element => ({ clipped: element.scrollWidth > element.clientWidth, whiteSpace: getComputedStyle(element).whiteSpace }))).toEqual({ clipped: false, whiteSpace: 'normal' });
+  }
+});
+
 test('keeps terminal controller history collapsed when no work is running', async ({ mount }) => {
   const component = await mount(<ControllerActivityCard activity={terminalRuns} />);
 
