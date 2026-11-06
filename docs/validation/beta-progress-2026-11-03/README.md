@@ -29,6 +29,12 @@ individual desktop/web tickets. Including the owner's two new usage/auth
 reports gives 29 scoped items. Those reports remain unfiled; deployed partial
 fixes are not closure evidence for the remaining live acceptance work.
 
+[Factory admission evidence](factory-hang-recheck.md) now identifies the live
+node-memory wait on #1525. Shared web `c0668cae` exposes the exact recorded
+refusal in Waiting and stops clipping it on Overview. Production capacity
+guards are unchanged; real remote execution and complete pipeline acceptance
+remain open.
+
 Windows follow-up: [worker recovery](windows-worker-recovery.md) updates the
 old worker, corrects its central origin, resumes its logon keepalive and verifies
 reachability from central. The tested launcher retry fix is installed in the protected

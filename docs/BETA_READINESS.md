@@ -73,6 +73,13 @@ work and are not gates for this desktop/shared-web pass.
   pass staged API/browser checks; API rollout awaits inspection of the actual
   GitLab proxy. The tested cookie-forwarding patch has not been applied live.
 
+- [Live factory admission receipts](validation/beta-progress-2026-11-03/factory-hang-recheck.md)
+  now explain the actual node-memory wait on #1525. Shared web `c0668cae`
+  places deferred work in Waiting, retains resource refusal details and
+  prior attempts, and wraps Overview's receipt. Targeted unit, component and
+  browser tests pass; all served assets are verified. Resource capacity and
+  complete factory execution remain unresolved.
+
 - [MacBook client update](validation/beta-progress-2026-11-03/mac-client-update.md)
   installed and launched native desktop/CLI 0.3.0. Native tests and a temporary
   central build/runtime passed; the central was stopped and its build files
