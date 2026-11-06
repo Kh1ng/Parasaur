@@ -84,6 +84,12 @@ live 30-day report retains all 85 observed turns rather than grouping only the
 three measured turns. Missing measurements remain unknown. Unified chat/factory
 reporting under #1538 remains open.
 
+[Canonical execution usage](canonical-execution-usage.md) stages native
+project/work-item grouping and a streaming dispatch-usage source for #1538.
+Per-attempt and legacy summary readings are counted without adding mirrored
+totals twice. This stage is not deployed; the combined endpoint and Telemetry
+view remain in progress.
+
 [Chat token categories](chat-token-breakdown.md) now survive ACP conversion and
 durable history, and the session drawer refuses complete totals when replies
 have missing measurements. Focused protocol, replay, unit and rendered component
