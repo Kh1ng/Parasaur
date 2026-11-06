@@ -142,3 +142,28 @@ Windows worker upgrades, the workspace/Git workflows and distribution signing
 still require acceptance. The central's worker reservation plus adaptive floor
 exceeds its available host memory; capacity deferrals must remain visible and
 must not be bypassed to make a trial pass. Mobile is deferred from this pass.
+
+
+## Extended observation and shared web follow-up (2026-11-05)
+
+The extended observer did not pass. It stopped the controller after 1,371
+seconds at its conservative memory threshold, with the same PID and zero
+restarts. The last sample had 1,523,449,856 bytes of cgroup memory: 728,383,488
+anonymous bytes and 782,577,664 file-cache bytes. RSS was 710,128 KiB. The
+recorded cgroup peak reached the original 1.5 GiB cap. The controller was left
+stopped; the API was not stopped. This is neither proof of an anonymous-memory
+leak nor evidence of multi-hour stability. Issues #1681 and #1680 remain open;
+the Mac client has not received an equivalent memory attribution check.
+The VM's `extended-controller-result.json` retains the failure report.
+
+The shared web assets at source `d0722750` were subsequently deployed with
+atomic index replacement and retained old chunks. All 30 asset files (29
+JavaScript chunks and CSS) matched the local manifest byte-for-byte over the
+tailnet HTTPS origin. The server-injected bootstrap, API PID, and CLI hash were
+preserved. This provides HTTP/deployment evidence, not native visual acceptance
+of the new deferred-activity labels. The Windows worker and protected launcher
+recovery are documented separately in `windows-worker-recovery.md`.
+Private assembly `875f7d6` pins core `d0722750`; 1,106 server tests passed with
+38 explicit skips, plus 16 mock cases, production build/typechecks, packaging
+input guards and transport tests. The enterprise build has not been deployed
+as a live GitLab SSO service.

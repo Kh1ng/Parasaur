@@ -54,8 +54,10 @@ work and are not gates for this desktop/shared-web pass.
   JavaScript chunks pass byte checks. Borrowed alias indexes and streamed
   completion/review reads plus filtered routing history are deployed. The latest
   15-minute live controller trial passed under the original memory limit and
-  authenticated Windows Overview/Factory pages load. Extended memory validation,
-  worker connectivity, Git transport and real factory progression remain open.
+  authenticated Windows Overview/Factory pages load. The extended observer
+  subsequently stopped the controller at its memory guard after about 23 minutes;
+  the controller is left stopped. Extended memory validation, complete worker
+  diagnostics, Git transport and real factory progression remain open.
 
 - [MacBook client update](validation/beta-progress-2026-11-03/mac-client-update.md)
   installed and launched native desktop/CLI 0.3.0. Native tests and a temporary
