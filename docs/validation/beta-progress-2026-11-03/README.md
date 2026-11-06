@@ -1,5 +1,11 @@
 # Beta finishing pass: local validation
 
+Latest reviewer check: [Windows review-provider readiness](review-worker-readiness.md)
+provisions central's existing configured provider and completes a real worker
+chat with the exact routine-review model. No new login or factory policy change
+was needed. The worker's missing factory routes and incomplete cross-controller
+claim configuration remain the next execution gates.
+
 Latest execution/lifecycle correction: [worker execution and chat runtime
 release](chat-runtime-lifecycle.md) reuses the existing login in WSL, completes a
 real worker chat and fixes archived ACP process retention. Three live worker

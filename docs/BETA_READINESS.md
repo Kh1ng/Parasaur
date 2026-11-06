@@ -49,6 +49,11 @@ work and are not gates for this desktop/shared-web pass.
 
 ## Evidence still required
 
+- [Windows review-provider readiness](validation/beta-progress-2026-11-03/review-worker-readiness.md)
+  verifies central's exact configured routine-review model on the worker using
+  the existing account. Portable factory policy, coordinated claims and full
+  factory progression remain unverified; no review policy was substituted.
+
 - [Worker execution and chat runtime lifecycle](validation/beta-progress-2026-11-03/chat-runtime-lifecycle.md)
   establishes a real Windows worker chat using the existing login, fixes archived
   ACP process retention, and verifies live cleanup. The tested four-module patch
