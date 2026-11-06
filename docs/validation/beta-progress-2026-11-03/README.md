@@ -78,6 +78,12 @@ The central API and Windows WSL worker are updated; an owned pinned dry-run
 completed. The current combined private build passes. Native factory handoff,
 live GitLab auth acceptance and the ten-hour memory soak remain outstanding.
 
+[Chat rollup completeness](chat-rollup-completeness.md) corrects partial token
+sums and inferred cache readings. Central and the shared web are updated; the
+live 30-day report retains all 85 observed turns rather than grouping only the
+three measured turns. Missing measurements remain unknown. Unified chat/factory
+reporting under #1538 remains open.
+
 [Chat token categories](chat-token-breakdown.md) now survive ACP conversion and
 durable history, and the session drawer refuses complete totals when replies
 have missing measurements. Focused protocol, replay, unit and rendered component
