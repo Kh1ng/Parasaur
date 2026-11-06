@@ -199,19 +199,24 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
             journal.update(phase='start_intent', start={'token_sha256': 'c' * 64,
                            'expires_at': (now + datetime.timedelta(seconds=10)).isoformat()},
                            consumption_offered=True,
+                           launch={'invocation': invocation, 'pid': actual['pid'], 'start_ticks': start_ticks},
                            execution={'invocation': invocation, 'pid': actual['pid'], 'start_ticks': start_ticks,
                                       'consumed_at': now.isoformat()})
             journal_path = root / 'work' / 'worker.json'
             journal_path.write_text(json.dumps(journal))
             assert inspect()['state'] == 'running'
             journal['execution']['start_ticks'] = str(int(start_ticks) + 1)
+            journal['launch']['start_ticks'] = str(int(start_ticks) + 1)
             journal_path.write_text(json.dumps(journal))
             assert inspect()['state'] == 'unknown'
             journal['execution']['start_ticks'] = start_ticks
+            journal['launch']['start_ticks'] = start_ticks
             journal['execution']['invocation'] = 'f' * 32
+            journal['launch']['invocation'] = 'f' * 32
             journal_path.write_text(json.dumps(journal))
             assert inspect()['state'] == 'unknown'
             journal['execution']['invocation'] = invocation
+            journal['launch']['invocation'] = invocation
             journal_path.write_text(json.dumps(journal))
             os.kill(json.loads(ready.read_text())['pid'], signal.SIGKILL)
             wait_for(lambda: properties(job)['MainPID'] == '0')

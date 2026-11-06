@@ -34,6 +34,17 @@ pub enum Command {
         config_path: Option<String>,
     },
     #[cfg(target_os = "linux")]
+    Start {
+        #[arg(long)]
+        context_dir: PathBuf,
+        #[arg(long)]
+        expected_context: String,
+        #[arg(long)]
+        work_dir: PathBuf,
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+    #[cfg(target_os = "linux")]
     Execute {
         #[arg(long)]
         context_dir: PathBuf,
@@ -43,6 +54,8 @@ pub enum Command {
         work_dir: PathBuf,
         #[arg(long)]
         config_path: Option<String>,
+        #[arg(long)]
+        credential_socket: Option<PathBuf>,
     },
     #[cfg(target_os = "linux")]
     WorkerStatus {
@@ -83,17 +96,36 @@ pub enum Command {
 pub fn run(args: Args) -> Result<()> {
     match args.command {
         #[cfg(target_os = "linux")]
+        Command::Start {
+            context_dir,
+            expected_context,
+            work_dir,
+            config_path,
+        } => {
+            println!(
+                "{}",
+                crate::native_handoff::launch::run(
+                    &context_dir,
+                    &expected_context,
+                    &work_dir,
+                    config_path.as_deref()
+                )?
+            );
+        }
+        #[cfg(target_os = "linux")]
         Command::Execute {
             context_dir,
             expected_context,
             work_dir,
             config_path,
+            credential_socket,
         } => {
             crate::native_handoff::wrapper::run(
                 &context_dir,
                 &expected_context,
                 &work_dir,
                 config_path.as_deref(),
+                credential_socket.as_deref(),
             )?;
         }
         #[cfg(target_os = "linux")]

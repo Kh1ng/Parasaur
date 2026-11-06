@@ -3,12 +3,10 @@
 
 Usage: python3 scripts/tests/native_worker_execution.py /absolute/gah
 No paid model or real forge. Default physical capacity guards remain enabled.
-StartIntent is a controlled fixture; consumption, process scope and operations
-are real. Credentials are supplied through a sealed, anonymous memfd stdin.
+Launch, durable StartIntent, consumption, process scope and operations are real.
+The start CLI receives private stdin and delivers it through its PID-verified socket.
 """
 import datetime
-import fcntl
-import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -97,7 +95,7 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        for case in ('allowed', 'denied', 'publication-denied', 'provider-claims'):
+        for case in ('allowed', 'denied', 'publication-denied', 'lost-start-reply', 'provider-claims'):
             denied = case == 'denied'
             publication_denied = case == 'publication-denied'
             run_id = str(uuid.uuid4())
@@ -189,7 +187,6 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                 # Capture the exact delegated path before systemd drops its
                 # ControlGroup property after terminal ExitType=cgroup state.
                 group_path = None
-                fd = None
                 try:
                     run('/usr/bin/systemd-run', '--user', '--unit=' + holder, *flags,
                         '-p', 'Type=oneshot', '-p', 'RemainAfterExit=yes', '-p', 'FileDescriptorStoreMax=1',
@@ -201,25 +198,26 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                     grant = {key: binding[key] for key in ('run_id', 'node_id', 'context_sha256')}
                     grant.update(reservation_id=journal['holder_invocation'], token=secrets.token_hex(32),
                                  expires_at=text_date(stamp() + datetime.timedelta(seconds=9)))
-                    # The start-offer transport is not implemented yet. This
-                    # controlled StartIntent is NOT a claimed real offer test.
-                    journal.update(phase='start_intent', start={
-                        'token_sha256': hashlib.sha256(grant['token'].encode()).hexdigest(),
-                        'expires_at': grant['expires_at']})
-                    journal_path.write_text(json.dumps(journal))
-                    fd = os.memfd_create('parasaur-native-credential', os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
-                    os.write(fd, json.dumps({'grant': grant, 'service_token': owner}).encode())
-                    os.lseek(fd, 0, os.SEEK_SET)
-                    fcntl.fcntl(fd, fcntl.F_ADD_SEALS,
-                                fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL)
-                    execute = [binary, 'native-handoff', 'execute', '--context-dir', str(context),
+                    start = [binary, 'native-handoff', 'start', '--context-dir', str(context),
                                '--expected-context', binding['context_sha256'], '--work-dir', str(work),
                                '--config-path', str(worker)]
                     calls.clear()
-                    run('/usr/bin/systemd-run', '--user', '--unit=' + job, *flags,
-                        '-p', 'Type=exec', '-p', 'ExitType=cgroup', '-p', 'RemainAfterExit=yes',
-                        '-p', f'StandardInput=file:/proc/{os.getpid()}/fd/{fd}',
-                        '-p', 'StandardOutput=file:' + str(stdout), '-p', 'StandardError=file:' + str(stderr), *execute)
+                    launched = subprocess.run(start, env=environment, input=json.dumps({'grant': grant, 'service_token': owner}),
+                        stdout=subprocess.DEVNULL if case == 'lost-start-reply' else subprocess.PIPE,
+                        stderr=subprocess.PIPE, text=True, timeout=10)
+                    if case == 'provider-claims':
+                        journal = json.loads(journal_path.read_text())
+                        assert launched.returncode != 0 and not calls and not marker.exists()
+                        assert journal['phase'] == 'ready' and not journal['consumption_offered'] and not journal['execution']
+                        assert 'provider-assignee claim integration is unavailable' in launched.stderr
+                        print(json.dumps({'case': case, 'refusedBeforeConsumption': True,
+                            'backendFixtureInvoked': False, 'realModelInvoked': False}), flush=True)
+                        continue
+                    assert launched.returncode == 0, launched.stderr
+                    if case != 'lost-start-reply':
+                        reply = json.loads(launched.stdout)
+                        assert reply['launch_confirmed'] and reply['execution_authorized'] is False
+                    stdout, stderr = work / 'job.stdout', work / 'job.stderr'
                     group_path = properties(job).get('ControlGroup')
                     deadline = time.monotonic() + 60
                     while True:
@@ -228,8 +226,6 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                             break
                         assert time.monotonic() < deadline, 'Disposable wrapper did not terminate'
                         time.sleep(.1)
-                    os.close(fd)
-                    fd = None
                     # Diagnostics are fixture-only and still must not contain
                     # either credential. Never print them wholesale.
                     output = stdout.read_text() + stderr.read_text()
@@ -238,20 +234,14 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                         if path.is_file():
                             data = path.read_bytes()
                             assert owner.encode() not in data and grant['token'].encode() not in data, 'Credential persisted in fixture artifact'
-                    if case == 'provider-claims':
-                        journal = json.loads(journal_path.read_text())
-                        assert not calls and not marker.exists()
-                        assert not journal['consumption_offered'] and not journal['execution']
-                        assert 'provider-assignee claim integration is unavailable' in output
-                        print(json.dumps({'case': case, 'refusedBeforeConsumption': True,
-                            'backendFixtureInvoked': False, 'realModelInvoked': False}), flush=True)
-                        continue
                     expected_calls = ['/api/native-dispatch/consume', '/api/native-dispatch/operation']
                     if publication_denied:
                         expected_calls.append('/api/native-dispatch/operation')
                     assert calls == expected_calls, (calls, output[-2000:])
                     journal = json.loads(journal_path.read_text())
                     assert journal['execution']['pid'] > 0 and journal['consumption_offered']
+                    assert journal['version'] == 3
+                    assert all(journal['launch'][key] == journal['execution'][key] for key in ('invocation', 'pid', 'start_ticks'))
                     assert marker.exists() is not denied, output[-2000:]
                     entries = [json.loads(row) for row in (work / 'ledger.jsonl').read_text().splitlines()]
                     terminal = [entry for entry in entries if entry.get('session_id') == run_id]
@@ -277,17 +267,19 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                         assert base.startswith('/'), 'Missing user app slice evidence'
                         group = Path('/sys/fs/cgroup') / base.lstrip('/') / job
                     assert empty(group), 'Wrapper exit did not prove an empty cgroup'
-                    # Calling execute again must never consume/start again.
-                    replay = subprocess.run(execute, env=environment, input=json.dumps({
-                        'grant': grant, 'service_token': owner}), capture_output=True, text=True, timeout=10)
-                    assert replay.returncode != 0 and len(calls) == len(expected_calls)
+                    # Cold start/execute processes cannot offer/consume again,
+                    # including when the original launch response was discarded.
+                    for action in ('start', 'execute'):
+                        replay_args = list(start)
+                        replay_args[2] = action
+                        replay = subprocess.run(replay_args, env=environment, input=json.dumps({
+                            'grant': grant, 'service_token': owner}), capture_output=True, text=True, timeout=10)
+                        assert replay.returncode != 0 and len(calls) == len(expected_calls)
                     print(json.dumps({'case': case, 'actualStartConsumption': True,
                         'actualProcessScope': True, 'backendFixtureInvoked': marker.exists(),
                         'operation': journal['operation']['phase'], 'capacityRetainedAfterExit': True,
-                        'replayRejected': True, 'realModelInvoked': False}), flush=True)
+                        'replayRejected': True, 'startReplyDiscarded': case == 'lost-start-reply', 'realModelInvoked': False}), flush=True)
                 finally:
-                    if fd is not None:
-                        os.close(fd)
                     ctl('stop', job, check=False)
                     try:
                         if group is not None:

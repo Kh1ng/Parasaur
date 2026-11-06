@@ -45,6 +45,7 @@ struct Journal {
     holder_invocation: String,
     phase: Phase,
     start: Option<StartIntent>,
+    launch: Option<super::host::JobIdentity>,
     execution: Option<operations::Execution>,
     operation: Option<operations::Operation>,
     #[serde(default)]
@@ -102,11 +103,12 @@ impl WorkerRun {
             directory: directory.into(),
             _lock: lock,
             journal: Journal {
-                version: 2,
+                version: 3,
                 binding: binding.clone(),
                 holder_invocation: holder_invocation.into(),
                 phase: Phase::ReservationIntent,
                 start: None,
+                launch: None,
                 execution: None,
                 operation: None,
                 consumption_offered: false,
@@ -144,8 +146,9 @@ impl WorkerRun {
                     .context_sha256
                     .bytes()
                     .all(|b| b.is_ascii_hexdigit())
-                && matches!(journal.version, 1 | 2)
-                && (journal.version == 2
+                && matches!(journal.version, 1..=3)
+                && (journal.version == 3 || journal.launch.is_none())
+                && (journal.version >= 2
                     || (journal.execution.is_none()
                         && journal.operation.is_none()
                         && !journal.consumption_offered))
@@ -183,7 +186,20 @@ impl WorkerRun {
         // Latch before writing: a failed rename/directory sync must never allow
         // a caller to fall back to its assumed previous in-memory phase.
         self.persistence_uncertain = true;
-        self.journal.version = 2;
+        // Retain already-consumed legacy identity when upgrading; this never
+        // creates a new start, and operation callers still prove the real job.
+        if self.journal.version < 3 && self.journal.launch.is_none() {
+            self.journal.launch =
+                self.journal
+                    .execution
+                    .as_ref()
+                    .map(|execution| super::host::JobIdentity {
+                        invocation: execution.invocation.clone(),
+                        pid: execution.pid,
+                        start_ticks: execution.start_ticks.clone(),
+                    });
+        }
+        self.journal.version = 3;
         crate::installer::files::replace(
             &self.directory.join("worker.json"),
             &serde_json::to_vec(&self.journal)?,
@@ -251,6 +267,26 @@ impl WorkerRun {
         self.journal.phase = Phase::StartIntent;
         self.persist()?;
         send()
+    }
+
+    /// Pin the exact launched process before credential delivery. An absent
+    /// launch record never authorizes consumption after a lost start reply.
+    pub(super) fn record_launch(&mut self, identity: super::host::JobIdentity) -> Result<()> {
+        ensure!(
+            self.journal.phase == Phase::StartIntent
+                && self.journal.launch.is_none()
+                && !self.journal.consumption_offered
+                && self.journal.execution.is_none(),
+            "Native launch is already recorded or unavailable"
+        );
+        super::host::require_job(
+            &self.journal.binding.run_id,
+            &identity.invocation,
+            identity.pid,
+            &identity.start_ticks,
+        )?;
+        self.journal.launch = Some(identity);
+        self.persist()
     }
 
     /// Safe diagnostic/recovery view: no token or file-system path is exposed.

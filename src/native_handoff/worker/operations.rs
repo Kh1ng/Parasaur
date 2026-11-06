@@ -111,11 +111,36 @@ impl WorkerRun {
             serde_json::json!({"sequence":operation.sequence,"purpose":operation.purpose,"state":operation.phase}))
     }
     pub(super) fn validate_operations(&self) -> Result<()> {
+        if let Some(launch) = &self.journal.launch {
+            ensure!(
+                self.journal.phase == Phase::StartIntent
+                    && launch.pid > 0
+                    && launch.invocation.len() == 32
+                    && launch.invocation.bytes().all(|b| b.is_ascii_hexdigit())
+                    && launch.invocation.bytes().any(|b| b != b'0')
+                    && launch
+                        .start_ticks
+                        .parse::<u64>()
+                        .is_ok_and(|value| value > 0),
+                "Invalid native launch identity"
+            );
+        }
         ensure!(
             !self.journal.consumption_offered || self.journal.phase == Phase::StartIntent,
             "Native consumption has no durable start intent"
         );
         if let Some(execution) = &self.journal.execution {
+            ensure!(
+                self.journal.version < 3
+                    || self
+                        .journal
+                        .launch
+                        .as_ref()
+                        .is_some_and(|launch| launch.invocation == execution.invocation
+                            && launch.pid == execution.pid
+                            && launch.start_ticks == execution.start_ticks),
+                "Native execution does not match its recorded launch"
+            );
             ensure!(
                 self.journal.phase == Phase::StartIntent
                     && self.journal.consumption_offered
@@ -162,6 +187,7 @@ impl WorkerRun {
     /// Enter once, after the fixed wrapper receives central's consumed-start
     /// response. A restart/re-exec never inherits entry through old files.
     pub fn enter(&mut self, consumed: &StartConsumption) -> Result<()> {
+        self.require_own_launch()?;
         ensure!(
             !self.persistence_uncertain
                 && self.journal.phase == Phase::StartIntent
@@ -228,6 +254,7 @@ impl WorkerRun {
         grant: &StartGrant,
         token: &str,
     ) -> Result<()> {
+        self.require_own_launch()?;
         ensure!(
             !self.persistence_uncertain
                 && !self.journal.consumption_offered
@@ -296,6 +323,20 @@ impl WorkerRun {
             sequence,
             purpose,
         }
+    }
+
+    fn require_own_launch(&self) -> Result<()> {
+        let launch = self
+            .journal
+            .launch
+            .as_ref()
+            .context("Native job has no recorded launch; reconcile it")?;
+        super::super::host::require_own_job(
+            &self.journal.binding.run_id,
+            &launch.invocation,
+            launch.pid,
+            &launch.start_ticks,
+        )
     }
 
     pub(crate) fn require_execution(&self) -> Result<()> {

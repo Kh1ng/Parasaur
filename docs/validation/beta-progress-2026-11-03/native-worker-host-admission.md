@@ -1,5 +1,56 @@
 # Native worker host admission
 
+## Fixed launch transport
+
+The private Linux `native-handoff start` command now accepts the same bounded
+stdin envelope as the fixed worker. It rechecks staged context/history and
+worker identity, durably offers one start, then launches only the current CLI's
+fixed `native-handoff execute` entry point. The transient UUID job uses Type=exec,
+ExitType=cgroup, RemainAfterExit=yes, Restart=no and KillMode=control-group. It
+does not replace an existing unit or wait for the entire model run. Its reply
+confirms launch only; it explicitly does not confer execution authority.
+
+Before credential delivery, the launcher records the observed invocation,
+main PID and kernel start ticks under the worker journal lock. It then releases
+that lock, allowing the wrapper to consume the grant. This avoids a startup race
+where the child reaches its nonblocking journal lock while its parent still
+owns it. Initial consumption requires this exact recorded launch, in addition
+to the actual job/holder checks.
+
+The journal now writes version 3. Version-1/2 state remains readable; existing
+consumed version-2 identity is preserved when upgraded on an operation write.
+Unstarted legacy fences are never reset and cannot consume without a recorded
+launch. Old readers reject the new schema. Scope mismatch fails without changing
+the journal.
+
+Credentials are delivered over a bounded Unix socket in an owned private user
+runtime directory. SO_PEERCRED must match the recorded main PID and user, and
+the entire physical job identity is rechecked before any bytes are sent. A
+different process under the same user receives no credential bytes. I considered
+a private FIFO; PID-checked delivery avoids making its reader identity implicit.
+The unit receives null stdin and no credential environment property. Logs are
+created exclusively with mode 0600; existing log evidence is not truncated.
+Systemd specifier characters in execution/output paths are refused before launch.
+Failed replies, delivery, persistence or expiry retain StartIntent and capacity.
+
+The real-process worker check now calls the actual start command; it no longer
+injects StartIntent or launch records. Controlled central/backend fixtures cover
+allowed execution, paused intake, denied publication, discarded launch replies
+with cold start/execute replay refusal, and unsupported provider-claim mode.
+Canonical result import/release and a central-to-worker API caller remain
+unfinished; this command is local-only and is not a generic remote operation.
+No installed worker, controller or API is updated by this increment.
+
+Validation: 44 native library cases, 573 dispatch cases, 76 provider cases,
+three native CLI cases, 12 capability cases, formatting and all-target/all-feature
+Clippy pass. Five actual start/worker service cases pass, including discarded
+launch output followed by cold replay refusal. The independent real holder/
+writer-crash/main-crash-with-descendant test passes with its entry identity
+explicitly controlled. The socket unit check rejects a wrong PID under the same
+user without sending credential bytes. Local metadata is retained in
+`artifacts/central-live-20261105/native-worker-launch.jsonl`; Rust log:
+`/home/khing/.cache/parasaur-project-report.qy1ih6c9/native-dispatch-checks.log`.
+
 ## Fixed worker executable
 
 The private Linux `native-handoff execute --context-dir ... --expected-context
@@ -31,23 +82,23 @@ preserves earlier work before cleaning its worktree.
 
 `scripts/tests/native_worker_execution.py` exercises the compiled executable
 under actual WSL systemd job/capacity units with the default physical capacity
-guards. A sealed anonymous memfd supplies credential stdin through systemd's
-[file input support](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#StandardInput=).
+guards. Its initial stdin envelope goes to the real start command, which uses
+the PID-verified delivery described above.
 It demonstrates real start-consumption HTTP, actual scope installation and an
 authorized fake-backend attempt; a paused factory starts no backend and records
 no attempt; a denied publication preserves the executed backend result without
 attempting a push. Operation fences, capacity retention after exit, empty job
 cgroups, replay refusal and absence of credential plaintext in fixture artifacts
-are checked. A fourth case verifies refusal of provider-assignee claim mode
-before consumption. Disposable units are stopped afterward. The fixture's initial
-StartIntent is controlled, not proof of an implemented launch/offer transport.
+are checked. Provider-assignee claim mode is refused before consumption, and a
+discarded launch response does not enable a second offer. Disposable units are
+stopped afterward. StartIntent and launch identity come from the actual CLI.
 Its HTTP authority and backend/forge are fixtures, not a production broker or
 paid model run.
 
 Provider-assignee claim mode is explicitly refused before start consumption.
 Its background renewal lifecycle is not yet integrated with operation fences;
 this avoids writing outside those fences or weakening the configured provider
-claim policy. Production launch/credential transport, provider-claim integration,
+claim policy. Central-to-worker API transport, provider-claim integration,
 terminal result/release reconciliation and rollout remain unfinished. No
 installed CLI, controller or API was changed by this increment.
 
@@ -81,9 +132,10 @@ publication. This module does not itself provide that backend/result proof.
 
 Only one operation record is retained per run. Diagnostic views distinguish
 Pending, Authorized and Completed without exposing stored permission data as
-current authority or claiming an agent ran. The worker journal writes version
-2; legacy version-1 start fences are retained and upgraded on the next write.
-Older readers fail closed rather than resetting the new state.
+current authority or claiming an agent ran. The operation consumer introduced
+journal version 2; the launch identity now requires version 3 as described above.
+Legacy start fences are retained across upgrades. Older readers fail closed
+rather than resetting the new state.
 
 Control requests use fixed `/usr/bin/curl`, stdin-only credentials/JSON, a
 five-second deadline, direct configured-authority connections and normal TLS
@@ -283,8 +335,8 @@ Windows WSL validation passes: 38 native library cases, 573 dispatch cases,
 `cargo clippy --all-targets --all-features -- -D warnings`. Local full log:
 `/home/khing/.cache/parasaur-project-report.qy1ih6c9/native-dispatch-checks.log`.
 
-The launch callback is still a library primitive, not a production executor.
-It must launch only the fixed verified wrapper, which consumes central's one-use
-grant and applies fresh later attempt/publication authority. No worker start
-endpoint or generic command launch was added. Actual wrapper launch, result
-spooling, reconciliation/release and central transport remain unfinished.
+The fixed start CLI now uses this callback to launch the verified wrapper, which
+consumes central's one-use grant and applies fresh later attempt/publication
+authority. No worker HTTP start endpoint or generic remote command launch was
+added. Terminal result spooling, reconciliation/release and central-to-worker
+API transport remain unfinished.

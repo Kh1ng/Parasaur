@@ -14,6 +14,11 @@ fn running() -> (tempfile::TempDir, DispatchBinding, WorkerRun) {
         start_ticks: "1".into(),
         consumed_at: crate::clock::now_utc().format(&Rfc3339).unwrap(),
     });
+    run.journal.launch = Some(super::super::super::host::JobIdentity {
+        invocation: "d".repeat(32),
+        pid: std::process::id(),
+        start_ticks: "1".into(),
+    });
     run.journal.consumption_offered = true;
     run.persist().unwrap();
     (directory, binding, run)
@@ -242,7 +247,7 @@ fn legacy_unstarted_journal_upgrades_on_write_without_discarding_its_fence() {
     let path = directory.path().join("worker.json");
     let mut legacy: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     legacy["version"] = 1.into();
-    for key in ["execution", "operation", "consumption_offered"] {
+    for key in ["execution", "operation", "consumption_offered", "launch"] {
         legacy.as_object_mut().unwrap().remove(key);
     }
     fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
@@ -252,10 +257,48 @@ fn legacy_unstarted_journal_upgrades_on_write_without_discarding_its_fence() {
         .unwrap();
     drop(run);
     let stored: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    assert_eq!(stored["version"], 2);
+    assert_eq!(stored["version"], 3);
     assert_eq!(stored["phase"], "start_intent");
     let mut reopened = WorkerRun::open(directory.path(), &binding).unwrap();
     assert!(reopened
         .offer_start_checked(&grant, || panic!("legacy fence was reset"), |_, _| Ok(()))
         .is_err());
+}
+
+#[test]
+fn version_two_consumed_identity_survives_upgrade_without_new_authority() {
+    let (directory, binding, run) = running();
+    drop(run);
+    let path = directory.path().join("worker.json");
+    let mut legacy: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    legacy["version"] = 2.into();
+    legacy.as_object_mut().unwrap().remove("launch");
+    fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    let mut run = WorkerRun::open(directory.path(), &binding).unwrap();
+    run.authorize_checked(
+        OperationPurpose::Attempt,
+        |request| Ok(permission(request)),
+        |_| Ok(()),
+    )
+    .unwrap();
+    drop(run);
+    let upgraded: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(upgraded["version"], 3);
+    for field in ["invocation", "pid", "start_ticks"] {
+        assert_eq!(upgraded["launch"][field], legacy["execution"][field]);
+    }
+    assert!(WorkerRun::open(directory.path(), &binding).is_ok());
+}
+
+#[test]
+fn execution_cannot_reopen_with_a_different_recorded_launch() {
+    let (directory, binding, run) = running();
+    drop(run);
+    let path = directory.path().join("worker.json");
+    let mut value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    value["launch"]["pid"] = (std::process::id() + 1).into();
+    let bytes = serde_json::to_vec(&value).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    assert!(WorkerRun::open(directory.path(), &binding).is_err());
+    assert_eq!(fs::read(&path).unwrap(), bytes);
 }

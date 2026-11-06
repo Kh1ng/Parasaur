@@ -13,12 +13,16 @@ use std::{
     path::Path,
 };
 
+#[cfg(target_os = "linux")]
+mod credential_socket;
 mod current;
 #[cfg(target_os = "linux")]
 pub mod execution;
 mod history;
 #[cfg(target_os = "linux")]
 pub mod host;
+#[cfg(target_os = "linux")]
+pub mod launch;
 mod policy;
 mod work;
 #[cfg(target_os = "linux")]

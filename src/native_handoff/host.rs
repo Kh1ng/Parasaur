@@ -132,7 +132,36 @@ pub(super) fn process_start_ticks(pid: u32) -> Result<String> {
     Ok(ticks.into())
 }
 
-/// Inspect a recorded job without treating service-name reuse as continuity.
+/// Identity pinned to one launched process, independent of its service name.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct JobIdentity {
+    pub(super) invocation: String,
+    pub(super) pid: u32,
+    pub(super) start_ticks: String,
+}
+
+/// Observe and recheck the actual running job before recording its identity.
+pub(super) fn observe_job(run_id: &str) -> Result<JobIdentity> {
+    let values = state(&format!("gah-native-job-{run_id}.service"))?;
+    let invocation = values
+        .get("InvocationID")
+        .context("Native job identity unavailable")?
+        .clone();
+    let pid = values
+        .get("MainPID")
+        .context("Native job PID unavailable")?
+        .parse()?;
+    let start_ticks = process_start_ticks(pid)?;
+    require_job(run_id, &invocation, pid, &start_ticks)?;
+    Ok(JobIdentity {
+        invocation,
+        pid,
+        start_ticks,
+    })
+}
+
+/// Recheck a recorded job without treating service-name reuse as continuity.
 pub(super) fn require_job(run_id: &str, invocation: &str, pid: u32, ticks: &str) -> Result<()> {
     let run = uuid::Uuid::parse_str(run_id)?;
     ensure!(

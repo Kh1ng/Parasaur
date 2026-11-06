@@ -1,5 +1,5 @@
-//! Fixed native job entry point. Secrets arrive only on bounded stdin and are
-//! detached before any subprocess. This process consumes one start, installs
+//! Fixed native job entry point. Secrets arrive on bounded stdin or a
+//! PID-verified socket, closed before any subprocess. It consumes one start, installs
 //! its verified scope, then runs the ordinary dispatch/ledger path exactly once.
 use super::{worker::StartGrant, worker::WorkerRun};
 use anyhow::{ensure, Context, Result};
@@ -17,9 +17,9 @@ const MAX_INPUT: usize = 16 * 1024;
 // Never derive Debug/Serialize: this envelope is not an artifact or diagnostic.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Credentials {
-    grant: StartGrant,
-    service_token: String,
+pub(super) struct Credentials {
+    pub(super) grant: StartGrant,
+    pub(super) service_token: String,
 }
 
 fn parse_input(bytes: &[u8]) -> Result<Credentials> {
@@ -75,11 +75,7 @@ fn read_input(file: &mut File) -> Result<Credentials> {
     parse_input(&bytes)
 }
 
-fn receive_input() -> Result<Credentials> {
-    ensure!(
-        !std::io::stdin().is_terminal(),
-        "Native credentials require private noninteractive stdin"
-    );
+fn protect_memory() -> Result<()> {
     // Disable wrapper core dumps and /proc memory access before reading a
     // credential. The owner token must not end up in a crash artifact.
     let limit = libc::rlimit {
@@ -91,6 +87,15 @@ fn receive_input() -> Result<Credentials> {
             && unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0) } == 0,
         "Native credential memory protection is unavailable"
     );
+    Ok(())
+}
+
+pub(super) fn receive_input() -> Result<Credentials> {
+    ensure!(
+        !std::io::stdin().is_terminal(),
+        "Native credentials require private noninteractive stdin"
+    );
+    protect_memory()?;
     let fd = unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_DUPFD_CLOEXEC, 3) };
     ensure!(fd >= 0, "Native credential stdin is unavailable");
     let mut file = unsafe { File::from_raw_fd(fd) };
@@ -98,25 +103,26 @@ fn receive_input() -> Result<Credentials> {
     drop(file);
     // A seekable stdin (e.g. a sealed memfd) must not be inherited by curl,
     // git, or a backend which could rewind and read the credential envelope.
+    detach_input()?;
+    result
+}
+
+fn detach_input() -> Result<()> {
     let null = File::open("/dev/null")?;
     ensure!(
         unsafe { libc::dup2(null.as_raw_fd(), libc::STDIN_FILENO) } >= 0,
         "Native credential stdin could not be detached"
     );
-    result
+    Ok(())
 }
 
-/// Run only as the exact transient gah-native-job service corresponding to an
-/// already-offered start. No arbitrary executable or authority origin is accepted.
-/// A ledger is not proof of this wrapper's death: its parent must independently
-/// observe service/cgroup termination before producing a terminal receipt.
-pub fn run(
+/// Reverify staged input and reject unsupported provider claim lifecycles.
+pub(super) fn prepare(
     context_dir: &Path,
     expected: &str,
     work: &Path,
     config_path: Option<&str>,
-) -> Result<()> {
-    let credentials = receive_input()?;
+) -> Result<super::WorkerContext> {
     let worker = crate::config::load(config_path)?;
     let node = crate::central_claims::resolve_node_id()?;
     let context = super::resume(&worker, context_dir, expected, &node, work)?;
@@ -128,6 +134,27 @@ pub fn run(
         profile.publishing.issue_claim.mode == crate::config::IssueClaimMode::Local,
         "Native provider-assignee claim integration is unavailable; retain this job for reconciliation"
     );
+    Ok(context)
+}
+
+/// Enter the exact transient job for an already-offered start. Its parent must
+/// independently observe termination before producing a terminal receipt.
+pub fn run(
+    context_dir: &Path,
+    expected: &str,
+    work: &Path,
+    config_path: Option<&str>,
+    socket: Option<&Path>,
+) -> Result<()> {
+    let credentials = if let Some(path) = socket {
+        protect_memory()?;
+        detach_input()?;
+        let mut file = super::credential_socket::connect(path)?;
+        read_input(&mut file)?
+    } else {
+        receive_input()?
+    };
+    let context = prepare(context_dir, expected, work, config_path)?;
     {
         let mut journal = WorkerRun::open(work, &context.binding)?;
         journal.consume_start(&context, &credentials.grant, &credentials.service_token)?;

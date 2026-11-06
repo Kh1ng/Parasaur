@@ -1,5 +1,15 @@
 # Beta finishing pass: local validation
 
+Latest native launch: private Linux `native-handoff start` now fences the offer,
+starts the fixed executable, records its actual invocation/PID/start ticks and
+releases the journal lock before PID-verified credential delivery. Five real
+WSL job cases cover execution, intake/publication denial, discarded launch replies
+and cold replay refusal, and unsupported provider claims. The separate real
+crash/descendant capacity test also passes. Journal version 3 retains legacy
+fences and consumed identity. Central-to-worker API wiring and terminal result/
+claim/capacity reconciliation remain unfinished. No live service is changed.
+See [fixed launch transport](native-worker-host-admission.md#fixed-launch-transport).
+
 Latest fixed worker: private Linux `native-handoff execute` receives bounded
 credential stdin, detaches it before children, rechecks staged history without
 copying it, consumes the start and installs actual process authority. A held
