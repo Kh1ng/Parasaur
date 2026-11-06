@@ -86,9 +86,14 @@ test('worker role reports central identity and permits execution without hosting
     const probe = express();
     probe.use(workerRouteGuard(worker));
     probe.get('/api/status', (_req, res) => res.sendStatus(200));
+    probe.all('/api/loop/last-decision', (_req, res) => res.json(null));
     const statusServer = createHttpServer(probe);
     const statusUrl = await listen(statusServer);
-    try { assert.equal((await fetch(`${statusUrl}/api/status`)).status, 200); } finally { await close(statusServer); }
+    try {
+      assert.equal((await fetch(`${statusUrl}/api/status`)).status, 200);
+      assert.equal((await fetch(`${statusUrl}/api/loop/last-decision?profile=test`)).status, 200);
+      assert.equal((await fetch(`${statusUrl}/api/loop/last-decision`, { method: 'POST' })).status, 409);
+    } finally { await close(statusServer); }
   } finally {
     await close(server);
   }
