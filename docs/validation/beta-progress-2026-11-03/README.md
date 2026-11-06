@@ -1,5 +1,15 @@
 # Beta finishing pass: local validation
 
+Latest broker: [durable native orchestration](native-dispatch-broker.md) records
+stage/start intent per run, retains results through failed canonical import and
+refuses duplicate launch after lost replies or restart. Fifteen broker cases
+pass on Windows and WSL; the combined claim/broker suite passes 37 Windows
+cases (two POSIX skips) and all 39 Linux cases. An actual Rust preparation,
+worker-check and canonical-import bridge passes with controlled transport.
+This is source-only: production authority, host admission, worker execution
+and live reconciliation remain unfinished. Usage and persistent GitLab auth
+also remain unverified in the owner's actual client.
+
 Latest native ownership: [durable holds and canonical acknowledgements](native-worker-ownership.md)
 keep work reserved across expiry, disconnect, import failure and restart until
 the exact native result is durably recorded. Unknown cancellation cannot release
