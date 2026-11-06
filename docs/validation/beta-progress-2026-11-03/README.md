@@ -1,5 +1,11 @@
 # Beta finishing pass: local validation
 
+Latest execution check: [capacity and worker diagnostics](execution-capacity.md)
+rules out the current event-query payload as the primary API memory bottleneck,
+identifies the central admission constraint and worker login gates, and fixes
+the Windows worker's blocked read-only decision route. Central can now read
+that decision state. Actual provider execution remains unverified.
+
 Latest connection correction: [WebSocket welcome](websocket-welcome.md)
 removes the duplicate status query and keeps absent work observations absent.
 The live TLS initial connection/reconnect, browser unavailable-state checks

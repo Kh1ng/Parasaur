@@ -49,6 +49,13 @@ work and are not gates for this desktop/shared-web pass.
 
 ## Evidence still required
 
+- [Execution capacity and worker diagnostics](validation/beta-progress-2026-11-03/execution-capacity.md)
+  identifies the central node's admission constraint and the worker's login
+  gaps. The broad event query is not the measured API memory bottleneck.
+  The Windows worker's read-only decision route is fixed and verified from
+  central, preserving mutation/auth boundaries. Cold status latency, usable
+  worker provider/model setup and actual factory progression remain open.
+
 - [WebSocket welcome](validation/beta-progress-2026-11-03/websocket-welcome.md)
   now omits unobserved work fields and avoids the duplicate full-status query.
   Pending/failed REST observations remain unavailable, including in the

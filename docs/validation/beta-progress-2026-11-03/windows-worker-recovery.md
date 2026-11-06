@@ -80,3 +80,8 @@ was changed without a reproduced cause.
 The live Factory intake also shows issues assigned to `Ram-Rod6198` excluded
 as managed by another loop. Assignments were not changed. Central node capacity
 continues to defer review launches. These are separate from worker reachability.
+
+The later [execution-capacity check](execution-capacity.md) fixes the worker
+role guard's missing GET last-decision permission. The direct endpoint and
+central relay now read successfully, with POST still rejected. Cold status
+latency and actual provider/worker execution remain acceptance work.
