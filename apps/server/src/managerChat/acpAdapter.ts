@@ -23,6 +23,7 @@ import type { Writable as NodeWritable, Readable as NodeReadable } from 'node:st
 import type { ChatTranscriptTurn, ChatUsage } from '@git-agent-harness/contracts';
 import type { PermissionAsk } from './permissionPolicy.js';
 import { agentChildEnv } from './childEnv.js';
+import { terminateProcessTree } from '../gahCli.js';
 
 export interface ManagerCommandInfo {
   name: string;
@@ -531,6 +532,7 @@ export function createAcpBackend(
     const spec = spawnSpec();
     const child = spawn(spec.command, spec.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
       env: agentChildEnv({ ...workspaceEnv, ...spec.env })
     });
 
@@ -846,6 +848,17 @@ export function createAcpBackend(
     }
   }
 
+  async function releaseConversation(key: string): Promise<void> {
+    starting.get(key)?.controller.abort(new Error('Agent startup cancelled.'));
+    const state = connections.get(key);
+    if (!state) return;
+    if (state.activePrompt) throw new Error('Stop this turn before releasing its agent.');
+    if (state.process.pid && !await terminateProcessTree(state.process.pid, state.process)) {
+      throw new Error('Agent processes did not stop; the workspace remains available.');
+    }
+    if (connections.get(key) === state) connections.delete(key);
+  }
+
   function dispose(): void {
     for (const pending of starting.values()) pending.controller.abort(new Error('Agent startup cancelled.'));
     starting.clear();
@@ -859,5 +872,5 @@ export function createAcpBackend(
     connections.clear();
   }
 
-  return { runTurn, listCommands, listModels, setModel, setReasoningEffort, steerTurn, cancelTurn, dispose, invalidateModels };
+  return { runTurn, listCommands, listModels, setModel, setReasoningEffort, steerTurn, cancelTurn, releaseConversation, dispose, invalidateModels };
 }

@@ -16,6 +16,7 @@ import { ManagerWakeQueue } from './managerWake.js';
 import {
   resolveAdapter,
   resolveInstanceAdapter,
+  releaseManagerConversation,
   listManagerBackends,
   type ManagerCommandInfo,
   type ManagerModelInfo,
@@ -357,6 +358,7 @@ export async function archiveChatSession(
   try {
   const stored = getSession(profile, sessionId, chatSessionStoreOptions);
   await flushSession(profile);
+  await releaseManagerConversation(key);
   if (stored?.workspaceNodes?.length) {
     if (stored.archivedAt !== null) return stored;
     const localId = localChatNodeId();

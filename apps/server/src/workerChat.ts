@@ -4,7 +4,7 @@ import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import type { ChatTranscriptTurn, HelperRoutePreference, HelperTaskKind, NodeRoleStatus, ProfileSummary } from '@git-agent-harness/contracts';
 import { runProfileList, runSubscriptionRoutes, runQuotaFailure } from './gahCli.js';
-import { resolveInstanceAdapter, type ManagerAdapter } from './managerChat/registry.js';
+import { releaseManagerConversation, resolveInstanceAdapter, type ManagerAdapter } from './managerChat/registry.js';
 import { archiveSession, chatKey, createSession, getSession, publishWorkspace, refreshWorkspace, resolveSessionCwd, restoreSession, touchSession, updateSession, type ChatSessionStoreOptions } from './managerChat/chatSessions.js';
 import { commitGitChanges, getGitReviewState, getGitStatusCached, getReviewChangesForHelper, getSelectedChangesForHelper } from './gitCache.js';
 import { findOpenPullRequest, publishPullRequest, updatePullRequest } from './gitPullRequest.js';
@@ -31,6 +31,7 @@ export function createWorkerChatRouter(deps: {
   adapter?: (backend: string, profile?: string, instance?: string | null) => ManagerAdapter | Promise<ManagerAdapter>;
   sessions?: ChatSessionStoreOptions;
   accounts?: typeof localChatAccounts;
+  release?: typeof releaseManagerConversation;
 }) {
   const router = Router();
   const active = new Map<string, ActiveExecution>();
@@ -243,6 +244,7 @@ export function createWorkerChatRouter(deps: {
       if (body.action === 'archive') {
         if (!sessionId) return void res.status(400).json({ error: 'A session is required.' });
         if ([...active.values()].some(turn => turn.key === key)) return void res.status(409).json({ error: 'Stop the active turn before archiving its workspace.' });
+        await (deps.release ?? releaseManagerConversation)(key);
         return void res.json(await archiveSession(body.profile, sessionId, profile, deps.sessions));
       }
       if (body.action === 'restore') {

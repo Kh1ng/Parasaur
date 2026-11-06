@@ -20,6 +20,10 @@ if (spawnCountPath) {
   fs.writeFileSync(spawnCountPath, String(spawnNumber));
 }
 let promptNumber = 0;
+if (mode === 'archive-tree') {
+  const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  fs.appendFileSync(spawnCountPath + '.pids', JSON.stringify([process.pid, child.pid]) + '\n');
+}
 let pendingPrompt;
 const lines = readline.createInterface({ input: process.stdin });
 
@@ -188,19 +192,47 @@ test('a failed workspace read can recover on the next ACP request', async () => 
   } finally { backend.dispose(); rmSync(fake.dir, { recursive: true, force: true }); }
 });
 
-test('cancel and disposal during workspace reads cannot launch a late ACP child', async () => {
-  for (const action of ['cancel', 'dispose']) {
+test('cancel, release and disposal during workspace reads cannot launch a late ACP child', async () => {
+  for (const action of ['cancel', 'release', 'dispose']) {
     let release!: (env: Record<string, string>) => void;
     let spawned = false;
     const backend = createAcpBackend('Workspace', () => { spawned = true; throw new Error('must not spawn'); }, {
       environment: () => new Promise(resolve => { release = resolve; })
     });
     const pending = backend.listModels({ key: 'conversation', profile: 'project' });
-    if (action === 'cancel') await backend.cancelTurn('conversation'); else backend.dispose();
+    if (action === 'cancel') await backend.cancelTurn('conversation');
+    else if (action === 'release') await backend.releaseConversation('conversation');
+    else backend.dispose();
     release({ APP_LABEL: 'late' });
     await assert.rejects(pending, /startup cancelled/);
     assert.equal(spawned, false);
     backend.dispose();
+  }
+});
+
+test('releasing an archived ACP conversation stops its process tree and preserves siblings', { timeout: 30_000 }, async () => {
+  const fake = fakeAcpScript();
+  const count = join(fake.dir, 'count');
+  const backend = createAcpBackend('Archive', () => ({ command: process.execPath, args: [fake.path, 'archive-tree', count] }));
+  const first = { key: 'first-session', profile: 'project' };
+  const second = { key: 'second-session', profile: 'project' };
+  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  try {
+    await backend.listModels(first);
+    await backend.listModels(second);
+    const [firstPids, secondPids] = readFileSync(count + '.pids', 'utf8').trim().split('\n').map(line => JSON.parse(line) as number[]);
+    assert.ok([...firstPids, ...secondPids].every(alive));
+    await backend.releaseConversation(first.key);
+    assert.ok(firstPids.every(pid => !alive(pid)), 'bridge and descendant both exit before release returns');
+    assert.ok(secondPids.every(alive), 'sibling conversation remains available');
+    await backend.listModels(second);
+    assert.equal(readFileSync(count, 'utf8'), '2');
+    await backend.listModels(first);
+    assert.equal(readFileSync(count, 'utf8'), '3', 'restoring the conversation starts a new runtime');
+  } finally {
+    await Promise.all([backend.releaseConversation(first.key), backend.releaseConversation(second.key)]);
+    backend.dispose();
+    rmSync(fake.dir, { recursive: true, force: true });
   }
 });
 
@@ -335,6 +367,7 @@ test('cancel evicts a child only when its prompt ignores cancellation', { timeou
       onChunk: (text) => { if (text === 'stuck-prompt-started') markPromptStarted(); }
     });
     await promptStarted;
+    await assert.rejects(backend.releaseConversation('profile'), /Stop this turn/, 'archive cleanup must not interrupt a live prompt');
     await backend.cancelTurn('profile');
     await assert.rejects(stuck);
 

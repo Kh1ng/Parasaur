@@ -101,6 +101,8 @@ export interface ManagerAdapter extends ManagerBackendInfo {
   setReasoningEffort(conversation: ManagerConversation, effortId: string): Promise<void>;
   steerTurn(gahProfile: string, message: string): Promise<{ outcome: 'injected' }>;
   cancelTurn(gahProfile: string): Promise<void>;
+  /** Release one idle conversation's runtime while retaining its durable history. */
+  releaseConversation?(key: string): Promise<void>;
   /** Release processes when a selected credential or instance changes. */
   dispose?(): void;
   /** Refresh catalogs while retaining controllers for active prompts. */
@@ -162,6 +164,14 @@ export function resolveAdapter(backendId: string): ManagerAdapter {
 }
 
 const INSTANCE_ADAPTERS = new Map<string, { runtime: string; runnerKind: string; adapter: ManagerAdapter }>();
+
+/** Retire every backend/account visited by this conversation, including before a handoff. */
+export async function releaseManagerConversation(key: string): Promise<void> {
+  await Promise.all([
+    ...Object.values(REGISTRY),
+    ...Array.from(INSTANCE_ADAPTERS.values(), entry => entry.adapter)
+  ].map(adapter => adapter.releaseConversation?.(key)));
+}
 
 /** Resolve one named account to its own ACP process and connection map. */
 export async function resolveInstanceAdapter(profile: string, backendId: string, instance?: string | null): Promise<ManagerAdapter> {
