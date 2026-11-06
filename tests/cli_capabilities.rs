@@ -5,6 +5,21 @@
 use git_agent_harness::cli::capabilities::*;
 
 #[test]
+fn native_context_and_current_policy_paths_remain_private() {
+    let manifest = generate_manifest();
+    for name in ["prepare", "check", "check-current-policy"] {
+        let id = format!("native-handoff.{name}");
+        let operation = &manifest.operations[&id];
+        assert_eq!(operation.remote_disposition, RemoteDisposition::LocalOnly);
+        assert_eq!(
+            operation.local_only_reason,
+            Some(LocalOnlyReason::SecuritySensitive)
+        );
+        assert!(!manifest.is_remote_available(&id));
+    }
+}
+
+#[test]
 fn isolated_host_protocol_is_never_a_remote_command() {
     let manifest = generate_manifest();
     let operation = &manifest.operations["isolation-host.run"];

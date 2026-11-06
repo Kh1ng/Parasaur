@@ -1,5 +1,5 @@
-//! Private native context preparation and verification. Neither operation
-//! starts a backend or treats a point-in-time history snapshot as live authority.
+//! Private native context preparation and verification. These commands never
+//! start a backend or treat a point-in-time history snapshot as live authority.
 use anyhow::{ensure, Result};
 use std::{io::Read, path::PathBuf};
 
@@ -33,10 +33,42 @@ pub enum Command {
         #[arg(long)]
         config_path: Option<String>,
     },
+    CheckCurrentPolicy {
+        #[arg(long)]
+        context_dir: PathBuf,
+        #[arg(long)]
+        expected_context: String,
+        #[arg(long)]
+        node_id: String,
+        #[arg(long)]
+        central_url: String,
+        #[arg(long)]
+        config_path: Option<String>,
+    },
 }
 
 pub fn run(args: Args) -> Result<()> {
     match args.command {
+        Command::CheckCurrentPolicy {
+            context_dir,
+            expected_context,
+            node_id,
+            central_url,
+            config_path,
+        } => {
+            let cfg = crate::config::load(config_path.as_deref())?;
+            let binding = crate::native_handoff::check_current_policy(
+                &cfg,
+                &context_dir,
+                &expected_context,
+                &node_id,
+                &central_url,
+            )?;
+            println!(
+                "{}",
+                serde_json::json!({"binding":binding,"policy_current":true,"execution_authorized":false})
+            );
+        }
         Command::Prepare {
             request_file,
             output,

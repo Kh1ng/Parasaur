@@ -57,6 +57,39 @@ fn native_context_cli_moves_history_and_verifies_the_expected_node_without_start
         .assert()
         .success();
     let binding: Value = serde_json::from_slice(&prepared.get_output().stdout).unwrap();
+    let check_current = || {
+        let mut command = bin();
+        command
+            .args([
+                "native-handoff",
+                "check-current-policy",
+                "--context-dir",
+                input.to_str().unwrap(),
+                "--expected-context",
+                binding["context_sha256"].as_str().unwrap(),
+                "--node-id",
+                "worker-native-test",
+                "--central-url",
+                "https://central.invalid",
+                "--config-path",
+                config_path.to_str().unwrap(),
+            ])
+            .env("GAH_LEDGER_PATH", &history);
+        command
+    };
+    let current = check_current().assert().success();
+    let current: Value = serde_json::from_slice(&current.get_output().stdout).unwrap();
+    assert_eq!(current["binding"], binding);
+    assert_eq!(current["policy_current"], true);
+    assert_eq!(current["execution_authorized"], false);
+    let mut paused = central.clone();
+    paused.defaults.factory_enabled = Some(false);
+    fs::write(&config_path, toml::to_string(&paused).unwrap()).unwrap();
+    check_current()
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("disabled centrally"));
+    fs::write(&config_path, toml::to_string(&central).unwrap()).unwrap();
     let mut worker = central.clone();
     worker.defaults.registry_central_url = Some("https://central.invalid".into());
     let marker = tmp.path().join("unexpected-backend-start");

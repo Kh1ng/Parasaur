@@ -59,6 +59,140 @@ fn fixture() -> (tempfile::TempDir, GahConfig, GahConfig, JobRequest) {
 }
 
 #[test]
+fn current_central_policy_refuses_disabled_factory_changed_policy_and_wrong_identity() {
+    let _guard = crate::test_support::ExecGuard::new();
+    let (tmp, central, mut worker, request) = fixture();
+    worker.defaults.node_role = crate::node_role::NodeRole::Worker;
+    let input = tmp.path().join("current-policy");
+    let bound = prepare(
+        &central,
+        &request,
+        "worker",
+        "https://central.invalid",
+        &input,
+    )
+    .unwrap();
+    let check = |cfg: &GahConfig, node: &str, origin: &str| {
+        check_current_policy(cfg, &input, &bound.context_sha256, node, origin)
+    };
+    assert_eq!(
+        serde_json::to_value(check(&central, "worker", "https://central.invalid").unwrap())
+            .unwrap(),
+        serde_json::to_value(&bound).unwrap()
+    );
+    assert!(check(&central, "another-worker", "https://central.invalid").is_err());
+    assert!(check(&central, "worker", "https://other.invalid").is_err());
+    assert!(check(&worker, "worker", "https://central.invalid").is_err());
+    let mut changed = central.clone();
+    changed.defaults.factory_enabled = Some(false);
+    assert!(check(&changed, "worker", "https://central.invalid").is_err());
+    changed = central.clone();
+    changed
+        .profiles
+        .get_mut("test")
+        .unwrap()
+        .publishing
+        .allow_pull_request_creation = true;
+    assert!(check(&changed, "worker", "https://central.invalid")
+        .unwrap_err()
+        .to_string()
+        .contains("policy changed"));
+    changed = central.clone();
+    changed
+        .profiles
+        .get_mut("test")
+        .unwrap()
+        .codex_args
+        .push("--dangerously-bypass-approvals-and-sandbox".into());
+    assert!(check(&changed, "worker", "https://central.invalid").is_err());
+    fs::write(input.join("request.json"), b"{}").unwrap();
+    assert!(check(&central, "worker", "https://central.invalid").is_err());
+}
+
+#[test]
+fn current_policy_checks_new_central_spend_instead_of_prepared_history() {
+    let _guard = crate::test_support::ExecGuard::new();
+    for observed_cost in [Some(1.0), None] {
+        let (tmp, central, _, request) = fixture();
+        let input = tmp.path().join("current-spend");
+        let bound = prepare(
+            &central,
+            &request,
+            "worker",
+            "https://central.invalid",
+            &input,
+        )
+        .unwrap();
+        let check = || {
+            check_current_policy(
+                &central,
+                &input,
+                &bound.context_sha256,
+                "worker",
+                "https://central.invalid",
+            )
+        };
+        assert!(check().is_ok());
+        let mut row = crate::ledger::LedgerEntry::new(
+            "test",
+            &central.profiles["test"],
+            "codex",
+            "fix",
+            "another-work",
+            Some(uuid::Uuid::new_v4().to_string()),
+            None,
+        );
+        row.work_id = Some("#another-work".into());
+        row.usage.actual_cost_usd = observed_cost;
+        row.attempts_started = Some(1);
+        crate::ledger::append(&central, &row).unwrap();
+        assert!(check()
+            .unwrap_err()
+            .downcast_ref::<crate::spend_budget::SpendBudgetHeld>()
+            .is_some());
+        let manifest: Manifest =
+            read_json(&fs::read(input.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(
+            manifest.history_entries, 0,
+            "The prepared snapshot itself has not changed"
+        );
+    }
+}
+
+#[test]
+fn current_policy_refuses_repository_permission_changes_and_removal() {
+    let _guard = crate::test_support::ExecGuard::new();
+    let (tmp, mut central, _, request) = fixture();
+    let path = tmp.path().join("repository-policy.toml");
+    fs::write(&path, "[repo]\ntrust_mode = 'draft_pr_allowed'\nallow_provider_mutation = true\nallow_push = false\nallow_draft_pr = true\nallow_issue_write = false\nallow_project_write = false\n").unwrap();
+    central.profiles.get_mut("test").unwrap().policy_path =
+        Some(path.to_string_lossy().into_owned());
+    let input = tmp.path().join("current-repository-policy");
+    let bound = prepare(
+        &central,
+        &request,
+        "worker",
+        "https://central.invalid",
+        &input,
+    )
+    .unwrap();
+    let check = |cfg: &GahConfig| {
+        check_current_policy(
+            cfg,
+            &input,
+            &bound.context_sha256,
+            "worker",
+            "https://central.invalid",
+        )
+    };
+    assert!(check(&central).is_ok());
+    fs::write(&path, "[repo]\ntrust_mode = 'draft_pr_allowed'\nallow_provider_mutation = true\nallow_push = true\nallow_draft_pr = true\nallow_issue_write = false\nallow_project_write = false\n").unwrap();
+    assert!(check(&central).is_err());
+    central.profiles.get_mut("test").unwrap().policy_path = None;
+    assert!(check(&central).is_err());
+}
+
+#[test]
 fn worker_reassembles_all_chunks_and_refuses_a_missing_middle_chunk() {
     let _guard = crate::test_support::ExecGuard::new();
     let (tmp, central, worker, request) = fixture();

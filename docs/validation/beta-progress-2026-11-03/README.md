@@ -1,5 +1,13 @@
 # Beta finishing pass: local validation
 
+Latest current-policy prerequisite: the private native CLI/server path checks
+current central policy, permissions, factory enablement and live spend after
+context preparation. Changed restrictions and newly recorded unknown/exhausted
+spend refuse admission. Sixteen context cases, capability/actual CLI checks,
+Clippy, server typechecking and the actual CLI/server bridge pass. It explicitly
+does not grant execution; live work/account/claim/host authority and the worker
+executor remain unfinished. See [current policy checks](native-dispatch-broker.md#current-central-policy-prerequisite).
+
 Latest broker: [durable native orchestration](native-dispatch-broker.md) records
 stage/start intent per run, retains results through failed canonical import and
 refuses duplicate launch after lost replies or restart. Fifteen broker cases

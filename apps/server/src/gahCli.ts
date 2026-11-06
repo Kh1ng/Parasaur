@@ -195,6 +195,24 @@ export function runReceiveNativeResult(options: { bindingFile: string; receiptFi
   return runJsonCommand(args, config, false, undefined, 64 * 1024);
 }
 
+/** Trusted central prerequisite, not an execution grant. The caller owns the
+ * context directory and must separately check loop/claim/work/host authority. */
+export async function runCheckNativePolicy(options: {
+  contextDirectory: string; contextSha256: string; nodeId: string; centralUrl: string; config?: string; signal?: AbortSignal;
+}): Promise<import('./nativeDispatchBroker.js').NativeDispatchBinding> {
+  const config = getConfigPath(options.config ?? process.env.GAH_CONFIG_PATH ?? process.env.GAH_CANONICAL_CONFIG);
+  const args = ['native-handoff', 'check-current-policy', '--context-dir', options.contextDirectory,
+    '--expected-context', options.contextSha256, '--node-id', options.nodeId, '--central-url', options.centralUrl,
+    ...(config ? ['--config-path', config] : [])];
+  const result = await runJsonCommand<{ binding: import('./nativeDispatchBroker.js').NativeDispatchBinding; policy_current: boolean; execution_authorized: boolean }>(
+    args, config, false, undefined, 64 * 1024, options.signal);
+  if (result.policy_current !== true || result.execution_authorized !== false
+    || result.binding?.node_id !== options.nodeId || result.binding.context_sha256 !== options.contextSha256) {
+    throw new Error('Current native policy check returned a mismatched binding');
+  }
+  return result.binding;
+}
+
 /**
  * Shared plumbing for the `--json` subcommands -- same spawn/parse/error
  * shape, factored out so callers don't duplicate it. Fail closed: stdout
@@ -206,10 +224,11 @@ function runJsonCommand<T>(
   config?: string,
   acceptStructuredFailure = false,
   input?: string,
-  maxOutputBytes = MAX_JSON_OUTPUT_BYTES
+  maxOutputBytes = MAX_JSON_OUTPUT_BYTES,
+  signal?: AbortSignal
 ): Promise<T> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(findGahBinary(), args, { ...getSpawnOptions(config), ...(input !== undefined ? { stdio: ['pipe', 'pipe', 'pipe'] as const } : {}) });
+    const child = spawn(findGahBinary(), args, { ...getSpawnOptions(config), ...(signal ? { signal } : {}), ...(input !== undefined ? { stdio: ['pipe', 'pipe', 'pipe'] as const } : {}) });
     if (input !== undefined) { child.stdin?.on('error', () => undefined); child.stdin?.end(input); }
 
     let stdout = '';

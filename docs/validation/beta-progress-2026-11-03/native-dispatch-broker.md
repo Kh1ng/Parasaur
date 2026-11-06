@@ -44,6 +44,31 @@ introducing a separate queue/database or retaining all run history in memory.
 The deployment contract remains one central service writer per claims/journal
 root. Operator deletion of durable history is not a supported replay mechanism.
 
+## Current central policy prerequisite
+
+`gah native-handoff check-current-policy` rereads the central configuration and
+live ledger. It verifies the prepared context identity and policy hashes,
+requires central role and enabled factory execution, compares current portable
+policy/runtime restrictions and repository-policy bytes against preparation,
+and runs the existing streaming spend admission against current history.
+Spend recorded after preparation, including unknown actual cost under an
+enforced limit, can therefore hold the job. It reuses spend admission's existing
+deduplicated hold notification behavior.
+
+The command returns the bound run and `policy_current: true` alongside
+`execution_authorized: false`. This is deliberately a prerequisite rather than
+an execution grant. The production authority must additionally check the live
+loop, exact claim, current work/review eligibility, account approvals and worker
+reservation, and repeat the appropriate checks before subsequent attempts or
+publication. No such production authority/executor is installed by this change.
+
+The trusted server wrapper `runCheckNativePolicy` uses fixed arguments and
+bounded output, verifies the returned context/node, and supports aborting the
+private CLI check. The context directory must be coordinator-owned; neither the
+command nor arbitrary caller-selected paths are exposed as a generic remote
+operation. Capability tests keep all native context commands local-only and
+security-sensitive.
+
 ## Verification on November 6
 
 - Server `npm run --workspace=apps/server typecheck` passes.
@@ -71,6 +96,16 @@ root. Operator deletion of durable history is not a supported replay mechanism.
   elapsed seconds, zero observation gaps and zero OOM kills. This is about
   8.4 hours, short of the ten-hour observation requirement and not sustained
   agent-load acceptance. It does not prove the memory issue fixed.
+- Current-policy increment: all 16 native context cases pass, including new
+  configuration/permissions/identity checks and both measured exhausted spend
+  and unknown spend arriving after preparation. Nine capability unit cases,
+  12 capability integration cases and the actual native-context CLI case pass;
+  formatting and all-target/all-feature Clippy with warnings denied pass.
+  Server typechecking and all 15 broker cases pass. The disposable real
+  CLI/server bridge additionally refuses a central pause and changed runtime
+  policy, then retains unknown imported cost as a live budget hold. The
+  transport/grant generator remains controlled test code, not production
+  authority. No backend or real issue runs.
 
 Local logs: `artifacts/native-broker-windows-tests.log`,
 `artifacts/native-broker-linux-tests.log` and

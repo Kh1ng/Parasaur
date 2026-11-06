@@ -13,8 +13,10 @@ use std::{
     path::Path,
 };
 
+mod current;
 mod history;
 mod policy;
+pub use current::check_current_policy;
 
 const MAX_JSON: u64 = 8 * 1024 * 1024;
 const MAX_HISTORY: u64 = 128 * 1024 * 1024;
