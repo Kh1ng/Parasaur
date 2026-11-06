@@ -49,6 +49,13 @@ work and are not gates for this desktop/shared-web pass.
 
 ## Evidence still required
 
+- [Capacity notification correction](validation/beta-progress-2026-11-03/capacity-notifications.md)
+  is live in shared web `0ce6e7fb` and a notification-only API backport.
+  Routine pre-launch waits stay in history and leave the unread bell; real
+  failures, prior backend attempts and delivery receipts are preserved.
+  Live TLS replay verifies updated and older clients. The actual resource
+  wait, cold-start blocking and full factory acceptance remain unresolved.
+
 - [Live central recovery](validation/beta-progress-2026-11-03/live-central-recovery.md)
   restored the tailnet dashboard and authenticated 0.3.0 API. All 29 deployed
   JavaScript chunks pass byte checks. Borrowed alias indexes and streamed

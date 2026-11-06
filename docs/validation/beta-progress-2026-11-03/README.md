@@ -1,5 +1,11 @@
 # Beta finishing pass: local validation
 
+Latest deployment: [capacity notifications](capacity-notifications.md) makes
+pre-launch waits quiet history, corrects matching old false failure alerts,
+and preserves real alerts and their receipts. Shared web `0ce6e7fb` and the
+notification-only API backport pass asset, state-preservation and live TLS
+protocol checks. The resource constraint and complete pipeline remain open.
+
 Latest live work: [central recovery and memory attribution](live-central-recovery.md)
 restored the tailnet dashboard/API, preserved credentials and sessions, and
 verified every deployed JavaScript chunk. An earlier 15-minute controller

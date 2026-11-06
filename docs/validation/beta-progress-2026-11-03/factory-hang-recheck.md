@@ -44,11 +44,11 @@ Private assembly `69524ff`, pinned to `c0668cae`, passes 1,106 server tests
 artifact/input/transport checks. Its isolated WSL log is
 `/home/khing/.cache/parasaur-enterprise-current.2eofbwne/build.log`.
 
-One related server-side gap remains: `activityFromController` currently turns
-ordinary capacity-refusal terminal events into `dispatch_failed` notifications.
-The controller history still records the full refusal, and the shared UI
-qualifies it as deferred, but the notification conversion needs its own fix.
-Do not claim that this web deployment corrects existing notification history.
+The related server-side notification gap is now separately fixed and deployed:
+[capacity notifications](capacity-notifications.md) records the conservative
+pre-launch classification, durable correction, older-client negotiation and
+live preservation checks. The original web-only deployment did not make that
+server-side correction.
 
 ## Earlier fixture and hosted investigation
 

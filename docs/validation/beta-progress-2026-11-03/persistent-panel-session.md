@@ -85,3 +85,9 @@ The auth API rollout remains pending a check/update of that proxy. Live web
 response, allowing the quota correction to deploy independently. Existing
 sign-in behavior is preserved until the staged API is rolled out. No owner
 credential is newly persisted beyond its existing tab-scoped storage.
+
+The live API has since received the notification-only backport described in
+[capacity notifications](capacity-notifications.md). The staged `acf34437`
+runtime predates that fix: rebuild from current public source and repeat the
+cookie/runtime checks before deploying persistent auth, so it cannot regress
+the notification correction. The actual GitLab proxy prerequisite remains.
