@@ -3,6 +3,7 @@
 The finishing pass implements #1537 as an opt-in native intake policy. This
 change is staged, not enabled on the live controller. No dollar amount has
 been selected for the owner and no running service has been restarted.
+Implementation: public `37e14780901afb5d08ca664ce894243ce9279fd6`.
 
 `routing.spend_budget` accepts independent `daily_usd` and `monthly_usd` ceilings
 with an explicit `actual` or `estimated` cost basis. Defaults can supply a
@@ -57,6 +58,19 @@ Logs are retained in `/home/khing/.cache/parasaur-project-report.qy1ih6c9/`:
 `spend-budget-final-checks.log`, `spend-budget-resume-checks.log` and
 `spend-budget-final-admission-checks.log`.
 
+The optimized CLI matches all 596 tracked Rust/Cargo inputs. Its isolated
+production smoke verifies the effective zero-dollar policy and a nonzero
+dispatch refusal before any session or execution ledger is created. Artifact:
+`artifacts/parasaur-spend-ceiling-37e14780/`; SHA-256
+`f3e3132eec105a3eb7c5877b87b8640dcb334a30dd0a09f8425bbb2411fac7a8`.
+The CLI reports 0.3.0 and requires glibc 2.39. It is not installed.
+
+Private `e42e5677af11823c965ac8f6a8eee6e1a79bf00e` pins this core revision.
+Its complete assembly passes 1,142 server cases with 38 explicit skips,
+17 mock cases, production builds, credential-route/race checks and private
+artifact/input guards. Log:
+`/home/khing/.cache/parasaur-enterprise-current.occnj489/build.log`.
+
 ## Acceptance limits and next factory boundary
 
 This is a ceiling on recorded factory history on the executing node, not a
@@ -65,6 +79,11 @@ cost. In-flight work can exceed it. Chat is outside this policy. Live acceptance
 requires a matching controller binary before enabling any policy; replacing
 only the CLI path does not update a controller already running the old inode.
 The existing ten-hour memory observer and its controller were left running.
+At 14:10 UTC on November 6, controller PID 666974 and observer PID 667504 still
+matched their live units. The observer had 193 samples over 11,805 seconds,
+no observation gaps and no OOM kills. This is not a ten-hour stability pass.
+Metadata is retained in ignored
+`artifacts/central-live-20261105/spend-ceiling-stage-memory-status.json`.
 
 The native controller still executes locally. The existing fleet API starts a
 separate full worker dispatch; it does not carry central native review/retry
