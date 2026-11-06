@@ -103,7 +103,7 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
   const subscriptions = useMemo(() => subscriptionUsage(quota.data), [quota.data]);
   const statusResource = useGahStore((state) => state.status);
   const statusSnapshot = statusResource.key === (activeProfile ?? '') ? statusResource.data : null;
-  const statusUnavailable = statusResource.key !== (activeProfile ?? '') || Boolean(statusResource.error);
+  const statusUnavailable = !statusSnapshot || Boolean(statusResource.error);
   const fetchStatus = useGahStore(state => state.fetchStatus);
   useEffect(() => {
     void fetchStatus(activeProfile, { force: true });

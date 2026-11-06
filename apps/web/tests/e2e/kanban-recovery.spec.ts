@@ -1,5 +1,34 @@
 import { expect, test } from '@playwright/test';
 
+test('a minimal welcome leaves pending and failed factory observations unavailable', async ({ page }) => {
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let hello = false;
+  await page.route('**/api/status**', async route => {
+    await held;
+    await route.fulfill({ status: 502, json: { message: 'fixture status unavailable' } });
+  });
+  await page.routeWebSocket('**/ws**', ws => {
+    ws.send(JSON.stringify({ type: 'server.welcome', serverVersion: 'fixture', serverProviderCatalog: { providers: [] }, sessions: [], providers: {}, profile: 'fixture' }));
+    ws.onMessage(raw => { if (JSON.parse(String(raw)).type === 'client.hello') hello = true; });
+  });
+  try {
+    await page.goto('/?page=kanban&profile=fixture');
+    await expect.poll(() => hello).toBe(true);
+    const main = page.locator('#main-content');
+    await expect(main.getByText('Loading the board…')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Factory activity unavailable', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'No job is running', exact: true })).toHaveCount(0);
+    release();
+    await expect(main.getByText('fixture status unavailable')).toBeVisible();
+    await expect(main.getByText('No jobs yet', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Factory activity unavailable', exact: true })).toBeVisible();
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+  }
+});
+
 test('a recorded node admission wait explains the review card without claiming execution', async ({ page }) => {
   await page.route('**/api/status**', async route => {
     const snapshot = await (await route.fetch()).json();

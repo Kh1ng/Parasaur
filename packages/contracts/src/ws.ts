@@ -208,7 +208,8 @@ export type ServerMessage =
       serverProviderCatalog: ServerProviderCatalog;
       sessions: Session[];
       providers: Record<ProviderInstanceId, ProviderStatus>;
-      // TICKET-114: Real GAH data from CLI
+      // Legacy status fields. Current servers load work observations through
+      // REST; omission means unobserved, never an empty queue or no blockers.
       profile?: string;
       mergeRequests?: MergeRequest[];
       availability?: AvailabilityScope[];

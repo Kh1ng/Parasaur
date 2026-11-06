@@ -25,13 +25,7 @@ import type {
   ServerMessage,
   ClientMessage,
   ClientCapabilities,
-  ProviderKind,
-  MergeRequest,
-  AvailabilityScope,
-  Blocker,
-  StatusError,
-  RecentLedgerSummary,
-  DependencyBlocker
+  ProviderKind
 } from '@git-agent-harness/contracts';
 
 // Session store for tracking active WebSocket connections
@@ -713,69 +707,19 @@ async function sendWelcomeMessage(ws: WebSocket) {
     const sessions = fleetDispatch.getAllSessions(defaultProfile);
     const providers = providerRegistry.getAllProviderStatuses();
 
-    // Include real GAH data (TICKET-114) via the same gahCli.runStatus()
-    // path TICKET-113 already wired up -- there's no separate
-    // per-field ProviderRegistry accessor, `gah status --json` returns
-    // all of this in one call.
-    let mergeRequests: MergeRequest[] = [];
-    let availability: AvailabilityScope[] = [];
-    let blockers: Blocker[] = [];
-    let constraints: Blocker[] = [];
-    let errors: StatusError[] = [];
-    let dependencyBlockers: DependencyBlocker[] = [];
-    // recent_ledger is a single nullable summary, not an array -- it was
-    // previously mistyped as unknown[] here (silently accepted at runtime
-    // by JS, but wrong; DashboardPage already correctly treats it as an
-    // object via `{recentLedger && ...}`).
-    let recentLedger: RecentLedgerSummary | null = null;
-    // TICKET-157: per-backend "configured for this profile" signal,
-    // derived from the Rust harness `configured_backend_path()`. Maps a
-    // backend name to whether it has a real implementation and is wired
-    // for the active profile.
-    let backendConfigured: Record<string, boolean> = {};
-    try {
-      const status = await gahCli.runStatus(defaultProfile);
-      mergeRequests = status.merge_requests;
-      availability = status.availability;
-      blockers = status.blockers;
-      constraints = status.constraints;
-      errors = status.errors;
-      dependencyBlockers = status.dependency_blockers ?? [];
-      recentLedger = status.recent_ledger;
-      backendConfigured = status.backend_configured ?? {};
-    } catch (statusError) {
-      console.error('Failed to load gah status for welcome message:', statusError);
-    }
-
-    const welcomeMessage: ServerMessage & {
-      profile?: string;
-      mergeRequests?: MergeRequest[];
-      availability?: AvailabilityScope[];
-      blockers?: Blocker[];
-      constraints?: Blocker[];
-      errors?: StatusError[];
-      dependencyBlockers?: DependencyBlocker[];
-      recentLedger?: RecentLedgerSummary | null;
-      backendConfigured?: Record<string, boolean>;
-    } = {
+    // Work observations load through REST; missing status is not an empty queue.
+    // Keep the handshake independent of ledger reads and forge availability.
+    const welcomeMessage: Extract<ServerMessage, { type: 'server.welcome' }> = {
       type: 'server.welcome',
       serverVersion: SERVER_VERSION,
       trustedLanMode: trustedLanWebSocketMode(ws),
       serverProviderCatalog,
       sessions,
       providers,
-      profile: defaultProfile,
-      mergeRequests,
-      availability,
-      blockers,
-      constraints,
-      errors,
-      dependencyBlockers,
-      recentLedger,
-      backendConfigured
+      profile: defaultProfile
     };
 
-    ws.send(JSON.stringify(welcomeMessage));
+    if (ws.readyState === WebSocket.OPEN && webSocketAccessValid(ws)) ws.send(JSON.stringify(welcomeMessage));
 
   } catch (error) {
     console.error('Failed to send welcome message:', error);

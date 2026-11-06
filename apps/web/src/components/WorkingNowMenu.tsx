@@ -48,7 +48,7 @@ export function WorkingNowMenu({ jobs, agents, unavailable = false, onOpenBoard 
         <div className="absolute right-0 top-full z-40 mt-1 w-80 max-w-[calc(100vw-1.5rem)] rounded-lg border border-subtle bg-raised shadow-xl" role="dialog" aria-label="What the factory is doing now">
           <div className="px-3 py-2">
             <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted">{unavailable || onlyStale ? 'Last recorded jobs' : 'Running now'}</h2>
-            {unavailable && <p className="mt-1 text-xs text-warning">Factory state could not refresh. Open the board to retry; current execution is unconfirmed.</p>}
+            {unavailable && <p className="mt-1 text-xs text-warning">Factory state is unavailable. Open the board to check; current execution is unconfirmed.</p>}
             {!unavailable && stale > 0 && <p className="mt-1 text-xs text-warning">{stale} {stale === 1 ? 'worker has' : 'workers have'} stale activity. Execution is unconfirmed; this does not prove a process stopped. Open the board to inspect recovery.</p>}
             {jobs.length === 0 && <p className="mt-1 text-xs text-secondary">{unavailable ? 'No retained job observations.' : 'Nothing is running.'}</p>}
             <ul className="mt-1 space-y-1.5">

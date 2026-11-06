@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { test } from 'node:test';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -15,11 +15,8 @@ import { runEvents } from './gahCli.js';
 import type { ControllerEvent, NodeRoleStatus, ServerMessage } from '@git-agent-harness/contracts';
 import { ActivityFeed, activityFromController } from './activityFeed.js';
 
-// Hermetic: welcome is pushed only after gahCli.runStatus() spawns a real
-// `gah status` child. A cold call of the repo's release binary takes ~21s
-// here (statusCache then serves subsequent calls), which blows past the
-// per-message welcome deadline and makes the first connection a flaky
-// ~20s timeout. Point GAH_BINARY at the instant fixture instead.
+// Other handler paths still query the CLI; keep those hermetic even though
+// the welcome handshake no longer depends on a status query.
 process.env.GAH_BINARY = fileURLToPath(new URL('../tests/fixtures/gah/gah', import.meta.url));
 
 /**
@@ -50,10 +47,8 @@ async function withWsServer(testFn: (wsUrl: string) => Promise<void>, node?: Nod
   }
 }
 
-// sendWelcomeMessage awaits a real `gah status --json` child process
-// (gahCli.runStatus) before pushing -- typically single-digit seconds on
-// first call, then cached (see gahCli.ts's statusCache) for the rest of
-// the run. This margin is for that first, uncached call.
+// Lease reconciliation remains part of the handshake. Bound the observation
+// independently of the test's own lifetime.
 function nextWelcome(ws: WebSocket): Promise<ServerMessage & { type: 'server.welcome' }> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('timed out waiting for server.welcome')), 15000);
@@ -167,6 +162,33 @@ test('server.welcome reconciles persisted leases before reporting running sessio
     if (previousPath === undefined) delete process.env.GAH_DISPATCH_LEASES_PATH;
     else process.env.GAH_DISPATCH_LEASES_PATH = previousPath;
     rmSync(dir, { recursive: true });
+  }
+});
+
+test('welcome never runs slow status or fabricates empty work observations', { skip: process.platform === 'win32' ? 'POSIX executable fixture' : false, timeout: 10000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-welcome-status-'));
+  const cli = join(dir, 'gah');
+  const queried = join(dir, 'queried');
+  const previous = process.env.GAH_BINARY;
+  writeFileSync(cli, `#!${process.execPath}\nconst fs=require('node:fs');fs.writeFileSync(${JSON.stringify(queried)},'queried');setTimeout(()=>process.exit(1),1000);\n`);
+  chmodSync(cli, 0o755);
+  process.env.GAH_BINARY = cli;
+  try {
+    await withWsServer(async url => {
+      const ws = new WebSocket(url);
+      try {
+        const welcome = await nextWelcome(ws);
+        assert.equal(existsSync(queried), false, 'A welcome must not spawn the CLI');
+        for (const key of ['mergeRequests','availability','blockers','constraints','dependencyBlockers','recentLedger','backendConfigured','errors']) {
+          assert.equal(Object.hasOwn(welcome,key), false, `${key} must stay absent until status is observed`);
+        }
+        assert.deepEqual(welcome.sessions, []);
+        assert.ok(welcome.serverProviderCatalog);
+      } finally { ws.close(); }
+    });
+  } finally {
+    if (previous===undefined) delete process.env.GAH_BINARY; else process.env.GAH_BINARY=previous;
+    rmSync(dir,{recursive:true});
   }
 });
 
