@@ -502,9 +502,10 @@ test('stopSession times out if cancellation takes too long', async (t) => {
   t.mock.timers.tick(1);
   const stoppedSession = await stopPromise;
 
-  // Should have timed out and marked as error
-  assert.equal(stoppedSession.status, 'error');
-  assert.equal(stoppedSession.error, 'Session cancellation timed out');
+  // A deadline is not termination proof; retain the nonterminal session.
+  assert.equal(stoppedSession.status, 'stopping');
+  assert.equal(stoppedSession.endedAt, undefined);
+  assert.match(stoppedSession.error ?? '', /Cancellation timed out/);
 });
 
 test('a GitLab dispatch context is recorded on the session and survives fleet listing', async () => {
@@ -528,3 +529,75 @@ test('a GitLab dispatch context is recorded on the session and survives fleet li
   });
   assert.equal(manager.getSession(plain.id)?.gitlab, undefined);
 });
+
+
+test('unconfirmed cancellation keeps the profile reserved until execution really settles', async () => {
+  let launches = 0;
+  let finish!: (value: { exitCode: number; stderr: string }) => void;
+  const manager = createSessionManager({ disableCleanupTimer: true,
+    providerRegistry: { isProviderAvailable: () => true }, pushBus: { publish() {} },
+    dispatchRunner: () => {
+      launches += 1;
+      return { promise: new Promise(resolve => { finish = resolve; }), cancel: async () => ({ cancelled: false, error: 'termination not confirmed' }) };
+    }
+  });
+  const options = { profile: 'fixture', providerKind: 'github' as const, instanceId: 'github-0', repo: 'fixture/repo', mode: 'fix' };
+  const first = await manager.startSession({ ...options, target: '#1' });
+  const second = await manager.startSession({ ...options, target: '#2' });
+  const stopped = await manager.stopSession(first.id);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(stopped.status, 'stopping');
+  assert.equal(stopped.endedAt, undefined);
+  assert.equal(launches, 1, 'the unconfirmed process must retain its profile slot');
+  assert.ok(manager.getActiveSessions().some(session => session.id === first.id));
+  finish({ exitCode: 3, stderr: 'observed final exit' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(launches, 2, 'observed process completion releases the slot');
+  assert.equal(manager.getSession(first.id)?.status, 'stopped');
+  finish({ exitCode: 0, stderr: '' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(manager.getSession(second.id)?.status, 'stopped');
+});
+
+
+test('cancelling the newest queued session cannot let a new sibling bypass its live predecessor', async () => {
+  let launches = 0;
+  const finishes: Array<(result: { exitCode: number; stderr: string }) => void> = [];
+  const manager = createSessionManager({ disableCleanupTimer: true,
+    providerRegistry: { isProviderAvailable: () => true }, pushBus: { publish() {} },
+    dispatchRunner: () => { launches += 1; return { promise: new Promise(resolve => finishes.push(resolve)), cancel: async () => ({ cancelled: true }) }; }
+  });
+  const options = { profile: 'fixture', providerKind: 'github' as const, instanceId: 'github-0', repo: 'fixture/repo', mode: 'fix' };
+  await manager.startSession({ ...options, target: '#1' });
+  const second = await manager.startSession({ ...options, target: '#2' });
+  assert.equal(second.status, 'starting');
+  await manager.stopSession(second.id);
+  assert.deepEqual(second.execution, { reason: 'not_started', exitCode: null, signal: null });
+  await manager.startSession({ ...options, target: '#3' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(launches, 1);
+  finishes.shift()?.({ exitCode: 0, stderr: '' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(launches, 2);
+  finishes.shift()?.({ exitCode: 0, stderr: '' });
+  await new Promise(resolve => setImmediate(resolve));
+});
+
+for (const [exitCode, signal, spawnFailed, reason] of [[0, null, false, 'exited'], [7, null, false, 'exited'], [-1, 'SIGTERM', false, 'exited'], [-1, null, true, 'launch_failed']] as const) {
+  test(`execution result preserves exit ${exitCode}, signal ${signal}, launch failure ${spawnFailed}`, async () => {
+    const published: ServerMessage[] = [];
+    const manager = createSessionManager({ disableCleanupTimer: true, providerRegistry: { isProviderAvailable: () => true },
+      pushBus: { publish: message => published.push(message) },
+      dispatchRunner: () => ({ promise: Promise.resolve({ exitCode, signal, spawnFailed, stderr: 'fixture diagnostic' }), cancel: async () => ({ cancelled: false }) })
+    });
+    const session = await manager.startSession({ profile: 'fixture', providerKind: 'github', instanceId: 'github-0', repo: 'fixture/repo', mode: 'fix' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(session.execution, { reason, exitCode: exitCode < 0 ? null : exitCode, signal });
+    assert.ok(session.endedAt);
+    assert.equal(session.status, exitCode === 0 ? 'stopped' : 'error');
+    const terminal = published.find(message => message.type === 'session.stopped');
+    assert.ok(terminal && terminal.type === 'session.stopped');
+    assert.deepEqual(terminal.session.execution, session.execution);
+    assert.deepEqual(manager.getAllSessions()[0]?.execution, session.execution);
+  });
+}

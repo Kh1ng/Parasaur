@@ -153,7 +153,10 @@ test('server.welcome reconciles persisted leases before reporting running sessio
       const ws = new WebSocket(wsUrl);
       try {
         const welcome = await nextWelcome(ws);
-        assert.deepEqual(welcome.sessions, []);
+        assert.equal(welcome.sessions.length, 1);
+        assert.equal(welcome.sessions[0]?.id, 'stale-session');
+        assert.equal(welcome.sessions[0]?.leaseState, 'uncertain_reconciling');
+        assert.equal(welcome.sessions[0]?.endedAt, undefined);
       } finally {
         ws.close();
       }

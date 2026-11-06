@@ -154,6 +154,23 @@ export function activityPath(event: Pick<ActivityEvent, "id" | "profile" | "sess
 
 // Session type - manually defined instead of using Effect Schema
 // to avoid version compatibility issues
+export interface SessionExecutionResult {
+  reason: 'exited' | 'cancelled' | 'not_started' | 'launch_failed';
+  /** Observed OS exit code; null for signals or unavailable detail. */
+  exitCode: number | null;
+  signal: string | null;
+}
+
+export function isSessionExecutionResult(value: unknown): value is SessionExecutionResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const result = value as Record<string, unknown>;
+  return ['exited', 'cancelled', 'not_started', 'launch_failed'].includes(result.reason as string)
+    && (result.exitCode === null || (typeof result.exitCode === 'number' && Number.isSafeInteger(result.exitCode) && result.exitCode >= 0 && result.exitCode <= 4_294_967_295))
+    && (result.signal === null || (typeof result.signal === 'string' && /^SIG[A-Z0-9]+$/.test(result.signal)))
+    && !(result.exitCode !== null && result.signal !== null)
+    && (!(result.reason === 'not_started' || result.reason === 'launch_failed') || (result.exitCode === null && result.signal === null));
+}
+
 export interface Session {
   /** Dispatch receipt correlation, retained in reconnect snapshots. */
   requestId?: string;
@@ -167,6 +184,8 @@ export interface Session {
   leaseState?: DispatchLeaseState;
   startedAt?: string;
   endedAt?: string;
+  /** Present only after execution/termination is confirmed. Older nodes omit it. */
+  execution?: SessionExecutionResult;
   error?: string;
   repo?: string;
   branch?: string;
@@ -182,6 +201,11 @@ export interface Session {
    * event (#1595). The runs feed filters by it; absent for every other
    * start path. */
   gitlab?: GitLabDispatchContext;
+}
+
+/** A disconnected or unconfirmed execution still owns its dispatch lease. */
+export function isSessionTerminal(session: Pick<Session, 'status' | 'leaseState'>): boolean {
+  return session.leaseState !== 'uncertain_reconciling' && (session.status === 'stopped' || session.status === 'error');
 }
 
 // WebSocket message types

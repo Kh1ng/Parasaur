@@ -609,7 +609,8 @@ wait
 
       const result = await dispatch.cancel();
 
-      assert.deepEqual(result, { cancelled: true });
+      assert.equal(result.cancelled, true);
+      assert.ok(result.result, "confirmed cancellation includes the observed result");
       assert.equal(
         isPidAlive(grandchildPid),
         false,
@@ -704,8 +705,8 @@ test('cancel() is idempotent: concurrent callers settle on one shared result', a
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     const [first, second] = await Promise.all([dispatch.cancel(), dispatch.cancel()]);
-    assert.deepEqual(first, { cancelled: true });
-    assert.deepEqual(second, { cancelled: true });
+    assert.equal(first.cancelled, true);
+    assert.strictEqual(first, second);
   } finally {
     if (original === undefined) delete process.env.GAH_BINARY;
     else process.env.GAH_BINARY = original;
@@ -731,6 +732,30 @@ test('factory module disabled rejects loop starts before touching systemd', asyn
     if (originalPath === undefined) delete process.env.PATH;
     else process.env.PATH = originalPath;
     restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test('a closed dispatch parent does not complete while its process group can still execute', { skip: process.platform !== 'linux', timeout: 10000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-parent-exit-'));
+  const script = join(dir, 'fake-gah'); const marker = join(dir, 'child.pid');
+  writeFileSync(script, `#!/bin/sh\nsleep 60 >/dev/null 2>&1 &\necho $! > "${marker}"\nexit 0\n`);chmodSync(script, 0o755);
+  const original = process.env.GAH_BINARY;process.env.GAH_BINARY = script;
+  let pid: number | undefined;
+  try {
+    const dispatch = runDispatchCancellable({ profile: 'fixture', mode: 'fix' }, () => {});
+    let settled = false;void dispatch.promise.then(() => { settled = true; });
+    await waitUntil(() => existsSync(marker));pid = Number(readFileSync(marker, 'utf8').trim());
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(settled, false, 'parent exit is not descendant completion');
+    assert.ok(isPidAlive(pid));
+    const cancelled = await dispatch.cancel();assert.equal(cancelled.cancelled, true);
+    await waitUntil(() => settled);
+    const result = await dispatch.promise;assert.equal(result.exitCode, 0);assert.equal(result.signal, null);
+  } finally {
+    if (pid) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    if (original === undefined) delete process.env.GAH_BINARY;else process.env.GAH_BINARY = original;
     rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -442,6 +442,8 @@ export interface StatusSnapshot {
   dispatch_backend_instances?: boolean;
   /** Absent on workers that silently ignore dispatch execution controls. */
   dispatch_execution_options?: boolean;
+  /** Confirms termination before releasing work and reports observed exit data. */
+  dispatch_execution_results?: boolean;
   /** Host role added in #938; absent on older CLIs. */
   node?: NodeRoleStatus;
   node_capacity?: NodeCapacitySettings;

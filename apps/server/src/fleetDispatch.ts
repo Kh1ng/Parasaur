@@ -11,7 +11,7 @@ import type {
   ServerMessage,
   Session
 } from '@git-agent-harness/contracts';
-import { COORDINATOR_VERSION } from '@git-agent-harness/contracts';
+import { COORDINATOR_VERSION, isSessionTerminal as sessionIsTerminal, isSessionExecutionResult } from '@git-agent-harness/contracts';
 import { preserveCorruptFile, writeFileAtomic } from './atomicFile.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { getSessionManager, type SessionOptions } from './sessions/SessionManager.js';
@@ -39,7 +39,7 @@ type FleetDispatchDeps = {
   transportFactory?: (node: NodeSelection, context: {
     coordinatorNodeId: string;
     pushBus: PushBusLike;
-    onTerminal: (session: Session) => void;
+    onSessionUpdate: (session: Session) => void;
     localSessionManager: ReturnType<typeof getSessionManager>;
     profile?: string;
     session?: Session;
@@ -92,8 +92,18 @@ function decorateSession(session: Session, nodeId: string, state: DispatchLeaseS
   };
 }
 
-function sessionIsTerminal(session: Session): boolean {
-  return session.status === 'stopped' || session.status === 'error';
+/** Only fresh execution observations require a receipt. Historical terminal
+ * records retain their original status; missing old exit details stay unknown. */
+function observedSession(session: Session, nodeId: string): Session {
+  if (sessionIsTerminal(session) && !isSessionExecutionResult(session.execution)) {
+    return decorateSession({ ...session, status: 'starting', endedAt: undefined, execution: undefined,
+      error: 'Worker exit result is unavailable; execution is unconfirmed' }, nodeId, 'uncertain_reconciling');
+  }
+  return decorateSession(session, nodeId, sessionLeaseState(session));
+}
+
+function sessionLeaseState(session: Session): DispatchLeaseState {
+  return session.leaseState === 'uncertain_reconciling' ? 'uncertain_reconciling' : sessionIsTerminal(session) ? 'terminal' : 'running';
 }
 
 // ws supplies createConnection, which bypasses Node's implicit global agent.
@@ -428,7 +438,7 @@ class RemoteNodeTransport implements NodeDispatchTransport {
     private readonly node: NodeSelection,
     private readonly pushBus: PushBusLike,
     private readonly coordinatorNodeId: string,
-    private readonly onTerminal: (session: Session) => void,
+    private readonly onSessionUpdate: (session: Session) => void,
     initialProfile = 'gah',
     initialSession?: Session,
     private readonly headers: Record<string, string> = {}
@@ -439,10 +449,13 @@ class RemoteNodeTransport implements NodeDispatchTransport {
     }
   }
 
+  private pendingRequestId?: string;
+
   async startSession(options: RoutedSessionOptions): Promise<Session> {
     if (this.startedSession) {
       return this.startedSession;
     }
+    this.pendingRequestId = options.requestId;
     const socket = await this.connect(options.profile);
     const session = await new Promise<Session>((resolve, reject) => {
       this.startResolver = { resolve, reject };
@@ -482,7 +495,7 @@ class RemoteNodeTransport implements NodeDispatchTransport {
         }
       }, RECONCILE_TIMEOUT_MS).unref?.();
     });
-    this.startedSession = decorateSession(session, this.node.nodeId, 'running');
+    this.startedSession = this.getSession(session.id) ?? observedSession(session, this.node.nodeId);
     return this.startedSession;
   }
 
@@ -509,7 +522,7 @@ class RemoteNodeTransport implements NodeDispatchTransport {
         }
       }, RECONCILE_TIMEOUT_MS).unref?.();
     });
-    this.startedSession = decorateSession(stopped, this.node.nodeId, 'terminal');
+    this.startedSession = observedSession(stopped, this.node.nodeId);
     return this.startedSession;
   }
 
@@ -575,22 +588,12 @@ class RemoteNodeTransport implements NodeDispatchTransport {
         this.handleMessage(data);
       });
       socket.on('close', () => {
-        if (!this.closed && this.startedSession && !sessionIsTerminal(this.startedSession)) {
-          const session = decorateSession(
-            {
-              ...this.startedSession,
-              status: 'error',
-              endedAt: nowIso(),
-              error: `Connection to node ${this.node.nodeId} closed`
-            },
-            this.node.nodeId,
-            'terminal'
-          );
-          this.pushBus.publish({
-            type: 'session.stopped',
-            session
-          });
-          this.onTerminal(session);
+        if (!this.closed && this.socket === socket && this.startedSession && !sessionIsTerminal(this.startedSession)) {
+          const session = decorateSession({ ...this.startedSession, status: 'starting', endedAt: undefined,
+            error: 'Worker connection lost; execution is unconfirmed' }, this.node.nodeId, 'uncertain_reconciling');
+          this.startedSession = session;
+          this.onSessionUpdate(session);
+          this.pushBus.publish({ type: 'session.status', session });
         }
       });
     });
@@ -606,24 +609,28 @@ class RemoteNodeTransport implements NodeDispatchTransport {
     }
 
     if (message.type === 'session.started') {
+      if (message.session.requestId && this.pendingRequestId && message.session.requestId !== this.pendingRequestId) return;
       if (this.startResolver) {
-        const session = decorateSession(message.session, this.node.nodeId, 'running');
+        const session = observedSession(message.session, this.node.nodeId);
         this.startedSession = session;
-        this.startResolver.resolve(session);
-        this.startResolver = undefined;
-      } else if (this.startedSession?.id === message.session.id) {
-        this.startedSession = decorateSession(message.session, this.node.nodeId, 'running');
+        this.startResolver.resolve(session); this.startResolver = undefined;
+      } else if (this.startedSession?.id === message.session.id || (this.pendingRequestId && message.session.requestId === this.pendingRequestId)) {
+        const session = observedSession(message.session, this.node.nodeId);
+        this.startedSession = session;
+        this.onSessionUpdate(session); this.pushBus.publish({ type: 'session.started', session });
       }
       return;
     }
 
     if (message.type === 'session.stopped') {
-      const session = decorateSession(message.session, this.node.nodeId, 'terminal');
+      if (this.startedSession ? message.session.id !== this.startedSession.id : message.session.requestId !== this.pendingRequestId || !this.pendingRequestId) return;
+      const session = observedSession(message.session, this.node.nodeId);
       this.startedSession = session;
-      this.onTerminal(session);
+      this.onSessionUpdate(session);
       if (this.stopResolver) {
         this.stopResolver.resolve(session);
         this.stopResolver = undefined;
+        if (!sessionIsTerminal(session)) this.suppressNextStopBroadcast = false;
         return;
       }
       if (this.suppressNextStopBroadcast) {
@@ -631,7 +638,7 @@ class RemoteNodeTransport implements NodeDispatchTransport {
         return;
       }
       this.pushBus.publish({
-        type: 'session.stopped',
+        type: sessionIsTerminal(session) ? 'session.stopped' : 'session.status',
         session
       });
       return;
@@ -646,7 +653,13 @@ class RemoteNodeTransport implements NodeDispatchTransport {
     }
 
     if (message.type === 'session.status' && this.startedSession?.id === message.session.id) {
-      this.startedSession = decorateSession(message.session, this.node.nodeId, this.startedSession.leaseState ?? 'running');
+      const session = observedSession(message.session, this.node.nodeId);
+      this.startedSession = session;
+      this.onSessionUpdate(session);
+      if (this.stopResolver && (session.error || sessionIsTerminal(session))) {
+        this.stopResolver.resolve(session); this.stopResolver = undefined;
+        this.suppressNextStopBroadcast = false;
+      } else { this.pushBus.publish({ type: 'session.status', session }); }
     }
   }
 }
@@ -664,7 +677,7 @@ function defaultTransportFactory(
   context: {
     coordinatorNodeId: string;
     pushBus: PushBusLike;
-    onTerminal: (session: Session) => void;
+    onSessionUpdate: (session: Session) => void;
     localSessionManager: ReturnType<typeof getSessionManager>;
     profile?: string;
     session?: Session;
@@ -678,7 +691,7 @@ function defaultTransportFactory(
     node,
     context.pushBus,
     context.coordinatorNodeId,
-    context.onTerminal,
+    context.onSessionUpdate,
     context.profile,
     context.session,
     nodeAuthHeaders(registryService, node.nodeId, node.advertisedUrl)
@@ -759,69 +772,49 @@ export class FleetDispatchCoordinator {
     }
 
     const target = await this.selectNode(options);
-    if (target.nodeId === this.coordinatorIdentity.node_id) {
-      const transport = this.transportFactory(target, {
-        coordinatorNodeId: this.coordinatorIdentity.node_id,
-        pushBus: this.pushBus,
-        onTerminal: (session) => this.updateLeaseForSession(session),
-        localSessionManager: this.localSessionManager,
-        profile: options.profile
-      });
-      const session = await transport.startSession(options);
-      const routed = decorateSession(session, this.coordinatorIdentity.node_id, 'running');
-      await this.verifyStartedAccount(transport, routed, options);
-      this.remoteTransports.set(routed.id, transport);
-      this.recordLease({
-        requestId,
-        retainReceipt: options.retainReceipt,
-        workKey,
-        profile: options.profile,
-        nodeId: this.coordinatorIdentity.node_id,
-        nodeUrl: this.coordinatorIdentity.advertised_url,
-        session: routed,
-        state: 'running',
-        createdAt: nowIso(),
-        updatedAt: nowIso(),
-        coordinatorNodeId: options.coordinatorNodeId ?? this.coordinatorIdentity.node_id,
-        pinnedNodeId: options.nodeId
-      });
-      return routed;
-    }
-
     const transport = this.transportFactory(target, {
-      coordinatorNodeId: this.coordinatorIdentity.node_id,
-      pushBus: this.pushBus,
-      onTerminal: (session) => this.updateLeaseForSession(session),
-      localSessionManager: this.localSessionManager,
-      profile: options.profile
+      coordinatorNodeId: this.coordinatorIdentity.node_id, pushBus: this.pushBus,
+      onSessionUpdate: session => this.updateLeaseForSession(session),
+      localSessionManager: this.localSessionManager, profile: options.profile
     });
-    const session = await transport.startSession({
-      ...options,
-      nodeId: target.nodeId,
-      coordinatorNodeId: this.coordinatorIdentity.node_id
-    });
-    this.remoteTransports.set(session.id, transport);
-    const routed = decorateSession(session, target.nodeId, 'running');
-    await this.verifyStartedAccount(transport, routed, options);
-    this.recordLease({
-      requestId,
-      retainReceipt: options.retainReceipt,
-      workKey,
-      profile: options.profile,
-      nodeId: target.nodeId,
-      nodeUrl: target.advertisedUrl,
-      session: routed,
-      state: 'running',
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-      coordinatorNodeId: this.coordinatorIdentity.node_id,
-      pinnedNodeId: options.nodeId
-    });
-    this.pushBus.publish({
-      type: 'session.started',
-      session: routed
-    });
-    return routed;
+    const pending: Session = {
+      id: `offered:${requestId}`, requestId, status: 'starting', startedAt: nowIso(),
+      providerKind: options.providerKind, instanceId: options.instanceId, nodeId: target.nodeId,
+      repo: options.repo, branch: options.branch, target: options.target, mr: options.mr,
+      mode: options.mode, backend: options.backend, backendInstance: options.backendInstance,
+      model: options.model, budget: options.budget, gitlab: options.gitlab
+    };
+    const offered: LeaseRecord = { requestId, retainReceipt: options.retainReceipt, workKey,
+      profile: options.profile, nodeId: target.nodeId, nodeUrl: target.advertisedUrl,
+      session: decorateSession(pending, target.nodeId, 'offered'), state: 'offered',
+      createdAt: nowIso(), updatedAt: nowIso(), coordinatorNodeId: this.coordinatorIdentity.node_id,
+      pinnedNodeId: options.nodeId };
+    // Persist ownership before a worker can launch. A lost acknowledgement or
+    // coordinator restart must never turn an unknown start into new work.
+    this.recordLease(offered);
+    this.remoteTransports.set(pending.id, transport);
+    try {
+      const session = await transport.startSession({ ...options, requestId,
+        nodeId: target.nodeId, coordinatorNodeId: this.coordinatorIdentity.node_id });
+      await this.verifyStartedAccount(transport, observedSession(session, target.nodeId), options);
+      const latest = transport.getSession(session.id) ?? session;
+      const observed = observedSession(latest, target.nodeId);
+      this.assertAccountBinding(observed, options);
+      const routed = decorateSession({ ...observed, requestId }, target.nodeId, sessionLeaseState(observed));
+      this.remoteTransports.delete(pending.id); this.remoteTransports.set(routed.id, transport);
+      this.recordLease({ ...offered, session: routed, state: sessionLeaseState(routed), updatedAt: nowIso() });
+      if (target.nodeId !== this.coordinatorIdentity.node_id) this.pushBus.publish({ type: 'session.started', session: routed });
+      return routed;
+    } catch (error) {
+      const current = this.leaseStore.getByRequestId(requestId) ?? offered;
+      if (!sessionIsTerminal(current.session)) {
+        const session = decorateSession({ ...current.session, status: 'starting', endedAt: undefined,
+          error: 'Worker start was not confirmed; reconciling the existing request' }, target.nodeId, 'uncertain_reconciling');
+        this.recordLease({ ...current, session, state: 'uncertain_reconciling', updatedAt: nowIso() });
+        this.pushBus.publish({ type: 'session.status', session });
+      }
+      throw error;
+    }
   }
 
   private assertAccountBinding(session: Session, options: RoutedSessionOptions): void {
@@ -841,7 +834,7 @@ export class FleetDispatchCoordinator {
     if (local) {
       const session = await this.localTransport.stopSession(sessionId);
       this.updateLeaseForSession(session);
-      return decorateSession(session, this.coordinatorIdentity.node_id, 'terminal');
+      return observedSession(session, this.coordinatorIdentity.node_id);
     }
 
     const lease = this.leaseStore.getBySessionId(sessionId);
@@ -854,7 +847,7 @@ export class FleetDispatchCoordinator {
       {
         coordinatorNodeId: this.coordinatorIdentity.node_id,
         pushBus: this.pushBus,
-        onTerminal: (session) => this.updateLeaseForSession(session),
+        onSessionUpdate: (session) => this.updateLeaseForSession(session),
         localSessionManager: this.localSessionManager,
         profile: lease.profile,
         session: lease.session
@@ -862,15 +855,16 @@ export class FleetDispatchCoordinator {
     );
     const session = await transport.stopSession(sessionId);
     this.remoteTransports.set(sessionId, transport);
-    const routed = decorateSession(session, lease.nodeId, 'terminal');
+    const routed = observedSession(session, lease.nodeId);
+    const nextState = sessionLeaseState(routed);
     this.recordLease({
       ...lease,
       session: routed,
-      state: 'terminal',
+      state: nextState,
       updatedAt: nowIso()
     });
     this.pushBus.publish({
-      type: 'session.stopped',
+      type: sessionIsTerminal(routed) ? 'session.stopped' : 'session.status',
       session: routed
     });
     return routed;
@@ -892,7 +886,7 @@ export class FleetDispatchCoordinator {
       {
         coordinatorNodeId: this.coordinatorIdentity.node_id,
         pushBus: this.pushBus,
-        onTerminal: (session) => this.updateLeaseForSession(session),
+        onSessionUpdate: (session) => this.updateLeaseForSession(session),
         localSessionManager: this.localSessionManager,
         profile: lease.profile,
         session: lease.session
@@ -976,7 +970,7 @@ export class FleetDispatchCoordinator {
         finish(this.getSession(sessionId) ?? current, true);
       }, timeoutMs);
       unsubscribe = this.pushBus.subscribe!((message) => {
-        if (message.type === 'session.stopped' && message.session.id === sessionId) {
+        if (message.type === 'session.stopped' && message.session.id === sessionId && sessionIsTerminal(message.session)) {
           finish(message.session, false);
         }
       });
@@ -1005,11 +999,11 @@ export class FleetDispatchCoordinator {
         ? this.localTransport.getSession(lease.session.id)
         : undefined;
       if (local) {
-        const decorated = decorateSession(local, this.coordinatorIdentity.node_id, sessionIsTerminal(local) ? 'terminal' : 'running');
+        const decorated = observedSession(local, this.coordinatorIdentity.node_id);
         this.recordLease({
           ...lease,
           session: decorated,
-          state: sessionIsTerminal(local) ? 'terminal' : 'running',
+          state: sessionLeaseState(decorated),
           updatedAt: nowIso()
         });
         continue;
@@ -1027,20 +1021,23 @@ export class FleetDispatchCoordinator {
         });
         continue;
       }
-      const matched = probe.sessions.find((session) => session.id === lease.session.id);
+      const matched = probe.sessions.find(session => session.id === lease.session.id
+        || (session.requestId === lease.requestId && deriveLeaseWorkKey({ profile: lease.profile,
+          session: decorateSession(session, lease.nodeId, 'running') }) === lease.workKey));
       if (!matched) {
         this.recordLease({
           ...lease,
-          session: decorateSession(lease.session, lease.nodeId, 'expired'),
-          state: 'expired',
+          session: decorateSession({ ...lease.session, status: 'starting', endedAt: undefined, error: 'Worker no longer reports this session; execution is unconfirmed' }, lease.nodeId, 'uncertain_reconciling'),
+          state: 'uncertain_reconciling',
           updatedAt: nowIso()
         });
         continue;
       }
-      const nextState: DispatchLeaseState = sessionIsTerminal(matched) ? 'terminal' : 'running';
+      const observed = observedSession(matched, lease.nodeId);
+      const nextState = sessionLeaseState(observed);
       this.recordLease({
         ...lease,
-        session: decorateSession(matched, lease.nodeId, nextState),
+        session: observed,
         state: nextState,
         updatedAt: nowIso()
       });
@@ -1054,11 +1051,18 @@ export class FleetDispatchCoordinator {
   }
 
   private updateLeaseForSession(session: Session): void {
-    const lease = this.leaseStore.getBySessionId(session.id);
-    if (!lease) {
+    const lease = this.leaseStore.getBySessionId(session.id)
+      ?? (session.requestId ? this.leaseStore.getByRequestId(session.requestId) : undefined);
+    if (!lease || (lease.session.id !== session.id && deriveLeaseWorkKey({ profile: lease.profile,
+      session: decorateSession(session, lease.nodeId, 'running') }) !== lease.workKey)) {
       return;
     }
-    const nextState: DispatchLeaseState = sessionIsTerminal(session) ? 'terminal' : 'running';
+    session = observedSession(session, lease.nodeId);
+    const nextState = sessionLeaseState(session);
+    if (lease.session.id !== session.id) {
+      const transport = this.remoteTransports.get(lease.session.id);
+      if (transport) { this.remoteTransports.delete(lease.session.id); this.remoteTransports.set(session.id, transport); }
+    }
     this.recordLease({
       ...lease,
       session: decorateSession(session, lease.nodeId, nextState),
@@ -1104,6 +1108,9 @@ export class FleetDispatchCoordinator {
         }
         if (options.backendInstance && snapshot && pin !== coordinatorId && snapshot.dispatch_backend_instances !== true) {
           throw new GAHError(`Update worker ${pin} before dispatching to a named account. It does not advertise exact account routing.`, 'BACKEND_INSTANCE_UNSUPPORTED');
+        }
+        if (snapshot && pin !== coordinatorId && snapshot.dispatch_execution_results !== true) {
+          throw new GAHError(`Update worker ${pin} before dispatching. Confirmed termination and execution results are required.`, 'DISPATCH_RESULTS_UNSUPPORTED');
         }
         if (options.backendInstance && snapshot) {
           throw new GAHError(`Account ${options.backendInstance} on node ${pin} is unavailable for this dispatch. Check node health, login, model support and limits.`, 'NODE_PINNING_FAILED');
@@ -1152,6 +1159,7 @@ export class FleetDispatchCoordinator {
   }
 
   private isSnapshotEligible(snapshot: NodeObservationSnapshot, options: RoutedSessionOptions): boolean {
+    if (snapshot.node_id !== this.coordinatorIdentity.node_id && snapshot.dispatch_execution_results !== true) return false;
     if (snapshot.node_id !== this.coordinatorIdentity.node_id && requiresDispatchExecutionOptions(options) && snapshot.dispatch_execution_options !== true) return false;
     if (options.backendInstance && (
       snapshot.node_id !== this.coordinatorIdentity.node_id && snapshot.dispatch_backend_instances !== true

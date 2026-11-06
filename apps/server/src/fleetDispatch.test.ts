@@ -46,6 +46,7 @@ function makeSnapshot(
     last_error_message: null,
     profile: 'gah',
     profiles: ['gah'],
+    dispatch_execution_results: true,
     backend_configured: { codex: true },
     backend_instances: [],
     availability: [],
@@ -199,6 +200,7 @@ class FakeTransport {
     const stopped: Session = {
       ...session,
       status: 'stopped',
+      execution: { reason: 'cancelled', exitCode: null, signal: null },
       endedAt: new Date().toISOString()
     };
     this.sessions.set(sessionId, stopped);
@@ -315,7 +317,7 @@ function createCoordinatorHarness(options: {
     transportFactory: (node, context) => {
       let transport = transportMap.get(node.nodeId);
       if (!transport) {
-        transport = new FakeTransport(node.nodeId, context.onTerminal, context.session);
+        transport = new FakeTransport(node.nodeId, context.onSessionUpdate, context.session);
         transportMap.set(node.nodeId, transport);
       }
       return transport as any;
@@ -384,7 +386,8 @@ test('fleet dispatch wait resolves from the terminal push event', async () => {
       ...session,
       status: 'stopped',
       endedAt: coordinator.getSession(session.id)?.endedAt,
-      leaseState: 'terminal'
+      leaseState: 'terminal',
+      execution: { reason: 'cancelled', exitCode: null, signal: null }
     },
     timedOut: false
   });
@@ -553,7 +556,12 @@ test('fleet dispatch reuses request ids across coordinator restarts and reconcil
 
     mockNode.sessions = [];
     await restartedCoordinator.reconcileLeases('gah');
-    assert.deepEqual(restartedCoordinator.getAllSessions(), []);
+    assert.equal(restartedCoordinator.getSession(first.id)?.leaseState, 'uncertain_reconciling');
+    assert.equal(restartedCoordinator.getSession(first.id)?.endedAt, undefined);
+    const held = await restartedCoordinator.startSession({ requestId: 'new-request-same-work', profile: 'gah',
+      providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve' });
+    assert.equal(held.id, first.id);
+    assert.equal(secondTransportMap.get('worker-1')?.startCalls ?? 0, 0);
   } finally {
     await mockNode.close();
     try {
@@ -1495,3 +1503,128 @@ for (const crash of ['after-acknowledgement', 'release-write-failure', 'after-re
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 }
+
+
+for (const observed of ['matching', 'missing', 'wrong-work'] as const) {
+  test(`an unacknowledged start survives coordinator restart with ${observed} worker evidence`, async () => {
+    const node = await createMockNode(); const dir = mkdtempSync(resolve(tmpdir(), 'gah-start-receipt-'));
+    const path = resolve(dir, 'leases.json'); let launches = 0;
+    const options = { requestId: 'lost-ack', nodeId: 'worker', profile: 'gah', providerKind: 'codex' as const,
+      instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve', target: '#42', backend: 'codex', model: 'gpt-4.1' };
+    const registryService = { getNode: () => undefined,
+      getNodeObservations: async () => [makeSnapshot('worker', node.url, 0, 0, 0)] } as unknown as RegistryService;
+    const deps = { registryService, pushBus: { publish() {} }, leaseStorePath: path,
+      coordinatorIdentity: { node_id: 'central', display_name: 'central', advertised_url: 'http://127.0.0.1:9999', version: '0.3.0', schema_digest: 'schema' },
+      transportFactory: () => ({ startSession: async () => {
+        launches += 1;
+        const saved = JSON.parse(readFileSync(path, 'utf8'));
+        assert.equal(saved.leases[0].state, 'offered', 'ownership must precede worker launch');
+        if (observed !== 'missing') node.sessions = [{ ...options, id: 'actual-worker-session', status: 'running',
+          repo: observed === 'wrong-work' ? 'different/repo' : options.repo }];
+        throw new Error('acknowledgement was lost');
+      }, stopSession: async () => { throw new Error('not used'); }, sendCommand: async () => {}, getSession: () => undefined, getSessions: () => [], close: async () => {} })
+    };
+    try {
+      const first = createFleetDispatchCoordinator(deps);
+      await assert.rejects(first.startSession(options), /acknowledgement was lost/);
+      assert.equal(first.getSessionByRequestId('lost-ack')?.leaseState, 'uncertain_reconciling');
+      const restarted = createFleetDispatchCoordinator(deps);
+      const recovered = await restarted.startSession(options);
+      assert.equal(launches, 1);
+      assert.equal(recovered.id, observed === 'matching' ? 'actual-worker-session' : 'offered:lost-ack');
+      assert.equal(recovered.leaseState, observed === 'matching' ? 'running' : 'uncertain_reconciling');
+      const sameWork = await restarted.startSession({ ...options, requestId: 'another-request' });
+      assert.equal(sameWork.id, recovered.id); assert.equal(launches, 1);
+    } finally { await node.close();rmSync(dir, { recursive: true, force: true }); }
+  });
+}
+
+test('a failed remote cancellation preserves its lease until a terminal result is observed', async () => {
+  const node = await createMockNode();const dir = mkdtempSync(resolve(tmpdir(), 'gah-unconfirmed-stop-'));
+  const messages: ServerMessage[] = []; let launches = 0;
+  let current: Session = { id: 'actual-stop', requestId: 'stop-receipt', providerKind: 'codex', instanceId: 'codex-0',
+    repo: 'owner/repo', mode: 'improve', target: '#42', status: 'running' };
+  const registryService = { getNode: () => undefined, getNodeObservations: async () => [makeSnapshot('worker', node.url, 0, 0, 0)] } as unknown as RegistryService;
+  const coordinator = createFleetDispatchCoordinator({ registryService, pushBus: { publish: message => { messages.push(message); } },
+    leaseStorePath: resolve(dir, 'leases.json'), coordinatorIdentity: { node_id: 'central', display_name: 'central', advertised_url: 'http://127.0.0.1:9999', version: '0.3.0', schema_digest: 'schema' },
+    transportFactory: (_node, context) => ({ startSession: async () => { launches++; return current; },
+      stopSession: async () => { current = { ...current, status: 'stopping', error: 'termination unconfirmed' };context.onSessionUpdate(current);return current; },
+      sendCommand: async () => {}, getSession: () => current, getSessions: () => [current], close: async () => {} }) });
+  const options = { requestId: 'stop-receipt', nodeId: 'worker', profile: 'gah', providerKind: 'codex' as const, instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve', target: '#42' };
+  try {
+    const started = await coordinator.startSession(options);node.sessions = [current];
+    const stopped = await coordinator.stopSession(started.id);node.sessions = [current];
+    assert.equal(stopped.status, 'stopping');assert.equal(stopped.endedAt, undefined);assert.notEqual(stopped.leaseState, 'terminal');
+    assert.equal(messages.filter(message => message.type === 'session.stopped').length, 0);
+    const duplicate = await coordinator.startSession({ ...options, requestId: 'new-id' });
+    assert.equal(duplicate.id, started.id);assert.equal(launches, 1);
+    for (const execution of [undefined, { reason: 'exited' as const, exitCode: -1, signal: null }]) {
+      current = { ...current, status: 'stopped', endedAt: new Date().toISOString(), execution };node.sessions = [current];
+      await coordinator.reconcileLeases('gah');
+      assert.equal(coordinator.getSession(started.id)?.leaseState, 'uncertain_reconciling');
+      assert.equal(coordinator.getSession(started.id)?.endedAt, undefined);
+    }
+    current = { ...current, status: 'stopped', error: undefined, endedAt: new Date().toISOString(),
+      execution: { reason: 'cancelled', exitCode: null, signal: 'SIGTERM' } };node.sessions = [current];
+    await coordinator.reconcileLeases('gah');
+    assert.equal(coordinator.getSession(started.id)?.leaseState, 'terminal');
+    assert.deepEqual(coordinator.getSession(started.id)?.execution, current.execution);
+  } finally { await node.close();rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test('losing an accepted worker socket keeps execution uncertain and ignores unrelated broadcasts', async () => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'gah-worker-disconnect-'));
+  const server = http.createServer();const wss = new WebSocketServer({ server });let starts = 0;
+  let current: Session | undefined;
+  wss.on('connection', socket => socket.on('message', raw => {
+    const message = JSON.parse(raw.toString());
+    if (message.type === 'client.hello') socket.send(JSON.stringify({ type: 'server.welcome', sessions: current ? [current] : [] }));
+    if (message.type === 'session.start') {
+      starts++;
+      socket.send(JSON.stringify({ type: 'session.started', session: { ...message, id: 'unrelated', requestId: 'other-request', status: 'running' } }));
+      current = { ...message, id: 'owned-session', status: 'running' };
+      socket.send(JSON.stringify({ type: 'session.started', session: current }));
+      socket.send(JSON.stringify({ type: 'session.stopped', session: { ...current, id: 'unrelated', requestId: 'other-request', status: 'stopped' } }));
+    }
+  }));
+  await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
+  const address = server.address();assert.ok(address && typeof address !== 'string');const url = `http://127.0.0.1:${address.port}`;
+  const registryService = { getNode: () => undefined, getNodeObservations: async () => [makeSnapshot('worker', url, 0, 0, 0)] } as unknown as RegistryService;
+  const coordinator = createFleetDispatchCoordinator({ registryService, pushBus: { publish() {} }, leaseStorePath: resolve(dir, 'leases.json'),
+    coordinatorIdentity: { node_id: 'central', display_name: 'central', advertised_url: 'http://127.0.0.1:9999', version: '0.3.0', schema_digest: 'schema' } });
+  const options = { requestId: 'socket-receipt', nodeId: 'worker', profile: 'gah', providerKind: 'codex' as const,
+    instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve', target: '#42' };
+  try {
+    const session = await coordinator.startSession(options);assert.equal(session.id, 'owned-session');
+    await new Promise(done => setTimeout(done, 20));assert.equal(coordinator.getSession(session.id)?.status, 'running');
+    for (const socket of wss.clients) socket.terminate();
+    const deadline = Date.now() + 2000;
+    while (coordinator.getSession(session.id)?.leaseState !== 'uncertain_reconciling' && Date.now() < deadline) await new Promise(done => setTimeout(done, 10));
+    assert.equal(coordinator.getSession(session.id)?.leaseState, 'uncertain_reconciling');
+    assert.equal(coordinator.getSession(session.id)?.endedAt, undefined);
+    current = undefined; // A restarted worker has lost its in-memory roster.
+    const held = await coordinator.startSession({ ...options, requestId: 'another-request' });
+    assert.equal(held.id, session.id);assert.equal(held.leaseState, 'uncertain_reconciling');assert.equal(starts, 1);
+  } finally {
+    for (const socket of wss.clients) socket.terminate();
+    await new Promise<void>(done => wss.close(() => server.close(() => done())));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test('an old worker cannot accept a new dispatch without confirmed execution support', async () => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'gah-old-worker-'));let launches = 0;
+  const registryService = { getNode: () => undefined,
+    getNodeObservations: async () => [makeSnapshot('old-worker', 'http://127.0.0.1:9998', 0, 0, 0, { dispatch_execution_results: false })] } as unknown as RegistryService;
+  const coordinator = createFleetDispatchCoordinator({ registryService, pushBus: { publish() {} }, leaseStorePath: resolve(dir, 'leases.json'),
+    coordinatorIdentity: { node_id: 'central', display_name: 'central', advertised_url: 'http://127.0.0.1:9999', version: '0.3.0', schema_digest: 'schema' },
+    transportFactory: () => { launches++;throw new Error('must not reach transport'); } });
+  try {
+    await assert.rejects(coordinator.startSession({ requestId: 'old-worker-test', nodeId: 'old-worker', profile: 'gah',
+      providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve' }),
+      (error: unknown) => error instanceof Error && (error as Error & { code?: string }).code === 'DISPATCH_RESULTS_UNSUPPORTED');
+    assert.equal(launches, 0);assert.equal(existsSync(resolve(dir, 'leases.json')), false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

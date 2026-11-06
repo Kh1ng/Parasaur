@@ -1208,6 +1208,9 @@ export function createServer(
         running_workers: runningWorkers(status, nodes, identity.node_id),
         dispatch_backend_instances: true,
         dispatch_execution_options: true,
+        // The Windows worker runs in WSL. Native Windows has no equivalent
+        // process-group completion observation for an already-exited parent.
+        dispatch_execution_results: process.platform !== 'win32',
         node: {
           ...node,
           central_claim_observation: node.central_url && status.node?.central_url === node.central_url

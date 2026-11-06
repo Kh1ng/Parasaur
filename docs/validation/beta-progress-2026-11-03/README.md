@@ -1,5 +1,11 @@
 # Beta finishing pass: local validation
 
+Latest worker correction: [execution ownership and results](worker-execution-results.md)
+keeps unknown cancellations, disconnects and lost acknowledgements from
+releasing work prematurely. Offered receipts survive coordinator restart, and
+fresh terminal states require an observed result. Native remote handoff still
+needs central ledger/policy transfer; this is its execution boundary.
+
 Latest staged control: [factory spend ceilings](factory-spend-ceilings.md)
 adds explicit daily/monthly recorded-cost guards, UTC rollover, pause notices
 and shared status. CLI and rendered scenarios pass. This is not enabled on

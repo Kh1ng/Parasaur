@@ -182,6 +182,7 @@ export interface NodeObservationSnapshot {
   dispatch_backend_instances?: boolean;
   /** Absent on workers that silently ignore dispatch execution controls. */
   dispatch_execution_options?: boolean;
+  dispatch_execution_results?: boolean;
   availability: AvailabilityScope[];
   recent_ledger: RecentLedgerSummary | null;
   active_claims: ActiveClaim[];

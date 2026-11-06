@@ -10,6 +10,7 @@ import { generateSessionId, GAHError } from '@git-agent-harness/shared';
 import { getProviderRegistry } from '../provider/ProviderRegistry.js';
 import { getServerPushBus } from '../serverPushBus.js';
 import { diagnosticTail } from '../diagnosticTail.js';
+import { isSessionTerminal } from '@git-agent-harness/contracts';
 import { runDispatchCancellable, type DispatchOptions, type DispatchResult, type CancellableDispatch, type CancellationResult } from '../gahCli.js';
 import type {
   Session,
@@ -18,7 +19,8 @@ import type {
   ProviderKind,
   ProviderInstanceId,
   SessionStatus,
-  GitLabDispatchContext
+  GitLabDispatchContext,
+  SessionExecutionResult
 } from '@git-agent-harness/contracts';
 
 export type SessionOptions = DispatchExecutionOptions & {
@@ -60,6 +62,12 @@ type SessionManagerDeps = {
   dispatchRunner?: DispatchRunner;
   disableCleanupTimer?: boolean;
 };
+
+function executionResult(reason: SessionExecutionResult['reason'], result?: DispatchResult): SessionExecutionResult {
+  return { reason,
+    exitCode: result && Number.isInteger(result.exitCode) && result.exitCode >= 0 ? result.exitCode : null,
+    signal: result?.signal ?? null };
+}
 
 class SessionManagerImpl {
   private sessions: Map<SessionId, Session> = new Map();
@@ -191,9 +199,7 @@ class SessionManagerImpl {
       this.handleDispatchError(sessionId, error);
     });
     
-    // Return the session immediately - it's now running
-    session.status = 'running';
-    this.sessions.set(sessionId, session);
+    // The profile queue promotes to running only when this session owns its slot.
     
     return session;
   }
@@ -276,11 +282,16 @@ class SessionManagerImpl {
 
       cancelPromise = (async (): Promise<CancellationResult> => {
         const result = actualDispatch ? await actualDispatch.cancel() : { cancelled: true };
-        release();
-        if (this.profileDispatchTails.get(options.profile) === tail) {
-          this.profileDispatchTails.delete(options.profile);
+        // A failed cancellation is an observation, not termination proof.
+        if (result.cancelled) {
+          release();
+          // A cancelled queued slot still follows its live predecessor. Do
+          // not erase that dependency and let a new sibling jump the queue.
+          void tail.then(() => {
+            if (this.profileDispatchTails.get(options.profile) === tail) this.profileDispatchTails.delete(options.profile);
+          });
         }
-        return result;
+        return { ...result, notStarted: actualDispatch === null };
       })();
 
       return cancelPromise;
@@ -298,35 +309,21 @@ class SessionManagerImpl {
     
     this.activeDispatches.delete(sessionId);
     
-    // Do not overwrite terminal state if session was already stopped/stopping
-    if (session.status === 'stopped' || session.status === 'stopping' || session.status === 'error') {
+    // A confirmed cancellation remains terminal even if its callback is late.
+    if (session.status === 'stopped' || session.status === 'error') {
       // Session was already cancelled or stopped, ignore late completion
       return;
     }
     
-    if (result.exitCode === 0) {
-      session.status = 'stopped';
-      session.endedAt = new Date().toISOString();
-      this.sessions.set(sessionId, session);
-      
-      this.pushBus.publish({
-        type: 'session.stopped',
-        session
-      });
-    } else {
-      session.status = 'error';
-      session.error = `Dispatch failed with exit code ${result.exitCode}`;
-      if (result.stderr) {
-        session.error = diagnosticTail(result.stderr);
-      }
-      session.endedAt = new Date().toISOString();
-      this.sessions.set(sessionId, session);
-      
-      this.pushBus.publish({
-        type: 'session.stopped',
-        session
-      });
-    }
+    const cancelled = session.status === 'stopping';
+    session.execution = executionResult(result.spawnFailed ? 'launch_failed' : cancelled ? 'cancelled' : 'exited', result);
+    session.status = cancelled || result.exitCode === 0 ? 'stopped' : 'error';
+    session.error = session.status === 'error'
+      ? diagnosticTail(result.stderr || `Dispatch failed with exit code ${result.exitCode}`)
+      : undefined;
+    session.endedAt = new Date().toISOString();
+    this.sessions.set(sessionId, session);
+    this.pushBus.publish({ type: 'session.stopped', session });
   }
   
   /**
@@ -338,13 +335,14 @@ class SessionManagerImpl {
     
     this.activeDispatches.delete(sessionId);
     
-    // Do not overwrite terminal state if session was already stopped/stopping
-    if (session.status === 'stopped' || session.status === 'stopping' || session.status === 'error') {
+    // A confirmed cancellation remains terminal even if its callback is late.
+    if (session.status === 'stopped' || session.status === 'error') {
       // Session was already cancelled or stopped, ignore late error
       return;
     }
     
     session.status = 'error';
+    session.execution = executionResult('launch_failed');
     session.error = diagnosticTail(error instanceof Error ? error.message : String(error));
     session.endedAt = new Date().toISOString();
     this.sessions.set(sessionId, session);
@@ -362,7 +360,7 @@ class SessionManagerImpl {
       throw new GAHError(`Session ${sessionId} not found`, 'SESSION_NOT_FOUND');
     }
     
-    if (session.status === 'stopped' || session.status === 'stopping') {
+    if (isSessionTerminal(session) || session.status === 'stopping') {
       return session;
     }
     
@@ -376,54 +374,42 @@ class SessionManagerImpl {
       session
     });
 
-    // If there's an active dispatch, cancel it and wait for the process
-    // tree to actually terminate before reporting success. A late-arriving
-    // timeout or an unconfirmed kill must surface as an explicit error, not
-    // a silent "stopped".
     const activeDispatch = this.activeDispatches.get(sessionId);
     if (activeDispatch) {
-      this.activeDispatches.delete(sessionId);
-
       let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
-        const cancelTimeout = new Promise<{ timedOut: true }>((resolve) => {
-          timeout = setTimeout(() => resolve({ timedOut: true }), 30000); // 30 second timeout
-        });
-
         const outcome = await Promise.race([
-          activeDispatch.cancel().then((result) => ({ timedOut: false as const, result })),
-          cancelTimeout
+          activeDispatch.cancel().then(result => ({ timedOut: false as const, result })),
+          new Promise<{ timedOut: true }>(resolve => {
+            timeout = setTimeout(() => resolve({ timedOut: true }), 30_000);
+          })
         ]);
-
+        // Completion can win the race while cancellation is being observed.
+        if (session.status !== 'stopping') return session;
         if (outcome.timedOut) {
-          session.status = 'error';
-          session.error = 'Session cancellation timed out';
+          session.error = 'Cancellation timed out; execution is still unconfirmed';
         } else if (!outcome.result.cancelled) {
-          session.status = 'error';
-          session.error = diagnosticTail(outcome.result.error ?? 'Session cancellation failed');
+          session.error = diagnosticTail(outcome.result.error ?? 'Cancellation failed; execution is still unconfirmed');
         } else {
           session.status = 'stopped';
+          session.execution = executionResult(outcome.result.notStarted ? 'not_started' : 'cancelled', outcome.result.result);
+          session.error = undefined;
+          this.activeDispatches.delete(sessionId);
         }
       } catch (error) {
-        session.status = 'error';
-        session.error = diagnosticTail(`Error during cancellation: ${error instanceof Error ? error.message : String(error)}`);
+        if (session.status !== 'stopping') return session;
+        session.error = diagnosticTail(`Cancellation unconfirmed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         clearTimeout(timeout);
       }
     } else {
-      // No active dispatch, just mark as stopped
+      // A queued session that never obtained a process is safe to retire.
       session.status = 'stopped';
+      session.execution = executionResult('not_started');
     }
-
-    session.endedAt = new Date().toISOString();
+    if (session.status === 'stopped') session.endedAt = new Date().toISOString();
     this.sessions.set(sessionId, session);
-
-    // Notify about session stop - only after cancellation completes or times out
-    this.pushBus.publish({
-      type: 'session.stopped',
-      session
-    });
-    
+    this.pushBus.publish({ type: session.status === 'stopped' ? 'session.stopped' : 'session.status', session });
     return session;
   }
   
@@ -486,7 +472,7 @@ class SessionManagerImpl {
   
   getActiveSessions(): Session[] {
     return Array.from(this.sessions.values())
-      .filter(session => ['starting', 'running'].includes(session.status));
+      .filter(session => ['starting', 'running', 'stopping'].includes(session.status));
   }
   
   private cleanupFinishedSessions(): void {

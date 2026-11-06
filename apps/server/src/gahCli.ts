@@ -8,7 +8,7 @@ import { spawn, spawnSync, SpawnOptions, ChildProcess } from 'node:child_process
 import { userInfo } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, readFileSync, readdirSync } from 'node:fs';
 import { AsyncTtlCache } from './asyncTtlCache.js';
 import { diagnosticTail } from './diagnosticTail.js';
 import type {
@@ -508,11 +508,17 @@ export interface DispatchOptions extends DispatchExecutionOptions {
 export interface DispatchResult {
   exitCode: number;
   stderr: string;
+  signal?: NodeJS.Signals | null;
+  spawnFailed?: boolean;
 }
 
 export interface CancellationResult {
   cancelled: boolean;
   error?: string;
+  /** Available from the real runner after process-tree termination. */
+  result?: DispatchResult;
+  /** Set by the profile queue when it cancelled a session before launch. */
+  notStarted?: boolean;
 }
 
 export interface CancellableDispatch {
@@ -614,21 +620,39 @@ function waitForClose(child: ChildProcess, timeoutMs: number): Promise<boolean> 
   });
 }
 
+function processGroupIsGone(pid: number): boolean {
+  try { process.kill(-pid, 0); }
+  catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+  if (process.platform !== 'linux') return false;
+  // Orphans can remain zombies until init reaps them. They cannot execute,
+  // so they must not pin a profile forever. Never infer exit from EPERM.
+  const active = (entry: string): boolean => {
+    const stat = readFileSync(`/proc/${entry}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    return Number(fields[2]) === pid && fields[0] !== 'Z' && fields[0] !== 'X';
+  };
+  try { if (active(String(pid))) return false; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false; }
+  try {
+    for (const entry of readdirSync('/proc')) {
+      if (!/^\d+$/.test(entry)) continue;
+      try { if (active(entry)) return false; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false; }
+    }
+    return true;
+  } catch { return false; }
+}
+
 function waitForProcessGroupExit(pid: number, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const deadline = Date.now() + timeoutMs;
     const check = () => {
-      try {
-        process.kill(-pid, 0);
-      } catch {
-        resolve(true);
-        return;
-      }
+      if (processGroupIsGone(pid)) { resolve(true); return; }
       if (Date.now() >= deadline) {
         resolve(false);
         return;
       }
-      setTimeout(check, 10);
+      setTimeout(check, 50);
     };
     check();
   });
@@ -721,16 +745,31 @@ export function runDispatchCancellable(
       stderr = diagnosticTail(stderr + diagnosticTail(data.toString()));
     });
 
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       // `code` is null when the process was terminated by a signal (e.g.
       // our own SIGTERM/SIGKILL during cancellation) -- collapsing that to
       // 0 would misreport an abnormal termination as a clean success.
-      settleOnce({ exitCode: code ?? -1, stderr });
+      const result = { exitCode: code ?? -1, signal, stderr };
+      // A closed parent can leave a live descendant holding the same profile.
+      // Keep completion pending until its isolated process group is gone.
+      const confirm = () => {
+        if (process.platform !== 'win32' && child.pid) {
+          if (processGroupIsGone(child.pid)) { settleOnce(result); return; }
+          setTimeout(confirm, 250).unref?.();
+        } else { settleOnce(result); }
+      };
+      confirm();
     });
 
     child.on('error', (error) => {
+      if (child.pid) {
+        // A post-spawn signalling error does not prove the child is gone.
+        stderr = diagnosticTail(stderr + `\nDispatch process error: ${error.message}`);
+        return;
+      }
       settleOnce({
         exitCode: -1,
+        spawnFailed: true,
         stderr: `Failed to spawn gah: ${error instanceof Error ? error.message : String(error)}`
       });
     });
@@ -761,7 +800,7 @@ export function runDispatchCancellable(
             error: `Could not confirm termination of process tree for pid ${pid}`
           };
         }
-        return { cancelled: true };
+        return { cancelled: true, result: { exitCode: child.exitCode ?? -1, signal: child.signalCode, stderr } };
       } catch (error) {
         return {
           cancelled: false,

@@ -483,7 +483,7 @@ async function handleStopSession(ws: WebSocket, message: Extract<ClientMessage, 
     const session = await fleetDispatch.stopSession(message.sessionId);
 
     ws.send(JSON.stringify({
-      type: 'session.stopped' as const,
+      type: session.status === 'stopped' || session.status === 'error' ? 'session.stopped' as const : 'session.status' as const,
       session
     }));
     
