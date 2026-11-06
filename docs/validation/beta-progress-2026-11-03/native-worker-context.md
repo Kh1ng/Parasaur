@@ -40,8 +40,51 @@ and reservation arithmetic above the filesystem's available capacity. Logs:
 `/home/khing/.cache/parasaur-project-report.qy1ih6c9/native-handoff-context-final-checks.log`.
 The earlier chunk implementation also passed ledger, dispatch, capability,
 telemetry and daily/monthly rollover checks; the final disk-preflight changes
-were verified by the focused cases and all-target Clippy. The actual production
-rerun is still required before claiming that the size blocker is cleared.
+were verified by the focused cases and all-target Clippy. The production
+rerun below now clears the size blocker; worker runtime compatibility and
+execution remain incomplete.
+
+## Production history transfer — version 2
+
+Public `88f27cf2` was built from an immutable archive with all 606 Rust/Cargo
+inputs verified. Its optimized binary SHA-256 is
+`57938fbae6cfe8ba155659539164c945b03ce7d8551ff0c0fab62d2bff6ed29d`.
+Production context and zero-dollar spend refusal smokes pass. The artifact
+is `artifacts/parasaur-native-context-88f27cf2/`; build log:
+`/home/khing/.cache/parasaur-native-context-release.80roa8b_/build.log`.
+It remains staged, not installed.
+
+At 17:24 UTC on November 6, the candidate prepared the actual central profile
+successfully: 26,302 entries, two chunks and 249,649,064 history bytes. The
+complete manifest digest is
+`5653722872101db7b402bab2b8eebc4cc9bcd01b2337c40bc2633fb36fada023`.
+The 4,916,683-byte transport archive was SHA-verified before extraction into a
+new private WSL directory. Fixed member names, file types, duplicate names,
+total size and extracted ownership permissions were checked. No Mac transfer
+or model/issue execution occurred.
+
+The actual Windows WSL worker check then refused the context because its
+`claude_args` differ from central's runtime-rule digest. Separate inspection
+also confirms differing `opencode_args`. The helper selected the same central
+config as the live API (`/srv/gah/config/config.toml`), ruling out a diagnostic
+config mix-up. Central explicitly has `--safe-mode` for Claude and the packaged
+reviewer-agent override for OpenCode; worker vectors are empty. These arguments
+can affect runtime permissions. They were neither discarded nor automatically
+copied, and no worker compatibility/execution pass is claimed. Resolve the
+runtime requirements and their actual executable support before another check.
+
+API PIDs 841661 (central) and 352938 (worker), central controller 666974 and
+observer 667504 were unchanged. Both probes verify configuration and installed
+CLI hashes stayed unchanged. Saved reports are
+`artifacts/central-live-20261105/native-context-88f27cf2-central.json` and
+`native-context-88f27cf2-worker.json` in the same ignored directory. Owned remote
+and WSL context directories retain this exact diagnostic run for reconciliation.
+
+Matched private `98f2e7e` pins public `88f27cf2` and passes 1,158 server tests
+(38 explicit skips), 17 mock cases, production builds, private artifact/input
+guards and browser credential/transport checks. Log:
+`/home/khing/.cache/parasaur-enterprise-current.dmqcov66/build.log`.
+Its Supabase values are fixtures, not live SSO evidence.
 
 ## Central preparation
 

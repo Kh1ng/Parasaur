@@ -1,11 +1,15 @@
 # Beta finishing pass: local validation
 
-Latest production compatibility evidence: the native context candidate refuses
-the actual central profile history at its 128 MiB limit; the canonical ledger
-is 261.6 MB. No complete context was published and no worker/backend executed.
-The next history-transfer implementation must preserve every required row with
-bounded resource use. See [the actual probe](native-worker-context.md#actual-central-compatibility-probe--november-6).
-Services, configuration and installed CLIs were unchanged.
+Latest production compatibility evidence: public `88f27cf2` clears the native
+history-size blocker with bounded, hashed chunks. Actual central preparation
+passes with all 26,302 selected-profile entries in two chunks (249.6 MB). The
+exact context was transferred to Windows WSL, whose check correctly refuses
+differing runtime arguments before materializing a job ledger. Runtime
+compatibility, authority refresh and native execution remain unfinished. See
+[production version 2 evidence](native-worker-context.md#production-history-transfer--version-2).
+Eleven focused cases, the actual CLI check and all-target Clippy pass. Matched
+private `98f2e7e` also passes its complete assembly. Services, configurations
+and installed CLIs were unchanged; no model or real issue ran.
 
 The owner's usage screenshot was also rechecked against current live data:
 the tailnet HTML and all 30 assets match the corrected deployed build, and the
