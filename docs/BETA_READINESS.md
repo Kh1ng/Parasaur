@@ -56,7 +56,9 @@ work and are not gates for this desktop/shared-web pass.
   15-minute live controller trial passed under the original memory limit and
   authenticated Windows Overview/Factory pages load. The extended observer
   subsequently stopped the controller at its memory guard after about 23 minutes;
-  the controller is left stopped. Extended memory validation, complete worker
+  that trial left it stopped. A streamed-recovery candidate is now running
+  under the original cap with a new one-hour observation in progress.
+  Extended memory validation, complete worker
   diagnostics, Git transport and real factory progression remain open.
 
 - [MacBook client update](validation/beta-progress-2026-11-03/mac-client-update.md)
@@ -348,9 +350,16 @@ forge access, portable aliases, identity/ledger integration,
 artifact publication, full shared-hardware acceptance, staged migration,
 hosted rollout and a real provider-backed job remain unfinished.
 
-A [current public recovery candidate](validation/beta-progress-2026-11-03/current-public-release.md)
-at `16e9ecc6` now includes the later server/web fixes and exact factory account
-routing. Its optimized release
-install, full asset/range reads and Windows-to-WSL smoke checks passed. The user
-WSL CLI is updated; the unchanged native desktop remains installed and closed.
-The candidate requires glibc 2.39 and is unsigned, unpublished and undeployed.
+The current public candidate at `acf34437` includes streamed controller
+recovery, expired-quota presentation and persistent panel pairing. Its optimized
+Linux release installer, cold HTTP asset checks and matched private assembly
+pass. The streamed CLI (`befb656a`) is deployed; the central API remains at
+`6b101b98` with shared web `c648ce94` until the candidate is rolled out.
+The Windows native client remains installed. Distribution signing, installed
+cross-platform release acceptance and the Mac memory soak remain open.
+
+- [Persistent panel session](validation/beta-progress-2026-11-03/persistent-panel-session.md)
+  replaces the GitLab handoff's shared-owner-token response with a revocable
+  controller cookie. Browser persistence and authorization checks pass; the
+  package is built and verified. Live deployment and GitLab SSO acceptance
+  remain open.

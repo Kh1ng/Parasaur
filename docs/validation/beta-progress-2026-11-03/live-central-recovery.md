@@ -194,3 +194,34 @@ This repairs the expired-window presentation, not full usage reconciliation.
 Provider refresh/identity/pool correctness still requires live acceptance, and
 persistent client authentication plus the deployed GitLab SSO path remain
 unfinished. The two new user reports have not been filed or counted as closed.
+
+
+## Streamed recovery readers (2026-11-06 UTC)
+
+Source `befb656a` replaces the controller's full `read_events` snapshots with
+streamed queries. Abandoned-run reconciliation retains only lifecycle IDs;
+capacity suppression and repeated human reports retain the latest matching
+record per work item; stuck-loop detection folds the selected action's two
+suffix counts. The complete journal is still validated before reconciliation
+writes, so corruption cannot silently produce partial recovery. Ledger/event
+files remain intact. The selected-action query adds a journal scan instead of
+keeping a historical event vector resident during selection.
+
+Validation: 200 controller tests, 12 event tests, a differential reader check
+covering 64 histories, resets, generations and legacy/out-of-order boundaries,
+all-target/all-feature Clippy with warnings denied, formatting and optimized
+build passed. The source manifest verifies 586 Rust/Cargo files against the
+commit with only CRLF/LF normalization. CLI SHA-256 is
+`8907144d7e394192be7f77b35d0920176ff3b4333b0e6d2e71af9971bf846f90`.
+It is installed on the VM, with the previous CLI backed up at
+`~/.local/state/gah/central-repair-20261105/gah-before-streamed-recovery`.
+The API PID and deployment were preserved.
+
+The controller was restarted under its original 1,572,864,000-byte limit.
+A one-hour observation is running in the separate transient user unit
+`parasaur-streamed-recovery-observer-20261106.service`, with a conservative
+1,450 MiB stop guard. Its metadata-only samples/result use the prefix
+`streamed-recovery-controller` in the existing VM evidence directory. The
+trial is not yet a pass; inspect its live unit and result before claiming
+completion or restarting it. An early five-minute sample had the same PID,
+zero restarts and zero cgroup OOM events. This is not long-run acceptance.

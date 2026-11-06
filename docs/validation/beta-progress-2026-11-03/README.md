@@ -2,10 +2,17 @@
 
 Latest live work: [central recovery and memory attribution](live-central-recovery.md)
 restored the tailnet dashboard/API, preserved credentials and sessions, and
-verified every deployed JavaScript chunk. The latest optimized
-controller passed a 15-minute live trial under its unchanged limit. Native
-Windows Overview/Factory load with saved owner access. Worker connectivity,
-Git transport, UI clarity and long-soak acceptance remain open.
+verified every deployed JavaScript chunk. An earlier 15-minute controller
+trial passed, but its extended trial reached the memory guard. The streamed
+recovery candidate is now deployed under the original cap, with a one-hour
+observation in progress. Native Windows Overview/Factory load with saved
+owner access. Complete worker diagnostics, Git transport, UI clarity and
+long-soak acceptance remain open.
+
+[Persistent panel sessions](persistent-panel-session.md) replace the handoff
+owner-token response with an ordinary revocable controller cookie. The public
+release installer and combined private build pass; live rollout and real
+GitLab SSO acceptance remain open.
 
 Windows follow-up: [worker recovery](windows-worker-recovery.md) updates the
 old worker, corrects its central origin, resumes its logon keepalive and verifies
