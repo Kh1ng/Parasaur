@@ -49,6 +49,11 @@ work and are not gates for this desktop/shared-web pass.
 
 ## Evidence still required
 
+- [Chat token breakdown](validation/beta-progress-2026-11-03/chat-token-breakdown.md)
+  preserves reported cache/reasoning categories and prevents incomplete replies
+  from yielding complete session totals. Focused protocol/history/UI checks and
+  the final private build pass. Deployment and fresh live counter reconciliation
+  remain required.
 - [Central claim participation](validation/beta-progress-2026-11-03/central-claim-participation.md)
   fixes central's missing membership path without registering it as a worker.
   Live cross-host acquire/conflict/renew/release checks pass, including the

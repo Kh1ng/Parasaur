@@ -34,6 +34,10 @@ Verification on 2026-11-06:
 - Both session detail component tests pass in Chromium. The updated desktop
   screenshot was visually inspected; the existing narrow-layout check passes.
 - Contracts build, server/web typecheck, server/web production builds pass.
+- Final private assembly `44901b7`, pinned to public `bd63be30`, passes 1,119
+  server cases with 38 explicit skips, 16 mock cases, production builds,
+  artifact/input guards and browser credential-transport checks. Its build log
+  is `/home/khing/.cache/parasaur-enterprise-current.ihts5hya/build.log`.
 
 This source change is not yet deployed. It does not resolve provider quota
 availability, historical readings, cross-node factory/chat reconciliation,
