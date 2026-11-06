@@ -261,7 +261,20 @@ test('releasing an archived ACP conversation stops its process tree and preserve
   const backend = createAcpBackend('Archive', () => ({ command: process.execPath, args: [fake.path, 'archive-tree', count] }));
   const first = { key: 'first-session', profile: 'project' };
   const second = { key: 'second-session', profile: 'project' };
-  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const alive = (pid: number) => {
+    try { process.kill(pid, 0); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false; throw error; }
+    if (process.platform === 'linux') {
+      // kill(pid, 0) also succeeds for an exited zombie awaiting init's reap.
+      // Assert that no process can execute, independently of reaping latency.
+      try {
+        const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+        const state = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[0];
+        return state !== 'Z' && state !== 'X';
+      } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+    }
+    return true;
+  };
   try {
     await backend.listModels(first);
     await backend.listModels(second);
