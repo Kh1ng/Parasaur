@@ -219,9 +219,22 @@ The API PID and deployment were preserved.
 
 The controller was restarted under its original 1,572,864,000-byte limit.
 A one-hour observation is running in the separate transient user unit
-`parasaur-streamed-recovery-observer-20261106.service`, with a conservative
-1,450 MiB stop guard. Its metadata-only samples/result use the prefix
+`parasaur-streamed-recovery-observer-v2-20261106.service`, with a conservative
+1,450 MiB working-set-plus-swap guard. Its metadata-only samples/result use the prefix
 `streamed-recovery-controller` in the existing VM evidence directory. The
 trial is not yet a pass; inspect its live unit and result before claiming
 completion or restarting it. An early five-minute sample had the same PID,
 zero restarts and zero cgroup OOM events. This is not long-run acceptance.
+
+
+The monitor was handed over to v2 without restarting the controller (same PID
+437234, zero restarts). A sampled 985,706,496-byte cgroup total included
+423,194,624 inactive-file bytes: its working set plus swap was 562,511,872
+bytes, with zero swap and no OOM events. The original monitor counted all file
+cache toward its stop threshold, which could manufacture another factory stop
+as normal reclaimable cache filled the cgroup. V2 subtracts `inactive_file`,
+adds `memory.swap.current`, and still fails on a PID change, restart or OOM kill.
+Production `MemoryMax` is unchanged. Existing samples and the original trial
+start time are retained; this is a changed diagnostic guard, not an unchanged
+threshold comparison with the prior failed trial. The full one-hour result is
+still pending.

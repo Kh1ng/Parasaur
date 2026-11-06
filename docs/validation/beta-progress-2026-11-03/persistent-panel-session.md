@@ -44,7 +44,9 @@ An initial root dependency install missed the bundle's managed runtime; its
 replacement npm install used over 1 GiB RAM, was stopped, and is not a pass.
 Dependencies were instead prepared by the verified installer in WSL, then
 transferred and checked on the VM. The live API was never replaced during
-staging. No package was transferred to the low-space MacBook.
+staging. The incomplete VM runtime was removed after verifying that no
+process used it and that all ready-runtime links stay inside the ready tree.
+The ready candidate and evidence were preserved. No package was transferred to the low-space MacBook.
 
 Deployment is pending. The public candidate is
 `artifacts/parasaur-central-acf34437/`; the live central API has not received
