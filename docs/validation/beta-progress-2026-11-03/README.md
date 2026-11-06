@@ -10,6 +10,11 @@ Context, ledger, actual CLI, dispatch, capability, telemetry and spend checks
 pass, including 570 dispatch cases, real daily/monthly budget rollover and
 all-target/all-feature Clippy. Counts and overlapping filters are documented
 in the linked evidence.
+Matched private `5385b42` / public `6b67abe1` passes its full assembly. A clean
+605-input optimized native build also passes production context and zero-spend
+smokes and remains uninstalled. The original memory observation is live at
+6.11 hours without gaps or OOM; ten-hour and sustained-load acceptance remain
+open.
 
 Latest native increment: [worker result ingestion](native-worker-result-import.md)
 adds a local-only CLI boundary for importing a worker's terminal native ledger

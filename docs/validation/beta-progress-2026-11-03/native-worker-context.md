@@ -112,6 +112,28 @@ Logs are
 `/home/khing/.cache/parasaur-project-report.qy1ih6c9/native-handoff-context-checks.log`
 and `native-handoff-context-final-checks.log` in the same directory.
 
+Public `6b67abe1` is pinned by private `5385b42`. The matched assembly passes
+1,158 server cases (38 explicit skips), 17 mock cases, production builds,
+artifact/input checks and browser credential/transport guards. Log:
+`/home/khing/.cache/parasaur-enterprise-current.i6_q6u2s/build.log`.
+
+An optimized candidate was built from a fresh immutable public archive, with
+all 605 tracked Rust/Cargo files compared. It passes production native context
+prepare/check (including inherited-empty-ledger refusal/replacement by prepared
+history) and a zero-dollar spend refusal before any dispatch session. No model
+or real issue was selected. Artifact:
+`artifacts/parasaur-native-context-6b67abe1/`; SHA-256
+`12bdd03a63764394caae4b0e3a124612684d60f89406682a1973af2d40c6fbe1`.
+It reports 0.3.0, requires glibc 2.39 and is not installed. Build log:
+`/home/khing/.cache/parasaur-native-context-release.ot9eh4h3/build.log`.
+
+At 16:59:57 UTC on November 6, controller PID 666974 and observer PID 667504
+were unchanged and live. The existing observation had 363 samples over
+22,005.309 seconds, zero gaps and zero cgroup OOM kills. Latest controller RSS
+was 733,700 KiB. Ten-hour and sustained-agent-load acceptance remain incomplete.
+The metadata report is retained under ignored
+`artifacts/central-live-20261105/native-context-memory.json`.
+
 This is source-only. The check explicitly returns `execution_started: false`
 and `authority_refresh_required: true`. A point-in-time context is not live
 authorization. The next executor/broker increment must refresh central
