@@ -102,3 +102,34 @@ Ignored metadata: `artifacts/central-live-20261105/native-claim-import-bridge.js
 The bridge records hashes of the typechecked TypeScript sources it executes.
 Windows/Linux focused logs are `artifacts/native-claims-windows-tests.log` and
 `artifacts/native-claims-linux-tests.log`.
+
+## Matched release verification
+
+Public `cd87332e` was built from a fresh immutable archive with all 606
+Rust/Cargo inputs checked. Artifact:
+`artifacts/parasaur-native-context-cd87332e/`; optimized binary SHA-256:
+`ad102428bfb110449770e7f5ace5efb88d2e4df8621791e1adfda8aef9cd0b68`.
+It passes native context and zero-dollar spend refusal production smokes. The
+same Rust/server acknowledgement bridge also passes using this exact optimized
+binary, including unconfirmed-cancellation refusal and receipt replay. It
+remains staged, not installed. Build log:
+`/home/khing/.cache/parasaur-native-context-release.jykycq1w/build.log`.
+
+Matched private `910d660` pins public `cd87332e` and passes 1,170 server
+cases (38 explicit skips), 17 mocks, production server/shared-web builds and
+artifact/input/credential/transport guards. Its validation Supabase values are
+fixtures, not live SSO evidence. Log:
+`/home/khing/.cache/parasaur-enterprise-current.1ui_o51i/build.log`.
+
+The existing controller observation remains running at 463 samples over
+28,005.797 seconds, with zero gaps and zero OOM kills. Controller 666974 and
+observer 667504 are unchanged. Ten-hour and sustained-load acceptance remain
+open. Metadata is retained in ignored
+`artifacts/central-live-20261105/native-ownership-memory.json`.
+
+The next broker increment must persist per-run offers before transport, retain
+the original central profile/work claims, refresh execution authority and
+permissions, and obtain capacity on the actual execution host. Its completion
+path must use the separately prepared binding and canonical acknowledgement
+above. Neither these fixture results nor an observation timeout permits
+re-offering an uncertain run or starting an empty-history controller.

@@ -6,6 +6,9 @@ the exact native result is durably recorded. Unknown cancellation cannot release
 ownership. An actual Rust/server bridge proves refused unconfirmed termination,
 failed-result/unknown-cost preservation, single import and safe late replay.
 Focused Windows/Linux checks, ledger/CLI checks, formatting and Clippy pass.
+The immutable optimized `cd87332e` candidate passes that same import bridge,
+and matched private `910d660` passes 1,170 server and 17 mock cases plus its
+production builds and artifact/credential guards. Neither is installed.
 This is source-only: fresh authority, actual-host admission and the durable
 per-run broker/executor are still required before agent work can launch.
 
