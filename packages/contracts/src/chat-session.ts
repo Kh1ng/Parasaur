@@ -107,6 +107,10 @@ export interface ChatUsage {
   input_tokens: number | null;
   output_tokens: number | null;
   total_tokens: number | null;
+  /** Provider-reported categories; may overlap input/output. Never add to total. */
+  cache_read_tokens?: number | null;
+  cache_write_tokens?: number | null;
+  reasoning_tokens?: number | null;
   estimated_cost_usd: number | null;
   duration_seconds: number | null;
 }

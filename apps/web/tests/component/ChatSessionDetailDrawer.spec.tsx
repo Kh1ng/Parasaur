@@ -20,14 +20,18 @@ const binding: SkillBindingSummary = {
 test('consolidates session identity, usage, work, rename, skills, and archive controls', async ({ mount, page }, testInfo) => {
   const actions: string[] = [];
   const component = await mount(<ChatSessionDetailDrawer session={session} turnBusy={false} providerPicker={null}
-    skillBinding={binding} skillBusy={false} usage={{ turns: 2, inputTokens: 1200, outputTokens: 300, totalTokens: 1500, estimatedCostUsd: 0.125, costIncomplete: false }}
+    skillBinding={binding} skillBusy={false} usage={{ turns: 2, inputTokens: 1200, outputTokens: 300, totalTokens: 1900, cacheReadTokens: 400, cacheWriteTokens: 0, reasoningTokens: null, estimatedCostUsd: 0.125, costIncomplete: false }}
     workId="#42" onRename={async (title) => { actions.push(`rename:${title}`); }} onArchive={async () => { actions.push('archive'); }}
     onRestore={async () => { actions.push('restore'); }} onToggleSkill={async (id) => { actions.push(`skill:${id}`); }}
     onInheritSkills={async () => { actions.push('inherit'); }} onOpenWork={(id) => actions.push(`work:${id}`)} onClose={() => actions.push('close')} />);
 
   await expect(component.getByText('codex-work')).toBeVisible();
+  const metrics = component.getByRole('heading', { name: 'Usage', exact: true }).locator('..');
+  await expect(metrics.getByText('Cache read tokens', { exact: true }).locator('..')).toHaveText('Cache read tokens400');
+  await expect(metrics.getByText('Cache write tokens', { exact: true }).locator('..')).toHaveText('Cache write tokens0');
+  await expect(metrics.getByText('Reasoning tokens', { exact: true }).locator('..')).toHaveText('Reasoning tokensNot reported');
+  await expect(metrics.getByText('1,900 total reported tokens', { exact: true })).toBeVisible();
   await expect(component.getByText('gpt-6-sol')).toBeVisible();
-  await expect(component.getByText('1,500 total reported tokens')).toBeVisible();
   await expect(component.getByText('$0.1250')).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({ path: testInfo.outputPath('session-detail-desktop.png') });

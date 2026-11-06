@@ -72,6 +72,11 @@ individual desktop/web tickets. Including the owner's two new usage/auth
 reports gives 29 scoped items. Those reports remain unfiled; deployed partial
 fixes are not closure evidence for the remaining live acceptance work.
 
+[Chat token categories](chat-token-breakdown.md) now survive ACP conversion and
+durable history, and the session drawer refuses complete totals when replies
+have missing measurements. Focused protocol, replay, unit and rendered component
+checks pass. This source change is not yet deployed.
+
 [Factory admission evidence](factory-hang-recheck.md) now identifies the live
 node-memory wait on #1525. Shared web `c0668cae` exposes the exact recorded
 refusal in Waiting and stops clipping it on Overview. Production capacity

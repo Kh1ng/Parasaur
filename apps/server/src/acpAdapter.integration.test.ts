@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { test } from 'node:test';
+import type { ChatTranscriptTurn } from '@git-agent-harness/contracts';
 
 import { createAcpBackend } from './managerChat/acpAdapter.js';
 import { defaultClaudeSpawn, resolveAdapter, invalidateAgentModels } from './managerChat/registry.js';
@@ -25,6 +26,7 @@ if (mode === 'archive-tree') {
   fs.appendFileSync(spawnCountPath + '.pids', JSON.stringify([process.pid, child.pid]) + '\n');
 }
 let pendingPrompt;
+let usageTurns = 0;
 const lines = readline.createInterface({ input: process.stdin });
 
 function respond(message) {
@@ -33,6 +35,14 @@ function respond(message) {
 
 lines.on('line', (line) => {
   const request = JSON.parse(line);
+  if (request.method === 'session/prompt' && mode === 'usage-breakdown') {
+    usageTurns++;
+    respond({ jsonrpc: '2.0', id: request.id, result: { stopReason: 'end_turn', usage: {
+      inputTokens: usageTurns * 10, outputTokens: usageTurns * 5, totalTokens: usageTurns * 100,
+      cachedReadTokens: usageTurns * 80, cachedWriteTokens: 0, thoughtTokens: usageTurns * 3
+    } } });
+    return;
+  }
   if (request.method === 'initialize') {
     respond({ jsonrpc: '2.0', id: request.id, result: { protocolVersion: request.params.protocolVersion, _meta: { steering: { supported: true } } } });
     return;
@@ -157,6 +167,23 @@ function fakeAcpScript(): { dir: string; path: string } {
   writeFileSync(scriptPath, FAKE_ACP_SOURCE);
   return { dir, path: scriptPath };
 }
+
+test('ACP replies preserve cache and reasoning categories across real protocol turns', async () => {
+  const fake = fakeAcpScript();
+  const backend = createAcpBackend('Usage fixture', () => ({ command: process.execPath, args: [fake.path, 'usage-breakdown'] }));
+  try {
+    const history: ChatTranscriptTurn[] = [];
+    for (let turn = 0; turn < 2; turn++) {
+      const result = await backend.runTurn({ key: 'usage-fixture', profile: 'fixture' }, { ...emptyTurnInput, prompt: 'usage fixture', history: [...history] });
+      assert.deepEqual(result.usage, {
+        input_tokens: 10, output_tokens: 5, total_tokens: 100,
+        cache_read_tokens: 80, cache_write_tokens: 0, reasoning_tokens: 3,
+        estimated_cost_usd: null, duration_seconds: result.usage?.duration_seconds
+      });
+      history.push({ role: 'user', text: 'usage fixture', timestamp: 1 }, { role: 'assistant', text: result.reply, timestamp: 2 });
+    }
+  } finally { backend.dispose(); rmSync(fake.dir, { recursive: true, force: true }); }
+});
 
 test('ACP workspace startup uses the real profile and shares concurrent connection reads', async () => {
   const fake = fakeAcpScript();

@@ -183,16 +183,21 @@ export function toChatUsage(
     ? Math.max(0, update.cost.amount - costBeforeUsd)
     : null;
   return {
-    input_tokens: usage ? counterDelta(usage.inputTokens, previousUsage?.inputTokens) : null,
-    output_tokens: usage ? counterDelta(usage.outputTokens, previousUsage?.outputTokens) : null,
-    total_tokens: usage ? counterDelta(usage.totalTokens, previousUsage?.totalTokens) : null,
+    input_tokens: counterDelta(usage?.inputTokens, previousUsage ? previousUsage.inputTokens : 0),
+    output_tokens: counterDelta(usage?.outputTokens, previousUsage ? previousUsage.outputTokens : 0),
+    total_tokens: counterDelta(usage?.totalTokens, previousUsage ? previousUsage.totalTokens : 0),
+    cache_read_tokens: counterDelta(usage?.cachedReadTokens, previousUsage ? previousUsage.cachedReadTokens : 0),
+    cache_write_tokens: counterDelta(usage?.cachedWriteTokens, previousUsage ? previousUsage.cachedWriteTokens : 0),
+    reasoning_tokens: counterDelta(usage?.thoughtTokens, previousUsage ? previousUsage.thoughtTokens : 0),
     estimated_cost_usd: cost,
     duration_seconds: durationMs / 1000
   };
 }
 
-function counterDelta(current: number, previous: number | undefined): number {
-  return previous === undefined || current < previous ? current : current - previous;
+function counterDelta(current: number | null | undefined, previous: number | null | undefined): number | null {
+  if (current == null || !Number.isSafeInteger(current) || current < 0
+    || previous == null || !Number.isSafeInteger(previous) || previous < 0) return null;
+  return current < previous ? current : current - previous;
 }
 
 /** Validates the raw usage_update payload before it reaches the UI
