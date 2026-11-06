@@ -1,7 +1,9 @@
 # Native reporting foundation for combined usage
 
-This work is staged locally, not deployed. It advances #1538's reporting
-contract; the combined HTTP endpoint and Telemetry view remain unfinished.
+The foundation described below is now superseded by the completed, deployed
+[combined usage report](combined-recorded-usage.md) at public `39c29be4`.
+The combined endpoint, Telemetry view and JSON export are live. The following
+sections retain the earlier stage's evidence and its historical deployment state.
 
 Public `d765484c` adds `project` and `work-item` to the report/ledger-summary
 grouping vocabulary and its shared TypeScript contract. Group keys are JSON

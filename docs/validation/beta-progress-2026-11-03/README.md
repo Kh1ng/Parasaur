@@ -1,5 +1,12 @@
 # Beta finishing pass: local validation
 
+Latest usage delivery: [combined recorded usage](combined-recorded-usage.md)
+is live at public `39c29be4`, with chat and factory source coverage, measured
+subtotals, account/model/project/work/day grouping and JSON export. Both live
+sources pass 7/30-day acceptance. Missing billed cost remains unknown. This
+supersedes the staged-only native usage status below; GitLab auth, distributed
+factory handoff and the long memory observation remain outstanding.
+
 Latest coordination correction: [central claim participation](central-claim-participation.md)
 lets central and registered workers arbitrate the same leases without a
 self-polling registry entry. Live cross-host claim tests pass. Central's
@@ -84,11 +91,11 @@ live 30-day report retains all 85 observed turns rather than grouping only the
 three measured turns. Missing measurements remain unknown. Unified chat/factory
 reporting under #1538 remains open.
 
-[Canonical execution usage](canonical-execution-usage.md) stages native
+[Canonical execution usage](canonical-execution-usage.md) introduced native
 project/work-item grouping and a streaming dispatch-usage source for #1538.
 Per-attempt and legacy summary readings are counted without adding mirrored
-totals twice. This stage is not deployed; the combined endpoint and Telemetry
-view remain in progress.
+totals twice. The [combined report](combined-recorded-usage.md) now deploys this
+source alongside chat, its HTTP endpoint and Telemetry view.
 
 [Chat token categories](chat-token-breakdown.md) now survive ACP conversion and
 durable history, and the session drawer refuses complete totals when replies
