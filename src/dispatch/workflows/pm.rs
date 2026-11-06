@@ -180,7 +180,9 @@ pub(crate) fn pm(
         ) {
             Ok(result) => result,
             Err(e) => {
-                if super::super::capacity_deferred_error(&e) {
+                if super::super::capacity_deferred_error(&e)
+                    || crate::dispatch::native_guard::authority_held(&e)
+                {
                     return Err(e);
                 }
                 eprintln!(

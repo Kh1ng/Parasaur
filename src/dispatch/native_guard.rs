@@ -32,6 +32,17 @@ pub(crate) fn verify_environment() -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn authority_held(_error: &anyhow::Error) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        crate::native_handoff::execution::authority_held(_error)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
 pub(crate) fn attempt(
     _identity: &ExecutionIdentity,
     invoke: impl FnOnce() -> Result<runner::RunResult>,

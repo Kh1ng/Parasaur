@@ -23,6 +23,8 @@ mod policy;
 mod work;
 #[cfg(target_os = "linux")]
 pub mod worker;
+#[cfg(target_os = "linux")]
+pub mod wrapper;
 pub use current::check_current_policy;
 pub use work::{check_current_route, check_current_work};
 
@@ -390,6 +392,30 @@ pub fn load(
     node_id: &str,
     work: &Path,
 ) -> Result<WorkerContext> {
+    load_history(worker, context, expected, node_id, work, false)
+}
+
+/// Reverify the original context and the exact already-materialized history.
+/// Execution must neither overwrite job evidence nor duplicate its history.
+#[cfg(target_os = "linux")]
+pub(crate) fn resume(
+    worker: &GahConfig,
+    context: &Path,
+    expected: &str,
+    node_id: &str,
+    work: &Path,
+) -> Result<WorkerContext> {
+    load_history(worker, context, expected, node_id, work, true)
+}
+
+fn load_history(
+    worker: &GahConfig,
+    context: &Path,
+    expected: &str,
+    node_id: &str,
+    work: &Path,
+    existing: bool,
+) -> Result<WorkerContext> {
     verify_history_environment(work)?;
     private_directory(context)?;
     let manifest_bytes = read_blob(&context.join("manifest.json"), None, MAX_JSON)?;
@@ -497,20 +523,48 @@ pub fn load(
             );
             Ok(total + bytes)
         })?;
-    crate::dispatch::ensure_minimum_free_space(work, "native job filesystem", history_bytes)?;
-    create_directory(work)?;
     let history_path = work.join("ledger.jsonl");
-    crate::installer::files::replace_with(&history_path, 0o600, |file| {
+    if existing {
+        private_directory(work)?;
+        let mut history = open_blob(&history_path, MAX_HISTORY * u64::from(MAX_HISTORY_CHUNKS))?;
         for name in &history_names {
+            let blob = &manifest.files[name];
+            // Check the source too: its hash/size contract is unchanged at the
+            // handoff boundary, even though no second history copy is made.
             copy_blob(
                 &context.join(name),
-                manifest.files.get(name),
+                Some(blob),
                 MAX_HISTORY,
-                &mut *file,
+                std::io::sink(),
             )?;
+            let mut digest = Sha256::new();
+            let mut chunk = std::io::Read::by_ref(&mut history).take(blob.bytes);
+            let bytes = std::io::copy(&mut chunk, &mut digest)?;
+            ensure!(
+                bytes == blob.bytes && format!("{:x}", digest.finalize()) == blob.sha256,
+                "Native job history changed before execution"
+            );
         }
-        Ok(())
-    })?;
+        let mut tail = [0];
+        ensure!(
+            history.read(&mut tail)? == 0,
+            "Native job history has additional entries"
+        );
+    } else {
+        crate::dispatch::ensure_minimum_free_space(work, "native job filesystem", history_bytes)?;
+        create_directory(work)?;
+        crate::installer::files::replace_with(&history_path, 0o600, |file| {
+            for name in &history_names {
+                copy_blob(
+                    &context.join(name),
+                    manifest.files.get(name),
+                    MAX_HISTORY,
+                    &mut *file,
+                )?;
+            }
+            Ok(())
+        })?;
+    }
     let mut count = 0;
     for line in BufReader::new(File::open(&history_path)?).lines() {
         let entry: crate::ledger::LedgerEntry = read_json(line?.as_bytes())?;
@@ -529,7 +583,14 @@ pub fn load(
     let profile = cfg.profiles.get_mut(&request.args.profile).unwrap();
     profile.artifact_root = work.to_string_lossy().into_owned();
     if let Some(bytes) = combined_policy {
-        write_blob(work, "repository-policy.toml", &bytes)?;
+        if existing {
+            ensure!(
+                read_blob(&work.join("repository-policy.toml"), None, MAX_REPO_POLICY)? == bytes,
+                "Native repository policy changed before execution"
+            );
+        } else {
+            write_blob(work, "repository-policy.toml", &bytes)?;
+        }
         profile.policy_path = Some(
             work.join("repository-policy.toml")
                 .to_string_lossy()

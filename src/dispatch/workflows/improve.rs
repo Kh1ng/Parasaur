@@ -432,6 +432,15 @@ pub(crate) fn improve(
         drop(admission_guard);
         let result = match result {
             Ok(r) => r,
+            Err(e) if crate::dispatch::native_guard::authority_held(&e) => {
+                worktree::preserve_wip(
+                    &wt,
+                    &profile.default_target_branch,
+                    "gah: WIP native authority held",
+                )?;
+                worktree::cleanup(&wt, repo);
+                return Err(e);
+            }
             Err(e)
                 if crate::dispatch::external_approval_pause::latch_external_approval_hold(
                     cfg,

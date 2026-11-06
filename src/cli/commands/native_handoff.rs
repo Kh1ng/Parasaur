@@ -1,5 +1,5 @@
-//! Private native context preparation and verification. These commands never
-//! start a backend or treat a point-in-time history snapshot as live authority.
+//! Private native context preparation, verification and fixed job entry.
+//! Only execute consumes fresh start authority and may invoke a backend.
 use anyhow::{ensure, Result};
 use std::{io::Read, path::PathBuf};
 
@@ -24,6 +24,17 @@ pub enum Command {
         config_path: Option<String>,
     },
     Check {
+        #[arg(long)]
+        context_dir: PathBuf,
+        #[arg(long)]
+        expected_context: String,
+        #[arg(long)]
+        work_dir: PathBuf,
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+    #[cfg(target_os = "linux")]
+    Execute {
         #[arg(long)]
         context_dir: PathBuf,
         #[arg(long)]
@@ -71,6 +82,20 @@ pub enum Command {
 
 pub fn run(args: Args) -> Result<()> {
     match args.command {
+        #[cfg(target_os = "linux")]
+        Command::Execute {
+            context_dir,
+            expected_context,
+            work_dir,
+            config_path,
+        } => {
+            crate::native_handoff::wrapper::run(
+                &context_dir,
+                &expected_context,
+                &work_dir,
+                config_path.as_deref(),
+            )?;
+        }
         #[cfg(target_os = "linux")]
         Command::WorkerStatus {
             work_dir,

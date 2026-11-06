@@ -123,6 +123,38 @@ fn native_work_check_reobserves_controller_eligibility_without_backend_or_provid
 }
 
 #[test]
+#[cfg(target_os = "linux")]
+fn native_execute_rejects_bad_credentials_without_echo_or_configuration_access() {
+    let tmp = test_tempdir();
+    for input in [
+        "PRIVATE_CREDENTIAL_CANARY".to_owned(),
+        "x".repeat(16 * 1024 + 1),
+    ] {
+        let output = bin()
+            .args([
+                "native-handoff",
+                "execute",
+                "--context-dir",
+                "missing",
+                "--expected-context",
+                "missing",
+                "--work-dir",
+                "missing",
+                "--config-path",
+            ])
+            .arg(tmp.path().join("missing-config.toml"))
+            .write_stdin(input)
+            .assert()
+            .failure();
+        assert!(output.get_output().stdout.is_empty());
+        let error = String::from_utf8_lossy(&output.get_output().stderr);
+        assert!(error.contains("Native credential input"));
+        assert!(!error.contains("PRIVATE_CREDENTIAL_CANARY"));
+        assert!(!error.contains("missing-config"));
+    }
+}
+
+#[test]
 fn native_context_cli_moves_history_and_verifies_the_expected_node_without_starting_a_backend() {
     let tmp = test_tempdir();
     let repo = tmp.path().join("repo");

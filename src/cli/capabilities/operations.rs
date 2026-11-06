@@ -16,13 +16,15 @@ pub(super) fn add_native_handoff_operations(manifest: &mut CapabilityManifest) {
         "host-reserve",
         #[cfg(target_os = "linux")]
         "worker-status",
+        #[cfg(target_os = "linux")]
+        "execute",
     ] {
         manifest.add_operation(OperationDefinition {
             operation_id: format!("native-handoff.{action}"), display_name: format!("Native Handoff {action}"),
             class: OperationClass::Admin, profile_scope: ProfileScope::Global, request_schema: None, response_schema: None,
-            streaming: StreamingBehavior::None, idempotency: if action == "host-reserve" { Idempotency::NonIdempotent } else { Idempotency::Conditional }, secret_fields: vec![],
+            streaming: StreamingBehavior::None, idempotency: if matches!(action, "host-reserve" | "execute") { Idempotency::NonIdempotent } else { Idempotency::Conditional }, secret_fields: vec![],
             remote_disposition: RemoteDisposition::LocalOnly, local_only_reason: Some(LocalOnlyReason::SecuritySensitive),
-            documentation: Some("Private native context, central policy/spend checks and host admission/recovery inspection. Does not authorize execution. Never expose caller-selected input/output paths through a generic remote operation.".into()),
+            documentation: Some("Private native context, policy checks, host admission/recovery and fixed worker entry. Only execute consumes fresh start authority. Never expose these paths or credential stdin through a generic remote operation.".into()),
             cli_command_path: format!("gah native-handoff {action}"), is_stable: false,
         });
     }

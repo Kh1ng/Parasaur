@@ -1,5 +1,63 @@
 # Native worker host admission
 
+## Fixed worker executable
+
+The private Linux `native-handoff execute --context-dir ... --expected-context
+... --work-dir ... --config-path ...` entry point now consumes an already-offered
+start from its actual job service, installs process authority and calls ordinary
+dispatch. It accepts no arbitrary executable or alternate central origin.
+The command is security-sensitive, local-only and non-idempotent; no generic
+remote operation can invoke it.
+
+Its strict credential envelope arrives only on noninteractive stdin, bounded
+to 16 KiB and two seconds. The wrapper disables core dumps and process memory
+access before reading it, and closes/replaces stdin with `/dev/null` before any
+subprocess. Credentials are not serialized as config, arguments or artifacts.
+Malformed/oversized input returns static errors before configuration loading.
+
+Execution revalidates the original manifest, policy, request and each source
+history chunk. The existing private job ledger must match those chunks exactly,
+including EOF; additional entries and changed repository policy refuse execution.
+This reads the staged history in bounded chunks without creating another copy
+or overwriting earlier job evidence. The ordinary ledger path retains actual
+results. The wrapper cannot certify its own death or release capacity; a parent
+must independently observe terminal service/cgroup state before building a
+terminal receipt.
+
+A refused operation now has a distinct error type. Fix/PM workflows propagate
+that hold before backend launch-failure bookkeeping. The real-process fixture
+exposed the prior false-attempt record, which is now prevented; a held fix also
+preserves earlier work before cleaning its worktree.
+
+`scripts/tests/native_worker_execution.py` exercises the compiled executable
+under actual WSL systemd job/capacity units with the default physical capacity
+guards. A sealed anonymous memfd supplies credential stdin through systemd's
+[file input support](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#StandardInput=).
+It demonstrates real start-consumption HTTP, actual scope installation and an
+authorized fake-backend attempt; a paused factory starts no backend and records
+no attempt; a denied publication preserves the executed backend result without
+attempting a push. Operation fences, capacity retention after exit, empty job
+cgroups, replay refusal and absence of credential plaintext in fixture artifacts
+are checked. A fourth case verifies refusal of provider-assignee claim mode
+before consumption. Disposable units are stopped afterward. The fixture's initial
+StartIntent is controlled, not proof of an implemented launch/offer transport.
+Its HTTP authority and backend/forge are fixtures, not a production broker or
+paid model run.
+
+Provider-assignee claim mode is explicitly refused before start consumption.
+Its background renewal lifecycle is not yet integrated with operation fences;
+this avoids writing outside those fences or weakening the configured provider
+claim policy. Production launch/credential transport, provider-claim integration,
+terminal result/release reconciliation and rollout remain unfinished. No
+installed CLI, controller or API was changed by this increment.
+
+Validation: 41 native library cases, 573 dispatch cases, 76 provider cases,
+three native CLI cases, 12 capability cases, formatting and all-target/all-feature
+Clippy with warnings denied pass. All four real-process fixture cases pass with
+the compiled debug CLI. Metadata-only output is retained locally at
+`artifacts/central-live-20261105/native-worker-execution.jsonl`; Rust check log:
+`/home/khing/.cache/parasaur-project-report.qy1ih6c9/native-dispatch-checks.log`.
+
 ## Worker-side permission consumption
 
 The staged worker now has real control clients for initial grant consumption
@@ -8,8 +66,9 @@ already verified worker context and require its full binding to match the
 journal. Start-consumption intent is synchronized before HTTP. A matching,
 unexpired consumed-start response can enter the job once, bound to the actual
 systemd job invocation, main PID, kernel process start ticks and unified cgroup.
-Re-exec/replacement cannot inherit that entry. This remains library plumbing;
-the executable wrapper and backend/publication hooks are not yet connected.
+Re-exec/replacement cannot inherit that entry. The fixed executable and dispatch
+hooks described above now consume this library plumbing; production launch and
+recovery transport remain unfinished.
 
 Each operation records Pending before HTTP. The entire reply scope, purpose,
 sequence, timestamps and ten-second maximum validity must match. The physical
@@ -214,9 +273,10 @@ These are source-level guards. Their focused fixtures demonstrate denial before
 callback/bookkeeping, preservation of real results when completion fails,
 identity mismatch rejection, nested-failure fencing and refusal to install from
 an unentered journal. They do not demonstrate a successful installed native
-process or a real model/forge transaction. No production CLI entry point installs
-this authority yet; the wrapper, secure credential delivery, production transport
-and full result/release lifecycle remain required before rollout.
+process or a real model/forge transaction. The fixed executable/process checks
+above add that process-scope evidence with controlled endpoints/backends;
+production launch transport and the full result/release lifecycle remain
+required before rollout.
 
 Windows WSL validation passes: 38 native library cases, 573 dispatch cases,
 76 provider cases, two native CLI integration cases, formatting and

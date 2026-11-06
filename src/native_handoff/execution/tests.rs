@@ -54,6 +54,7 @@ fn refused_authority_never_enters_attempt_bookkeeping_or_backend() {
         |_| true,
     );
     assert!(result.is_err());
+    assert!(authority_held(result.as_ref().unwrap_err()));
     assert_eq!(starts, 0);
     assert!(execution.unconfirmed.load(Ordering::SeqCst));
 }

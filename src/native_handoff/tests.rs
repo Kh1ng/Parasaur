@@ -59,6 +59,43 @@ pub(super) fn fixture() -> (tempfile::TempDir, GahConfig, GahConfig, JobRequest)
 }
 
 #[test]
+#[cfg(target_os = "linux")]
+fn execution_reuses_exact_history_without_copying_or_overwriting_it() {
+    let _guard = crate::test_support::ExecGuard::new();
+    let (tmp, central, worker, request) = fixture();
+    let input = tmp.path().join("input");
+    let work = tmp.path().join("job");
+    let binding = prepare(
+        &central,
+        &request,
+        "worker",
+        "https://central.invalid",
+        &input,
+    )
+    .unwrap();
+    let initial = load(&worker, &input, &binding.context_sha256, "worker", &work).unwrap();
+    let history = work.join("ledger.jsonl");
+    let before = history.metadata().unwrap();
+    let reopened = resume(&worker, &input, &binding.context_sha256, "worker", &work).unwrap();
+    assert_eq!(
+        serde_json::to_value(&initial.config).unwrap(),
+        serde_json::to_value(&reopened.config).unwrap()
+    );
+    assert_eq!(before.ino(), history.metadata().unwrap().ino());
+    assert_eq!(
+        before.mtime_nsec(),
+        history.metadata().unwrap().mtime_nsec()
+    );
+    let canary = b"PRIVATE_CHANGED_HISTORY";
+    fs::write(&history, canary).unwrap();
+    let error = resume(&worker, &input, &binding.context_sha256, "worker", &work)
+        .err()
+        .unwrap();
+    assert!(!error.to_string().contains("PRIVATE_CHANGED_HISTORY"));
+    assert_eq!(fs::read(&history).unwrap(), canary);
+}
+
+#[test]
 fn current_central_policy_refuses_disabled_factory_changed_policy_and_wrong_identity() {
     let _guard = crate::test_support::ExecGuard::new();
     let (tmp, central, mut worker, request) = fixture();

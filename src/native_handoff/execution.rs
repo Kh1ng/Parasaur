@@ -31,6 +31,21 @@ struct Execution {
 static CURRENT: OnceLock<Execution> = OnceLock::new();
 thread_local! {static PUBLICATION:Cell<bool>=const{Cell::new(false)};}
 
+/// Distinguish a refused permission from a backend which actually failed to
+/// launch. Workflow bookkeeping must never invent an attempt for this hold.
+#[derive(Debug)]
+struct AuthorityHeld;
+impl std::fmt::Display for AuthorityHeld {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Native operation authority is held")
+    }
+}
+impl std::error::Error for AuthorityHeld {}
+
+pub(crate) fn authority_held(error: &anyhow::Error) -> bool {
+    error.is::<AuthorityHeld>()
+}
+
 /// Install only in the fixed job wrapper after consuming central's grant.
 /// No backend receives the service token through args, environment or files.
 pub fn install(context: WorkerContext, work: PathBuf, token: String) -> Result<()> {
@@ -173,8 +188,9 @@ fn operate<T>(
     invoke: impl FnOnce() -> Result<T>,
     confirmed: impl FnOnce(&T) -> bool,
 ) -> Result<T> {
-    let permission =
-        prepare().inspect_err(|_| execution.unconfirmed.store(true, Ordering::SeqCst))?;
+    let permission = prepare()
+        .inspect_err(|_| execution.unconfirmed.store(true, Ordering::SeqCst))
+        .context(AuthorityHeld)?;
     let result = invoke();
     let complete = result.as_ref().is_ok_and(confirmed) && execution.finish(&permission).is_ok();
     if !complete {

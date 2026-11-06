@@ -1,5 +1,18 @@
 # Beta finishing pass: local validation
 
+Latest fixed worker: private Linux `native-handoff execute` receives bounded
+credential stdin, detaches it before children, rechecks staged history without
+copying it, consumes the start and installs actual process authority. A held
+permission no longer becomes a phantom backend launch failure in fix/PM usage.
+Real WSL jobs with controlled authority/backend fixtures cover allowed attempt,
+paused intake and denied publication, preserve capacity after exit and reject
+replay. Provider-assignee claim mode is refused before consumption until its
+renewal lifecycle is integrated. Forty-one native cases, 573 dispatch cases,
+76 provider cases, three CLI cases, 12 capability cases, formatting and Clippy
+pass. Launch transport, provider claims and terminal result/release reconciliation
+remain unfinished; nothing is installed. See
+[fixed worker executable](native-worker-host-admission.md#fixed-worker-executable).
+
 Latest dispatch guards: verified process authority now gates backend attempts
 and fix/review/PM publication. Main attempt counters are behind the permission
 check, changed route identity cannot overwrite ledger attribution, and uncertain

@@ -15,6 +15,8 @@ fn native_context_and_current_policy_paths_remain_private() {
         "host-reserve",
         #[cfg(target_os = "linux")]
         "worker-status",
+        #[cfg(target_os = "linux")]
+        "execute",
     ] {
         let id = format!("native-handoff.{name}");
         let operation = &manifest.operations[&id];
@@ -24,7 +26,7 @@ fn native_context_and_current_policy_paths_remain_private() {
             Some(LocalOnlyReason::SecuritySensitive)
         );
         assert!(!manifest.is_remote_available(&id));
-        if name == "host-reserve" {
+        if matches!(name, "host-reserve" | "execute") {
             assert_eq!(operation.idempotency, Idempotency::NonIdempotent);
         }
     }
