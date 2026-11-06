@@ -134,6 +134,31 @@ was 733,700 KiB. Ten-hour and sustained-agent-load acceptance remain incomplete.
 The metadata report is retained under ignored
 `artifacts/central-live-20261105/native-context-memory.json`.
 
+## Actual central compatibility probe — November 6
+
+The staged candidate was checked against the running central API's actual
+configuration and inherited environment, using an owned diagnostic request
+with no issue or model execution. Preparation failed with
+`Native profile history exceeds its context limit; retain history for reconciliation`.
+The canonical ledger is 261,588,311 bytes; the context currently caps its
+selected-profile serialization at 128 MiB. A raw ledger size and its normalized
+profile projection are different measurements, but the actual preparation
+failure proves that the latter also exceeds the context cap.
+
+No complete context manifest or archive was published. Therefore worker
+compatibility was not tested, and the synthetic release smoke is insufficient
+to claim compatibility with the production history. The next implementation
+must accommodate complete history with bounded transfer, disk and memory use;
+it must not discard rows, start with empty history, or bypass spend/review
+guards to make the probe pass.
+
+The API remained PID 841661, controller PID 666974 and observer PID 667504.
+Configuration and installed CLI hashes were unchanged. The candidate remains
+staged, not installed. Private failure diagnostics and metadata are retained
+on central under `~/.local/state/gah/native-context-probe-6b67abe1/`.
+Reinspect that saved diagnostic rather than retrying the same incomplete
+directory. No service was stopped or restarted.
+
 This is source-only. The check explicitly returns `execution_started: false`
 and `authority_refresh_required: true`. A point-in-time context is not live
 authorization. The next executor/broker increment must refresh central

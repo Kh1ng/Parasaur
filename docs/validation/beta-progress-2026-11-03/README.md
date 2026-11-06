@@ -1,5 +1,18 @@
 # Beta finishing pass: local validation
 
+Latest production compatibility evidence: the native context candidate refuses
+the actual central profile history at its 128 MiB limit; the canonical ledger
+is 261.6 MB. No complete context was published and no worker/backend executed.
+The next history-transfer implementation must preserve every required row with
+bounded resource use. See [the actual probe](native-worker-context.md#actual-central-compatibility-probe--november-6).
+Services, configuration and installed CLIs were unchanged.
+
+The owner's usage screenshot was also rechecked against current live data:
+the tailnet HTML and all 30 assets match the corrected deployed build, and the
+current selector keeps the expired Nous reading separate from Mistral and
+historical. The particular running client and provider collection/billing
+accuracy remain unverified; see [live quota evidence](provider-quota-freshness.md#live-recheck-after-the-owners-usage-report--november-6).
+
 Latest native input: [policy/history context](native-worker-context.md) prepares
 and verifies a job's central history, limits, validation and generation while
 retaining worker-local credentials, paths and capacity settings. The actual CLI
