@@ -841,6 +841,18 @@ fn gh_until(operation: &str, args: &[&str], deadline: Option<Deadline>) -> Resul
     let mut command = provider_command("gh");
     command.args(args);
     let launching = || format!("launching gh to {operation}");
+    #[cfg(target_os = "linux")]
+    if super::native_guard::active() {
+        let timeout = deadline.map_or(Duration::from_secs(30), |deadline| {
+            deadline.remaining().min(Duration::from_secs(30))
+        });
+        let out = crate::runner::process::run_bounded_owned(command, timeout)
+            .with_context(|| format!("Native claim command {operation} unconfirmed"))?;
+        if !out.status.success() {
+            anyhow::bail!("Native claim command {operation} failed");
+        }
+        return Ok(String::from_utf8(out.stdout)?);
+    }
     let out = match deadline {
         None => command.output().with_context(launching)?,
         Some(deadline) => {
@@ -996,7 +1008,9 @@ impl IssueBoard for GithubBoard<'_> {
         // GitHub answers success and changes nothing when the login may not
         // be assigned. Catch that here, before a claim comment is posted
         // that could never take effect.
-        let assigned = self.change_assignees(issue, "POST", &[login.to_string()])?;
+        let assigned = super::native_guard::claim(self.profile, || {
+            self.change_assignees(issue, "POST", &[login.to_string()])
+        })?;
         if !assigned.lines().any(|line| same_login(line, login)) {
             anyhow::bail!("GitHub did not assign {login} to issue #{issue}; check its access");
         }
@@ -1004,10 +1018,23 @@ impl IssueBoard for GithubBoard<'_> {
     }
 
     fn unassign(&self, issue: &str, logins: &[String]) -> Result<()> {
-        self.change_assignees(issue, "DELETE", logins).map(drop)
+        super::native_guard::claim(self.profile, || {
+            self.change_assignees(issue, "DELETE", logins).map(drop)
+        })
     }
 
     fn post_claim(&self, issue: &str, body: &str) -> Result<()> {
+        if super::native_guard::active() {
+            let endpoint = self.issue_endpoint(issue, "/comments")?;
+            let body = format!("body={}", crate::redact::redact(body));
+            return super::native_guard::claim(self.profile, || {
+                self.gh(
+                    "post claim comment",
+                    &["api", "--method", "POST", &endpoint, "--raw-field", &body],
+                )
+                .map(drop)
+            });
+        }
         crate::provider::post_issue_comment(self.profile, issue, body)
     }
 
@@ -1017,13 +1044,15 @@ impl IssueBoard for GithubBoard<'_> {
         crate::policy::enforce_policy(self.profile, "edit-issue")?;
         let endpoint = format!("repos/{}/issues/comments/{comment_id}", self.profile.repo);
         let body = format!("body={body}");
-        self.gh(
-            "renew claim comment",
-            &[
-                "api", "--method", "PATCH", &endpoint, "-f", &body, "--silent",
-            ],
-        )
-        .map(drop)
+        super::native_guard::claim(self.profile, || {
+            self.gh(
+                "renew claim comment",
+                &[
+                    "api", "--method", "PATCH", &endpoint, "-f", &body, "--silent",
+                ],
+            )
+            .map(drop)
+        })
     }
 
     fn has_open_pull_request(&self, issue: &str) -> Result<bool> {

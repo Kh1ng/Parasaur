@@ -44,7 +44,18 @@ pub fn install_shutdown_handler() -> Result<()> {
 /// block a caller on a hung backend -- unlike `spawn_with_idle_watch`, there
 /// is no idle-vs-progress distinction here, just a hard deadline.
 pub fn run_bounded(cmd: Command, timeout: Duration) -> Option<std::process::Output> {
-    run_bounded_input(cmd, timeout, None)
+    run_bounded_input(cmd, timeout, None, false)
+}
+
+/// Bounded provider-claim command whose descendants must end before its write
+/// fence completes. Keep the leader unreaped until group cleanup, and refuse
+/// unconfirmed cleanup or more than 1 MiB on either captured stream.
+#[cfg(target_os = "linux")]
+pub(crate) fn run_bounded_owned(cmd: Command, timeout: Duration) -> Option<std::process::Output> {
+    if timeout.is_zero() {
+        return None;
+    }
+    run_bounded_input(cmd, timeout, None, true)
 }
 
 /// Same deadline and process-group ownership, with private piped request input.
@@ -53,13 +64,14 @@ pub(crate) fn run_bounded_with_input(
     timeout: Duration,
     input: &[u8],
 ) -> Option<std::process::Output> {
-    run_bounded_input(cmd, timeout, Some(input))
+    run_bounded_input(cmd, timeout, Some(input), false)
 }
 
 fn run_bounded_input(
     mut cmd: Command,
     timeout: Duration,
     input: Option<&[u8]>,
+    owned: bool,
 ) -> Option<std::process::Output> {
     let mut stdout = tempfile::tempfile().ok()?;
     let mut stderr = tempfile::tempfile().ok()?;
@@ -86,15 +98,40 @@ fn run_bounded_input(
     }
     let deadline = Instant::now() + timeout;
     loop {
-        match child.try_wait() {
+        let observed = if owned {
+            #[cfg(target_os = "linux")]
+            {
+                if crate::runner::exited_without_reaping(&child).ok()? {
+                    let cleanup = kill_process_group(&mut child);
+                    let status = child.wait().ok()?;
+                    if cleanup.is_some() {
+                        return None;
+                    }
+                    Ok(Some(status))
+                } else {
+                    Ok(None)
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                child.try_wait()
+            }
+        } else {
+            child.try_wait()
+        };
+        match observed {
             Ok(Some(status)) => {
                 use std::io::Seek;
                 stdout.rewind().ok()?;
                 stderr.rewind().ok()?;
                 let mut stdout_bytes = Vec::new();
                 let mut stderr_bytes = Vec::new();
-                stdout.read_to_end(&mut stdout_bytes).ok()?;
-                stderr.read_to_end(&mut stderr_bytes).ok()?;
+                let limit = if owned { 1024 * 1024 } else { u64::MAX - 1 };
+                stdout.take(limit + 1).read_to_end(&mut stdout_bytes).ok()?;
+                stderr.take(limit + 1).read_to_end(&mut stderr_bytes).ok()?;
+                if stdout_bytes.len() as u64 > limit || stderr_bytes.len() as u64 > limit {
+                    return None;
+                }
                 return Some(std::process::Output {
                     status,
                     stdout: stdout_bytes,
@@ -134,6 +171,29 @@ fn bounded_private_stdin_cannot_block_the_process_deadline() {
     )
     .is_none());
     assert!(start.elapsed() < Duration::from_secs(5));
+}
+
+#[cfg(all(test, target_os = "linux"))]
+#[test]
+fn native_claim_command_reaps_descendants_and_bounds_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("child");
+    let mut expired = Command::new("/usr/bin/touch");
+    expired.arg(&marker);
+    assert!(run_bounded_owned(expired, Duration::ZERO).is_none());
+    assert!(!marker.exists());
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", "sleep 60 & echo $! > \"$1\"; exit 0", "fixture"]);
+    command.arg(&marker);
+    assert!(run_bounded_owned(command, Duration::from_secs(2))
+        .unwrap()
+        .status
+        .success());
+    let pid: u32 = fs::read_to_string(marker).unwrap().trim().parse().unwrap();
+    assert!(linux_process_snapshot(pid).is_none_or(|process| process.zombie));
+    let mut oversized = Command::new("/usr/bin/head");
+    oversized.args(["-c", "1048577", "/dev/zero"]);
+    assert!(run_bounded_owned(oversized, Duration::from_secs(2)).is_none());
 }
 
 pub fn shutdown_requested() -> bool {

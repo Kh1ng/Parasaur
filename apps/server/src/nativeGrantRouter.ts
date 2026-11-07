@@ -86,7 +86,7 @@ export function nativeGrantRouter(deps: {
       || typeof request.node_id!=='string' || request.node_id.length>128
       || typeof request.context_sha256!=='string' || !/^[a-f0-9]{64}$/.test(request.context_sha256)
       || typeof request.reservation_id!=='string' || !request.reservation_id || request.reservation_id.length>4096
-      || !Number.isSafeInteger(request.sequence) || request.sequence<1 || !['attempt','publish'].includes(request.purpose)) {
+      || !Number.isSafeInteger(request.sequence) || request.sequence<1 || !['attempt','publish','claim'].includes(request.purpose)) {
       return void res.status(400).json({allowed:false,reason:'invalid_operation'});
     }
     try {

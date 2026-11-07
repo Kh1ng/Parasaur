@@ -19,6 +19,7 @@ fn execution() -> (tempfile::TempDir, Execution) {
             work,
             token: "fixture-owner".into(),
             unconfirmed: AtomicBool::new(false),
+            provider_gate: Mutex::new(()),
         },
     )
 }

@@ -288,6 +288,18 @@ const operation=(f:ReturnType<typeof fixture>,sequence=1,purpose:NativeOperation
   run_id:f.run,node_id:f.binding.node_id,context_sha256:f.binding.context_sha256,reservation_id:'reservation',sequence,purpose,
 });
 
+test('provider claim writes advance an independent durable sequence during a backend attempt',async()=>{
+  const f=fixture();await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  assert.equal((await f.broker.authorizeOperation(operation(f))).allowed,true);
+  const claim=operation(f,1,'claim');assert.equal((await f.broker.authorizeOperation(claim)).allowed,true);
+  assert.deepEqual(await f.reload().authorizeOperation(claim),{allowed:false,reason:'invalid_operation'});
+  assert.equal((await f.broker.authorizeOperation(operation(f,2,'claim'))).allowed,true);
+  assert.equal((await f.broker.authorizeOperation(operation(f,2,'publish'))).allowed,true);
+  f.authorize(async()=>({allowed:false,reason:'factory_paused'}));
+  assert.deepEqual(await f.broker.authorizeOperation(operation(f,3,'claim')),{allowed:false,reason:'factory_paused'});
+  assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);assert.equal(f.starts,1);
+});
+
 test('later operations require consumed start authority and exact monotonic sequences across restart',async()=>{
   const unconsumed=fixture();unconsumed.skipConsumption();await unconsumed.broker.offerPrepared(unconsumed.run,unconsumed.binding.context_sha256);
   assert.deepEqual(await unconsumed.broker.authorizeOperation(operation(unconsumed)),{allowed:false,reason:'invalid_operation'});

@@ -17,7 +17,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        OnceLock,
+        Mutex, OnceLock,
     },
     time::{Duration, Instant},
 };
@@ -27,6 +27,7 @@ struct Execution {
     work: PathBuf,
     token: String,
     unconfirmed: AtomicBool,
+    provider_gate: Mutex<()>,
 }
 static CURRENT: OnceLock<Execution> = OnceLock::new();
 thread_local! {static PUBLICATION:Cell<bool>=const{Cell::new(false)};}
@@ -64,6 +65,7 @@ pub fn install(context: WorkerContext, work: PathBuf, token: String) -> Result<(
             work,
             token,
             unconfirmed: AtomicBool::new(false),
+            provider_gate: Mutex::new(()),
         })
         .map_err(|_| anyhow::anyhow!("Native process authority is already installed"))
 }
@@ -87,12 +89,26 @@ pub(crate) fn verify_dispatch(cfg: &GahConfig, args: &DispatchArgs) -> Result<()
                     == serde_json::to_value(&execution.context.request.args)?,
             "Native dispatch changed its verified configuration or request"
         );
-        WorkerRun::open(&execution.work, &execution.context.binding)?.require_execution()?;
+        let run = WorkerRun::open(&execution.work, &execution.context.binding)?;
+        run.require_execution()?;
+        run.require_operations_completed()?;
     }
     Ok(())
 }
 
 impl Execution {
+    fn begin_work(
+        &self,
+        purpose: OperationPurpose,
+        identity: Option<&ExecutionIdentity>,
+        profile: Option<&Profile>,
+    ) -> Result<OperationPermission> {
+        let _gate = self
+            .provider_gate
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Native provider operation panicked"))?;
+        self.begin(purpose, identity, profile)
+    }
     fn verify_identity(&self, identity: &ExecutionIdentity) -> Result<()> {
         let bound = &self.context.binding;
         ensure!(
@@ -146,7 +162,22 @@ impl Execution {
         );
         // Neither a direct child's exit nor successful log parsing proves that
         // no orphan backend is still using this job's resources.
-        quiescent(&self.context.binding.run_id)?;
+        if permission.purpose != OperationPurpose::Claim {
+            let _gate = if PUBLICATION.get() {
+                None
+            } else {
+                Some(
+                    self.provider_gate
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("Native provider operation panicked"))?,
+                )
+            };
+            quiescent(&self.context.binding.run_id)?;
+            return WorkerRun::open(&self.work, &self.context.binding)?
+                .complete_operation(permission);
+        }
+        // Claim commands use owned, bounded process groups. A concurrent model
+        // is expected here; its journal and completion remain separate.
         WorkerRun::open(&self.work, &self.context.binding)?.complete_operation(permission)
     }
 }
@@ -210,7 +241,7 @@ pub(crate) fn attempt(
         None => invoke(),
         Some(execution) => operate(
             execution,
-            || execution.begin(OperationPurpose::Attempt, Some(identity), None),
+            || execution.begin_work(OperationPurpose::Attempt, Some(identity), None),
             invoke,
             |result| result.exit_code != runner::process::PROCESS_CLEANUP_FAILED_EXIT_CODE,
         ),
@@ -225,7 +256,7 @@ pub(crate) fn review(
         None => invoke(),
         Some(execution) => operate(
             execution,
-            || execution.begin(OperationPurpose::Attempt, Some(identity), None),
+            || execution.begin_work(OperationPurpose::Attempt, Some(identity), None),
             invoke,
             |result| {
                 !matches!(
@@ -261,22 +292,42 @@ pub(crate) fn publication_observed<T>(
         }
         return result;
     }
-    let permission = || execution.begin(OperationPurpose::Publish, None, Some(profile));
+    let _gate = execution
+        .provider_gate
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Native provider operation panicked"))?;
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            PUBLICATION.set(false);
+        }
+    }
+    PUBLICATION.set(true);
+    let _reset = Reset;
     operate(
         execution,
-        permission,
-        || {
-            struct Reset;
-            impl Drop for Reset {
-                fn drop(&mut self) {
-                    PUBLICATION.set(false)
-                }
-            }
-            PUBLICATION.set(true);
-            let _reset = Reset;
-            invoke()
-        },
+        || execution.begin(OperationPurpose::Publish, None, Some(profile)),
+        invoke,
         confirmed,
+    )
+}
+
+/// One assign/comment/renewal write, never blanket authority for a lease's
+/// lifetime. Serialize claim writes with model admission/completion while
+/// allowing renewal during the actual long-running backend invocation.
+pub(crate) fn claim<T>(profile: &Profile, invoke: impl FnOnce() -> Result<T>) -> Result<T> {
+    let Some(execution) = CURRENT.get() else {
+        return invoke();
+    };
+    let _gate = execution
+        .provider_gate
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Native provider operation panicked"))?;
+    operate(
+        execution,
+        || execution.begin(OperationPurpose::Claim, None, Some(profile)),
+        invoke,
+        |_| true,
     )
 }
 
@@ -295,7 +346,9 @@ pub(crate) fn finish_dispatch() -> Result<()> {
             !execution.unconfirmed.load(Ordering::SeqCst),
             "Native operation remains unconfirmed; preserve this job for reconciliation"
         );
-        WorkerRun::open(&execution.work, &execution.context.binding)?.require_execution()?;
+        let run = WorkerRun::open(&execution.work, &execution.context.binding)?;
+        run.require_execution()?;
+        run.require_operations_completed()?;
     }
     Ok(())
 }

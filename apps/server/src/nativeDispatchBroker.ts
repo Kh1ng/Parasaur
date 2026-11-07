@@ -27,7 +27,7 @@ export type NativeAuthorization = { allowed: true }
 export type NativeGrantConsumption = (NativeClaimBinding & { allowed: true; reservation_id: string; expires_at: string; consumed_at: string })
   | { allowed: false; reason: 'invalid_grant' | 'expired' | 'already_consumed' | 'consumption_in_progress' | Exclude<NativeAuthorization, {allowed:true}>['reason'] };
 export interface NativeOperationRequest extends NativeClaimBinding {
-  reservation_id: string; sequence: number; purpose: 'attempt' | 'publish';
+  reservation_id: string; sequence: number; purpose: 'attempt' | 'publish' | 'claim';
 }
 export interface NativeAcknowledgementRequest extends NativeClaimBinding {
   reservation_id: string; receipt_sha256: string;
@@ -68,6 +68,7 @@ interface Journal {
   activated?: boolean;
   start_grant?: { reservation: NativeHostReservation; issued_at: string; expires_at: string; token_sha256: string; consumed_at?: string };
   last_operation?: { sequence: number; purpose: NativeOperationRequest['purpose']; authorized_at: string };
+  last_claim_operation?: { sequence: number; purpose: 'claim'; authorized_at: string };
 }
 export type NativeDispatchView = Pick<Journal, 'phase' | 'updated_at' | 'reason' | 'acknowledgement' | 'worker_release' | 'reservation_release' | 'activated'> & { binding: NativeDispatchBinding; grant_consumed_at?: string };
 type Deps = {
@@ -311,7 +312,7 @@ export class NativeDispatchBroker {
   async authorizeOperation(request: NativeOperationRequest): Promise<NativeOperationAuthorization> {
     if (!request || !isNativeRunId(request.run_id) || !digest(request.context_sha256)
       || !Number.isSafeInteger(request.sequence) || request.sequence < 1
-      || !['attempt','publish'].includes(request.purpose)) return {allowed:false,reason:'invalid_operation'};
+      || !['attempt','publish','claim'].includes(request.purpose)) return {allowed:false,reason:'invalid_operation'};
     request={run_id:request.run_id,node_id:request.node_id,context_sha256:request.context_sha256,
       reservation_id:request.reservation_id,sequence:request.sequence,purpose:request.purpose};
     if (this.advancing.has(request.run_id)) return {allowed:false,reason:'operation_in_progress'};
@@ -328,7 +329,9 @@ export class NativeDispatchBroker {
       if (bindingHash(this.prepared(request.run_id,request.context_sha256))!==journal.binding_sha256) return {allowed:false,reason:'invalid_operation'};
       const authorized_at=new Date(this.now()).toISOString();
       const expires_at=new Date(Date.parse(authorized_at)+10_000).toISOString();
-      this.update(journal,{last_operation:{sequence:request.sequence,purpose:request.purpose,authorized_at}});
+      this.update(journal,request.purpose==='claim'
+        ? {last_claim_operation:{sequence:request.sequence,purpose:'claim',authorized_at}}
+        : {last_operation:{sequence:request.sequence,purpose:request.purpose,authorized_at}});
       if (this.now()>=Date.parse(expires_at)) return {allowed:false,reason:'authority_unavailable'};
       return {...request,allowed:true,authorized_at,expires_at};
     } catch { return {allowed:false,reason:'authority_unavailable'}; }
@@ -336,12 +339,13 @@ export class NativeDispatchBroker {
   }
 
   private operationMatches(journal: Journal, request: NativeOperationRequest): boolean {
+    const previous=request.purpose==='claim'?journal.last_claim_operation:journal.last_operation;
     return journal.start_offered && !!journal.start_grant?.consumed_at && !journal.terminal_observed
       && journal.phase!=='terminal' && same(journal.binding,request)
       && journal.start_grant.reservation.id===request.reservation_id
       && this.now()>=Date.parse(journal.start_grant.consumed_at)
-      && (!journal.last_operation || this.now()>=Date.parse(journal.last_operation.authorized_at))
-      && request.sequence===(journal.last_operation?.sequence??0)+1;
+      && [journal.last_operation,journal.last_claim_operation].every(operation=>!operation || this.now()>=Date.parse(operation.authorized_at))
+      && request.sequence===(previous?.sequence??0)+1;
   }
   private owns(binding: NativeDispatchBinding): boolean {
     const held = this.deps.claims.getLease(binding.profile, binding.work_id);
@@ -419,6 +423,7 @@ export class NativeDispatchBroker {
     const journal = readJson<Journal>(this.journalPath(run));
     const grant = journal.start_grant;
     const operation = journal.last_operation;
+    const claimOperation = journal.last_claim_operation;
     const cancellation = journal.reservation_release;
     if (journal.version !== 1 || journal.binding?.run_id !== run || !digest(journal.binding.context_sha256)
       || !phases.includes(journal.phase) || typeof journal.stage_offered !== 'boolean' || typeof journal.start_offered !== 'boolean'
@@ -437,6 +442,9 @@ export class NativeDispatchBroker {
       || (Object.hasOwn(journal,'last_operation') && (!operation || !grant?.consumed_at || !Number.isSafeInteger(operation.sequence) || operation.sequence<1
         || !['attempt','publish'].includes(operation.purpose) || !Number.isFinite(Date.parse(operation.authorized_at))
         || Date.parse(operation.authorized_at)<Date.parse(grant.consumed_at)))
+      || (Object.hasOwn(journal,'last_claim_operation') && (!claimOperation || !grant?.consumed_at
+        || !Number.isSafeInteger(claimOperation.sequence) || claimOperation.sequence<1 || claimOperation.purpose!=='claim'
+        || !Number.isFinite(Date.parse(claimOperation.authorized_at)) || Date.parse(claimOperation.authorized_at)<Date.parse(grant.consumed_at)))
       || ((journal.phase==='cancelling' || journal.phase==='cancelled') && !cancellation)
       || (Object.hasOwn(journal,'reservation_release') && (!cancellation || !['cancelling','cancelled'].includes(journal.phase)
         || journal.start_offered || journal.terminal_observed || !!journal.acknowledgement || !same(cancellation.reservation,journal.binding)

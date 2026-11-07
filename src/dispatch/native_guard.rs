@@ -91,6 +91,20 @@ pub(crate) fn finish() -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn claim<T>(
+    _profile: &crate::config::Profile,
+    invoke: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    #[cfg(target_os = "linux")]
+    {
+        crate::native_handoff::execution::claim(_profile, invoke)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        invoke()
+    }
+}
+
 pub(crate) fn publication_observed<T>(
     _profile: &crate::config::Profile,
     invoke: impl FnOnce() -> Result<T>,

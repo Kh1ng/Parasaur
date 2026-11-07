@@ -105,7 +105,9 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        cases = ('allowed', 'denied') if http_worker else ('allowed', 'denied', 'publication-denied', 'lost-start-reply', 'running-result', 'lost-stop-reply', 'provider-claims')
+        # Real provider claim acquisition/renewal uses the full controller/forge
+        # fixture in native_controller_http.mjs, rather than this empty gh stub.
+        cases = ('allowed', 'denied') if http_worker else ('allowed', 'denied', 'publication-denied', 'lost-start-reply', 'running-result', 'lost-stop-reply')
         for case in cases:
             canonical_ack = None
             denied = case == 'denied'
@@ -142,7 +144,6 @@ def main():
                 forge.write_text('#!/bin/sh\nprintf "[]\\n"\n')
                 forge.chmod(0o700)
                 origin_url = f'http://127.0.0.1:{server.server_port}'
-                claim_policy = '[profiles.fixture.publishing.issue_claim]\nmode="github_assignee"\n' if case == 'provider-claims' else ''
                 common = f'''registry_central_url = {json.dumps(origin_url)}
 artifact_root = {json.dumps(str(root / 'artifacts'))}
 worktree_base = {json.dumps(str(root / 'worktrees'))}
@@ -158,7 +159,6 @@ codex_path = {json.dumps(str(backend))}
 validation_commands = ["true"]
 [profiles.fixture.publishing]
 allow_pull_request_creation = {str(publication_denied).lower()}
-{claim_policy}
 [profiles.fixture.routing]
 improve_candidates = [{{backend="codex",model="fixture-model"}}]
 '''
@@ -246,14 +246,6 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                     launched = http_call('start') if http_worker else subprocess.run(start, env=environment, input=json.dumps({'grant': grant, 'service_token': owner}),
                         stdout=subprocess.DEVNULL if case == 'lost-start-reply' else subprocess.PIPE,
                         stderr=subprocess.PIPE, text=True, timeout=10)
-                    if case == 'provider-claims':
-                        journal = json.loads(journal_path.read_text())
-                        assert launched.returncode != 0 and not calls and not marker.exists()
-                        assert journal['phase'] == 'ready' and not journal['consumption_offered'] and not journal['execution']
-                        assert 'provider-assignee claim integration is unavailable' in launched.stderr
-                        print(json.dumps({'case': case, 'refusedBeforeConsumption': True,
-                            'backendFixtureInvoked': False, 'realModelInvoked': False}), flush=True)
-                        continue
                     assert launched.returncode == 0, launched.stderr
                     if case != 'lost-start-reply':
                         reply = json.loads(launched.stdout)

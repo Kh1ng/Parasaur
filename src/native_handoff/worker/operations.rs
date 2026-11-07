@@ -9,6 +9,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 pub enum OperationPurpose {
     Attempt,
     Publish,
+    Claim,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -108,8 +109,32 @@ pub(super) fn response_body(response: crate::curl_http::CurlResponse) -> Result<
 }
 
 impl WorkerRun {
-    pub(super) fn operation_observation(&self) -> serde_json::Value {
-        self.journal.operation.as_ref().map_or(serde_json::Value::Null,|operation|
+    pub(crate) fn require_operations_completed(&self) -> Result<()> {
+        ensure!(
+            [&self.journal.operation, &self.journal.claim_operation]
+                .into_iter()
+                .flatten()
+                .all(|operation| operation.phase == OperationPhase::Completed),
+            "Native execution or provider claim write remains unconfirmed"
+        );
+        Ok(())
+    }
+    fn operation(&self, purpose: OperationPurpose) -> Option<&Operation> {
+        if purpose == OperationPurpose::Claim {
+            self.journal.claim_operation.as_ref()
+        } else {
+            self.journal.operation.as_ref()
+        }
+    }
+    fn operation_slot(&mut self, purpose: OperationPurpose) -> &mut Option<Operation> {
+        if purpose == OperationPurpose::Claim {
+            &mut self.journal.claim_operation
+        } else {
+            &mut self.journal.operation
+        }
+    }
+    pub(super) fn operation_observation(&self, purpose: OperationPurpose) -> serde_json::Value {
+        self.operation(purpose).map_or(serde_json::Value::Null,|operation|
             serde_json::json!({"sequence":operation.sequence,"purpose":operation.purpose,"state":operation.phase}))
     }
     pub(super) fn validate_operations(&self) -> Result<()> {
@@ -167,7 +192,22 @@ impl WorkerRun {
                 "Invalid consumed native start"
             );
         }
-        if let Some(operation) = &self.journal.operation {
+        ensure!(
+            self.journal
+                .operation
+                .as_ref()
+                .is_none_or(|operation| operation.purpose != OperationPurpose::Claim)
+                && self
+                    .journal
+                    .claim_operation
+                    .as_ref()
+                    .is_none_or(|operation| operation.purpose == OperationPurpose::Claim),
+            "Native operation channel changed"
+        );
+        for operation in [&self.journal.operation, &self.journal.claim_operation]
+            .into_iter()
+            .flatten()
+        {
             ensure!(
                 self.journal.execution.is_some()
                     && (1..=9_007_199_254_740_991).contains(&operation.sequence)
@@ -422,24 +462,35 @@ impl WorkerRun {
             "Native execution is unavailable"
         );
         ensure!(
-            self.journal
-                .operation
-                .as_ref()
+            self.operation(purpose)
                 .is_none_or(|operation| operation.phase == OperationPhase::Completed),
             "Native operation is still pending or unconfirmed"
         );
+        ensure!(
+            if purpose == OperationPurpose::Claim {
+                self.journal.operation.as_ref().is_none_or(|operation| {
+                    operation.phase == OperationPhase::Completed
+                        || (operation.phase == OperationPhase::Authorized
+                            && operation.purpose == OperationPurpose::Attempt)
+                })
+            } else {
+                self.journal
+                    .claim_operation
+                    .as_ref()
+                    .is_none_or(|operation| operation.phase == OperationPhase::Completed)
+            },
+            "Native provider claim or execution authority remains unconfirmed"
+        );
         check(self)?;
         let sequence = self
-            .journal
-            .operation
-            .as_ref()
+            .operation(purpose)
             .map_or(1, |operation| operation.sequence + 1);
         ensure!(
             sequence <= 9_007_199_254_740_991,
             "Native operation sequence is exhausted"
         );
         let request = self.operation_request(sequence, purpose);
-        self.journal.operation = Some(Operation {
+        *self.operation_slot(purpose) = Some(Operation {
             sequence,
             purpose,
             phase: OperationPhase::Pending,
@@ -449,7 +500,7 @@ impl WorkerRun {
         let permission = send(&request)?;
         self.validate_permission(&permission, &request, true)?;
         check(self)?;
-        self.journal.operation = Some(Operation {
+        *self.operation_slot(purpose) = Some(Operation {
             sequence,
             purpose,
             phase: OperationPhase::Authorized,
@@ -476,10 +527,17 @@ impl WorkerRun {
             "Native worker persistence is uncertain"
         );
         check(self)?;
+        ensure!(
+            permission.purpose == OperationPurpose::Claim
+                || self
+                    .journal
+                    .claim_operation
+                    .as_ref()
+                    .is_none_or(|operation| operation.phase == OperationPhase::Completed),
+            "Native provider claim write remains unconfirmed"
+        );
         let operation = self
-            .journal
-            .operation
-            .as_ref()
+            .operation(permission.purpose)
             .context("Missing native operation fence")?;
         ensure!(
             operation.phase == OperationPhase::Authorized,
@@ -493,7 +551,10 @@ impl WorkerRun {
             serde_json::to_vec(expected)? == serde_json::to_vec(permission)?,
             "Native operation completion scope changed"
         );
-        self.journal.operation.as_mut().unwrap().phase = OperationPhase::Completed;
+        self.operation_slot(permission.purpose)
+            .as_mut()
+            .unwrap()
+            .phase = OperationPhase::Completed;
         self.persist()
     }
 }

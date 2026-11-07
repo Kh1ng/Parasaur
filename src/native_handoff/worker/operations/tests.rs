@@ -41,6 +41,91 @@ fn permission(request: &OperationRequest) -> OperationPermission {
 }
 
 #[test]
+fn claim_renewals_have_independent_fences_during_an_authorized_backend() {
+    let (directory, binding, mut run) = running();
+    let attempt = run
+        .authorize_checked(
+            OperationPurpose::Attempt,
+            |request| Ok(permission(request)),
+            |_| Ok(()),
+        )
+        .unwrap();
+    let claim = run
+        .authorize_checked(
+            OperationPurpose::Claim,
+            |request| Ok(permission(request)),
+            |_| Ok(()),
+        )
+        .unwrap();
+    assert_eq!((attempt.sequence, claim.sequence), (1, 1));
+    assert!(run.complete_checked(&attempt, |_| Ok(())).is_err());
+    run.complete_checked(&claim, |_| Ok(())).unwrap();
+    let renewed = run
+        .authorize_checked(
+            OperationPurpose::Claim,
+            |request| Ok(permission(request)),
+            |_| Ok(()),
+        )
+        .unwrap();
+    assert_eq!(renewed.sequence, 2);
+    run.complete_checked(&renewed, |_| Ok(())).unwrap();
+    run.complete_checked(&attempt, |_| Ok(())).unwrap();
+    drop(run);
+    let mut run = WorkerRun::open(directory.path(), &binding).unwrap();
+    let publication = run
+        .authorize_checked(
+            OperationPurpose::Publish,
+            |request| Ok(permission(request)),
+            |_| Ok(()),
+        )
+        .unwrap();
+    assert_eq!(publication.sequence, 2);
+    assert!(run
+        .authorize_checked(
+            OperationPurpose::Claim,
+            |_| panic!("claim write overlapped publication"),
+            |_| Ok(())
+        )
+        .is_err());
+    assert_eq!(run.observation().unwrap()["claim_operation"]["sequence"], 2);
+}
+
+#[test]
+fn uncertain_claim_write_survives_reload_and_prevents_more_execution() {
+    let (directory, binding, mut run) = running();
+    let attempt = run
+        .authorize_checked(
+            OperationPurpose::Attempt,
+            |request| Ok(permission(request)),
+            |_| Ok(()),
+        )
+        .unwrap();
+    assert!(run
+        .authorize_checked(
+            OperationPurpose::Claim,
+            |_| anyhow::bail!("lost claim permission reply"),
+            |_| Ok(())
+        )
+        .is_err());
+    assert!(run.complete_checked(&attempt, |_| Ok(())).is_err());
+    drop(run);
+    let mut run = WorkerRun::open(directory.path(), &binding).unwrap();
+    assert_eq!(
+        run.observation().unwrap()["claim_operation"]["state"],
+        "pending"
+    );
+    for purpose in [
+        OperationPurpose::Claim,
+        OperationPurpose::Attempt,
+        OperationPurpose::Publish,
+    ] {
+        assert!(run
+            .authorize_checked(purpose, |_| panic!("replayed a held operation"), |_| Ok(()))
+            .is_err());
+    }
+}
+
+#[test]
 fn pending_operation_survives_lost_reply_and_reopen_without_reissuing_http() {
     let (directory, binding, mut run) = running();
     let mut calls = 0;

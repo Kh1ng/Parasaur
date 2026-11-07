@@ -14,7 +14,8 @@ import { pathToFileURL } from 'node:url';
 
 assert.equal(process.platform,'linux');
 const [runtime,binaryArgument,mode='normal']=process.argv.slice(2);
-assert.ok(['normal','lost-reservation','lost-activation'].includes(mode));
+assert.ok(['normal','lost-reservation','lost-activation','provider-claims'].includes(mode));
+const providerClaims=mode==='provider-claims';
 const binary=resolve(binaryArgument),modules=pathToFileURL(`${resolve(runtime)}/`);
 const execute=promisify(execFile);
 const [{NativeWorker,nativeWorkerRouter},{NativeWorkerHttpTransport},{NativeDispatchBroker},
@@ -51,6 +52,7 @@ writeFileSync(backend,`#!/bin/sh
 if [ "$1" = login ]; then echo 'Logged in using ChatGPT'; exit 0; fi
 if [ "$1" != exec ]; then echo 'fixture codex'; exit 0; fi
 printf 'attempt\\n' >> '${marker}'
+${providerClaims?'sleep 23':''}
 printf 'worker edit\\n' >> README.md
 printf '{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":7}}\\n'
 `,{mode:0o700});
@@ -62,7 +64,7 @@ for(const name of ['main.py','model.py','api.py'])writeFileSync(join(forge,name)
 const forgeState=join(forge,'state.json');
 writeFileSync(forgeState,JSON.stringify({now:new Date().toISOString(),login:'fixture',repo:'fixture/diagnostic',project:'42',
   issues:{},pulls:{},branches:{},checks:{},pipelines:{},labels:[],next_number:1,next_id:1,calls:[],effects:[]}),{mode:0o600});
-writeFileSync(join(bins,'gh'),`#!/bin/sh\nexec /usr/bin/python3 '${join(forge,'main.py')}' '${forgeState}' '${join(forge,'commands.log')}' gh "$@"\n`,{mode:0o700});
+writeFileSync(join(bins,'gh'),`#!/bin/sh\nexport GAH_TEST_NOW="$(/usr/bin/date -u +%Y-%m-%dT%H:%M:%S.000Z)"\nexec /usr/bin/python3 '${join(forge,'main.py')}' '${forgeState}' '${join(forge,'commands.log')}' gh "$@"\n`,{mode:0o700});
 sync('gh',['api','repos/fixture/diagnostic/issues','--method','POST','--raw-field','title=Disposable native controller task',
   '--raw-field','body=Update README.md. Acceptance criteria: README.md contains worker edit.', '--raw-field','labels=exec:autonomous']);
 const profile={name:'fixture',repo_id:'controller-http',repo:'fixture/diagnostic'};
@@ -100,6 +102,7 @@ codex_path = ${JSON.stringify(role==='worker'?backend:join(base,'absent-central-
 validation_commands = ["true"]
 [profiles.fixture.publishing]
 allow_pull_request_creation = false
+${providerClaims?'[profiles.fixture.publishing.issue_claim]\nmode = "github_assignee"\nttl_minutes = 1\nverify_seconds = 0':''}
 [profiles.fixture.routing]
 improve_candidates = [{backend="codex",instance="work",model="fixture-model"}]
 [profiles.fixture.routing.backend_instances.work]
@@ -168,6 +171,14 @@ try {
   assert.equal(result[0].remote_execution.node_id,workerId);
   assert.equal(result[0].remote_execution.receipt_sha256,view.acknowledgement.receipt_sha256);
   assert.equal(result[0].usage.actual_cost_usd,null);
+  if(providerClaims) {
+    const recorded=JSON.parse(readFileSync(forgeState,'utf8'));
+    assert.deepEqual(recorded.issues['1'].assignees,['fixture']);
+    assert.equal(recorded.issues['1'].comments.filter(comment=>comment.body.startsWith('<!-- gah-claim ')).length,1);
+    assert.ok(recorded.calls.some(call=>call.includes('PATCH') && call.some(value=>value.startsWith('repos/fixture/diagnostic/issues/comments/'))));
+    const journal=JSON.parse(readFileSync(join(root,binding.run_id,'broker.json'),'utf8'));
+    assert.ok(journal.last_claim_operation.sequence>=3);assert.equal(journal.last_operation.sequence,1);
+  }
   const lease=JSON.parse(readFileSync(join(worker.contexts.paths(binding).work,'capacity.json'),'utf8'));
   await execute('/usr/bin/python3',['-c','import fcntl,sys\nwith open(sys.argv[1]) as file: fcntl.flock(file,fcntl.LOCK_EX|fcntl.LOCK_NB)',lease.path],{timeout:5000});
   const before=readFileSync(process.env.GAH_LEDGER_PATH,'utf8');reload();
@@ -185,6 +196,7 @@ try {
     outcome:result[0].validation_result,actualCostUsd:result[0].usage.actual_cost_usd,mode,
     lostReservationRecoveredAcrossCentralReload:mode==='lost-reservation',
     lostActivationRecoveredAcrossCentralReload:mode==='lost-activation'};
+  report.providerClaimRenewedDuringBackend=providerClaims;
   const release=JSON.parse(readFileSync(new URL('../../../../release.json',modules),'utf8'));
   report.apiCoreRevision=release.core;report.apiPrivateRevision=release.enterprise;
   const manifest=JSON.parse(readFileSync(join(dirname(binary),'manifest.json'),'utf8'));

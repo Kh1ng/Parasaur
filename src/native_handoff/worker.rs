@@ -51,6 +51,8 @@ struct Journal {
     launch: Option<super::host::JobIdentity>,
     execution: Option<operations::Execution>,
     operation: Option<operations::Operation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    claim_operation: Option<operations::Operation>,
     #[serde(default)]
     consumption_offered: bool,
 }
@@ -123,6 +125,7 @@ impl WorkerRun {
                 launch: None,
                 execution: None,
                 operation: None,
+                claim_operation: None,
                 consumption_offered: false,
             },
             persistence_uncertain: false,
@@ -312,7 +315,8 @@ impl WorkerRun {
         let mut view = serde_json::json!({"binding": self.journal.binding, "phase": self.journal.phase,
             "holder_invocation": self.journal.holder_invocation, "start_offered": self.journal.start.is_some(),
             "execution_authorized": false});
-        view["operation"] = self.operation_observation();
+        view["operation"] = self.operation_observation(OperationPurpose::Attempt);
+        view["claim_operation"] = self.operation_observation(OperationPurpose::Claim);
         Ok(view)
     }
 

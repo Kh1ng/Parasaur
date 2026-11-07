@@ -151,14 +151,6 @@ pub(super) fn prepare(
     let worker = crate::config::load(config_path)?;
     let node = crate::central_claims::resolve_node_id()?;
     let context = super::resume(&worker, context_dir, expected, &node, work)?;
-    // A background provider-assignee lease has its own write/renewal lifecycle.
-    // Until that lifecycle is integrated with native operation fences, do not
-    // silently run it outside those fences or weaken the provider claim policy.
-    let profile = crate::config::get_profile(&context.config, &context.binding.profile)?;
-    ensure!(
-        profile.publishing.issue_claim.mode == crate::config::IssueClaimMode::Local,
-        "Native provider-assignee claim integration is unavailable; retain this job for reconciliation"
-    );
     Ok(context)
 }
 
