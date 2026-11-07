@@ -94,7 +94,7 @@ fn group_empty(run_id: &str) -> Result<()> {
     Ok(())
 }
 
-fn job_empty(run_id: &str, identity: &JobIdentity) -> Result<()> {
+fn job_empty(run_id: &str, identity: Option<&JobIdentity>) -> Result<()> {
     let unit = format!("gah-native-job-{run_id}.service");
     let values = state(&unit)?;
     if values.get("LoadState").map(String::as_str) == Some("not-found") {
@@ -104,7 +104,11 @@ fn job_empty(run_id: &str, identity: &JobIdentity) -> Result<()> {
             "Native absent job has inconsistent identity"
         );
     } else {
-        terminal_state(&values, &unit, identity)?;
+        terminal_state(
+            &values,
+            &unit,
+            identity.context("An unstarted native reservation has a job; retain capacity")?,
+        )?;
     }
     group_empty(run_id)
 }
@@ -137,7 +141,7 @@ pub(in crate::native_handoff) fn release_capacity(
     identity: &JobIdentity,
     work: &Path,
 ) -> Result<Option<File>> {
-    capacity_state(binding, holder, identity, work, true)
+    capacity_state(binding, holder, Some(identity), work, true)
 }
 
 pub(in crate::native_handoff) fn released_capacity(
@@ -146,14 +150,31 @@ pub(in crate::native_handoff) fn released_capacity(
     identity: &JobIdentity,
     work: &Path,
 ) -> Result<()> {
-    drop(capacity_state(binding, holder, identity, work, false)?);
+    drop(capacity_state(
+        binding,
+        holder,
+        Some(identity),
+        work,
+        false,
+    )?);
     Ok(())
+}
+
+/// The caller holds the worker writer lock and has durably fenced out every
+/// start. Absence of a job is mandatory; an exited job is still inconsistent.
+pub(in crate::native_handoff) fn release_unused_capacity(
+    binding: &DispatchBinding,
+    holder: &str,
+    work: &Path,
+    stop: bool,
+) -> Result<Option<File>> {
+    capacity_state(binding, holder, None, work, stop)
 }
 
 fn capacity_state(
     binding: &DispatchBinding,
     holder: &str,
-    identity: &JobIdentity,
+    identity: Option<&JobIdentity>,
     work: &Path,
     stop: bool,
 ) -> Result<Option<File>> {

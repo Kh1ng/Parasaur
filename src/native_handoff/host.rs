@@ -8,7 +8,9 @@ use std::{
     time::Duration,
 };
 mod release;
-pub(super) use release::{record_lease, release_capacity, released_capacity};
+pub(super) use release::{
+    record_lease, release_capacity, release_unused_capacity, released_capacity,
+};
 
 fn state(unit: &str) -> Result<BTreeMap<String, String>> {
     let mut command = Command::new("/usr/bin/systemctl");

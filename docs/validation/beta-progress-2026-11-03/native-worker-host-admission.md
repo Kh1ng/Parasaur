@@ -443,3 +443,42 @@ consumes central's one-use grant and applies fresh later attempt/publication
 authority. No worker HTTP start endpoint or generic remote command launch was
 added. Terminal result spooling, reconciliation/release and central-to-worker
 API transport remain unfinished.
+
+## Retiring an unused reservation
+
+An unused systemd holder does not physically expire with its short-lived start
+offer. The former broker comment implying expiry was incorrect. The fixed
+local-only command `gah native-handoff release-reservation --binding-file
+<private binding> --work-dir <owned work> --reservation-id <original holder>`
+now retires a verified, never-started reservation. It neither records a result
+nor consumes execution authority.
+
+The locked worker journal must be Ready, without any start, launch, execution,
+consumption or operation record. A private, binding-scoped
+`reservation-release.json` commits StopIntent before external effects. Its mere
+presence prevents any subsequent start, including after a lost reply or cold
+reload. The host must prove the job unit absent and its cgroup empty, verify
+the original holder and exact registry inode, stop only that holder and obtain
+the kernel lease lock before durably recording Released. An unknown/unrecorded
+job or changed holder retains capacity. An uncertain write latches refusal.
+
+Fresh worker status reports `reservation_released` and `capacity_held: false`
+only after rechecking physical release. Repeated release and lost-stop-reply
+recovery do not stop another holder. Context history stays intact, and no
+canonical result or attempt is fabricated. Possible starts still require the
+existing terminal result and canonical acknowledgement path instead.
+
+Focused Linux verification passes 52 native, 573 dispatch, 76 provider, three
+native CLI and 12 capability cases, formatting and all-target/all-feature
+Clippy with warnings denied. Real WSL systemd scenarios pass ordinary unused
+release, a four-second stop exceeding the command reply deadline, and the
+existing main-process-crash/live-descendant retention scenario. They use default
+4 GiB admission and disposable units, no model or real issue. An initial replay
+fixture correctly refused an inherited ledger override; removing that test-only
+override, as the fixed launch service does, reaches and verifies the cancellation
+fence. No production guard was relaxed to make that assertion pass.
+
+This supplies the worker primitive needed by production transport. Central
+delivery/cancellation acknowledgement and safe retirement of the matching
+never-started central claim remain to be integrated. No installed CLI, live
+factory hold, service or issue was changed.

@@ -5,6 +5,7 @@ use super::*;
 use fs2::FileExt;
 mod operations;
 mod release;
+mod reservation_release;
 mod result;
 pub use operations::{OperationPermission, OperationPurpose, OperationRequest, StartConsumption};
 
@@ -225,6 +226,7 @@ impl WorkerRun {
     /// the descriptor. The transport must also observe its active/exited state
     /// before offering this reservation to central.
     pub fn ready(&mut self) -> Result<()> {
+        self.require_uncancelled()?;
         ensure!(
             self.journal.phase == Phase::ReservationIntent,
             "Native reservation must be reconciled"
@@ -251,6 +253,7 @@ impl WorkerRun {
         send: impl FnOnce() -> Result<()>,
         holder: impl FnOnce(&str, &str) -> Result<()>,
     ) -> Result<()> {
+        self.require_uncancelled()?;
         ensure!(
             !self.persistence_uncertain && self.journal.phase == Phase::Ready,
             "Native start is already offered or unavailable; observe it instead"
@@ -340,7 +343,7 @@ impl WorkerRun {
         };
         value["state"] = if held && running {
             "running"
-        } else if held && self.journal.phase == Phase::Ready {
+        } else if held && self.journal.phase == Phase::Ready && self.require_uncancelled().is_ok() {
             "ready"
         } else {
             "unknown"
@@ -352,6 +355,13 @@ impl WorkerRun {
                 value["capacity_held"] = false.into();
             }
             value["release"] = release;
+        }
+        if let Some(release) = self.reservation_release_observation()? {
+            if release["capacity_released"] == true {
+                value["state"] = "reservation_released".into();
+                value["capacity_held"] = false.into();
+            }
+            value["reservation_release"] = release;
         }
         Ok(value)
     }

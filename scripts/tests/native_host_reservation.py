@@ -55,6 +55,8 @@ def empty(group):
 
 def main():
     binary = Path(sys.argv[1]).resolve(strict=True)
+    mode = sys.argv[2] if len(sys.argv) > 2 else 'running'
+    assert mode in ('running', 'release-unused', 'release-unused-lost-reply')
     assert Path('/sys/fs/cgroup/cgroup.controllers').exists()
     # Read-only inventory before the fixture. Never clean another worker's file.
     runtime = Path(os.environ['XDG_RUNTIME_DIR'])
@@ -123,11 +125,16 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                             f'os.dup2(os.open({str(stderr)!r},os.O_CREAT|os.O_WRONLY,0o600),2)\n'
                             f'os.execve({str(binary)!r},{arguments + ["--work-dir", str(root / "work")]!r},env)\n')
         group = None
+        stop_count = root / 'stop-count'
+        stopper = root / 'stopper.py'
+        stopper.write_text(f'from pathlib import Path\nimport time\nwith Path({str(stop_count)!r}).open("a") as f:f.write("stop\\n")\ntime.sleep(4)\n')
+        stop_properties = ['-p', f'ExecStop=/usr/bin/python3 {stopper}'] if mode == 'release-unused-lost-reply' else []
         try:
             result = run('/usr/bin/systemd-run', '--user', '--collect', '--unit=' + holder,
                          '-p', 'Type=oneshot', '-p', 'RemainAfterExit=yes',
                          '-p', 'FileDescriptorStoreMax=1', '-p', 'FileDescriptorStorePreserve=yes',
                          '-p', 'NotifyAccess=all', '-p', 'MemoryMax=512M', '-p', 'TimeoutStartSec=20',
+                         *stop_properties,
                          '/usr/bin/python3', str(launcher), check=False)
             assert result.returncode == 0, stderr.read_text() if stderr.exists() else result.stderr
             held = properties(holder)
@@ -178,6 +185,64 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                       if path.read_text() == '4294967296 2.000\n' and is_locked(path)]
             assert len(leases) == 1, 'Expected this real default admission lease'
             lease = leases[0]
+            if mode != 'running':
+                release_arguments = [str(binary), 'native-handoff', 'release-reservation', '--binding-file', str(expected),
+                                     '--work-dir', str(root / 'work'), '--reservation-id']
+
+                def release(reservation=response['holder_invocation'], check=True):
+                    return run(*release_arguments, reservation, env=environment, check=check)
+
+                assert release('f' * 32, False).returncode != 0 and is_locked(lease)
+                assert not (root / 'work' / 'reservation-release.json').exists()
+                # Even a job absent from the journal is not safe to stop or ignore.
+                run('/usr/bin/systemd-run', '--user', '--collect', '--unit=' + job,
+                    '-p', 'Type=exec', '-p', 'MemoryMax=64M', '/bin/sleep', '30')
+                group = Path('/sys/fs/cgroup') / properties(job)['ControlGroup'].lstrip('/')
+                assert release(check=False).returncode != 0 and is_locked(lease)
+                assert properties(job)['MainPID'] != '0'
+                assert inspect()['state'] == 'unknown'
+                ctl('stop', job)
+                wait_for(lambda: properties(job)['LoadState'] == 'not-found')
+                # A cancelled reservation cannot later consume a start grant.
+                grant = {key: binding[key] for key in ('run_id', 'node_id', 'context_sha256')}
+                grant.update(reservation_id=response['holder_invocation'], token='c' * 64,
+                             expires_at=(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=10)).isoformat())
+                entry_environment = {key: value for key, value in environment.items()
+                                     if key not in ('GAH_LEDGER_PATH', 'GAH_EVENTS_PATH', 'GAH_RECONCILIATION_PATH')}
+                replay = subprocess.run([str(binary), 'native-handoff', 'start', '--context-dir', str(context),
+                                         '--expected-context', binding['context_sha256'], '--work-dir', str(root / 'work'),
+                                         '--config-path', str(worker)], env=entry_environment,
+                                        input=json.dumps({'service_token': 'fixture-only', 'grant': grant}),
+                                        capture_output=True, text=True, timeout=20)
+                assert replay.returncode != 0 and 'reservation release was offered' in replay.stderr, replay.stderr
+                assert json.loads((root / 'work' / 'worker.json').read_text())['start'] is None
+                capacity_path = root / 'work' / 'capacity.json'
+                capacity = capacity_path.read_bytes()
+                changed = json.loads(capacity)
+                changed['holder_invocation'] = 'f' * 32
+                capacity_path.write_text(json.dumps(changed))
+                assert release(check=False).returncode != 0 and is_locked(lease)
+                assert properties(holder)['ActiveState'] == 'active'
+                capacity_path.write_bytes(capacity)
+                if mode == 'release-unused-lost-reply':
+                    assert release(check=False).returncode != 0
+                    assert json.loads((root / 'work' / 'reservation-release.json').read_text())['phase'] == 'stop_intent'
+                    wait_for(lambda: properties(holder)['LoadState'] == 'not-found')
+                released = json.loads(release().stdout)
+                assert released['binding'] == binding and released['capacity_released']
+                assert released['dispatch_started'] is False and not is_locked(lease)
+                assert json.loads(release().stdout) == released
+                assert inspect()['state'] == 'reservation_released' and inspect()['capacity_held'] is False
+                assert (context / 'history-0000.jsonl').exists()
+                assert not (root / 'work' / 'result.json').exists() and not canary.exists()
+                if mode == 'release-unused-lost-reply':
+                    assert stop_count.read_text().splitlines() == ['stop']
+                print(json.dumps({'passed': True, 'mode': mode, 'realDefaultHostAdmission': True,
+                                  'unrecordedJobRetainsCapacity': True, 'changedHolderRefused': True,
+                                  'cancelledStartRefused': True, 'physicalCapacityReleased': True,
+                                  'repeatedReleaseIdempotent': True, 'canonicalResultInvented': False,
+                                  'lostStopReplyRecovered': mode == 'release-unused-lost-reply', 'agentInvoked': False}, indent=2))
+                return
             ready = root / 'job.json'
             child = root / 'child.py'
             child.write_text('import json,os,subprocess,time\nfrom pathlib import Path\n'
@@ -205,6 +270,11 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
             journal_path = root / 'work' / 'worker.json'
             journal_path.write_text(json.dumps(journal))
             assert inspect()['state'] == 'running'
+            refused_release = run(str(binary), 'native-handoff', 'release-reservation', '--binding-file', str(expected),
+                                  '--work-dir', str(root / 'work'), '--reservation-id', response['holder_invocation'],
+                                  env=environment, check=False)
+            assert refused_release.returncode != 0 and is_locked(lease)
+            assert not (root / 'work' / 'reservation-release.json').exists()
             journal['execution']['start_ticks'] = str(int(start_ticks) + 1)
             journal['launch']['start_ticks'] = str(int(start_ticks) + 1)
             journal_path.write_text(json.dumps(journal))

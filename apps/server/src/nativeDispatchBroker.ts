@@ -433,7 +433,7 @@ export class NativeDispatchBroker {
     if (journal.phase === 'terminal') return view(journal);
     if (journal.start_offered) return this.reconcileRun(journal);
     if (decision?.allowed !== true || Date.parse(reservation.expires_at) <= this.now()) {
-      try { await this.deadline(signal => this.deps.transport.releaseReservation(binding, reservation, signal)); } catch { /* host reservation still expires without authorizing a start */ }
+      try { await this.deadline(signal => this.deps.transport.releaseReservation(binding, reservation, signal)); } catch { /* A deadline never proves physical release; retain the reservation for reconciliation. */ }
       const reason = decision?.allowed ? 'host_reservation_expired' : this.denialReason(decision);
       return view(this.update(journal, { phase: 'authorization_deferred', reason }));
     }

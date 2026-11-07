@@ -58,6 +58,15 @@ pub enum Command {
         credential_socket: Option<PathBuf>,
     },
     #[cfg(target_os = "linux")]
+    ReleaseReservation {
+        #[arg(long)]
+        binding_file: PathBuf,
+        #[arg(long)]
+        work_dir: PathBuf,
+        #[arg(long)]
+        reservation_id: String,
+    },
+    #[cfg(target_os = "linux")]
     ReleaseResult {
         #[arg(long)]
         context_dir: PathBuf,
@@ -116,6 +125,20 @@ pub enum Command {
 
 pub fn run(args: Args) -> Result<()> {
     match args.command {
+        #[cfg(target_os = "linux")]
+        Command::ReleaseReservation {
+            binding_file,
+            work_dir,
+            reservation_id,
+        } => {
+            let binding = crate::native_handoff::worker::read_binding(&binding_file)?;
+            ensure!(
+                binding.node_id == crate::central_claims::resolve_node_id()?,
+                "Native reservation belongs to a different worker"
+            );
+            let mut run = crate::native_handoff::worker::WorkerRun::open(&work_dir, &binding)?;
+            println!("{}", run.release_reservation(&reservation_id)?);
+        }
         #[cfg(target_os = "linux")]
         Command::ReleaseResult {
             context_dir,
