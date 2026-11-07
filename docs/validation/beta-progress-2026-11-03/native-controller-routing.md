@@ -9,9 +9,9 @@ Unknown authentication readiness remains unknown.
 
 Preparation reserves canonical work ownership without staging or starting the
 worker. Only after receiving that durable reservation does the controller release
-its own local claim and activate the original run. A lost reservation reply keeps
-the local claim; a lost activation reply retains the remote identity and reports
-unconfirmed activation. Neither case authorizes a local backend fallback.
+its own local claim and activate the original run. A lost reservation reply cannot
+authorize activation; a lost activation reply retains the remote identity and
+reports unconfirmed activation. Neither case authorizes a local backend fallback.
 
 A private per-work index recovers a completed preparation after a lost reply
 without another history copy. Partial preparations remain inspectable and refuse
@@ -33,6 +33,21 @@ capability tests pass under Linux/WSL. Formatting and all-target/all-feature
 Clippy with warnings denied pass. Contract/server typechecks and all 60 focused
 server handoff, producer, transport and context tests pass. The shared review
 account-pin rule also has a regression test for backend/model substitution.
+
+The matched build uses public `36430bdde56128f7aca8febaa9c6d9cd89c3c21b`
+and private `9d9cb7cc5dd05077be4437bef1c32084a2f81bd5`. All 1,235 server
+tests pass with 38 existing skips; all 17 mock tests pass. Server and shared-web
+production builds, private input/release guards, credential-route checks and
+cloud transport checks pass. Its isolated checkout is
+`/home/khing/.cache/parasaur-enterprise-current.wlk4ak_w/source`, with evidence
+in the adjacent `build.log`.
+
+The optimized Linux CLI is
+`artifacts/parasaur-native-context-36430bdd/gah-linux-x86_64`, SHA-256
+`675fce742ccf12f2ceac9e907a55aa1b3b1c1b60b8df842de8d58535dc52f9f7`.
+All 629 Rust/Cargo inputs match that public source archive. Release compilation,
+native-context verification and zero-spend-ceiling production-binary smokes pass.
+The artifact requires glibc 2.39 and remains uninstalled.
 
 Deployment remains pending. Provider-assignee claim renewal, remote PM artifact
 publication and uncertain-start reconciliation without a terminal ledger receipt
