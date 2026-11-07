@@ -3,6 +3,7 @@
 //! journal owns each verified job directory; it never stores grant plaintext.
 use super::*;
 use fs2::FileExt;
+use std::time::{Duration, Instant};
 mod operations;
 mod release;
 mod reservation_release;
@@ -148,6 +149,27 @@ impl WorkerRun {
         };
         run.validate(binding)?;
         Ok(run)
+    }
+
+    /// Open while another process briefly observes the same journal. Only lock
+    /// acquisition waits, bounded; no authorization, provider write or state
+    /// transition is repeated.
+    pub fn open_waiting(directory: &Path, binding: &DispatchBinding) -> Result<Self> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match Self::open(directory, binding) {
+                Err(error)
+                    if error.chain().any(|cause| {
+                        cause
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|error| error.kind() == std::io::ErrorKind::WouldBlock)
+                    }) && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
+                result => return result,
+            }
+        }
     }
 
     fn validate(&self, binding: &DispatchBinding) -> Result<()> {

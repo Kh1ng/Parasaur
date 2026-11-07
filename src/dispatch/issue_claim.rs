@@ -898,6 +898,9 @@ impl<'a> GithubBoard<'a> {
     }
 
     fn for_writing(profile: &'a Profile) -> Result<Self> {
+        if profile.delivery_mode == crate::config::DeliveryMode::Handoff {
+            anyhow::bail!("delivery_mode=handoff: provider-visible issue claims are disallowed");
+        }
         crate::policy::enforce_policy(profile, "edit-issue")?;
         if !profile.publishing.allow_issue_comments {
             anyhow::bail!(

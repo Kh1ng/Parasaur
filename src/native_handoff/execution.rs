@@ -58,7 +58,7 @@ pub fn install(context: WorkerContext, work: PathBuf, token: String) -> Result<(
         context.request.args.route_admission.is_none(),
         "Native jobs already own their host admission"
     );
-    WorkerRun::open(&work, &context.binding)?.require_execution()?;
+    WorkerRun::open_waiting(&work, &context.binding)?.require_execution()?;
     CURRENT
         .set(Execution {
             context,
@@ -89,7 +89,7 @@ pub(crate) fn verify_dispatch(cfg: &GahConfig, args: &DispatchArgs) -> Result<()
                     == serde_json::to_value(&execution.context.request.args)?,
             "Native dispatch changed its verified configuration or request"
         );
-        let run = WorkerRun::open(&execution.work, &execution.context.binding)?;
+        let run = WorkerRun::open_waiting(&execution.work, &execution.context.binding)?;
         run.require_execution()?;
         run.require_operations_completed()?;
     }
@@ -148,7 +148,7 @@ impl Execution {
         if let Some(profile) = profile {
             self.verify_profile(profile)?;
         }
-        WorkerRun::open(&self.work, &self.context.binding)?.authorize_central(
+        WorkerRun::open_waiting(&self.work, &self.context.binding)?.authorize_central(
             &self.context,
             purpose,
             &self.token,
@@ -173,12 +173,12 @@ impl Execution {
                 )
             };
             quiescent(&self.context.binding.run_id)?;
-            return WorkerRun::open(&self.work, &self.context.binding)?
+            return WorkerRun::open_waiting(&self.work, &self.context.binding)?
                 .complete_operation(permission);
         }
         // Claim commands use owned, bounded process groups. A concurrent model
         // is expected here; its journal and completion remain separate.
-        WorkerRun::open(&self.work, &self.context.binding)?.complete_operation(permission)
+        WorkerRun::open_waiting(&self.work, &self.context.binding)?.complete_operation(permission)
     }
 }
 
@@ -223,7 +223,16 @@ fn operate<T>(
         .inspect_err(|_| execution.unconfirmed.store(true, Ordering::SeqCst))
         .context(AuthorityHeld)?;
     let result = invoke();
-    let complete = result.as_ref().is_ok_and(confirmed) && execution.finish(&permission).is_ok();
+    let complete = result.as_ref().is_ok_and(confirmed)
+        && execution
+            .finish(&permission)
+            .inspect_err(|error| {
+                eprintln!(
+                    "Native operation completion unconfirmed: {}",
+                    crate::redact::redact(&error.to_string())
+                )
+            })
+            .is_ok();
     if !complete {
         execution.unconfirmed.store(true, Ordering::SeqCst);
         eprintln!("Native operation remains held; no further backend or publication is permitted in this job");
@@ -346,7 +355,7 @@ pub(crate) fn finish_dispatch() -> Result<()> {
             !execution.unconfirmed.load(Ordering::SeqCst),
             "Native operation remains unconfirmed; preserve this job for reconciliation"
         );
-        let run = WorkerRun::open(&execution.work, &execution.context.binding)?;
+        let run = WorkerRun::open_waiting(&execution.work, &execution.context.binding)?;
         run.require_execution()?;
         run.require_operations_completed()?;
     }

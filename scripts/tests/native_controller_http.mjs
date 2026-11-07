@@ -7,15 +7,16 @@ import assert from 'node:assert/strict';
 import { mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,readdirSync,chmodSync } from 'node:fs';
 import { join,resolve,dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { randomBytes } from 'node:crypto';
+import { randomBytes,createHash } from 'node:crypto';
 import { spawnSync,execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 
 assert.equal(process.platform,'linux');
 const [runtime,binaryArgument,mode='normal']=process.argv.slice(2);
-assert.ok(['normal','lost-reservation','lost-activation','provider-claims'].includes(mode));
-const providerClaims=mode==='provider-claims';
+assert.ok(['normal','lost-reservation','lost-activation','provider-claims','provider-claims-paused','provider-claims-lost'].includes(mode));
+const providerClaims=mode.startsWith('provider-claims');
+const claimFault=mode==='provider-claims-paused'||mode==='provider-claims-lost';
 const binary=resolve(binaryArgument),modules=pathToFileURL(`${resolve(runtime)}/`);
 const execute=promisify(execFile);
 const [{NativeWorker,nativeWorkerRouter},{NativeWorkerHttpTransport},{NativeDispatchBroker},
@@ -102,7 +103,7 @@ codex_path = ${JSON.stringify(role==='worker'?backend:join(base,'absent-central-
 validation_commands = ["true"]
 [profiles.fixture.publishing]
 allow_pull_request_creation = false
-${providerClaims?'[profiles.fixture.publishing.issue_claim]\nmode = "github_assignee"\nttl_minutes = 1\nverify_seconds = 0':''}
+${providerClaims?'[profiles.fixture.publishing.issue_claim]\nmode = "github_assignee"\nttl_minutes = 1\nverify_seconds = 0\npriority_logins = ["other", "fixture"]':''}
 [profiles.fixture.routing]
 improve_candidates = [{backend="codex",instance="work",model="fixture-model"}]
 [profiles.fixture.routing.backend_instances.work]
@@ -155,10 +156,20 @@ try {
     assert.ok(loop.stdout.includes('activation_unconfirmed'));reload();
   }
   const deadline=Date.now()+60_000;
+  let faultApplied=false;
   let view=broker.get(binding.run_id);
   while(view.phase!=='terminal' || view.worker_release?.phase!=='released') {
     assert.notEqual(view.phase,'cancelled',`Native authority refused execution: ${view.reason}; fixture ${base}`);
     assert.ok(Date.now()<deadline,`Native dispatch did not finish: ${JSON.stringify(view)}; fixture ${base}`);
+    if(claimFault && !faultApplied && existsSync(marker)) {
+      if(mode==='provider-claims-paused') {
+        writeFileSync(config,configuration('central').replace('[defaults]','[defaults]\nfactory_enabled = false'),{mode:0o600});
+      } else {
+        await execute('/usr/bin/python3',['-c',
+          'import fcntl,json,sys,datetime\np=sys.argv[1]\nwith open(p+".lock","a") as lock:\n fcntl.flock(lock,fcntl.LOCK_EX)\n with open(p) as file: s=json.load(file)\n item=s["issues"]["1"]; item["assignees"]=["other"]\n note=dict(item["comments"][0]); note["user"]={"login":"other"}; note["id"]=s["next_id"]; s["next_id"]+=1\n note["created_at"]=note["updated_at"]=datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00","Z")\n item["comments"].append(note)\n with open(p,"w") as file: json.dump(s,file)\n',forgeState],{timeout:5000});
+      }
+      faultApplied=true;
+    }
     await new Promise(done=>setTimeout(done,200));view=await broker.reconcile(binding.run_id);
   }
   assert.equal(claims.getLease('fixture','#1'),undefined);
@@ -167,24 +178,39 @@ try {
   const rows=readFileSync(process.env.GAH_LEDGER_PATH,'utf8').trim().split('\n').map(JSON.parse);
   const result=rows.filter(row=>row.session_id===binding.run_id && row.mode==='fix');
   assert.equal(result.length,1);assert.equal(result[0].attempts_started,1);
-  assert.equal(result[0].validation_result,'passed');
+  if(claimFault) {
+    assert.ok(faultApplied);assert.ok(result[0].failure_class);
+    assert.notEqual(result[0].remote_execution.termination.exit_code,0);
+    assert.equal(result[0].usage.input_tokens,11);assert.equal(result[0].usage.output_tokens,7);
+  } else {
+    assert.equal(result[0].validation_result,'passed');assert.equal(result[0].failure_class,null);
+    assert.equal(result[0].remote_execution.termination.exit_code,0);
+  }
   assert.equal(result[0].remote_execution.node_id,workerId);
   assert.equal(result[0].remote_execution.receipt_sha256,view.acknowledgement.receipt_sha256);
   assert.equal(result[0].usage.actual_cost_usd,null);
   if(providerClaims) {
     const recorded=JSON.parse(readFileSync(forgeState,'utf8'));
-    assert.deepEqual(recorded.issues['1'].assignees,['fixture']);
-    assert.equal(recorded.issues['1'].comments.filter(comment=>comment.body.startsWith('<!-- gah-claim ')).length,1);
-    assert.ok(recorded.calls.some(call=>call.includes('PATCH') && call.some(value=>value.startsWith('repos/fixture/diagnostic/issues/comments/'))));
+    assert.deepEqual(recorded.issues['1'].assignees,[mode==='provider-claims-lost'?'other':'fixture']);
+    assert.equal(recorded.issues['1'].comments.filter(comment=>comment.body.startsWith('<!-- gah-claim ')).length,mode==='provider-claims-lost'?2:1);
+    const renewed=recorded.calls.some(call=>call.includes('PATCH') && call.some(value=>value.startsWith('repos/fixture/diagnostic/issues/comments/')));
+    assert.equal(renewed,!claimFault);
     const journal=JSON.parse(readFileSync(join(root,binding.run_id,'broker.json'),'utf8'));
-    assert.ok(journal.last_claim_operation.sequence>=3);assert.equal(journal.last_operation.sequence,1);
+    assert.equal(journal.last_claim_operation.sequence>=3,!claimFault);assert.equal(journal.last_operation.sequence,1);
   }
   const lease=JSON.parse(readFileSync(join(worker.contexts.paths(binding).work,'capacity.json'),'utf8'));
   await execute('/usr/bin/python3',['-c','import fcntl,sys\nwith open(sys.argv[1]) as file: fcntl.flock(file,fcntl.LOCK_EX|fcntl.LOCK_NB)',lease.path],{timeout:5000});
   const before=readFileSync(process.env.GAH_LEDGER_PATH,'utf8');reload();
   await broker.reconcilePending();assert.equal(broker.get(binding.run_id).phase,'terminal');
   assert.equal(readFileSync(process.env.GAH_LEDGER_PATH,'utf8'),before);
-  const completedCycle=await execute(binary,['loop','--profile','fixture','--config-path',config,'--once'],{env:process.env,timeout:45_000,maxBuffer:128*1024});
+  let completedCycle;
+  try {
+    completedCycle=await execute(binary,['loop','--profile','fixture','--config-path',config,'--once'],{env:process.env,timeout:45_000,maxBuffer:128*1024});
+  } catch(error) {
+    if(mode!=='provider-claims-paused')throw error;
+    assert.equal(error.code,1);assert.ok(error.stderr.includes('Factory automation is disabled'));
+    completedCycle={stdout:'Factory remains disabled\n'};
+  }
   writeFileSync(join(base,'controller-completed.stdout'),completedCycle.stdout,{mode:0o600});
   assert.equal(readFileSync(process.env.GAH_LEDGER_PATH,'utf8'),before);
   assert.equal(readFileSync(marker,'utf8'),'attempt\n');
@@ -192,15 +218,23 @@ try {
   const report={passed:true,fixtureRoot:base,actualControllerCycle:true,actualRustPlanning:true,centralExecutableAbsent:true,
     actualWorkerAccountCatalog:true,actualAuthenticatedHttp:true,actualFreshCentralAuthority:true,controlledManagedLoopObservation:true,
     actualDefaultSystemdAdmission:true,actualBackendFixtureAttempts:1,actualCanonicalImport:true,actualAcknowledgedRelease:true,
-    reloadDoesNotRelaunchOrReimport:true,completedWorkNotRedispatched:true,realModelInvoked:false,productionServicesChanged:false,runId:binding.run_id,
-    outcome:result[0].validation_result,actualCostUsd:result[0].usage.actual_cost_usd,mode,
+    reloadDoesNotRelaunchOrReimport:true,completedWorkNotRedispatched:!claimFault,stoppedWorkNotRedispatched:claimFault,realModelInvoked:false,productionServicesChanged:false,runId:binding.run_id,
+    outcome:result[0].failure_class?'failed':result[0].validation_result,validationResult:result[0].validation_result,
+    processExitCode:result[0].remote_execution.termination.exit_code,actualCostUsd:result[0].usage.actual_cost_usd,mode,
     lostReservationRecoveredAcrossCentralReload:mode==='lost-reservation',
     lostActivationRecoveredAcrossCentralReload:mode==='lost-activation'};
-  report.providerClaimRenewedDuringBackend=providerClaims;
+  report.providerClaimRenewedDuringBackend=providerClaims&&!claimFault;
+  report.providerRenewalRefusedAfterPause=mode==='provider-claims-paused';
+  report.providerClaimLossStopsCompletion=mode==='provider-claims-lost';
   const release=JSON.parse(readFileSync(new URL('../../../../release.json',modules),'utf8'));
   report.apiCoreRevision=release.core;report.apiPrivateRevision=release.enterprise;
-  const manifest=JSON.parse(readFileSync(join(dirname(binary),'manifest.json'),'utf8'));
-  report.binarySourceRevision=manifest.sourceRevision;report.binarySha256=manifest.binarySha256;
+  report.binarySha256=createHash('sha256').update(readFileSync(binary)).digest('hex');
+  const manifestPath=join(dirname(binary),'manifest.json');
+  report.binarySourceRevision=null;
+  if(existsSync(manifestPath)) {
+    const manifest=JSON.parse(readFileSync(manifestPath,'utf8'));
+    assert.equal(report.binarySha256,manifest.binarySha256);report.binarySourceRevision=manifest.sourceRevision;
+  }
   writeFileSync(join(base,'report.json'),JSON.stringify(report,null,2)+'\n',{mode:0o600});console.log(JSON.stringify(report));
 } catch(error) {
   process.stderr.write(`Native controller acceptance failed; inspect ${base}\n`);throw error;

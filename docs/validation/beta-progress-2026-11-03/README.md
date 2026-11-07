@@ -1,5 +1,13 @@
 # Beta finishing pass: local validation
 
+Native fix/review jobs now hold provider-visible issue claims with the existing
+assignee/comment protocol, renewing under fresh central authority on a journal
+separate from backend execution. Real controller acceptance passes normal
+renewal, central pause and takeover by another identity through the matched API
+and a debug CLI; lost claim authority fails the job without redispatch while
+validation stays separately recorded. In-job journal opens now wait briefly for
+busy observation locks. See [provider claims](native-provider-claims.md).
+
 Real controller acceptance now passes normal dispatch and both lost reservation
 and activation replies through the matched API and optimized worker CLI. It found
 and fixed a catalog serialization refusal and a dormant-reservation intake stall.

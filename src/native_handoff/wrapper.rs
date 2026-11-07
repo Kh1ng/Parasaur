@@ -173,7 +173,7 @@ pub fn run(
     };
     let context = prepare(context_dir, expected, work, config_path)?;
     {
-        let mut journal = WorkerRun::open(work, &context.binding)?;
+        let mut journal = WorkerRun::open_waiting(work, &context.binding)?;
         journal.consume_start(&context, &credentials.grant, &credentials.service_token)?;
     }
     let cfg = context.config.clone();

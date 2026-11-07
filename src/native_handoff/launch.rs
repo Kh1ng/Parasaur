@@ -141,7 +141,7 @@ pub fn run(
         .tempdir_in(runtime)?;
     let socket = temporary.path().join("input");
     let listener = UnixListener::bind(&socket)?;
-    let mut journal = WorkerRun::open(&work, &context.binding)?;
+    let mut journal = WorkerRun::open_waiting(&work, &context.binding)?;
     let mut identity = None;
     journal.offer_start(&credentials.grant, || {
         identity = Some(start_job(

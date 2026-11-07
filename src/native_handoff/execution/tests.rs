@@ -42,6 +42,21 @@ fn permission(execution: &Execution) -> OperationPermission {
 }
 
 #[test]
+fn own_execution_waits_for_observation_lock_without_repeating_an_operation() {
+    let (_directory, execution) = execution();
+    let mut held =
+        WorkerRun::reserve(&execution.work, &execution.context.binding, &"b".repeat(32)).unwrap();
+    held.ready().unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        drop(held);
+    });
+    let run = WorkerRun::open_waiting(&execution.work, &execution.context.binding).unwrap();
+    release.join().unwrap();
+    assert_eq!(run.observation().unwrap()["phase"], "ready");
+}
+
+#[test]
 fn refused_authority_never_enters_attempt_bookkeeping_or_backend() {
     let (_directory, execution) = execution();
     let mut starts = 0;
