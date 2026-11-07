@@ -3,6 +3,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { opendir } from 'node:fs/promises';
 import type { NativeClaimBinding, NativeResultAcknowledgement, NativeReservationRelease } from '@git-agent-harness/contracts';
 import type { ClaimsService } from './claimsService.js';
 import { writeFileAtomic } from './atomicFile.js';
@@ -168,6 +169,26 @@ export class NativeDispatchBroker {
     return this.serial(runId, () => this.reconcileRun(this.read(runId)));
   }
   get(runId: string): NativeDispatchView { return view(this.read(runId)); }
+
+  /** Stream durable offers on startup/poll without retaining an ever-growing
+   * run map. One failed worker cannot erase or re-offer another run. */
+  async reconcilePending():Promise<{checked:number;unconfirmed:number}> {
+    let checked=0,unconfirmed=0;
+    const entries=await opendir(this.root);
+    for await(const entry of entries) {
+      if(!entry.isDirectory() || !isNativeRunId(entry.name) || this.active.has(entry.name)) continue;
+      if(!existsSync(join(this.root,entry.name,'broker.json'))) continue;
+      try {
+        const journal=this.read(entry.name);
+        if(journal.phase==='cancelled' || (journal.phase==='terminal' && journal.history_cleaned
+          && journal.worker_release?.phase==='released' && journal.worker_release.context_history_cleaned)) continue;
+        checked++;
+        const current=journal.stage_offered?await this.reconcile(entry.name):await this.offerPrepared(entry.name,journal.binding.context_sha256);
+        if(['reconciling','result_pending','cancelling'].includes(current.phase)) unconfirmed++;
+      } catch {unconfirmed++;}
+    }
+    return {checked,unconfirmed};
+  }
 
   /** Replay only the durable canonical acknowledgement, never an execution
    * permission. A receipt or an expired/absent claim alone cannot release the

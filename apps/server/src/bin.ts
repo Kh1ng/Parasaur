@@ -8,7 +8,10 @@ import { createServer as createExpressServer, initializeSkillBank } from './serv
 import { createServer as createHttpServer } from 'http';
 import { createWebSocketHandler } from './wsServer.js';
 import { validateNodeRole, workerMemoryEnvironment } from './nodeRole.js';
-import { runNodeRole, runProfileList } from './gahCli.js';
+import { runNodeRole, runProfileList, findGahBinary } from './gahCli.js';
+import { NativeWorker } from './nativeWorker.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { isGahCliAvailable } from './gahCli.js';
 import { getProviderRegistry } from './provider/ProviderRegistry.js';
 import { RegistryService } from './registryService.js';
@@ -133,6 +136,12 @@ async function main() {
     node,
     deviceAccess,
     registryService,
+    nativeDispatchRoot:node.role==='central'?join(process.env.XDG_STATE_HOME??join(homedir(),'.local','state'),'gah','native-dispatch'):undefined,
+    nativeWorker:node.role==='worker' && process.platform==='linux'?new NativeWorker({
+      root:join(process.env.XDG_STATE_HOME??join(homedir(),'.local','state'),'gah','native-worker'),
+      nodeId:coordinatorIdentity.node_id,binary:findGahBinary(),config:process.env.GAH_CONFIG_PATH,
+      profiles:runProfileList,centralToken:()=>process.env.COORDINATOR_TOKEN,
+    }):undefined,
     webPushNotifications,
     apnsNotifications,
     activityFeed,
@@ -226,7 +235,19 @@ async function main() {
   let stopRouterQuotaRefresh: (() => void) | undefined;
   let stopQuotaRefresh: (() => Promise<void>) | undefined;
   // Start HTTP server
+  let stopNativeReconciliation:(()=>void)|undefined;
   server.listen(PORT, HOST, () => {
+    if(app.locals.nativeDispatchBroker) {
+      let checking=false;
+      const reconcile=async()=>{
+        if(checking) return;checking=true;
+        try {await app.locals.nativeDispatchBroker.reconcilePending();}
+        catch {console.warn('Native dispatch reconciliation unavailable; existing runs remain held.');}
+        finally {checking=false;}
+      };
+      const timer=setInterval(()=>{void reconcile();},10_000);timer.unref();
+      stopNativeReconciliation=()=>clearInterval(timer);void reconcile();
+    }
     logLifecycle(`Parasaur server listening on ${HOST}:${PORT}`);
     // A slow ledger/availability read must not hide health and repair APIs.
     // The registry owns its pending, failed and recovered readiness state.
@@ -268,6 +289,7 @@ async function main() {
     app.locals.gitLabEventsQueue?.stop();
     stopChatMaintenanceScheduler();
     stopWorkerAutoUpdate?.();
+    stopNativeReconciliation?.();
     authHealthProber.stop();
     server.close();
     stopRouterQuotaRefresh?.();

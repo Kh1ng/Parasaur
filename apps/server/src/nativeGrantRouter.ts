@@ -13,6 +13,21 @@ export function nativeGrantRouter(deps: {
   const router = Router();
   router.use(requireOwner);
   router.use(rateLimit({windowMs:60_000,limit:60,standardHeaders:true,legacyHeaders:false}));
+  router.post('/offer',async(req,res)=>{
+    const request=req.body as {run_id?:unknown;context_sha256?:unknown}|undefined;
+    if(!request || Object.keys(request).length!==2 || !isNativeRunId(request.run_id)
+      || typeof request.context_sha256!=='string' || !/^[a-f0-9]{64}$/.test(request.context_sha256)) {
+      return void res.status(400).json({error:'Invalid prepared native offer'});
+    }
+    try {
+      res.json(await deps.broker.offerPrepared(request.run_id,request.context_sha256));
+    } catch {res.status(409).json({error:'Native offer unconfirmed; inspect the original run'});}
+  });
+  router.get('/runs/:run', (req,res)=>{
+    if(!isNativeRunId(req.params.run)) return void res.sendStatus(400);
+    try {res.set('Cache-Control','no-store').json(deps.broker.get(req.params.run));}
+    catch {res.status(404).json({error:'Native run unavailable'});}
+  });
   const membership=(request:{run_id:string;node_id:string})=>{
     const binding=deps.broker.get(request.run_id).binding;
     return ()=>binding.node_id===request.node_id && !!deps.worker(request.node_id)?.profiles?.includes(binding.profile);

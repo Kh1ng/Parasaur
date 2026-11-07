@@ -96,11 +96,15 @@ import { mutationSafety } from './mutationSafety.js';
 import { pairingRouter } from './pairing.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { resolveChatProject } from './projectCatalog.js';
-import { RegistryService, NodeDoctorError } from './registryService.js';
+import { RegistryService, NodeDoctorError, resolveSecret } from './registryService.js';
 import { ClaimsService } from './claimsService.js';
 import { claimsRouter } from './claimsRouter.js';
 import { nativeGrantRouter } from './nativeGrantRouter.js';
-import type { NativeDispatchBroker } from './nativeDispatchBroker.js';
+import { NativeDispatchBroker } from './nativeDispatchBroker.js';
+import { NativeWorkerHttpTransport } from './nativeWorkerTransport.js';
+import { nativeDispatchAuthority, nativeContinuationAuthority } from './nativeDispatchAuthority.js';
+import { runReceiveNativeResult } from './gahCli.js';
+import { nativeWorkerRouter, type NativeWorker } from './nativeWorker.js';
 import { backendForProfile, helperRouteFor, readSettings as readManagerChatSettings, setBackendForProfile, validHelperRoute, writeSettings as writeManagerChatSettings } from './managerChat/settingsStore.js';
 import { gatewayBaseUrl, gatewayApiKey, gatewayHealth, recall } from './managerChat/memoryGatewayClient.js';
 import { readGatewaySettings, writeGatewaySettings } from './gatewaySettingsStore.js';
@@ -189,6 +193,8 @@ type CreateServerOptions = Partial<ConfigEffectiveDeps> & {
   registryService?: RegistryService;
   claimsService?: ClaimsService;
   nativeDispatchBroker?: NativeDispatchBroker;
+  nativeDispatchRoot?: string;
+  nativeWorker?: NativeWorker;
   coordinatorPort?: number;
   deviceAccess?: DeviceAccess;
   node?: NodeRoleStatus;
@@ -458,6 +464,7 @@ export function createServer(
   const mutation = mutationSafety(getCoordinatorIdentity(undefined, coordinatorPort).node_id);
   if (configDeps.ownerRoutes) app.use('/api/owner', requireOwner, configDeps.ownerRoutes(mutation));
   app.use(workerRouteGuard(node));
+  if(node.role==='worker' && configDeps.nativeWorker) app.use('/api/native-worker',nativeWorkerRouter(configDeps.nativeWorker));
   if (node.role === 'central') app.use('/api/integrations/gitlab',
     gitLabQueueRouter(app.locals.gitLabEventsStore, app.locals.gitLabEventsQueue, mutation));
   const agentCliVersions = configDeps.agentCliVersions ?? new AgentCliVersions(getCoordinatorIdentity(undefined, coordinatorPort));
@@ -1186,8 +1193,16 @@ export function createServer(
     profiles: listProfiles,
     node: id => registryService.getNode(id)
   }));
-  if (node.role === 'central' && configDeps.nativeDispatchBroker) {
-    app.use('/api/native-dispatch', nativeGrantRouter({broker:configDeps.nativeDispatchBroker,worker:id=>registryService.getNode(id)}));
+  if (node.role === 'central' && (configDeps.nativeDispatchBroker || configDeps.nativeDispatchRoot)) {
+    const identity=getCoordinatorIdentity(undefined,coordinatorPort);
+    const root=configDeps.nativeDispatchRoot!;
+    const centralUrl=node.central_url??identity.advertised_url;
+    const broker=configDeps.nativeDispatchBroker??new NativeDispatchBroker({root,centralUrl,coordinatorNodeId:identity.node_id,
+      claims:centralClaims(),transport:new NativeWorkerHttpTransport({contextRoot:root,worker:id=>registryService.getNode(id),secret:resolveSecret}),
+      authorizeStart:nativeDispatchAuthority(root,centralUrl),authorizeContinuation:nativeContinuationAuthority(root,centralUrl),
+      recordCanonicalResult:runReceiveNativeResult});
+    app.locals.nativeDispatchBroker=broker;
+    app.use('/api/native-dispatch', nativeGrantRouter({broker,worker:id=>registryService.getNode(id)}));
   }
 
   // Pull-data REST endpoints (TICKET-productization): these are on-demand

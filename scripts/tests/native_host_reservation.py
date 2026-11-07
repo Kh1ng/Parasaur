@@ -56,7 +56,7 @@ def empty(group):
 def main():
     binary = Path(sys.argv[1]).resolve(strict=True)
     mode = sys.argv[2] if len(sys.argv) > 2 else 'running'
-    assert mode in ('running', 'release-unused', 'release-unused-lost-reply', 'release-unused-broker')
+    assert mode in ('running', 'release-unused', 'release-unused-lost-reply', 'release-unused-broker', 'http-broker')
     assert Path('/sys/fs/cgroup/cgroup.controllers').exists()
     # Read-only inventory before the fixture. Never clean another worker's file.
     runtime = Path(os.environ['XDG_RUNTIME_DIR'])
@@ -112,6 +112,17 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                                  '--output', str(context), '--node-id', 'native-host-fixture',
                                  '--central-url', 'https://native-host-fixture.invalid',
                                  '--config-path', str(central), env=environment).stdout)
+        if mode == 'http-broker':
+            expected = root / 'binding.json'
+            expected.write_text(json.dumps(binding))
+            expected.chmod(0o600)
+            probe = Path(__file__).with_name('native_worker_http.mjs')
+            result = run(sys.argv[3], str(probe), sys.argv[4], str(binary), str(root), env=environment, check=False)
+            assert result.returncode == 0, result.stderr
+            report = json.loads(result.stdout)
+            assert report['passed'] and not canary.exists()
+            print(json.dumps(report, indent=2))
+            return
         arguments = [str(binary), 'native-handoff', 'host-reserve', '--context-dir', str(context),
                      '--expected-context', binding['context_sha256'], '--config-path', str(worker)]
         outside = run(*arguments, '--work-dir', str(root / 'outside'), env=environment, check=False)
