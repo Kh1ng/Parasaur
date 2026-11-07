@@ -173,12 +173,15 @@ try {
   const before=readFileSync(process.env.GAH_LEDGER_PATH,'utf8');reload();
   await broker.reconcilePending();assert.equal(broker.get(binding.run_id).phase,'terminal');
   assert.equal(readFileSync(process.env.GAH_LEDGER_PATH,'utf8'),before);
+  const completedCycle=await execute(binary,['loop','--profile','fixture','--config-path',config,'--once'],{env:process.env,timeout:45_000,maxBuffer:128*1024});
+  writeFileSync(join(base,'controller-completed.stdout'),completedCycle.stdout,{mode:0o600});
+  assert.equal(readFileSync(process.env.GAH_LEDGER_PATH,'utf8'),before);
   assert.equal(readFileSync(marker,'utf8'),'attempt\n');
   assert.equal(readdirSync(root).filter(name=>name!== 'preparations').length,1);
   const report={passed:true,fixtureRoot:base,actualControllerCycle:true,actualRustPlanning:true,centralExecutableAbsent:true,
     actualWorkerAccountCatalog:true,actualAuthenticatedHttp:true,actualFreshCentralAuthority:true,controlledManagedLoopObservation:true,
     actualDefaultSystemdAdmission:true,actualBackendFixtureAttempts:1,actualCanonicalImport:true,actualAcknowledgedRelease:true,
-    reloadDoesNotRelaunchOrReimport:true,realModelInvoked:false,productionServicesChanged:false,runId:binding.run_id,
+    reloadDoesNotRelaunchOrReimport:true,completedWorkNotRedispatched:true,realModelInvoked:false,productionServicesChanged:false,runId:binding.run_id,
     outcome:result[0].validation_result,actualCostUsd:result[0].usage.actual_cost_usd,mode,
     lostReservationRecoveredAcrossCentralReload:mode==='lost-reservation',
     lostActivationRecoveredAcrossCentralReload:mode==='lost-activation'};

@@ -1,5 +1,12 @@
 # Beta finishing pass: local validation
 
+Real controller acceptance now passes normal dispatch and both lost reservation
+and activation replies through the matched API and optimized worker CLI. It found
+and fixed a catalog serialization refusal and a dormant-reservation intake stall.
+Each fixture executes/imports once, proves capacity released, survives reload and
+does not redispatch completed work. Production rollout and provider/PM lifecycle
+integration remain pending. See [controller acceptance](native-controller-routing.md#real-controller-acceptance-and-recovery).
+
 Current controller source adds worker account discovery, central route planning,
 durable dormant preparation and explicit ownership transfer before activation.
 Canonical native holds now inform scheduling and fresh grant authority. Real HTTP
