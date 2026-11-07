@@ -56,7 +56,7 @@ def empty(group):
 def main():
     binary = Path(sys.argv[1]).resolve(strict=True)
     mode = sys.argv[2] if len(sys.argv) > 2 else 'running'
-    assert mode in ('running', 'release-unused', 'release-unused-lost-reply')
+    assert mode in ('running', 'release-unused', 'release-unused-lost-reply', 'release-unused-broker')
     assert Path('/sys/fs/cgroup/cgroup.controllers').exists()
     # Read-only inventory before the fixture. Never clean another worker's file.
     runtime = Path(os.environ['XDG_RUNTIME_DIR'])
@@ -105,7 +105,9 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
             'allow_unknown_red_baseline': False, 'escalate': False, 'skip_validation_gate': False,
             'work_id': '#1', 'run_id': run_id, 'dispatch_reason': 'initial',
         }}))
-        context = root / 'context'
+        context = root / 'runs' / run_id / 'context'
+        context.parent.parent.mkdir(mode=0o700)
+        context.parent.mkdir(mode=0o700)
         binding = json.loads(run(str(binary), 'native-handoff', 'prepare', '--request-file', str(request),
                                  '--output', str(context), '--node-id', 'native-host-fixture',
                                  '--central-url', 'https://native-host-fixture.invalid',
@@ -185,6 +187,16 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                       if path.read_text() == '4294967296 2.000\n' and is_locked(path)]
             assert len(leases) == 1, 'Expected this real default admission lease'
             lease = leases[0]
+            if mode == 'release-unused-broker':
+                probe = Path(__file__).with_name('native_reservation_broker.mjs')
+                result = run(sys.argv[3], str(probe), sys.argv[4], str(binary), str(root), env=environment, check=False)
+                assert result.returncode == 0, result.stderr
+                report = json.loads(result.stdout)
+                assert report['passed'] and not is_locked(lease)
+                assert inspect()['state'] == 'reservation_released'
+                assert not canary.exists() and not (root / 'work' / 'result.json').exists()
+                print(json.dumps(report, indent=2))
+                return
             if mode != 'running':
                 release_arguments = [str(binary), 'native-handoff', 'release-reservation', '--binding-file', str(expected),
                                      '--work-dir', str(root / 'work'), '--reservation-id']

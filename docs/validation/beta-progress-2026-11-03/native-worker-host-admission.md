@@ -493,3 +493,40 @@ New cases cover exact proof, held capacity, lost replies, both uncertain writes
 and preservation of running/newer claims. Production worker transport/startup
 remain unfinished. No installed CLI, live factory hold, service or issue was
 changed.
+
+### Optimized and matched acceptance
+
+The optimized `9501a798` CLI verifies all 625 Rust/Cargo inputs against its
+immutable source archive. SHA-256:
+`b82fd34aad9838660c6b7693617d215532553c68ca4bd0c0adabeb586b797c71`.
+Artifact: `artifacts/parasaur-native-context-9501a798/gah-linux-x86_64`.
+Release/context/current-policy/zero-spend smokes pass; it requires glibc 2.39
+and is staged, not installed.
+
+That exact binary passes all three real host scenarios and all seven terminal
+execution/release scenarios. Evidence:
+`artifacts/central-live-20261105/native-unused-release-optimized.jsonl`.
+No disposable native capacity/job units remain after the checks.
+
+Public `744fc811` / private `213f2be3` passes 1,219 server cases (38 existing
+skips), 17 mock cases, production builds and release/input/credential/transport
+guards. Log:
+`/home/khing/.cache/parasaur-enterprise-current.w4q40507/build.log`.
+Its Rust/Cargo inputs are identical to the optimized `9501a798` candidate.
+The existing actual Rust/compiled owner-HTTP broker bridge passes again using
+this pair and exact binary.
+
+A paired `native_host_reservation.py ... release-unused-broker <node> <compiled
+API directory>` / `native_reservation_broker.mjs` fixture runs the actual compiled
+broker/claims and optimized worker CLI against a real systemd holder. Delivery
+and denial authority are controlled. Its first release really frees the kernel
+lock and deliberately loses the reply; central retains its claim. A fresh
+broker/claims instance retries the same worker release, then retires the claim.
+One stage, two release requests, zero starts/imports/models occur. Evidence:
+`artifacts/central-live-20261105/native-unused-broker-optimized.json`.
+The first combined fixture correctly refused an intermediate directory created
+with the inherited umask; explicitly creating every fixture ancestor privately
+reaches this test without weakening broker permissions.
+
+This verifies the cancellation boundary across real broker and worker code,
+not production network delivery, live factory progression or a memory leak fix.
