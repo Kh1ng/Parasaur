@@ -413,3 +413,8 @@ The actual Rust/owner-HTTP bridge passes again against this compiled assembly,
 including its release-recovery assertions. The Rust/Cargo inputs are unchanged
 from optimized `4ca651d1`; the existing exact binary is reused rather than
 claiming a new Rust build. Neither assembly nor binary is installed live.
+
+The newer [worker HTTP delivery](native-worker-http.md) increment supersedes
+the missing-transport/startup boundary above. Controller offer production and
+live rollout remain incomplete; its actual network and matched-assembly
+evidence are recorded separately there.

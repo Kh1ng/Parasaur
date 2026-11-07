@@ -86,6 +86,8 @@ async function grantEndpoint(broker: NativeDispatchBroker, worker: (id: string)=
     post:(body:unknown,owner=true)=>fetch(url,{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify(body)}),
     operation:(body:unknown,owner=true)=>fetch(url.replace('/consume','/operation'),{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify(body)}),
     acknowledgement:(body:unknown,owner=true)=>fetch(url.replace('/consume','/acknowledgement'),{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify(body)}),
+    offer:(body:unknown,owner=true)=>fetch(url.replace('/consume','/offer'),{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify(body)}),
+    get:(run:string,owner=true)=>fetch(url.replace('/consume',`/runs/${run}`),{headers:{'x-test-principal':owner?'owner':'device'}}),
     close:()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())),
   };
 }
@@ -221,6 +223,34 @@ test('concurrent exact requests persist intent before transport and stage/start 
   assert.equal(readFileSync(join(f.runPath,'broker.json'),'utf8').includes(f.grant.token), false);
   assert.ok(results.every(result => result.grant_consumed_at));
   assert.equal(JSON.stringify(f.broker.get(f.run)).includes('token_sha256'),false);
+});
+
+test('startup reconciliation resumes durable work once and stops scanning completed runs',async()=>{
+  const f=fixture();f.failStage();await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  assert.equal(f.starts,0);
+  assert.deepEqual(await f.reload().reconcilePending(),{checked:1,unconfirmed:0});
+  assert.equal(f.starts,1);assert.equal(f.stages,1);
+  f.failImport();f.observe({...f.binding,state:'terminal',receipt_json:'{"fixture":"finished"}'});
+  assert.deepEqual(await f.broker.reconcilePending(),{checked:1,unconfirmed:1});
+  assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+  f.recoverImport();assert.deepEqual(await f.reload().reconcilePending(),{checked:1,unconfirmed:0});
+  assert.equal(f.resultReleases,1);assert.equal(f.starts,1);
+  assert.deepEqual(await f.broker.reconcilePending(),{checked:0,unconfirmed:0});
+});
+
+test('prepared-offer HTTP and run observation remain owner-only and never return a start secret',async()=>{
+  const f=fixture();const api=await grantEndpoint(f.broker,()=>({profiles:['gah']}));
+  const request={run_id:f.run,context_sha256:f.binding.context_sha256};
+  try {
+    assert.equal((await api.offer(request,false)).status,403);assert.equal(f.stages,0);
+    assert.equal((await api.offer({...request,path:'/private/other'})).status,400);
+    assert.equal((await api.offer(request)).status,200);assert.equal(f.stages,1);
+    assert.equal((await api.offer(request)).status,200);assert.equal(f.starts,1);
+    assert.equal((await api.get(f.run,false)).status,403);
+    const observed=await api.get(f.run);assert.equal(observed.status,200);
+    const payload=await observed.text();assert.equal(JSON.parse(payload).phase,'running');
+    assert.equal(payload.includes(f.grant.token),false);assert.equal(payload.includes('token_sha256'),false);
+  } finally {await api.close();}
 });
 
 const operation=(f:ReturnType<typeof fixture>,sequence=1,purpose:NativeOperationRequest['purpose']='attempt'):NativeOperationRequest=>({

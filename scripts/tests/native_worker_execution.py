@@ -38,6 +38,7 @@ def text_date(value):
 
 def main():
     binary = str(Path(sys.argv[1]).resolve(strict=True))
+    http_worker = len(sys.argv) > 2
     owner = secrets.token_hex(32)
     calls = []
     grant = None
@@ -104,7 +105,8 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        for case in ('allowed', 'denied', 'publication-denied', 'lost-start-reply', 'running-result', 'lost-stop-reply', 'provider-claims'):
+        cases = ('allowed', 'denied') if http_worker else ('allowed', 'denied', 'publication-denied', 'lost-start-reply', 'running-result', 'lost-stop-reply', 'provider-claims')
+        for case in cases:
             canonical_ack = None
             denied = case == 'denied'
             publication_denied = case == 'publication-denied'
@@ -184,9 +186,21 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                     'work_id': '#fixture', 'run_id': run_id, 'dispatch_reason': 'initial',
                 }}))
                 context, work = root / 'context', root / 'work'
+                if http_worker:
+                    context = root / 'runs' / run_id / 'context'
+                    context.parent.parent.mkdir(mode=0o700)
+                    context.parent.mkdir(mode=0o700)
                 binding = json.loads(run(binary, 'native-handoff', 'prepare', '--request-file', str(request),
                     '--output', str(context), '--node-id', 'native-execution-fixture',
                     '--central-url', origin_url, '--config-path', str(central), env=environment).stdout)
+                expected_binding = context / 'binding.json'
+                binding_file = expected_binding
+
+                def http_call(action):
+                    return subprocess.run([sys.argv[2], str(Path(__file__).with_name('native_worker_http_command.mjs')),
+                        sys.argv[3], binary, str(root), action], env=environment,
+                        input=json.dumps({'binding': binding, 'owner': owner, 'grant': grant}),
+                        capture_output=True, text=True, timeout=20)
                 stdout, stderr = root / 'stdout', root / 'stderr'
                 reserve = [binary, 'native-handoff', 'host-reserve', '--context-dir', str(context),
                            '--expected-context', binding['context_sha256'], '--work-dir', str(work),
@@ -207,10 +221,18 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                 # ControlGroup property after terminal ExitType=cgroup state.
                 group_path = None
                 try:
-                    run('/usr/bin/systemd-run', '--user', '--unit=' + holder, *flags, *stop_flags,
-                        '-p', 'Type=oneshot', '-p', 'RemainAfterExit=yes', '-p', 'FileDescriptorStoreMax=1',
-                        '-p', 'FileDescriptorStorePreserve=yes', '-p', 'NotifyAccess=all', '-p', 'MemoryMax=512M',
-                        '-p', 'StandardOutput=file:' + str(stdout), '-p', 'StandardError=file:' + str(stderr), *reserve)
+                    if http_worker:
+                        staged = http_call('stage')
+                        assert staged.returncode == 0, staged.stderr
+                        assert json.loads(staged.stdout)['state'] == 'ready'
+                        context = root / 'remote' / run_id / 'context'
+                        work = root / 'remote' / run_id / 'work'
+                        binding_file = root / 'remote' / run_id / 'binding.json'
+                    else:
+                        run('/usr/bin/systemd-run', '--user', '--unit=' + holder, *flags, *stop_flags,
+                            '-p', 'Type=oneshot', '-p', 'RemainAfterExit=yes', '-p', 'FileDescriptorStoreMax=1',
+                            '-p', 'FileDescriptorStorePreserve=yes', '-p', 'NotifyAccess=all', '-p', 'MemoryMax=512M',
+                            '-p', 'StandardOutput=file:' + str(stdout), '-p', 'StandardError=file:' + str(stderr), *reserve)
                     journal_path = work / 'worker.json'
                     journal = json.loads(journal_path.read_text())
                     assert journal['phase'] == 'ready'
@@ -221,7 +243,7 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                                '--expected-context', binding['context_sha256'], '--work-dir', str(work),
                                '--config-path', str(worker)]
                     calls.clear()
-                    launched = subprocess.run(start, env=environment, input=json.dumps({'grant': grant, 'service_token': owner}),
+                    launched = http_call('start') if http_worker else subprocess.run(start, env=environment, input=json.dumps({'grant': grant, 'service_token': owner}),
                         stdout=subprocess.DEVNULL if case == 'lost-start-reply' else subprocess.PIPE,
                         stderr=subprocess.PIPE, text=True, timeout=10)
                     if case == 'provider-claims':
@@ -235,10 +257,13 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                     assert launched.returncode == 0, launched.stderr
                     if case != 'lost-start-reply':
                         reply = json.loads(launched.stdout)
-                        assert reply['launch_confirmed'] and reply['execution_authorized'] is False
+                        if http_worker:
+                            assert reply['state'] in ('unknown', 'running', 'terminal')
+                        else:
+                            assert reply['launch_confirmed'] and reply['execution_authorized'] is False
                     stdout, stderr = work / 'job.stdout', work / 'job.stderr'
                     collect = [binary, 'native-handoff', 'result', '--context-dir', str(context),
-                               '--binding-file', str(context / 'binding.json'), '--work-dir', str(work)]
+                               '--binding-file', str(binding_file), '--work-dir', str(work)]
                     if case == 'running-result':
                         deadline = time.monotonic() + 5
                         while not marker.exists():
@@ -299,6 +324,11 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                     recovered = run(*collect, env=environment)
                     assert owner not in recovered.stdout and grant['token'] not in recovered.stdout
                     result = json.loads(recovered.stdout)
+                    if http_worker:
+                        observed = http_call('observe')
+                        assert observed.returncode == 0, observed.stderr
+                        observed = json.loads(observed.stdout)
+                        assert observed['state'] == 'terminal' and observed['receipt_json'] == result['receipt_json']
                     receipt = json.loads(result['receipt_json'])
                     differences = {key: (entry.get(key), receipt['ledger'].get(key))
                         if isinstance(entry.get(key), (int, float)) else 'changed'
@@ -308,10 +338,10 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                     receipt_file = root / 'receipt.json'
                     receipt_file.write_text(result['receipt_json'])
                     release_args = [binary, 'native-handoff', 'release-result', '--context-dir', str(context),
-                        '--binding-file', str(context / 'binding.json'), '--work-dir', str(work), '--config-path', str(worker)]
+                        '--binding-file', str(binding_file), '--work-dir', str(work), '--config-path', str(worker)]
 
                     def release_call(check=True):
-                        response = subprocess.run(release_args, env=environment, input=json.dumps({'service_token': owner}),
+                        response = http_call('release-result') if http_worker else subprocess.run(release_args, env=environment, input=json.dumps({'service_token': owner}),
                             capture_output=True, text=True, timeout=10)
                         assert owner not in response.stdout + response.stderr
                         if check:
@@ -324,7 +354,7 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                     assert not (work / 'release.json').exists() and is_locked(lease)
                     for expected in ('recorded', 'already_recorded'):
                         imported = json.loads(run(binary, 'ledger', 'receive-dispatch', '--binding-file',
-                            str(context / 'binding.json'), '--receipt-file', str(receipt_file),
+                            str(expected_binding), '--receipt-file', str(receipt_file),
                             '--acknowledgement', '--config-path', str(central), env=environment).stdout)
                         assert imported['outcome'] == expected
                         assert imported['receipt_sha256'] == result['receipt_sha256']
@@ -369,7 +399,7 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                     assert (work / 'ledger.jsonl').exists(), 'Working evidence must be retained'
                     assert json.loads(release_call().stdout) == released
                     status = json.loads(run(binary, 'native-handoff', 'worker-status', '--binding-file',
-                        str(context / 'binding.json'), '--work-dir', str(work), env=environment).stdout)
+                        str(binding_file), '--work-dir', str(work), env=environment).stdout)
                     assert status['state'] == 'released' and status['capacity_held'] is False
                     assert status['release']['context_history_cleaned'] is True
                     if case == 'lost-stop-reply':
@@ -390,7 +420,8 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                         'replayRejected': True, 'immutableResultRecovered': True, 'canonicalImportOnce': True,
                         'capacityReleasedAfterAcknowledgement': True, 'contextHistoryCleaned': True,
                         'lostStopReplyRecovered': case == 'lost-stop-reply',
-                        'startReplyDiscarded': case == 'lost-start-reply', 'realModelInvoked': False}), flush=True)
+                        'startReplyDiscarded': case == 'lost-start-reply', 'realModelInvoked': False,
+                        'actualWorkerHttp': http_worker}), flush=True)
                 finally:
                     ctl('stop', job, check=False)
                     try:
