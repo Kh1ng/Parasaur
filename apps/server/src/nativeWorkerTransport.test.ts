@@ -101,6 +101,7 @@ test('catalog is owner-scoped, preserves unknown authentication and refuses extr
     const response=await fetch(`${f.url}/api/native-worker/catalog`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(scope)});
     assert.equal(response.status,403);
     const catalog=await f.transport.catalog(scope);assert.equal(catalog.instances[0].auth_ready,null);
+    assert.deepEqual(await f.transport.catalog(f.binding),catalog);
     assert.equal(f.stages,0);assert.equal(f.starts,0);
     f.corruptCatalog();await assert.rejects(f.transport.catalog(scope),error=>String(error).includes('Invalid worker account metadata') && !String(error).includes('PRIVATE_'));
   }finally{await f.close();}

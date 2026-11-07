@@ -57,7 +57,10 @@ export class NativeWorkerHttpTransport implements NativeWorkerTransport {
     return this.request(binding,'/api/native-worker',{action,binding,...extra},signal);
   }
   async catalog(scope:Pick<NativeDispatchBinding,'node_id'|'profile'|'repo_id'|'repo'>,signal?:AbortSignal):Promise<NativeWorkerCatalog> {
-    const catalog=await this.request(scope,'/api/native-worker/catalog',scope,signal) as NativeWorkerCatalog;
+    // Authority callers hold a complete binding. Pick the wire fields explicitly:
+    // TypeScript's structural Pick does not remove extra runtime properties.
+    const identity={node_id:scope.node_id,profile:scope.profile,repo_id:scope.repo_id,repo:scope.repo};
+    const catalog=await this.request(identity,'/api/native-worker/catalog',identity,signal) as NativeWorkerCatalog;
     const bounded=(value:unknown):value is string=>typeof value==='string' && value.length>0 && value.length<=4096 && !/[\x00-\x1f\x7f]/.test(value);
     const ids=new Set<string>();
     if(!catalog || catalog.protocol!==1 || catalog.node_id!==scope.node_id || catalog.profile!==scope.profile
