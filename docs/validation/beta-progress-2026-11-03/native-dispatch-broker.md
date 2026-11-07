@@ -404,3 +404,12 @@ in `artifacts/central-live-20261105/native-broker-bridge.json`.
 
 The production native worker transport and startup wiring are still absent;
 this driver is not deployed and does not establish a working live factory path.
+
+Matched public `76fd51b1` / private `f0c1a013` verification passes all 1,215
+server cases (38 existing skips), 17 mock cases, production server/shared-web
+builds and release/input/credential/transport guards. Log:
+`/home/khing/.cache/parasaur-enterprise-current.607j1jds/build.log`.
+The actual Rust/owner-HTTP bridge passes again against this compiled assembly,
+including its release-recovery assertions. The Rust/Cargo inputs are unchanged
+from optimized `4ca651d1`; the existing exact binary is reused rather than
+claiming a new Rust build. Neither assembly nor binary is installed live.
