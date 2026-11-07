@@ -67,6 +67,7 @@ async function grantEndpoint(broker: NativeDispatchBroker, worker: (id: string)=
   return {
     post:(body:unknown,owner=true)=>fetch(url,{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify(body)}),
     operation:(body:unknown,owner=true)=>fetch(url.replace('/consume','/operation'),{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify(body)}),
+    acknowledgement:(body:unknown,owner=true)=>fetch(url.replace('/consume','/acknowledgement'),{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify(body)}),
     close:()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())),
   };
 }
@@ -432,4 +433,44 @@ test('registry revocation during a grant check never delivers permission or allo
     registered=true;assert.equal((await endpoint.post(f.grant)).status,409);
     assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
   } finally {await endpoint.close();}
+});
+
+test('release acknowledgement requires exact durable canonical import and survives expiry/restart/pause',async()=>{
+  const f=fixture();await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  const receipt='{"fixture":"terminal"}';
+  const request={run_id:f.run,node_id:f.binding.node_id,context_sha256:f.binding.context_sha256,
+    reservation_id:f.grant.reservation_id,receipt_sha256:hash(receipt)};
+  assert.deepEqual(f.broker.acknowledgeResult(request),{allowed:false,reason:'result_pending'});
+  f.failImport();f.observe({...f.binding,state:'terminal',receipt_json:receipt});
+  assert.equal((await f.broker.reconcile(f.run)).phase,'result_pending');
+  assert.deepEqual(f.broker.acknowledgeResult(request),{allowed:false,reason:'result_pending'});
+  f.recoverImport();assert.equal((await f.reload().reconcile(f.run)).phase,'terminal');
+  const expected=f.broker.acknowledgeResult(request);assert.equal(expected.allowed,true);
+  f.advance();f.authorize(async()=>({allowed:false,reason:'factory_paused'}));
+  assert.deepEqual(f.reload().acknowledgeResult(request),expected);
+  for(const key of ['node_id','context_sha256','reservation_id','receipt_sha256'] as const){
+    assert.deepEqual(f.broker.acknowledgeResult({...request,[key]:key.endsWith('sha256')?'f'.repeat(64):'wrong'}),
+      {allowed:false,reason:'invalid_acknowledgement'});
+  }
+  assert.equal(f.starts,1);assert.equal(f.releases,0);assert.equal(f.imports,2);
+});
+
+test('acknowledgement endpoint is owner-only, strictly scoped and checks current worker membership',async()=>{
+  const f=fixture();await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  const receipt='{"fixture":"terminal"}';
+  const request={run_id:f.run,node_id:f.binding.node_id,context_sha256:f.binding.context_sha256,
+    reservation_id:f.grant.reservation_id,receipt_sha256:hash(receipt)};
+  let registered=true;
+  const endpoint=await grantEndpoint(f.broker,()=>({profiles:registered?['gah']:[]}));
+  try{
+    assert.equal((await endpoint.acknowledgement(request,false)).status,403);
+    assert.equal((await endpoint.acknowledgement({...request,command:'release'})).status,400);
+    assert.equal((await endpoint.acknowledgement(request)).status,409);
+    f.observe({...f.binding,state:'terminal',receipt_json:receipt});await f.broker.reconcile(f.run);
+    const response=await endpoint.acknowledgement(request);assert.equal(response.status,200);
+    const result=await response.json() as {allowed:boolean;acknowledgement:NativeResultAcknowledgement};
+    assert.equal(result.allowed,true);assert.equal(result.acknowledgement.receipt_sha256,hash(receipt));
+    registered=false;assert.equal((await endpoint.acknowledgement(request)).status,403);
+    registered=true;assert.equal((await endpoint.acknowledgement({...request,receipt_sha256:'f'.repeat(64)})).status,409);
+  }finally{await endpoint.close();}
 });

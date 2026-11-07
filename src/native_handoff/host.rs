@@ -7,6 +7,8 @@ use std::{
     collections::BTreeMap, os::fd::AsRawFd, os::unix::process::CommandExt, process::Command,
     time::Duration,
 };
+mod release;
+pub(super) use release::{record_lease, release_capacity, released_capacity};
 
 fn state(unit: &str) -> Result<BTreeMap<String, String>> {
     let mut command = Command::new("/usr/bin/systemctl");
@@ -375,6 +377,7 @@ pub fn reserve(context: &WorkerContext, work: &std::path::Path) -> Result<serde_
     // Set retention before the first possible transfer, including failed or
     // timed-out notifications. Never unlink a possibly manager-owned lease.
     let file = lease.persistent_monitor_file()?;
+    record_lease(context, work, &invocation, &file)?;
     let fd = file.as_raw_fd();
     let mut command = Command::new("/usr/bin/systemd-notify");
     command.args([

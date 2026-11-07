@@ -69,7 +69,7 @@ pub struct DispatchReceipt {
     pub ledger: LedgerEntry,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReceiveOutcome {
     Recorded,
@@ -78,7 +78,8 @@ pub enum ReceiveOutcome {
 
 /// Proof returned only after canonical append/replay has been synchronized.
 /// A coordinator uses this exact run fence to release its remote claim hold.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReceiveAcknowledgement {
     pub outcome: ReceiveOutcome,
     pub run_id: String,

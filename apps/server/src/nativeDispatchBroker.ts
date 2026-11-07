@@ -28,6 +28,11 @@ export type NativeGrantConsumption = (NativeClaimBinding & { allowed: true; rese
 export interface NativeOperationRequest extends NativeClaimBinding {
   reservation_id: string; sequence: number; purpose: 'attempt' | 'publish';
 }
+export interface NativeAcknowledgementRequest extends NativeClaimBinding {
+  reservation_id: string; receipt_sha256: string;
+}
+export type NativeAcknowledgement = { allowed: true; acknowledgement: NativeResultAcknowledgement }
+  | { allowed: false; reason: 'result_pending' | 'invalid_acknowledgement' | 'authority_unavailable' };
 export type NativeOperationAuthorization = (NativeOperationRequest & { allowed: true; authorized_at: string; expires_at: string })
   | { allowed: false; reason: 'invalid_operation' | 'operation_in_progress' | Exclude<NativeAuthorization, {allowed:true}>['reason'] };
 export type NativeWorkerObservation = NativeClaimBinding & (
@@ -147,6 +152,30 @@ export class NativeDispatchBroker {
     return this.serial(runId, () => this.reconcileRun(this.read(runId)));
   }
   get(runId: string): NativeDispatchView { return view(this.read(runId)); }
+
+  /** Replay only the durable canonical acknowledgement, never an execution
+   * permission. A receipt or an expired/absent claim alone cannot release the
+   * worker's physical reservation. Current factory pause does not erase facts. */
+  acknowledgeResult(request: NativeAcknowledgementRequest): NativeAcknowledgement {
+    if (!request || !isNativeRunId(request.run_id) || !digest(request.context_sha256)
+      || !digest(request.receipt_sha256) || typeof request.reservation_id !== 'string') {
+      return { allowed: false, reason: 'invalid_acknowledgement' };
+    }
+    const journal = this.read(request.run_id);
+    if (!same(request, journal.binding) || journal.start_grant?.reservation.id !== request.reservation_id) {
+      return { allowed: false, reason: 'invalid_acknowledgement' };
+    }
+    if (journal.phase !== 'terminal') return { allowed: false, reason: 'result_pending' };
+    const ack = journal.acknowledgement!;
+    if (ack.receipt_sha256 !== request.receipt_sha256) return { allowed: false, reason: 'invalid_acknowledgement' };
+    if (bindingHash(this.prepared(request.run_id, request.context_sha256)) !== journal.binding_sha256) {
+      return { allowed: false, reason: 'authority_unavailable' };
+    }
+    return { allowed: true, acknowledgement: {
+      outcome: ack.outcome, run_id: ack.run_id, node_id: ack.node_id, context_sha256: ack.context_sha256,
+      profile: ack.profile, work_id: ack.work_id, receipt_sha256: ack.receipt_sha256,
+    } };
+  }
 
   /** A worker wrapper exchanges its secret before entering dispatch. This
    * cannot take the offer lock: transport.start may await this very callback.

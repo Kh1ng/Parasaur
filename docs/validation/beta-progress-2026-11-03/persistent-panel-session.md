@@ -64,11 +64,22 @@ A real signed-in GitLab-to-Parasaur acceptance run remains required.
 
 The companion repository's current Omnibus snippet (base blob
 `d4fd79ce9e5d2d1ff44b7147649f67ba1e9045a1`) sets `Cookie` to an empty value.
-That default would discard both the controller session and browser-bound
-pairing-request cookie. The installed GitLab config has not been inspected;
-its management login is not available yet. The central's configured GitLab
+That default discards both the controller session and browser-bound
+pairing-request cookie. Read-only inspection on 2026-11-06 confirmed this exact
+empty-cookie directive in the live `/parasaur/` location and persistent config.
+The central's configured GitLab
 origin is `https://gitlab.coltonspurgin.tech`, and its running Caddy gate uses
 GitLab upstream `192.168.5.150:80`. The gate/API/Hermes services were not changed.
+
+The owner supplied the management route: MacBook `coltonspurgin@100.109.87.86`
+to VM `khing@192.168.5.150`, with passwordless sudo confirmed. GitLab runs in
+Docker container `gitlab` (`gitlab/gitlab-ee:19.5.3-ee.0`). Persistent config is
+`/home/khing/gitlab/config/gitlab.rb`; the rendered block is in
+`/home/khing/gitlab/data/nginx/conf/service_conf/gitlab-rails.conf`. Embedded
+nginx syntax passes before changes, with an existing duplicate-MIME warning.
+No config was changed during inspection. Subsequent SSH signing requires the
+MacBook's encrypted default key passphrase; a secure request is pending after
+its agent became unavailable. Private key material is not copied.
 
 [Cookie forwarding patch](gitlab-cookie-forwarding.patch) selectively forwards
 `gah_device` and `gah_pairing_request`, preserves empty invalid credentials,

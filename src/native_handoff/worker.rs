@@ -4,6 +4,7 @@
 use super::*;
 use fs2::FileExt;
 mod operations;
+mod release;
 mod result;
 pub use operations::{OperationPermission, OperationPurpose, OperationRequest, StartConsumption};
 
@@ -61,6 +62,15 @@ pub struct WorkerRun {
     _lock: File,
     journal: Journal,
     persistence_uncertain: bool,
+}
+
+impl Drop for WorkerRun {
+    fn drop(&mut self) {
+        // Another thread may fork while this descriptor is open. Closing our
+        // copy alone would keep the writer lock until that child reaches exec.
+        // Explicit unlock ends this logical writer even with an inherited copy.
+        let _ = fs2::FileExt::unlock(&self._lock);
+    }
 }
 
 impl WorkerRun {
@@ -336,6 +346,13 @@ impl WorkerRun {
             "unknown"
         }
         .into();
+        if let Some(release) = self.release_observation()? {
+            if release["capacity_released"] == true {
+                value["state"] = "released".into();
+                value["capacity_held"] = false.into();
+            }
+            value["release"] = release;
+        }
         Ok(value)
     }
 }

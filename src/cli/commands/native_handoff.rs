@@ -58,6 +58,17 @@ pub enum Command {
         credential_socket: Option<PathBuf>,
     },
     #[cfg(target_os = "linux")]
+    ReleaseResult {
+        #[arg(long)]
+        context_dir: PathBuf,
+        #[arg(long)]
+        binding_file: PathBuf,
+        #[arg(long)]
+        work_dir: PathBuf,
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+    #[cfg(target_os = "linux")]
     #[command(name = "result")]
     CollectResult {
         #[arg(long)]
@@ -105,6 +116,23 @@ pub enum Command {
 
 pub fn run(args: Args) -> Result<()> {
     match args.command {
+        #[cfg(target_os = "linux")]
+        Command::ReleaseResult {
+            context_dir,
+            binding_file,
+            work_dir,
+            config_path,
+        } => {
+            let token = crate::native_handoff::wrapper::receive_owner()?;
+            let binding = crate::native_handoff::worker::read_binding(&binding_file)?;
+            ensure!(
+                binding.node_id == crate::central_claims::resolve_node_id()?,
+                "Native result belongs to a different worker"
+            );
+            let cfg = crate::config::load(config_path.as_deref())?;
+            let mut run = crate::native_handoff::worker::WorkerRun::open(&work_dir, &binding)?;
+            println!("{}", run.release_result(&context_dir, &cfg, &token)?);
+        }
         #[cfg(target_os = "linux")]
         Command::CollectResult {
             context_dir,

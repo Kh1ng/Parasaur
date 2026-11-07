@@ -1,5 +1,62 @@
 # Native worker host admission
 
+## Acknowledged capacity release
+
+The owner-only central `/api/native-dispatch/acknowledgement` exchange now replays
+the durable canonical acknowledgement for the exact run/node/context, original
+holder and receipt hash. Pending import, a changed scope or receipt, browser
+principals and revoked worker/profile membership are refused. The completed fact
+survives restart and expiry and does not require fresh model permission after a
+factory pause. Only fixed acknowledgement fields are returned.
+
+Private Linux `native-handoff release-result` takes an existing service credential
+on bounded private stdin, checks its configured authority against the original
+manifest, and independently retrieves that acknowledgement. Caller-supplied
+acknowledgements are not accepted. The worker synchronizes Acknowledged and
+StopIntent records before stopping its exact holder. A fresh process can finish
+the same stop after a lost reply; it never starts a job or stops a replacement
+holder. The release journal retains the original scope and receipt identity.
+
+Host admission now records the actual capacity lease path/device/inode before
+descriptor transfer. Release pins that exact inode, verifies the job is empty
+and the holder has no stored descriptors, and obtains the lease's free kernel
+lock before synchronizing Released. The verifier descriptor remains held until
+that barrier completes. The ordinary capacity scanner may subsequently collect
+the free registry entry; a cold retry recognizes that completed state. Existing
+capacity guards and registry permissions are preserved. Privacy comes from the
+owned 0700 user runtime directory; ordinary worker lease files retain their
+existing umask.
+
+Only after acknowledgement and confirmed release are original context history
+chunks removed, with private-file/hash checks and directory synchronization.
+Working ledger and session evidence remain. Cleanup can retry independently;
+result replay still returns the immutable receipt after context chunk removal.
+The compact worker status now reports Released and free capacity only after a
+new non-mutating holder/job/kernel-lease check, rather than leaving completed
+jobs indistinguishable from unknown state.
+
+The real WSL fixture refuses pending import, wrong acknowledgement and changed
+capacity identity without stopping the holder. It then proves canonical import,
+kernel release, context cleanup, repeated release/result/status calls and replay
+refusal. A four-second fixture stop exceeds the fixed three-second reply budget;
+the persisted StopIntent recovers after that same stop completes, with exactly
+one stop invocation. The fixture uses controlled authority/backend/forge, not a
+paid model. Central-to-worker production API wiring remains unfinished and no
+native installed service is changed by this increment.
+
+Worker writer guards now explicitly unlock on drop. This avoids a transient
+false busy result when another thread forks with a copy of the descriptor just
+before the writer finishes. A deterministic duplicated-descriptor check covers
+the failure without changing capacity lease handoff lifetime.
+
+Validation: 49 native library cases, 573 dispatch cases, 76 provider cases,
+three CLI cases, 12 capability cases, formatting and all-target/all-feature
+Clippy pass. Thirty-three broker/owner-HTTP cases and the server typecheck pass.
+Seven actual WSL lifecycle cases pass, including the genuine stop reply timeout,
+changed holder proof, acknowledgement refusal, kernel release and Released status.
+Local metadata is retained at `artifacts/central-live-20261105/native-worker-release.jsonl`.
+The independent host/descendant/crash check remains required for the final candidate.
+
 ## Terminal result recovery
 
 The private Linux `native-handoff result --context-dir ... --binding-file ...

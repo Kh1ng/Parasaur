@@ -19,7 +19,7 @@ import threading
 import time
 import uuid
 
-from native_host_reservation import ctl, empty, properties, run as host_run
+from native_host_reservation import ctl, empty, is_locked, properties, run as host_run
 
 
 def run(*args, **kwargs):
@@ -43,6 +43,7 @@ def main():
     grant = None
     denied = False
     publication_denied = False
+    canonical_ack = None
 
     class Central(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -74,6 +75,14 @@ def main():
                 result = {key: body[key] for key in ('run_id', 'node_id', 'context_sha256', 'reservation_id')}
                 result.update(allowed=True, consumed_at=text_date(now), expires_at=grant['expires_at'])
                 status = 200
+            elif self.path == '/api/native-dispatch/acknowledgement':
+                assert set(body) == {'run_id', 'node_id', 'context_sha256', 'reservation_id', 'receipt_sha256'}
+                assert all(body[key] == grant[key] for key in ('run_id', 'node_id', 'context_sha256', 'reservation_id'))
+                if canonical_ack is None:
+                    result, status = {'allowed': False, 'reason': 'result_pending'}, 409
+                else:
+                    assert body['receipt_sha256'] == canonical_ack['receipt_sha256']
+                    result, status = {'allowed': True, 'acknowledgement': canonical_ack}, 200
             else:
                 assert self.path == '/api/native-dispatch/operation'
                 expected_sequence = 2 if body['purpose'] == 'publish' else 1
@@ -95,7 +104,8 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        for case in ('allowed', 'denied', 'publication-denied', 'lost-start-reply', 'running-result', 'provider-claims'):
+        for case in ('allowed', 'denied', 'publication-denied', 'lost-start-reply', 'running-result', 'lost-stop-reply', 'provider-claims'):
+            canonical_ack = None
             denied = case == 'denied'
             publication_denied = case == 'publication-denied'
             run_id = str(uuid.uuid4())
@@ -184,12 +194,20 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                 flags = []
                 for key in ('GAH_COORDINATOR_IDENTITY_PATH', 'PATH', 'HOME'):
                     flags += ['--setenv=' + key + '=' + environment[key]]
+                stop_count = root / 'stop-count'
+                stop_flags = []
+                if case == 'lost-stop-reply':
+                    stop_script = root / 'slow-stop.py'
+                    stop_script.write_text('from pathlib import Path\nimport time\n' +
+                        f'with Path({str(stop_count)!r}).open("a") as file: file.write("stop\\n")\n' +
+                        'time.sleep(4)\n')
+                    stop_flags = ['-p', 'ExecStop=/usr/bin/python3 ' + str(stop_script)]
                 group = None
                 # Capture the exact delegated path before systemd drops its
                 # ControlGroup property after terminal ExitType=cgroup state.
                 group_path = None
                 try:
-                    run('/usr/bin/systemd-run', '--user', '--unit=' + holder, *flags,
+                    run('/usr/bin/systemd-run', '--user', '--unit=' + holder, *flags, *stop_flags,
                         '-p', 'Type=oneshot', '-p', 'RemainAfterExit=yes', '-p', 'FileDescriptorStoreMax=1',
                         '-p', 'FileDescriptorStorePreserve=yes', '-p', 'NotifyAccess=all', '-p', 'MemoryMax=512M',
                         '-p', 'StandardOutput=file:' + str(stdout), '-p', 'StandardError=file:' + str(stderr), *reserve)
@@ -289,12 +307,31 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                     assert receipt['execution']['termination']['exit_code'] == (1 if denied or publication_denied else 0)
                     receipt_file = root / 'receipt.json'
                     receipt_file.write_text(result['receipt_json'])
+                    release_args = [binary, 'native-handoff', 'release-result', '--context-dir', str(context),
+                        '--binding-file', str(context / 'binding.json'), '--work-dir', str(work), '--config-path', str(worker)]
+
+                    def release_call(check=True):
+                        response = subprocess.run(release_args, env=environment, input=json.dumps({'service_token': owner}),
+                            capture_output=True, text=True, timeout=10)
+                        assert owner not in response.stdout + response.stderr
+                        if check:
+                            assert response.returncode == 0, response.stderr[-2000:]
+                        return response
+
+                    lease = Path(json.loads((work / 'capacity.json').read_text())['path'])
+                    assert is_locked(lease)
+                    assert release_call(False).returncode != 0
+                    assert not (work / 'release.json').exists() and is_locked(lease)
                     for expected in ('recorded', 'already_recorded'):
                         imported = json.loads(run(binary, 'ledger', 'receive-dispatch', '--binding-file',
                             str(context / 'binding.json'), '--receipt-file', str(receipt_file),
                             '--acknowledgement', '--config-path', str(central), env=environment).stdout)
                         assert imported['outcome'] == expected
                         assert imported['receipt_sha256'] == result['receipt_sha256']
+                    canonical_ack = dict(imported, node_id='wrong-worker')
+                    assert release_call(False).returncode != 0
+                    assert not (work / 'release.json').exists() and is_locked(lease)
+                    canonical_ack = imported
                     # A cold recovery replays the committed original, even if
                     # mutable ledger data or unit metadata later disappears.
                     with (work / 'ledger.jsonl').open('a') as ledger:
@@ -309,6 +346,36 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                     assert host_run(*collect, env=environment, check=False).returncode != 0
                     spool_path.write_bytes(original)
                     assert properties(holder)['NFileDescriptorStore'] == '1'
+                    capacity_path = work / 'capacity.json'
+                    capacity_original = capacity_path.read_bytes()
+                    wrong_capacity = json.loads(capacity_original)
+                    wrong_capacity['holder_invocation'] = 'f' * 32
+                    capacity_path.write_text(json.dumps(wrong_capacity))
+                    assert release_call(False).returncode != 0 and is_locked(lease)
+                    assert not stop_count.exists(), 'A mismatched holder must never be stopped'
+                    capacity_path.write_bytes(capacity_original)
+                    if case == 'lost-stop-reply':
+                        interrupted = release_call(False)
+                        assert interrupted.returncode != 0, 'Expected the fixed stop reply deadline'
+                        assert json.loads((work / 'release.json').read_text())['phase'] == 'stop_intent'
+                        deadline = time.monotonic() + 8
+                        while properties(holder).get('NFileDescriptorStore') != '0':
+                            assert time.monotonic() < deadline, 'Original holder stop did not finish'
+                            time.sleep(.05)
+                    released = json.loads(release_call().stdout)
+                    assert released['capacity_released'] and released['context_history_cleaned']
+                    assert not lease.exists() or not is_locked(lease)
+                    assert not list(context.glob('history-*.jsonl'))
+                    assert (work / 'ledger.jsonl').exists(), 'Working evidence must be retained'
+                    assert json.loads(release_call().stdout) == released
+                    status = json.loads(run(binary, 'native-handoff', 'worker-status', '--binding-file',
+                        str(context / 'binding.json'), '--work-dir', str(work), env=environment).stdout)
+                    assert status['state'] == 'released' and status['capacity_held'] is False
+                    assert status['release']['context_history_cleaned'] is True
+                    if case == 'lost-stop-reply':
+                        assert stop_count.read_text().splitlines() == ['stop']
+                    assert json.loads(run(*collect, env=environment).stdout) == result
+                    expected_calls = list(calls)
                     # Cold start/execute processes cannot offer/consume again,
                     # including when the original launch response was discarded.
                     for action in ('start', 'execute'):
@@ -316,11 +383,13 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                         replay_args[2] = action
                         replay = subprocess.run(replay_args, env=environment, input=json.dumps({
                             'grant': grant, 'service_token': owner}), capture_output=True, text=True, timeout=10)
-                        assert replay.returncode != 0 and len(calls) == len(expected_calls)
+                        assert replay.returncode != 0 and calls == expected_calls
                     print(json.dumps({'case': case, 'actualStartConsumption': True,
                         'actualProcessScope': True, 'backendFixtureInvoked': marker.exists(),
                         'operation': journal['operation']['phase'], 'capacityRetainedAfterExit': True,
                         'replayRejected': True, 'immutableResultRecovered': True, 'canonicalImportOnce': True,
+                        'capacityReleasedAfterAcknowledgement': True, 'contextHistoryCleaned': True,
+                        'lostStopReplyRecovered': case == 'lost-stop-reply',
                         'startReplyDiscarded': case == 'lost-start-reply', 'realModelInvoked': False}), flush=True)
                 finally:
                     ctl('stop', job, check=False)

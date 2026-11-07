@@ -21,6 +21,8 @@ fn native_context_and_current_policy_paths_remain_private() {
         "start",
         #[cfg(target_os = "linux")]
         "result",
+        #[cfg(target_os = "linux")]
+        "release-result",
     ] {
         let id = format!("native-handoff.{name}");
         let operation = &manifest.operations[&id];

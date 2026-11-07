@@ -78,7 +78,7 @@ fn date(value: &str) -> Result<OffsetDateTime> {
     OffsetDateTime::parse(value, &Rfc3339).context("Invalid native permission timestamp")
 }
 
-fn response_body(response: crate::curl_http::CurlResponse) -> Result<Vec<u8>> {
+pub(super) fn response_body(response: crate::curl_http::CurlResponse) -> Result<Vec<u8>> {
     if response.status == 200 {
         return Ok(response.body);
     }
@@ -92,6 +92,8 @@ fn response_body(response: crate::curl_http::CurlResponse) -> Result<Vec<u8>> {
             | "controller_changed"
             | "claim_lost"
             | "authority_busy"
+            | "result_pending"
+            | "invalid_acknowledgement"
             | "invalid_operation"
             | "operation_in_progress"
             | "worker_membership_unavailable"

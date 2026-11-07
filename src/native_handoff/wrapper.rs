@@ -14,6 +14,10 @@ use std::{
 
 const MAX_INPUT: usize = 16 * 1024;
 
+fn valid_owner(token: &str) -> bool {
+    !token.is_empty() && token.len() <= 4096 && !token.chars().any(char::is_control)
+}
+
 // Never derive Debug/Serialize: this envelope is not an artifact or diagnostic.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,9 +34,7 @@ fn parse_input(bytes: &[u8]) -> Result<Credentials> {
     let input: Credentials = serde_json::from_slice(bytes)
         .map_err(|_| anyhow::anyhow!("Native credential input is invalid"))?;
     ensure!(
-        !input.service_token.is_empty()
-            && input.service_token.len() <= 4096
-            && !input.service_token.chars().any(char::is_control)
+        valid_owner(&input.service_token)
             && input.grant.token.len() == 64
             && input.grant.token.bytes().all(|b| b.is_ascii_hexdigit()),
         "Native credential input is invalid"
@@ -40,7 +42,7 @@ fn parse_input(bytes: &[u8]) -> Result<Credentials> {
     Ok(input)
 }
 
-fn read_input(file: &mut File) -> Result<Credentials> {
+fn read_bytes(file: &mut File) -> Result<Vec<u8>> {
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut bytes = Vec::new();
     loop {
@@ -72,7 +74,11 @@ fn read_input(file: &mut File) -> Result<Credentials> {
             "Native credential input exceeds its limit"
         );
     }
-    parse_input(&bytes)
+    Ok(bytes)
+}
+
+fn read_input(file: &mut File) -> Result<Credentials> {
+    parse_input(&read_bytes(file)?)
 }
 
 fn protect_memory() -> Result<()> {
@@ -91,6 +97,25 @@ fn protect_memory() -> Result<()> {
 }
 
 pub(super) fn receive_input() -> Result<Credentials> {
+    parse_input(&receive_bytes()?)
+}
+
+pub(crate) fn receive_owner() -> Result<String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Owner {
+        service_token: String,
+    }
+    let input: Owner = serde_json::from_slice(&receive_bytes()?)
+        .map_err(|_| anyhow::anyhow!("Native service credential input is invalid"))?;
+    ensure!(
+        valid_owner(&input.service_token),
+        "Native service credential input is invalid"
+    );
+    Ok(input.service_token)
+}
+
+pub(super) fn receive_bytes() -> Result<Vec<u8>> {
     ensure!(
         !std::io::stdin().is_terminal(),
         "Native credentials require private noninteractive stdin"
@@ -99,7 +124,7 @@ pub(super) fn receive_input() -> Result<Credentials> {
     let fd = unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_DUPFD_CLOEXEC, 3) };
     ensure!(fd >= 0, "Native credential stdin is unavailable");
     let mut file = unsafe { File::from_raw_fd(fd) };
-    let result = read_input(&mut file);
+    let result = read_bytes(&mut file);
     drop(file);
     // A seekable stdin (e.g. a sealed memfd) must not be inherited by curl,
     // git, or a backend which could rewind and read the credential envelope.

@@ -44,6 +44,20 @@ pub(super) fn grant(binding: &DispatchBinding) -> StartGrant {
 }
 
 #[test]
+fn writer_drop_releases_the_lock_even_with_an_inherited_descriptor_copy() {
+    let directory = directory();
+    let binding = binding();
+    let run = WorkerRun::reserve(directory.path(), &binding, &"a".repeat(32)).unwrap();
+    let inherited = run._lock.try_clone().unwrap();
+    drop(run);
+    let resumed = WorkerRun::open(directory.path(), &binding).unwrap();
+    drop(inherited);
+    assert!(WorkerRun::open(directory.path(), &binding).is_err());
+    drop(resumed);
+    assert!(WorkerRun::open(directory.path(), &binding).is_ok());
+}
+
+#[test]
 fn lost_start_reply_is_never_reoffered_after_reopening() {
     let directory = directory();
     let binding = binding();

@@ -1,5 +1,15 @@
 # Beta finishing pass: local validation
 
+Latest native release: the worker verifies central's durable exact-receipt
+acknowledgement, persists stop intent and proves its recorded kernel lease is
+free before confirming release. Original context history chunks are then cleaned;
+working ledger/session evidence remains. Cold retry recovers a real stop reply
+timeout without issuing another stop. Compact status distinguishes confirmed
+Released from unknown. Browser/mismatched/pending acknowledgements cannot release
+capacity. Seven WSL process cases cover the lifecycle with controlled authority/
+backend/forge; production central API wiring remains unfinished. See
+[acknowledged capacity release](native-worker-host-admission.md#acknowledged-capacity-release).
+
 Latest terminal recovery: private `native-handoff result` verifies the recorded
 job's actual exit and empty cgroup, streams past the exact original history and
 spools one immutable actual ledger receipt. The original row is retained without
