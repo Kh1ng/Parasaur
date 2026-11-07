@@ -145,6 +145,10 @@ pub(super) fn apply_holds(
         let bytes = request(cfg, "holds", &serde_json::json!({"profile":profile}))?;
         let holds: Vec<crate::central_claims::NativeHeldWork> = serde_json::from_slice(&bytes)
             .map_err(|_| anyhow::anyhow!("Native ownership observation invalid"))?;
+        project_native_holds(profile, None, &holds, None)?;
+        if cfg.defaults.factory_enabled != Some(false) {
+            resume_dormant(cfg, profile, &holds)?;
+        }
         project_native_holds(profile, Some(snapshot), &holds, None)
     }
     #[cfg(not(target_os = "linux"))]
@@ -152,6 +156,67 @@ pub(super) fn apply_holds(
         let _ = (profile, snapshot);
         anyhow::bail!("Central native scheduling requires Linux/WSL")
     }
+}
+
+#[cfg(target_os = "linux")]
+fn resume_dormant(
+    cfg: &GahConfig,
+    profile: &str,
+    holds: &[crate::central_claims::NativeHeldWork],
+) -> Result<()> {
+    if holds.is_empty() {
+        return Ok(());
+    }
+    let bytes = request(
+        cfg,
+        "pending-activation",
+        &serde_json::json!({"profile":profile}),
+    )?;
+    let pending: Vec<RunView> = serde_json::from_slice(&bytes)
+        .map_err(|_| anyhow::anyhow!("Native dormant reservation observation invalid"))?;
+    let configured = crate::config::get_profile(cfg, profile)?;
+    let mut ids = std::collections::HashSet::new();
+    ensure!(
+        pending.len() <= holds.len()
+            && pending.iter().all(|view| {
+                let binding = &view.binding;
+                view.activated == Some(false)
+                    && view.phase == "reserved"
+                    && binding.profile == profile
+                    && binding.repo_id == configured.repo_id
+                    && binding.repo == configured.repo
+                    && ids.insert(binding.run_id.clone())
+                    && holds.iter().any(|hold| {
+                        hold.run_id == binding.run_id
+                            && hold.node_id == binding.node_id
+                            && hold.context_sha256 == binding.context_sha256
+                            && crate::work_claim::normalize_work_identity(&hold.work_id)
+                                == crate::work_claim::normalize_work_identity(&binding.work_id)
+                    })
+            }),
+        "Dormant reservation does not match canonical ownership"
+    );
+    let scope = crate::work_claim::canonical_claim_scope(profile, &configured.repo_id);
+    for view in pending {
+        // A live local owner may still be receiving its reservation reply.
+        // Never release another dispatch's claim to make recovery progress.
+        if crate::work_claim::get_claimed_work_ids(&scope)?
+            .iter()
+            .any(|work| *work == crate::work_claim::normalize_work_identity(&view.binding.work_id))
+        {
+            continue;
+        }
+        // The API rechecks canonical ownership and fresh work/route authority.
+        // An uncertain reply remains the same run; the next cycle observes it.
+        let _ = request(
+            cfg,
+            "offer",
+            &serde_json::json!({
+                "run_id":view.binding.run_id,"context_sha256":view.binding.context_sha256
+            }),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(unix)]

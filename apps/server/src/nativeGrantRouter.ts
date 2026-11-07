@@ -28,6 +28,12 @@ export function nativeGrantRouter(deps: {
     catch {res.status(503).json({error:'Native ownership unavailable'});}
   };
   router.get('/holds',holds);router.post('/holds',holds);
+  router.post('/pending-activation',(req,res)=>{
+    const profile=req.body?.profile;
+    if(typeof profile!=='string' || !profile || profile.length>128 || Object.keys(req.body).length!==1) return void res.sendStatus(400);
+    try {res.set('Cache-Control','no-store').json(deps.broker.pendingActivation(profile));}
+    catch {res.status(503).json({error:'Native dormant reservations unavailable'});}
+  });
   router.get('/preparation',(req,res)=>{
     if(!deps.producer || typeof req.query.profile!=='string' || typeof req.query.work_id!=='string'
       || req.query.profile.length>128 || req.query.work_id.length>4096) return void res.sendStatus(400);

@@ -5,7 +5,7 @@ import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdi
 import { dirname, join, resolve } from 'node:path';
 import { opendir } from 'node:fs/promises';
 import type { NativeClaimBinding, NativeResultAcknowledgement, NativeReservationRelease,NativeHeldWork } from '@git-agent-harness/contracts';
-import type { ClaimsService } from './claimsService.js';
+import { canonicalWorkId,type ClaimsService } from './claimsService.js';
 import { writeFileAtomic } from './atomicFile.js';
 
 export interface NativeDispatchBinding extends NativeClaimBinding {
@@ -190,6 +190,18 @@ export class NativeDispatchBroker {
     return this.serial(runId, () => this.reconcileRun(this.read(runId)));
   }
   get(runId: string): NativeDispatchView { return view(this.read(runId)); }
+
+  /** Controller recovery observes only dormant runs still backed by canonical
+   * ownership. Observation itself never stages or activates a reservation. */
+  pendingActivation(profile:string):NativeDispatchView[] {
+    return this.heldWork(profile).map(hold=>{
+      const current=this.get(hold.run_id);
+      if(current.binding.profile!==profile || current.binding.node_id!==hold.node_id
+        || current.binding.context_sha256!==hold.context_sha256
+        || canonicalWorkId(current.binding.work_id)!==canonicalWorkId(hold.work_id)) throw Error('Native reservation ownership changed');
+      return current;
+    }).filter(current=>current.activated===false && current.phase==='reserved');
+  }
 
   heldWork(profile:string):NativeHeldWork[] {
     const leases=this.deps.claims.getLeases().filter(lease=>lease.profile===profile && lease.native_handoff);

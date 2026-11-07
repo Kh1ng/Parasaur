@@ -155,3 +155,75 @@ fn ownership_transfer_and_lost_replies_keep_the_original_run() {
         crate::work_claim::release_owned_work(&scope, "#71").unwrap();
     }
 }
+
+#[test]
+fn dormant_recovery_waits_for_local_owners_and_refuses_unbound_or_paused_work() {
+    let _exec = crate::test_support::ExecGuard::new();
+    let _token = Token(std::env::var_os("COORDINATOR_TOKEN"));
+    std::env::set_var("COORDINATOR_TOKEN", "native-fixture");
+    let (directory, mut cfg) = crate::ledger::test_util::test_config();
+    let _claims =
+        crate::test_support::ClaimStateEnvGuard::set(directory.path().join("claims.json"));
+    let profile = crate::ledger::test_util::profile();
+    let scope = crate::work_claim::canonical_claim_scope("real", &profile.repo_id);
+    cfg.profiles.insert("real".into(), profile);
+    cfg.defaults.node_role = crate::node_role::NodeRole::Central;
+    for case in 0..4 {
+        cfg.defaults.factory_enabled = Some(case != 3);
+        let hold = super::hold("#71");
+        if case == 0 {
+            assert!(crate::work_claim::try_claim_work(&scope, "#71").unwrap());
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        cfg.defaults.registry_central_url =
+            Some(format!("http://{}", listener.local_addr().unwrap()));
+        let pending = serde_json::json!({"binding":{
+            "run_id":hold.run_id, "context_sha256":hold.context_sha256,
+            "node_id":if case == 2 { "other-worker" } else { "worker" },
+            "profile":"real", "repo_id":cfg.profiles["real"].repo_id,
+            "repo":cfg.profiles["real"].repo, "work_id":"TICKET-071", "mode":"fix",
+            "branch":null, "review_generation":null, "dispatch_reason":"initial",
+            "backend":"codex", "backend_instance":"work", "model":"fixture"
+        },"phase":"reserved","activated":false});
+        let server = std::thread::spawn({
+            let hold = hold.clone();
+            move || {
+                let (stream, path, body) = receive(&listener);
+                assert_eq!(body, serde_json::json!({"profile":"real"}));
+                if case == 3 {
+                    assert!(path.starts_with("POST /api/native-dispatch/holds "));
+                    respond(stream, &serde_json::json!([hold]));
+                    return;
+                }
+                assert!(path.starts_with("POST /api/native-dispatch/pending-activation "));
+                respond(stream, &serde_json::json!([pending]));
+                if case != 1 {
+                    return;
+                }
+                let (stream, path, body) = receive(&listener);
+                assert!(path.starts_with("POST /api/native-dispatch/offer "));
+                assert_eq!(
+                    body,
+                    serde_json::json!({"run_id":hold.run_id,"context_sha256":hold.context_sha256})
+                );
+                respond(stream, &serde_json::json!({}));
+            }
+        });
+        let result = if case == 3 {
+            apply_holds(
+                &cfg,
+                "real",
+                &mut super::super::super::tests::empty_snapshot(),
+            )
+        } else {
+            resume_dormant(&cfg, "real", &[hold])
+        };
+        server.join().unwrap();
+        assert_eq!(result.is_err(), case == 2);
+        if case == 0 {
+            assert!(crate::work_claim::is_claimed(&scope, "#71").unwrap());
+            crate::work_claim::release_owned_work(&scope, "#71").unwrap();
+        }
+    }
+}

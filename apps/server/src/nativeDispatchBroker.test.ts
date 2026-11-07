@@ -89,6 +89,7 @@ async function grantEndpoint(broker: NativeDispatchBroker, worker: (id: string)=
     offer:(body:unknown,owner=true)=>fetch(url.replace('/consume','/offer'),{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify(body)}),
     get:(run:string,owner=true)=>fetch(url.replace('/consume',`/runs/${run}`),{headers:{'x-test-principal':owner?'owner':'device'}}),
     holds:(profile:string,owner=true)=>fetch(url.replace('/consume','/holds'),{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify({profile})}),
+    pending:(body:unknown,owner=true)=>fetch(url.replace('/consume','/pending-activation'),{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify(body)}),
     close:()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())),
   };
 }
@@ -244,9 +245,12 @@ test('controller reservation remains dormant across reload until a separate acti
   assert.equal(held.phase,'reserved');assert.equal(held.activated,false);assert.equal(f.stages,0);assert.equal(f.starts,0);
   assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
   assert.deepEqual(await f.reload().reconcilePending(),{checked:1,unconfirmed:1});assert.equal(f.stages,0);
+  assert.deepEqual(f.broker.pendingActivation('gah'),[f.broker.get(f.run)]);
+  assert.deepEqual(f.broker.pendingActivation('other'),[]);
   assert.equal((await f.broker.reservePrepared(f.run,f.binding.context_sha256)).activated,false);
   assert.equal((await f.broker.offerPrepared(f.run,f.binding.context_sha256)).phase,'running');
   assert.equal(f.stages,1);assert.equal(f.starts,1);
+  assert.deepEqual(f.broker.pendingActivation('gah'),[]);
 });
 
 test('native ownership observation is owner-only and uses canonical held work identities',async()=>{
@@ -257,6 +261,10 @@ test('native ownership observation is owner-only and uses canonical held work id
     const held=await api.holds('gah');assert.equal(held.status,200);
     assert.deepEqual(await held.json(),[{profile:'gah',work_id:'#1525',run_id:f.run,node_id:'worker',context_sha256:f.binding.context_sha256,reserves_intake:false}]);
     assert.deepEqual(await (await api.holds('other')).json(),[]);
+    assert.equal((await api.pending({profile:'gah'},false)).status,403);
+    assert.equal((await api.pending({profile:'gah',activate:true})).status,400);
+    assert.deepEqual(await (await api.pending({profile:'other'})).json(),[]);
+    assert.deepEqual(await (await api.pending({profile:'gah'})).json(),[f.broker.get(f.run)]);
     assert.equal(f.stages,0);
   }finally{await api.close();}
 });
