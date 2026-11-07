@@ -11,7 +11,7 @@ import type { AddressInfo } from 'node:net';
 import { nativeGrantRouter } from './nativeGrantRouter.js';
 import type { NativeResultAcknowledgement } from '@git-agent-harness/contracts';
 import { ClaimsService, ClaimConflictError } from './claimsService.js';
-import { NativeDispatchBroker, type NativeAuthorization, type NativeDispatchBinding, type NativeHostReservation, type NativeWorkerObservation, type NativeStartGrant, type NativeOperationRequest } from './nativeDispatchBroker.js';
+import { NativeDispatchBroker, type NativeAuthorization, type NativeDispatchBinding, type NativeHostReservation, type NativeWorkerObservation, type NativeStartGrant, type NativeOperationRequest, type NativeWorkerRelease } from './nativeDispatchBroker.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 function fixture() {
@@ -27,12 +27,13 @@ function fixture() {
   const binding: NativeDispatchBinding = { run_id: run, node_id: 'worker', context_sha256: hash(manifest), profile: 'gah', repo_id: 'fixture', repo: 'fixture/repo', work_id: '#1525', mode: 'fix', backend: 'opencode', model: 'fixture-model', backend_instance: null, branch: null, review_generation: null, dispatch_reason: null };
   writeFileSync(join(context, 'binding.json'), JSON.stringify(binding), { mode: 0o600 });
   const claimsPath = join(root, 'claims.json'); let claims = new ClaimsService(claimsPath, () => now);
-  let stages = 0; let starts = 0; let releases = 0; let imports = 0;
+  let stages = 0; let starts = 0; let releases = 0; let imports = 0; let resultReleases = 0;
   const reservation = (): NativeHostReservation => ({ ...binding, id: 'reservation', expires_at: new Date(now + 20_000).toISOString() });
   let observation: NativeWorkerObservation = { ...binding, state: 'ready', reservation: reservation() };
   let authorize: () => Promise<NativeAuthorization> = async () => ({ allowed: true });
   let grant: NativeStartGrant | undefined; let consume = true;
   let stageFails = false; let startFails = false; let importFails = false; let observeFails = false; let stageHangs = false; let timeout=5000;
+  let release: ((result: NativeWorkerRelease)=>Promise<NativeWorkerRelease>) = async result=>result;
   const ack: NativeResultAcknowledgement = { ...binding, profile: 'gah', work_id: '#1525', receipt_sha256: 'b'.repeat(64), outcome: 'recorded' };
   const deps = () => ({ root, centralUrl: 'https://central.invalid', coordinatorNodeId: 'central', claims, now: () => now, observationTimeoutMs:timeout,
     authorizeStart: () => authorize(),
@@ -42,12 +43,21 @@ function fixture() {
       async start(_binding: NativeDispatchBinding, offered: NativeStartGrant) { starts++; grant = offered; assert.equal(JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8')).start_offered,true); if (startFails) throw Error('PRIVATE_START_TOKEN'); if (consume && !(await broker.consumeStartGrant(offered)).allowed) throw Error('Start authority refused'); observation = { ...binding,state: 'running' }; return observation; },
       async observe() { if (observeFails) throw Error('PRIVATE_OBSERVATION_TOKEN'); return observation; },
       async releaseReservation() { releases++; },
+      async releaseResult() {
+        resultReleases++;
+        const journal=JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8'));
+        assert.equal(journal.phase,'terminal'); assert.ok(journal.acknowledgement);
+        assert.ok(journal.worker_release); assert.equal(claims.getLease('gah','#1525'),undefined);
+        return release({...binding,reservation_id:'reservation',receipt_sha256:journal.acknowledgement.receipt_sha256,
+          capacity_released:true,context_history_cleaned:true});
+      },
     },
     async recordCanonicalResult({ receiptFile }: { receiptFile: string }) { imports++; if (importFails) throw Error('PRIVATE_IMPORT_TOKEN'); return { ...ack, receipt_sha256: hash(readFileSync(receiptFile,'utf8')), outcome: imports > 1 ? 'already_recorded' as const : 'recorded' as const }; },
   });
   let broker: NativeDispatchBroker = new NativeDispatchBroker(deps());
   return { root, run, runPath, context, binding, ack, request,
-    get broker() { return broker; }, get claims() { return claims; }, get stages() { return stages; }, get starts() { return starts; }, get imports() { return imports; }, get releases() { return releases; },
+    get broker() { return broker; }, get claims() { return claims; }, get stages() { return stages; }, get starts() { return starts; }, get imports() { return imports; }, get releases() { return releases; }, get resultReleases() { return resultReleases; },
+    release(value:typeof release) {release=value;},
     get grant() { assert.ok(grant); return structuredClone(grant); }, skipConsumption() { consume = false; },
     observe(value: NativeWorkerObservation) { observation = value; },
     failStage() { stageFails = true; }, failStart() { startFails = true; }, failImport() { importFails = true; }, recoverImport() { importFails = false; }, failObserve() { observeFails = true; },
@@ -71,6 +81,128 @@ async function grantEndpoint(broker: NativeDispatchBroker, worker: (id: string)=
     close:()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())),
   };
 }
+
+test('canonical import drives one physical release, independently of current execution permission', async () => {
+  const f=fixture(); await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  f.authorize(async()=>{throw Error('Terminal release must not request execution permission');});
+  f.observe({...f.binding,state:'terminal',receipt_json:'{"fixture":"finished"}'});
+  const done=await f.broker.reconcile(f.run);
+  assert.equal(done.phase,'terminal');
+  assert.deepEqual(done.worker_release,{phase:'released',context_history_cleaned:true});
+  const reloaded=f.reload();
+  await Promise.all(Array.from({length:6},()=>reloaded.reconcile(f.run)));
+  assert.equal(f.resultReleases,1); assert.equal(f.imports,1); assert.equal(f.starts,1);
+});
+
+test('lost release replies persist pending capacity and retry the same run after restart', async () => {
+  const f=fixture(); f.shortDeadline(); await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  f.release(async()=>new Promise<NativeWorkerRelease>(()=>undefined));
+  f.observe({...f.binding,state:'terminal',receipt_json:'{"fixture":"finished"}'});
+  const pending=await f.broker.reconcile(f.run);
+  assert.equal(pending.phase,'terminal'); assert.equal(pending.acknowledgement?.outcome,'recorded');
+  assert.deepEqual(pending.worker_release,{phase:'pending',context_history_cleaned:false,reason:'worker_release_unconfirmed'});
+  assert.equal(f.claims.getLease('gah','#1525'),undefined);
+  f.advance(); f.failObserve(); f.release(async result=>result);
+  const done=await f.reload().reconcile(f.run);
+  assert.deepEqual(done.worker_release,{phase:'released',context_history_cleaned:true});
+  assert.equal(f.resultReleases,2); assert.equal(f.imports,1); assert.equal(f.starts,1); assert.equal(f.stages,1);
+  assert.equal(JSON.stringify(done).includes('PRIVATE_'),false);
+});
+
+test('wrong release identity, receipt, reservation or proof never reports released capacity', async () => {
+  for (const changes of [
+    {run_id:randomUUID()},{node_id:'other'},{context_sha256:'f'.repeat(64)},
+    {reservation_id:'replacement'},{receipt_sha256:'f'.repeat(64)},
+    {capacity_released:undefined},{context_history_cleaned:undefined},
+    {capacity_released:false,context_history_cleaned:true},
+  ]) {
+    const f=fixture(); await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+    f.release(async result=>({...result,...changes}) as NativeWorkerRelease);
+    f.observe({...f.binding,state:'terminal',receipt_json:'{"fixture":"finished"}'});
+    const done=await f.broker.reconcile(f.run);
+    assert.equal(done.phase,'terminal'); assert.equal(done.worker_release?.phase,'pending');
+    assert.equal(done.worker_release?.reason,'worker_release_mismatch');
+    f.release(async result=>result);
+    assert.equal((await f.reload().reconcile(f.run)).worker_release?.phase,'released');
+    assert.equal(f.imports,1); assert.equal(f.starts,1);
+  }
+});
+
+test('worker cleanup retries retain confirmed release and stay separate from central cleanup', async t => {
+  const f=fixture(); await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  const unlink=fs.unlinkSync;
+  t.mock.method(fs,'unlinkSync',(path:fs.PathLike)=>{
+    if(String(path)===join(f.context,'history-0000.jsonl')) throw Error('Fixture central cleanup failure');
+    return unlink(path);
+  });
+  syncBuiltinESMExports();
+  f.release(async result=>({...result,context_history_cleaned:false}));
+  f.observe({...f.binding,state:'terminal',receipt_json:'{"fixture":"finished"}'});
+  try {
+    const done=await f.broker.reconcile(f.run);
+    assert.equal(done.reason,'history_cleanup_pending');
+    assert.deepEqual(done.worker_release,{phase:'released',context_history_cleaned:false,reason:'worker_history_cleanup_pending'});
+  } finally {t.mock.restoreAll();syncBuiltinESMExports();}
+  f.release(async()=>{throw Error('PRIVATE_RELEASE_CREDENTIAL');});
+  const deferred=await f.reload().reconcile(f.run);
+  assert.equal(deferred.reason,undefined); assert.equal(deferred.worker_release?.phase,'released');
+  assert.equal(deferred.worker_release?.context_history_cleaned,false);
+  f.release(async result=>result);
+  assert.deepEqual((await f.broker.reconcile(f.run)).worker_release,{phase:'released',context_history_cleaned:true});
+  assert.equal(f.resultReleases,3); assert.equal(f.imports,1); assert.equal(f.starts,1);
+});
+
+test('unconfirmed release intent persistence prevents the worker side effect', async t => {
+  const f=fixture(); await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  f.observe({...f.binding,state:'terminal',receipt_json:'{"fixture":"finished"}'});
+  const rename=fs.renameSync;
+  t.mock.method(fs,'renameSync',(source:fs.PathLike,destination:fs.PathLike)=>{
+    rename(source,destination);
+    if(String(destination)===join(f.runPath,'broker.json') && JSON.parse(readFileSync(destination,'utf8')).worker_release) {
+      throw Error('Fixture release-intent sync failure');
+    }
+  });
+  syncBuiltinESMExports();
+  try {await assert.rejects(f.broker.reconcile(f.run),/persistence is uncertain/);}
+  finally {t.mock.restoreAll();syncBuiltinESMExports();}
+  assert.equal(f.resultReleases,0); assert.equal(f.imports,1);
+  assert.equal((await f.reload().reconcile(f.run)).worker_release?.phase,'released');
+  assert.equal(f.resultReleases,1); assert.equal(f.imports,1); assert.equal(f.starts,1);
+});
+
+test('failed import and an observed-but-held worker cannot report released capacity', async () => {
+  const f=fixture(); await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  f.failImport(); f.observe({...f.binding,state:'terminal',receipt_json:'{"fixture":"finished"}'});
+  assert.equal((await f.broker.reconcile(f.run)).phase,'result_pending'); assert.equal(f.resultReleases,0);
+  f.recoverImport(); f.release(async result=>({...result,capacity_released:false,context_history_cleaned:false}));
+  assert.equal((await f.broker.reconcile(f.run)).worker_release?.phase,'pending');
+  f.release(async result=>result);
+  assert.equal((await f.reload().reconcile(f.run)).worker_release?.phase,'released');
+  assert.equal(f.resultReleases,2); assert.equal(f.imports,2); assert.equal(f.starts,1);
+  const unstarted=fixture();
+  unstarted.observe({...unstarted.binding,state:'terminal',receipt_json:'{"preflight":"failed"}'});
+  const done=await unstarted.broker.offerPrepared(unstarted.run,unstarted.binding.context_sha256);
+  assert.deepEqual(done.worker_release,{phase:'pending',context_history_cleaned:false,reason:'reservation_unavailable'});
+  assert.equal(unstarted.resultReleases,0); assert.equal(unstarted.starts,0);
+});
+
+test('uncertain final release persistence recovers its saved proof without repeating import or release', async t => {
+  const f=fixture(); await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  f.observe({...f.binding,state:'terminal',receipt_json:'{"fixture":"finished"}'});
+  const rename=fs.renameSync;
+  t.mock.method(fs,'renameSync',(source:fs.PathLike,destination:fs.PathLike)=>{
+    rename(source,destination);
+    if(String(destination)===join(f.runPath,'broker.json') && JSON.parse(readFileSync(destination,'utf8')).worker_release?.phase==='released') {
+      throw Error('Fixture release-proof sync failure');
+    }
+  });
+  syncBuiltinESMExports();
+  try {await assert.rejects(f.broker.reconcile(f.run),/persistence is uncertain/);}
+  finally {t.mock.restoreAll();syncBuiltinESMExports();}
+  assert.equal(f.resultReleases,1);
+  assert.equal((await f.reload().reconcile(f.run)).worker_release?.phase,'released');
+  assert.equal(f.resultReleases,1); assert.equal(f.imports,1); assert.equal(f.starts,1);
+});
 
 test('concurrent exact requests persist intent before transport and stage/start once', async () => {
   const f = fixture();

@@ -39,11 +39,22 @@ export type NativeWorkerObservation = NativeClaimBinding & (
   { state: 'waiting_capacity' } | { state: 'ready'; reservation: NativeHostReservation }
   | { state: 'running' } | { state: 'unknown' } | { state: 'terminal'; receipt_json: string }
 );
+/** The worker verifies central's acknowledgement itself and proves physical
+ * release. A delivered request or a terminal process is not that proof. */
+export interface NativeWorkerRelease extends NativeClaimBinding {
+  reservation_id: string; receipt_sha256: string;
+  capacity_released: boolean; context_history_cleaned: boolean;
+}
 export interface NativeWorkerTransport {
   stage(binding: NativeDispatchBinding, contextDirectory: string, signal?: AbortSignal): Promise<NativeWorkerObservation>;
   start(binding: NativeDispatchBinding, grant: NativeStartGrant, signal?: AbortSignal): Promise<NativeWorkerObservation>;
   observe(binding: NativeDispatchBinding, signal?: AbortSignal): Promise<NativeWorkerObservation>;
   releaseReservation(binding: NativeDispatchBinding, reservation: NativeHostReservation, signal?: AbortSignal): Promise<void>;
+  releaseResult(binding: NativeDispatchBinding, reservation: NativeHostReservation, signal?: AbortSignal): Promise<NativeWorkerRelease>;
+}
+interface WorkerRelease {
+  phase: 'pending' | 'released'; context_history_cleaned: boolean;
+  reason?: 'reservation_unavailable' | 'worker_release_unconfirmed' | 'worker_release_mismatch' | 'worker_history_cleanup_pending';
 }
 type Phase = 'prepared' | 'reserved' | 'stage_offered' | 'waiting_capacity' | 'authorization_deferred'
   | 'start_offered' | 'running' | 'reconciling' | 'result_pending' | 'terminal';
@@ -51,10 +62,11 @@ interface Journal {
   version: 1; binding: NativeDispatchBinding; binding_sha256: string; phase: Phase; stage_offered: boolean; start_offered: boolean; terminal_observed: boolean;
   updated_at: string; reason?: string; receipt_file?: string; receipt_sha256?: string;
   acknowledgement?: NativeResultAcknowledgement; history_cleaned?: boolean;
+  worker_release?: WorkerRelease;
   start_grant?: { reservation: NativeHostReservation; issued_at: string; expires_at: string; token_sha256: string; consumed_at?: string };
   last_operation?: { sequence: number; purpose: NativeOperationRequest['purpose']; authorized_at: string };
 }
-export type NativeDispatchView = Pick<Journal, 'phase' | 'updated_at' | 'reason' | 'acknowledgement'> & { binding: NativeDispatchBinding; grant_consumed_at?: string };
+export type NativeDispatchView = Pick<Journal, 'phase' | 'updated_at' | 'reason' | 'acknowledgement' | 'worker_release'> & { binding: NativeDispatchBinding; grant_consumed_at?: string };
 type Deps = {
   root: string; centralUrl: string; coordinatorNodeId: string; claims: ClaimsService; transport: NativeWorkerTransport;
   authorizeStart: (binding: NativeDispatchBinding, reservation: NativeHostReservation, signal?: AbortSignal) => Promise<NativeAuthorization>;
@@ -93,6 +105,7 @@ function readPrivate(path: string): Buffer {
 const readJson = <T>(path: string): T => JSON.parse(readPrivate(path).toString('utf8')) as T;
 function view(journal: Journal): NativeDispatchView {
   return structuredClone({ binding: journal.binding, phase: journal.phase, updated_at: journal.updated_at,
+    ...(journal.worker_release ? { worker_release: journal.worker_release } : {}),
     ...(journal.start_grant?.consumed_at ? { grant_consumed_at: journal.start_grant.consumed_at } : {}),
     ...(journal.reason ? { reason: journal.reason } : {}), ...(journal.acknowledgement ? { acknowledgement: journal.acknowledgement } : {}) });
 }
@@ -133,7 +146,7 @@ export class NativeDispatchBroker {
       }
       let journal = existsSync(path) ? this.read(runId) : this.create(prepared);
       if (journal.binding_sha256 !== bindingHash(prepared)) throw Error('Native offer conflicts with its durable run binding');
-      if (journal.phase === 'terminal') return view(this.cleanHistory(journal));
+      if (journal.phase === 'terminal') return this.finishTerminal(journal);
       if (journal.stage_offered) return this.reconcileRun(journal);
       this.deps.claims.reserveNative(this.deps.coordinatorNodeId, prepared.profile, prepared.work_id, prepared);
       journal = this.update(journal, { phase: 'reserved' });
@@ -351,7 +364,12 @@ export class NativeDispatchBroker {
         || !['recorded','already_recorded'].includes(journal.acknowledgement.outcome)))
       || (Object.hasOwn(journal,'last_operation') && (!operation || !grant?.consumed_at || !Number.isSafeInteger(operation.sequence) || operation.sequence<1
         || !['attempt','publish'].includes(operation.purpose) || !Number.isFinite(Date.parse(operation.authorized_at))
-        || Date.parse(operation.authorized_at)<Date.parse(grant.consumed_at)))) throw Error('Unsupported native broker journal; retain it for reconciliation');
+        || Date.parse(operation.authorized_at)<Date.parse(grant.consumed_at)))
+      || (Object.hasOwn(journal,'worker_release') && (journal.phase!=='terminal' || !journal.worker_release
+        || !['pending','released'].includes(journal.worker_release.phase) || typeof journal.worker_release.context_history_cleaned!=='boolean'
+        || (journal.worker_release.phase==='pending' && journal.worker_release.context_history_cleaned)
+        || (journal.worker_release.phase==='released' && !grant)
+        || (journal.worker_release.reason!==undefined && !['reservation_unavailable','worker_release_unconfirmed','worker_release_mismatch','worker_history_cleanup_pending'].includes(journal.worker_release.reason))))) throw Error('Unsupported native broker journal; retain it for reconciliation');
     return journal;
   }
   private write(journal: Journal): void {
@@ -376,7 +394,7 @@ export class NativeDispatchBroker {
     return view(this.update(current, { phase: 'reconciling', reason }));
   }
   private async reconcileRun(journal: Journal): Promise<NativeDispatchView> {
-    if (journal.phase === 'terminal') return view(this.cleanHistory(journal));
+    if (journal.phase === 'terminal') return this.finishTerminal(journal);
     if (!journal.stage_offered) return view(journal);
     try { return await this.observed(journal, await this.deadline(signal => this.deps.transport.observe(journal.binding, signal))); }
     catch {
@@ -450,19 +468,56 @@ export class NativeDispatchBroker {
   }
   private async importResult(previous: Journal): Promise<NativeDispatchView> {
     const journal = this.read(previous.binding.run_id);
-    if (journal.phase === 'terminal') return view(journal);
+    if (journal.phase === 'terminal') return this.finishTerminal(journal);
     if (!journal.receipt_file || !/^receipt-[a-f0-9]{64}\.json$/.test(journal.receipt_file)) throw Error('Native receipt spool is missing or unsupported');
     const path = join(this.runPath(journal.binding.run_id), journal.receipt_file);
     if (hash(readPrivate(path)) !== journal.receipt_sha256) return this.uncertain(journal, 'worker_receipt_changed');
     if (bindingHash(this.prepared(journal.binding.run_id, journal.binding.context_sha256)) !== journal.binding_sha256) return this.uncertain(journal, 'prepared_binding_changed');
+    let terminal: Journal;
     try {
       const acknowledgement = await this.deps.claims.completeNative(this.deps.coordinatorNodeId, journal.binding.profile, journal.binding.work_id,
         // Rust's acknowledgement digest identifies its canonical JSON payload;
         // receipt_sha256 above guards the exact spool bytes, including formatting.
         journal.binding, () => this.deps.recordCanonicalResult({ bindingFile: join(this.contextPath(journal.binding.run_id), 'binding.json'), receiptFile: path }));
-      const terminal = this.update(journal, { phase: 'terminal', acknowledgement, reason: undefined });
-      return view(this.cleanHistory(terminal));
+      terminal = this.update(journal, { phase: 'terminal', acknowledgement, reason: undefined });
     } catch { return view(this.update(journal, { phase: 'result_pending', reason: 'canonical_import_unconfirmed' })); }
+    return this.finishTerminal(terminal);
+  }
+
+  /** Completion of business work and physical release are independent facts.
+   * Persist intent before the idempotent worker command. A lost reply retries
+   * that same release; it never reimports, reauthorizes or starts the job. */
+  private async finishTerminal(previous: Journal): Promise<NativeDispatchView> {
+    let terminal = this.cleanHistory(previous);
+    if (terminal.worker_release?.phase==='released' && terminal.worker_release.context_history_cleaned) {
+      // A cold reader may see a rename whose directory sync never completed.
+      try { syncDirectory(this.runPath(terminal.binding.run_id)); }
+      catch (error) { this.persistenceUncertain=true; throw error; }
+      return view(terminal);
+    }
+    const reservation = terminal.start_grant?.reservation;
+    const save = (worker_release: WorkerRelease) => {
+      terminal = { ...this.read(terminal.binding.run_id), worker_release, updated_at: new Date(this.now()).toISOString() };
+      this.write(terminal);
+      return view(terminal);
+    };
+    if (!reservation) return save({phase:'pending',context_history_cleaned:false,reason:'reservation_unavailable'});
+    // Retain any earlier physical-release proof while retrying only cleanup.
+    const pending: WorkerRelease = terminal.worker_release?.phase==='released'
+      ? terminal.worker_release : {phase:'pending',context_history_cleaned:false,reason:'worker_release_unconfirmed'};
+    save(pending);
+    let result: NativeWorkerRelease;
+    try { result = await this.deadline(signal => this.deps.transport.releaseResult(terminal.binding, reservation, signal)); }
+    catch { return view(terminal); }
+    if (!result || !same(result,terminal.binding) || result.reservation_id!==reservation.id
+      || result.receipt_sha256!==terminal.acknowledgement!.receipt_sha256
+      || typeof result.capacity_released!=='boolean' || typeof result.context_history_cleaned!=='boolean'
+      || (!result.capacity_released && result.context_history_cleaned)) {
+      return save({...pending,reason:'worker_release_mismatch'});
+    }
+    if (!result.capacity_released) return view(terminal);
+    return save({phase:'released',context_history_cleaned:result.context_history_cleaned,
+      ...(!result.context_history_cleaned ? {reason:'worker_history_cleanup_pending' as const} : {})});
   }
 
   /** Keep the compact request/policy/binding/receipt journal permanently, but

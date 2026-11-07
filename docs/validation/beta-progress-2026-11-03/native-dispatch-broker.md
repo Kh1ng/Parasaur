@@ -379,3 +379,28 @@ canonical import. Provider-assignee mode remains refused. Working ledgers and
 session evidence remain retained; only the original context history is cleaned.
 No live controller restart, issue closure or memory-fix claim follows from these
 checks.
+
+## Broker-driven worker release
+
+Terminal reconciliation now drives the worker's idempotent result-release
+operation after canonical acknowledgement. Its separate `worker_release`
+observation distinguishes pending capacity, released capacity and deferred
+worker history cleanup from central business outcome and central history
+cleanup. The broker persists release intent before transport and verifies the
+response's run/node/context, original reservation and canonical receipt digest.
+A lost reply retains pending state; restart retries only that same release,
+without importing, staging, starting or requesting execution authority again.
+A missing original reservation remains visibly pending for reconciliation.
+
+All 40 focused broker/HTTP cases pass on Windows, including failed import,
+lost release reply, wrong proof, held capacity, separate cleanup failures and
+uncertain intent/final-proof persistence. Server typechecking passes. The
+isolated actual Rust/compiled owner-HTTP bridge additionally records one
+canonical import and two release requests across a simulated lost reply and
+broker reload. Physical release in that bridge remains a controlled fixture;
+the separate optimized systemd lifecycle evidence above covers the actual
+Rust worker release command. Source hashes and fixture metadata are retained
+in `artifacts/central-live-20261105/native-broker-bridge.json`.
+
+The production native worker transport and startup wiring are still absent;
+this driver is not deployed and does not establish a working live factory path.
