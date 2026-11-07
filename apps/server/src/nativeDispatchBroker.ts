@@ -3,7 +3,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import type { NativeClaimBinding, NativeResultAcknowledgement } from '@git-agent-harness/contracts';
+import type { NativeClaimBinding, NativeResultAcknowledgement, NativeReservationRelease } from '@git-agent-harness/contracts';
 import type { ClaimsService } from './claimsService.js';
 import { writeFileAtomic } from './atomicFile.js';
 
@@ -49,7 +49,7 @@ export interface NativeWorkerTransport {
   stage(binding: NativeDispatchBinding, contextDirectory: string, signal?: AbortSignal): Promise<NativeWorkerObservation>;
   start(binding: NativeDispatchBinding, grant: NativeStartGrant, signal?: AbortSignal): Promise<NativeWorkerObservation>;
   observe(binding: NativeDispatchBinding, signal?: AbortSignal): Promise<NativeWorkerObservation>;
-  releaseReservation(binding: NativeDispatchBinding, reservation: NativeHostReservation, signal?: AbortSignal): Promise<void>;
+  releaseReservation(binding: NativeDispatchBinding, reservation: NativeHostReservation, signal?: AbortSignal): Promise<NativeReservationRelease>;
   releaseResult(binding: NativeDispatchBinding, reservation: NativeHostReservation, signal?: AbortSignal): Promise<NativeWorkerRelease>;
 }
 interface WorkerRelease {
@@ -57,16 +57,17 @@ interface WorkerRelease {
   reason?: 'reservation_unavailable' | 'worker_release_unconfirmed' | 'worker_release_mismatch' | 'worker_history_cleanup_pending';
 }
 type Phase = 'prepared' | 'reserved' | 'stage_offered' | 'waiting_capacity' | 'authorization_deferred'
-  | 'start_offered' | 'running' | 'reconciling' | 'result_pending' | 'terminal';
+  | 'start_offered' | 'running' | 'reconciling' | 'result_pending' | 'terminal' | 'cancelling' | 'cancelled';
 interface Journal {
   version: 1; binding: NativeDispatchBinding; binding_sha256: string; phase: Phase; stage_offered: boolean; start_offered: boolean; terminal_observed: boolean;
   updated_at: string; reason?: string; receipt_file?: string; receipt_sha256?: string;
   acknowledgement?: NativeResultAcknowledgement; history_cleaned?: boolean;
   worker_release?: WorkerRelease;
+  reservation_release?: { reservation: NativeHostReservation; proof?: NativeReservationRelease; reason?: 'worker_release_unconfirmed' | 'worker_release_mismatch' };
   start_grant?: { reservation: NativeHostReservation; issued_at: string; expires_at: string; token_sha256: string; consumed_at?: string };
   last_operation?: { sequence: number; purpose: NativeOperationRequest['purpose']; authorized_at: string };
 }
-export type NativeDispatchView = Pick<Journal, 'phase' | 'updated_at' | 'reason' | 'acknowledgement' | 'worker_release'> & { binding: NativeDispatchBinding; grant_consumed_at?: string };
+export type NativeDispatchView = Pick<Journal, 'phase' | 'updated_at' | 'reason' | 'acknowledgement' | 'worker_release' | 'reservation_release'> & { binding: NativeDispatchBinding; grant_consumed_at?: string };
 type Deps = {
   root: string; centralUrl: string; coordinatorNodeId: string; claims: ClaimsService; transport: NativeWorkerTransport;
   authorizeStart: (binding: NativeDispatchBinding, reservation: NativeHostReservation, signal?: AbortSignal) => Promise<NativeAuthorization>;
@@ -80,7 +81,7 @@ const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).dige
 const same = (left: NativeClaimBinding, right: NativeClaimBinding) => left?.run_id === right.run_id && left.node_id === right.node_id && left.context_sha256 === right.context_sha256;
 export const isNativeRunId = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value) && value !== '00000000-0000-0000-0000-000000000000';
 const digest = (value: string) => /^[a-f0-9]{64}$/.test(value);
-const phases: Phase[] = ['prepared', 'reserved', 'stage_offered', 'waiting_capacity', 'authorization_deferred', 'start_offered', 'running', 'reconciling', 'result_pending', 'terminal'];
+const phases: Phase[] = ['prepared', 'reserved', 'stage_offered', 'waiting_capacity', 'authorization_deferred', 'start_offered', 'running', 'reconciling', 'result_pending', 'terminal', 'cancelling', 'cancelled'];
 const bindingFields = ['run_id', 'node_id', 'context_sha256', 'profile', 'repo_id', 'repo', 'work_id', 'mode', 'backend', 'backend_instance', 'model', 'branch', 'review_generation', 'dispatch_reason'] as const;
 const bindingHash = (binding: NativeDispatchBinding) => hash(JSON.stringify(bindingFields.map(key => binding[key])));
 
@@ -106,6 +107,7 @@ const readJson = <T>(path: string): T => JSON.parse(readPrivate(path).toString('
 function view(journal: Journal): NativeDispatchView {
   return structuredClone({ binding: journal.binding, phase: journal.phase, updated_at: journal.updated_at,
     ...(journal.worker_release ? { worker_release: journal.worker_release } : {}),
+    ...(journal.reservation_release ? { reservation_release: journal.reservation_release } : {}),
     ...(journal.start_grant?.consumed_at ? { grant_consumed_at: journal.start_grant.consumed_at } : {}),
     ...(journal.reason ? { reason: journal.reason } : {}), ...(journal.acknowledgement ? { acknowledgement: journal.acknowledgement } : {}) });
 }
@@ -147,6 +149,7 @@ export class NativeDispatchBroker {
       let journal = existsSync(path) ? this.read(runId) : this.create(prepared);
       if (journal.binding_sha256 !== bindingHash(prepared)) throw Error('Native offer conflicts with its durable run binding');
       if (journal.phase === 'terminal') return this.finishTerminal(journal);
+      if (journal.reservation_release) return this.cancelReservation(journal);
       if (journal.stage_offered) return this.reconcileRun(journal);
       this.deps.claims.reserveNative(this.deps.coordinatorNodeId, prepared.profile, prepared.work_id, prepared);
       journal = this.update(journal, { phase: 'reserved' });
@@ -349,6 +352,7 @@ export class NativeDispatchBroker {
     const journal = readJson<Journal>(this.journalPath(run));
     const grant = journal.start_grant;
     const operation = journal.last_operation;
+    const cancellation = journal.reservation_release;
     if (journal.version !== 1 || journal.binding?.run_id !== run || !digest(journal.binding.context_sha256)
       || !phases.includes(journal.phase) || typeof journal.stage_offered !== 'boolean' || typeof journal.start_offered !== 'boolean'
       || typeof journal.terminal_observed !== 'boolean' || journal.binding_sha256 !== bindingHash(journal.binding)
@@ -365,6 +369,14 @@ export class NativeDispatchBroker {
       || (Object.hasOwn(journal,'last_operation') && (!operation || !grant?.consumed_at || !Number.isSafeInteger(operation.sequence) || operation.sequence<1
         || !['attempt','publish'].includes(operation.purpose) || !Number.isFinite(Date.parse(operation.authorized_at))
         || Date.parse(operation.authorized_at)<Date.parse(grant.consumed_at)))
+      || ((journal.phase==='cancelling' || journal.phase==='cancelled') && !cancellation)
+      || (Object.hasOwn(journal,'reservation_release') && (!cancellation || !['cancelling','cancelled'].includes(journal.phase)
+        || journal.start_offered || journal.terminal_observed || !!journal.acknowledgement || !same(cancellation.reservation,journal.binding)
+        || !cancellation.reservation.id || typeof cancellation.reservation.id!=='string' || cancellation.reservation.id.length>4096
+        || /[\x00-\x1f\x7f]/.test(cancellation.reservation.id) || !Number.isFinite(Date.parse(cancellation.reservation.expires_at))
+        || (cancellation.proof && !this.reservationReleased(journal.binding,cancellation.reservation,cancellation.proof))
+        || (journal.phase==='cancelled' && !cancellation.proof)
+        || (cancellation.reason!==undefined && !['worker_release_unconfirmed','worker_release_mismatch'].includes(cancellation.reason))))
       || (Object.hasOwn(journal,'worker_release') && (journal.phase!=='terminal' || !journal.worker_release
         || !['pending','released'].includes(journal.worker_release.phase) || typeof journal.worker_release.context_history_cleaned!=='boolean'
         || (journal.worker_release.phase==='pending' && journal.worker_release.context_history_cleaned)
@@ -380,13 +392,13 @@ export class NativeDispatchBroker {
   private update(previous: Journal, changes: Partial<Journal>): Journal {
     const current = existsSync(this.journalPath(previous.binding.run_id)) ? this.read(previous.binding.run_id) : previous;
     if (current.binding_sha256 !== previous.binding_sha256) throw Error('Native run binding changed during reconciliation');
-    if (current.phase === 'terminal') return current;
+    if (current.phase === 'terminal' || current.phase === 'cancelled') return current;
     const next = { ...current, ...changes, updated_at: new Date(this.now()).toISOString() };
     this.write(next); return next;
   }
   private uncertain(journal: Journal, reason: string): NativeDispatchView {
     const current = this.read(journal.binding.run_id);
-    if (current.phase === 'terminal') return view(current);
+    if (current.phase === 'terminal' || current.reservation_release) return view(current);
     const held = this.deps.claims.getLease(current.binding.profile, current.binding.work_id);
     if (held?.node_id === this.deps.coordinatorNodeId && held.native_handoff && same(held.native_handoff, current.binding)) {
       this.deps.claims.observeNative(this.deps.coordinatorNodeId, current.binding.profile, current.binding.work_id, current.binding, 'reconciling');
@@ -395,6 +407,7 @@ export class NativeDispatchBroker {
   }
   private async reconcileRun(journal: Journal): Promise<NativeDispatchView> {
     if (journal.phase === 'terminal') return this.finishTerminal(journal);
+    if (journal.reservation_release) return this.cancelReservation(journal);
     if (!journal.stage_offered) return view(journal);
     try { return await this.observed(journal, await this.deadline(signal => this.deps.transport.observe(journal.binding, signal))); }
     catch {
@@ -405,6 +418,7 @@ export class NativeDispatchBroker {
   private async observed(previous: Journal, observation: NativeWorkerObservation): Promise<NativeDispatchView> {
     let journal = this.read(previous.binding.run_id); const binding = journal.binding;
     if (journal.phase === 'terminal') return view(journal);
+    if (journal.reservation_release) return this.cancelReservation(journal);
     if (!same(observation, binding)) return this.uncertain(journal, 'worker_identity_mismatch');
     if (observation.state === 'terminal') return this.receiveResult(journal, observation.receipt_json);
     // Once termination is saved centrally, a stale live-worker observation
@@ -433,9 +447,10 @@ export class NativeDispatchBroker {
     if (journal.phase === 'terminal') return view(journal);
     if (journal.start_offered) return this.reconcileRun(journal);
     if (decision?.allowed !== true || Date.parse(reservation.expires_at) <= this.now()) {
-      try { await this.deadline(signal => this.deps.transport.releaseReservation(binding, reservation, signal)); } catch { /* A deadline never proves physical release; retain the reservation for reconciliation. */ }
       const reason = decision?.allowed ? 'host_reservation_expired' : this.denialReason(decision);
-      return view(this.update(journal, { phase: 'authorization_deferred', reason }));
+      return this.cancelReservation(this.update(journal,{phase:'cancelling',reason,
+        reservation_release:{reservation:{run_id:binding.run_id,node_id:binding.node_id,context_sha256:binding.context_sha256,
+          id:reservation.id,expires_at:reservation.expires_at},reason:'worker_release_unconfirmed'}}));
     }
     if (!this.owns(binding)) return this.uncertain(journal, 'claim_lost');
     if (bindingHash(this.prepared(binding.run_id, binding.context_sha256)) !== journal.binding_sha256) return this.uncertain(journal, 'prepared_context_changed');
@@ -465,6 +480,37 @@ export class NativeDispatchBroker {
     }
     const pending = this.update(journal, { phase: 'result_pending', receipt_file: name, receipt_sha256: hash(receipt), reason: undefined });
     return this.importResult(pending);
+  }
+
+  private reservationReleased(binding: NativeDispatchBinding, reservation: NativeHostReservation, proof: NativeReservationRelease): boolean {
+    return !!proof && same(proof,binding) && proof.reservation_id===reservation.id
+      && proof.capacity_released===true && proof.dispatch_started===false;
+  }
+
+  /** Persist cancellation before transport. This permanently fences the old
+   * run out of start permission. Release its central claim only after durable
+   * proof that the original unused physical reservation is gone. */
+  private async cancelReservation(previous: Journal): Promise<NativeDispatchView> {
+    let journal=this.read(previous.binding.run_id);
+    if (journal.phase==='cancelled') return view(journal);
+    const cancellation=journal.reservation_release!;
+    if (!cancellation.proof) {
+      let proof: NativeReservationRelease;
+      try {proof=await this.deadline(signal=>this.deps.transport.releaseReservation(journal.binding,cancellation.reservation,signal));}
+      catch {return view(journal);}
+      if (!this.reservationReleased(journal.binding,cancellation.reservation,proof)) {
+        return view(this.update(journal,{reservation_release:{...cancellation,reason:'worker_release_mismatch'}}));
+      }
+      journal=this.update(journal,{reservation_release:{reservation:cancellation.reservation,proof:{
+        run_id:proof.run_id,node_id:proof.node_id,context_sha256:proof.context_sha256,reservation_id:proof.reservation_id,
+        capacity_released:true,dispatch_started:false}}});
+    }
+    // A cold reader may see the proof rename before its directory sync.
+    try {syncDirectory(this.runPath(journal.binding.run_id));}
+    catch(error) {this.persistenceUncertain=true;throw error;}
+    this.deps.claims.cancelNativeReservation(this.deps.coordinatorNodeId,journal.binding.profile,journal.binding.work_id,
+      journal.binding,journal.reservation_release!.reservation.id,journal.reservation_release!.proof!);
+    return view(this.update(journal,{phase:'cancelled'}));
   }
   private async importResult(previous: Journal): Promise<NativeDispatchView> {
     const journal = this.read(previous.binding.run_id);

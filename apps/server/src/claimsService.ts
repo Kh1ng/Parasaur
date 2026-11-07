@@ -15,7 +15,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { ClaimLease, NativeClaimBinding, NativeClaimHold, NativeResultAcknowledgement } from '@git-agent-harness/contracts';
+import type { ClaimLease, NativeClaimBinding, NativeClaimHold, NativeResultAcknowledgement, NativeReservationRelease } from '@git-agent-harness/contracts';
 import { writeFileAtomic } from './atomicFile.js';
 
 const DEFAULT_LEASE_SECONDS = 15 * 60; // 15 min; renewal interval is lease/3, see central_claims.rs
@@ -253,6 +253,23 @@ export class ClaimsService {
     const lease: ClaimLease = { ...existing, native_handoff: { ...existing.native_handoff!, phase } };
     const next = new Map(this.leases); next.set(key, lease); this.commit(next);
     return copyLease(lease);
+  }
+
+  /** Only the trusted broker calls this after fencing out every start and
+   * durably recording the original worker's physical-release proof. Possible
+   * execution still requires canonical result import. Never expose as RPC. */
+  cancelNativeReservation(owner: string, profile: string, workId: string, binding: NativeClaimBinding,
+    reservationId: string, proof: NativeReservationRelease): void {
+    this.healthy();
+    if (!validNative(binding) || !proof || !sameNative(proof,binding) || !reservationId
+      || proof.reservation_id!==reservationId || proof.capacity_released!==true || proof.dispatch_started!==false) {
+      throw Error('Unused native reservation release is unconfirmed');
+    }
+    const key=claimKey(profile,workId); const existing=this.leases.get(key);
+    if (existing?.node_id===owner && sameNative(existing.native_handoff,binding)) {
+      if (['running','result_pending'].includes(existing.native_handoff!.phase)) throw Error('Native execution requires canonical result reconciliation');
+      const next=new Map(this.leases); next.delete(key); this.commit(next);
+    }
   }
 
   /** The central broker supplies its canonical ledger importer, never a

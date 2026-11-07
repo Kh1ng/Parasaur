@@ -31,6 +31,14 @@ export interface NativeClaimBinding {
   context_sha256: string;
 }
 
+/** Worker proof for retiring a reservation that never received a start.
+ * It cannot acknowledge a dispatch result or release possible execution. */
+export interface NativeReservationRelease extends NativeClaimBinding {
+  reservation_id: string;
+  capacity_released: boolean;
+  dispatch_started: boolean;
+}
+
 export interface NativeClaimHold extends NativeClaimBinding {
   phase: 'reserved' | 'offered' | 'running' | 'reconciling' | 'result_pending';
   held_at: string;

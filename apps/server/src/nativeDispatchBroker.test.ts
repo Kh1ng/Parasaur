@@ -9,7 +9,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { nativeGrantRouter } from './nativeGrantRouter.js';
-import type { NativeResultAcknowledgement } from '@git-agent-harness/contracts';
+import type { NativeResultAcknowledgement, NativeReservationRelease } from '@git-agent-harness/contracts';
 import { ClaimsService, ClaimConflictError } from './claimsService.js';
 import { NativeDispatchBroker, type NativeAuthorization, type NativeDispatchBinding, type NativeHostReservation, type NativeWorkerObservation, type NativeStartGrant, type NativeOperationRequest, type NativeWorkerRelease } from './nativeDispatchBroker.js';
 
@@ -34,6 +34,7 @@ function fixture() {
   let grant: NativeStartGrant | undefined; let consume = true;
   let stageFails = false; let startFails = false; let importFails = false; let observeFails = false; let stageHangs = false; let timeout=5000;
   let release: ((result: NativeWorkerRelease)=>Promise<NativeWorkerRelease>) = async result=>result;
+  let cancel: ((result: NativeReservationRelease)=>Promise<NativeReservationRelease>) = async result=>result;
   const ack: NativeResultAcknowledgement = { ...binding, profile: 'gah', work_id: '#1525', receipt_sha256: 'b'.repeat(64), outcome: 'recorded' };
   const deps = () => ({ root, centralUrl: 'https://central.invalid', coordinatorNodeId: 'central', claims, now: () => now, observationTimeoutMs:timeout,
     authorizeStart: () => authorize(),
@@ -42,7 +43,13 @@ function fixture() {
       async stage() { stages++; assert.equal(JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8')).stage_offered,true); if (stageHangs) return new Promise<NativeWorkerObservation>(() => undefined); if (stageFails) throw Error('PRIVATE_STAGE_TOKEN'); return observation; },
       async start(_binding: NativeDispatchBinding, offered: NativeStartGrant) { starts++; grant = offered; assert.equal(JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8')).start_offered,true); if (startFails) throw Error('PRIVATE_START_TOKEN'); if (consume && !(await broker.consumeStartGrant(offered)).allowed) throw Error('Start authority refused'); observation = { ...binding,state: 'running' }; return observation; },
       async observe() { if (observeFails) throw Error('PRIVATE_OBSERVATION_TOKEN'); return observation; },
-      async releaseReservation() { releases++; },
+      async releaseReservation(_binding:NativeDispatchBinding,held:NativeHostReservation) {
+        releases++;
+        const journal=JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8'));
+        assert.equal(journal.phase,'cancelling'); assert.equal(journal.start_offered,false);
+        assert.ok(journal.reservation_release);assert.ok(claims.getLease('gah','#1525')?.native_handoff);
+        return cancel({...binding,reservation_id:held.id,capacity_released:true,dispatch_started:false});
+      },
       async releaseResult() {
         resultReleases++;
         const journal=JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8'));
@@ -58,6 +65,7 @@ function fixture() {
   return { root, run, runPath, context, binding, ack, request,
     get broker() { return broker; }, get claims() { return claims; }, get stages() { return stages; }, get starts() { return starts; }, get imports() { return imports; }, get releases() { return releases; }, get resultReleases() { return resultReleases; },
     release(value:typeof release) {release=value;},
+    cancel(value:typeof cancel) {cancel=value;},
     get grant() { assert.ok(grant); return structuredClone(grant); }, skipConsumption() { consume = false; },
     observe(value: NativeWorkerObservation) { observation = value; },
     failStage() { stageFails = true; }, failStart() { startFails = true; }, failImport() { importFails = true; }, recoverImport() { importFails = false; }, failObserve() { observeFails = true; },
@@ -319,10 +327,79 @@ test('denied authority or invalid host reservations cannot issue a start grant',
     const f = fixture();
     if (kind==='denied') f.authorize(async () => ({allowed:false,reason:'budget_held'}));
     else f.observe({...f.binding,state:'ready',reservation:{...f.binding,id:kind==='malformed-id'?'bad\nreservation':'reservation',context_sha256:kind==='wrong-context'?'c'.repeat(64):f.binding.context_sha256,expires_at:kind==='expired'?'2026-11-06T18:00:00Z':'2026-11-06T19:00:20Z'}});
-    assert.equal((await f.broker.offerPrepared(f.run,f.binding.context_sha256)).phase,kind==='denied'?'authorization_deferred':'reconciling');
+    assert.equal((await f.broker.offerPrepared(f.run,f.binding.context_sha256)).phase,kind==='denied'?'cancelled':'reconciling');
     assert.equal(f.starts,0); assert.equal(f.releases,kind==='denied'?1:0);
-    assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+    assert.equal(!!f.claims.getLease('gah','#1525')?.native_handoff,kind!=='denied');
   }
+});
+
+test('lost unused-release replies retain the claim and retry only cancellation after reload',async()=>{
+  const f=fixture(); f.authorize(async()=>({allowed:false,reason:'factory_paused'}));
+  f.cancel(async()=>{throw Error('PRIVATE_CANCELLATION_TOKEN');});
+  const pending=await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  assert.equal(pending.phase,'cancelling');assert.equal(pending.reservation_release?.reason,'worker_release_unconfirmed');
+  assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+  f.authorize(async()=>{throw Error('Cancellation cannot request new permission');});
+  f.observe({...f.binding,state:'ready',reservation:{...f.binding,id:'replacement',expires_at:'2026-11-06T19:00:20Z'}});
+  f.cancel(async proof=>{assert.equal(proof.reservation_id,'reservation');return proof;});
+  const done=await f.reload().reconcile(f.run);
+  assert.equal(done.phase,'cancelled');assert.equal(done.reservation_release?.proof?.capacity_released,true);
+  assert.equal(done.acknowledgement,undefined);assert.equal(f.claims.getLease('gah','#1525'),undefined);
+  assert.equal((await f.broker.offerPrepared(f.run,f.binding.context_sha256)).phase,'cancelled');
+  assert.equal(f.releases,2);assert.equal(f.stages,1);assert.equal(f.starts,0);assert.equal(f.imports,0);
+  assert.ok(existsSync(join(f.context,'history-0000.jsonl')));
+  assert.equal(JSON.stringify(done).includes('PRIVATE_'),false);
+});
+
+test('unused reservation retirement requires exact proof of physical release and no start',async()=>{
+  for(const changes of [{run_id:randomUUID()},{node_id:'other'},{context_sha256:'f'.repeat(64)},
+    {reservation_id:'other'},{capacity_released:false},{dispatch_started:true},{dispatch_started:undefined}]) {
+    const f=fixture();f.authorize(async()=>({allowed:false,reason:'budget_held'}));
+    f.cancel(async proof=>({...proof,...changes}) as NativeReservationRelease);
+    const pending=await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+    assert.equal(pending.phase,'cancelling');assert.equal(pending.reservation_release?.reason,'worker_release_mismatch');
+    assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+    f.cancel(async proof=>proof);
+    assert.equal((await f.reload().reconcile(f.run)).phase,'cancelled');
+    assert.equal(f.claims.getLease('gah','#1525'),undefined);assert.equal(f.starts,0);assert.equal(f.imports,0);
+  }
+});
+
+test('cancellation intent and proof persistence failures preserve the original claim until reload',async t=>{
+  for(const phase of ['intent','proof']) {
+    const f=fixture();f.authorize(async()=>({allowed:false,reason:'factory_paused'}));
+    const rename=fs.renameSync;
+    t.mock.method(fs,'renameSync',(source:fs.PathLike,destination:fs.PathLike)=>{
+      rename(source,destination);
+      if(String(destination)===join(f.runPath,'broker.json')) {
+        const journal=JSON.parse(readFileSync(destination,'utf8'));
+        if(journal.phase==='cancelling' && (phase==='intent' || !!journal.reservation_release?.proof)) throw Error('Fixture cancellation sync failure');
+      }
+    });
+    syncBuiltinESMExports();
+    try {await assert.rejects(f.broker.offerPrepared(f.run,f.binding.context_sha256),/persistence is uncertain/);}
+    finally {t.mock.restoreAll();syncBuiltinESMExports();}
+    assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+    assert.equal(f.releases,phase==='intent'?0:1);
+    assert.equal((await f.reload().reconcile(f.run)).phase,'cancelled');
+    assert.equal(f.claims.getLease('gah','#1525'),undefined);assert.equal(f.releases,1);assert.equal(f.starts,0);assert.equal(f.imports,0);
+  }
+});
+
+test('unused release cannot clear a running claim or a newer work owner',async()=>{
+  const f=fixture();await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  const proof={...f.binding,reservation_id:'reservation',capacity_released:true,dispatch_started:false};
+  assert.throws(()=>f.claims.cancelNativeReservation('central','gah','#1525',f.binding,'reservation',proof),/canonical result reconciliation/);
+  assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+  const cancelled=fixture();cancelled.authorize(async()=>({allowed:false,reason:'factory_paused'}));
+  cancelled.cancel(async proof=>{
+    cancelled.claims.cancelNativeReservation('central','gah','#1525',cancelled.binding,'reservation',proof);
+    cancelled.claims.acquire('replacement','gah','#1525');return proof;
+  });
+  assert.equal((await cancelled.broker.offerPrepared(cancelled.run,cancelled.binding.context_sha256)).phase,'cancelled');
+  assert.equal(cancelled.claims.getLease('gah','#1525')?.node_id,'replacement');
+  assert.equal((await cancelled.reload().reconcile(cancelled.run)).phase,'cancelled');
+  assert.equal(cancelled.claims.getLease('gah','#1525')?.node_id,'replacement');
 });
 
 test('an observation deadline leaves the exact stage intent held and never repeats it', async () => {

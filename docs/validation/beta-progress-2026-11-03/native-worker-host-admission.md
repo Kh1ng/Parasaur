@@ -478,7 +478,18 @@ fixture correctly refused an inherited ledger override; removing that test-only
 override, as the fixed launch service does, reaches and verifies the cancellation
 fence. No production guard was relaxed to make that assertion pass.
 
-This supplies the worker primitive needed by production transport. Central
-delivery/cancellation acknowledgement and safe retirement of the matching
-never-started central claim remain to be integrated. No installed CLI, live
-factory hold, service or issue was changed.
+Central now durably records `cancelling` before requesting this operation. It
+requires an exact matching worker proof of physical release and no dispatch
+start before retiring the old central claim and recording `cancelled`. Failed
+or lost replies retain the claim and retry only cancellation of the original
+reservation. Neither fresh permission nor a stale Ready observation can restart
+the cancelled run. Proof persistence precedes claim retirement; interrupted
+claim cleanup replays without another worker release. A running/result-pending
+claim and a newer work owner remain protected. No canonical result is invented
+and original context history remains available.
+
+All 44 focused broker cases, contracts build and server typechecking pass.
+New cases cover exact proof, held capacity, lost replies, both uncertain writes
+and preservation of running/newer claims. Production worker transport/startup
+remain unfinished. No installed CLI, live factory hold, service or issue was
+changed.
