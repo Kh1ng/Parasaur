@@ -338,3 +338,44 @@ with `artifacts/probe-native-broker.mjs` after
 `node artifacts/build-native-claim-runtime.mjs`; it takes the staged Rust
 binary as its sole argument. These are local validation artifacts, not a live
 dispatch or beta-completion claim.
+
+## Canonical acknowledgement and physical release acceptance
+
+Public `4ca651d1` and private `53c28240` are the latest matched acceptance
+pair. The complete private assembly passes 1,208 server cases (38 existing
+skips), 17 mock cases, production builds and release/input/credential/transport
+guards. Log: `/home/khing/.cache/parasaur-enterprise-current.bhxrighm/build.log`.
+Focused Rust checks pass 49 native, 573 dispatch, 76 provider, three CLI and
+12 capability cases, with formatting and all-target/all-feature Clippy passing.
+All 33 focused broker/HTTP cases and server typechecking also pass.
+
+The immutable optimized CLI compares 624 Rust/Cargo inputs against public
+`4ca651d1227c2dda021a5a29ad5f4768e7b8b729`. Its SHA-256 is
+`9f4e6870a98332c81d37e342bad666fd1e5b1ed7dcb1f2f9ebe0ca81c18f32cd`;
+the staged binary is `artifacts/parasaur-native-context-4ca651d1/gah-linux-x86_64`.
+Release/context/current-policy/zero-spend smokes pass. It is not installed.
+
+The exact optimized binary passes all seven real WSL lifecycle fixtures:
+allowed execution, denied intake, denied publication, lost start reply,
+result requested while running, lost stop reply and unsupported provider-claim
+mode. These use actual systemd jobs, kernel capacity locks and fixed worker
+commands, with controlled backend/provider/authority fixtures. Terminal cases
+recover the immutable result, import it once, verify central's matching durable
+acknowledgement, release physical capacity and clean the original context
+history. Pending/wrong acknowledgements and changed holder proof retain
+capacity. The lost-stop case finishes the same stop rather than issuing another.
+Evidence: `artifacts/central-live-20261105/native-worker-release-optimized.jsonl`.
+An independent optimized host-admission scenario also passes descendant-process
+and capacity-retention checks. No paid model or real issue is used.
+
+The actual compiled owner HTTP router and Rust bridge pass pending/wrong receipt
+refusal and canonical acknowledgement replay across restart, using the same
+optimized binary and matched private assembly. Evidence:
+`artifacts/central-live-20261105/native-broker-bridge.json`.
+
+This is staged acceptance, not production integration. Default startup still
+does not wire the native broker/worker transport or invoke worker release after
+canonical import. Provider-assignee mode remains refused. Working ledgers and
+session evidence remain retained; only the original context history is cleaned.
+No live controller restart, issue closure or memory-fix claim follows from these
+checks.

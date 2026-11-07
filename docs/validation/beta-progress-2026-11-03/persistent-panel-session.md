@@ -78,8 +78,12 @@ Docker container `gitlab` (`gitlab/gitlab-ee:19.5.3-ee.0`). Persistent config is
 `/home/khing/gitlab/data/nginx/conf/service_conf/gitlab-rails.conf`. Embedded
 nginx syntax passes before changes, with an existing duplicate-MIME warning.
 No config was changed during inspection. Subsequent SSH signing requires the
-MacBook's encrypted default key passphrase; a secure request is pending after
-its agent became unavailable. Private key material is not copied.
+MacBook's encrypted default key passphrase after its agent became unavailable.
+The secure request expired without delivering a secret. A subsequent direct
+Windows-to-VM check, using the VM host identity already trusted by the MacBook,
+also refused the Windows key. The prepared candidate/rollback scripts have not
+run on the VM; no proxy or service changes are claimed. Private key material
+is not copied.
 
 [Cookie forwarding patch](gitlab-cookie-forwarding.patch) selectively forwards
 `gah_device` and `gah_pairing_request`, preserves empty invalid credentials,
