@@ -13,7 +13,7 @@ pub fn check_current_work(
     node_id: &str,
     origin: &str,
 ) -> Result<DispatchBinding> {
-    check_current(cfg, context, expected, node_id, origin, true)
+    check_current(cfg, context, expected, node_id, origin, true, None)
 }
 
 /// Recheck the same immutable policy, exact account/model and live routing
@@ -26,16 +26,17 @@ pub fn check_current_route(
     node_id: &str,
     origin: &str,
 ) -> Result<DispatchBinding> {
-    check_current(cfg, context, expected, node_id, origin, false)
+    check_current(cfg, context, expected, node_id, origin, false, None)
 }
 
-fn check_current(
+pub(super) fn check_current(
     cfg: &GahConfig,
     context: &Path,
     expected: &str,
     node_id: &str,
     origin: &str,
     require_next_action: bool,
+    catalog: Option<&WorkerCheckScope>,
 ) -> Result<DispatchBinding> {
     let bound = check_current_policy(cfg, context, expected, node_id, origin)?;
     let manifest_bytes = read_blob(&context.join("manifest.json"), None, MAX_JSON)?;
@@ -76,12 +77,15 @@ fn check_current(
     );
     let entries = crate::ledger::read_entries(cfg)?;
     if require_next_action {
-        let snapshot = crate::status::build_snapshot_from_entries(
+        let mut snapshot = crate::status::build_snapshot_from_entries(
             cfg,
             &args.profile,
             crate::clock::now_utc(),
             &entries,
         )?;
+        if let Some(catalog) = catalog {
+            catalog.project(&args.profile, &bound, Some(&mut snapshot))?;
+        }
         ensure!(
             !snapshot
                 .errors
@@ -110,7 +114,13 @@ fn check_current(
         None,
     );
     current.work_id = args.work_id.clone();
-    let runtime = crate::dispatch::routing_runtime_state_from_entries(&entries, &current);
+    let mut runtime = crate::dispatch::routing_runtime_state_from_entries(&entries, &current);
+    if let Some(catalog) = catalog {
+        catalog.project(&args.profile, &bound, None)?;
+        catalog
+            .catalog()
+            .apply(&args.profile, profile, node_id, &mut runtime)?;
+    }
     let route = crate::routing::decide_with_state(
         &cfg.defaults,
         profile,

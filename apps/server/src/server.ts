@@ -102,6 +102,7 @@ import { claimsRouter } from './claimsRouter.js';
 import { nativeGrantRouter } from './nativeGrantRouter.js';
 import { NativeDispatchBroker } from './nativeDispatchBroker.js';
 import { NativeWorkerHttpTransport } from './nativeWorkerTransport.js';
+import { NativeDispatchProducer } from './nativeDispatchProducer.js';
 import { nativeDispatchAuthority, nativeContinuationAuthority } from './nativeDispatchAuthority.js';
 import { runReceiveNativeResult } from './gahCli.js';
 import { nativeWorkerRouter, type NativeWorker } from './nativeWorker.js';
@@ -1197,12 +1198,17 @@ export function createServer(
     const identity=getCoordinatorIdentity(undefined,coordinatorPort);
     const root=configDeps.nativeDispatchRoot!;
     const centralUrl=node.central_url??identity.advertised_url;
-    const broker=configDeps.nativeDispatchBroker??new NativeDispatchBroker({root,centralUrl,coordinatorNodeId:identity.node_id,
-      claims:centralClaims(),transport:new NativeWorkerHttpTransport({contextRoot:root,worker:id=>registryService.getNode(id),secret:resolveSecret}),
-      authorizeStart:nativeDispatchAuthority(root,centralUrl),authorizeContinuation:nativeContinuationAuthority(root,centralUrl),
+    const transport=root?new NativeWorkerHttpTransport({contextRoot:root,worker:id=>registryService.getNode(id),secret:resolveSecret}):undefined;
+    const held=(profile:string)=>broker.heldWork(profile);
+    const broker:NativeDispatchBroker=configDeps.nativeDispatchBroker??new NativeDispatchBroker({root,centralUrl,coordinatorNodeId:identity.node_id,
+      claims:centralClaims(),transport:transport!,
+      authorizeStart:nativeDispatchAuthority(root,centralUrl,undefined,(binding,signal)=>transport!.catalog(binding,signal),held),
+      authorizeContinuation:nativeContinuationAuthority(root,centralUrl,undefined,(binding,signal)=>transport!.catalog(binding,signal),held),
       recordCanonicalResult:runReceiveNativeResult});
     app.locals.nativeDispatchBroker=broker;
-    app.use('/api/native-dispatch', nativeGrantRouter({broker,worker:id=>registryService.getNode(id)}));
+    const producer=root && transport?new NativeDispatchProducer({root,centralUrl,coordinatorId:identity.node_id,broker,claims:centralClaims(),
+      workers:()=>registryService.getNodes(),profiles:listProfiles,transport}):undefined;
+    app.use('/api/native-dispatch', nativeGrantRouter({broker,producer,worker:id=>registryService.getNode(id)}));
   }
 
   // Pull-data REST endpoints (TICKET-productization): these are on-demand

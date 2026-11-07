@@ -11,6 +11,10 @@ pub struct Args {
 
 #[derive(clap::Subcommand)]
 pub enum Command {
+    Plan {
+        #[arg(long)]
+        config_path: Option<String>,
+    },
     Prepare {
         #[arg(long)]
         request_file: PathBuf,
@@ -106,6 +110,8 @@ pub enum Command {
         config_path: Option<String>,
     },
     CheckCurrentPolicy {
+        #[arg(long)]
+        worker_catalog_file: Option<PathBuf>,
         #[arg(long, conflicts_with = "check_route")]
         check_work: bool,
         #[arg(long)]
@@ -125,6 +131,33 @@ pub enum Command {
 
 pub fn run(args: Args) -> Result<()> {
     match args.command {
+        Command::Plan { config_path } => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Input {
+                request: crate::native_handoff::JobRequest,
+                catalog: crate::native_handoff::WorkerCatalog,
+            }
+            let mut bytes = Vec::new();
+            std::io::stdin()
+                .take(8 * 1024 * 1024 + 1)
+                .read_to_end(&mut bytes)?;
+            ensure!(
+                bytes.len() <= 8 * 1024 * 1024,
+                "Native planning input exceeds its limit"
+            );
+            let input: Input = serde_json::from_slice(&bytes)
+                .map_err(|_| anyhow::anyhow!("Invalid native planning input"))?;
+            let cfg = crate::config::load(config_path.as_deref())?;
+            println!(
+                "{}",
+                serde_json::to_string(&crate::dispatch::plan_native(
+                    &cfg,
+                    &input.request,
+                    &input.catalog
+                )?)?
+            );
+        }
         #[cfg(target_os = "linux")]
         Command::ReleaseReservation {
             binding_file,
@@ -245,6 +278,7 @@ pub fn run(args: Args) -> Result<()> {
             );
         }
         Command::CheckCurrentPolicy {
+            worker_catalog_file,
             check_work,
             check_route,
             context_dir,
@@ -261,13 +295,32 @@ pub fn run(args: Args) -> Result<()> {
             } else {
                 crate::native_handoff::check_current_policy
             };
-            let binding = check(
-                &cfg,
-                &context_dir,
-                &expected_context,
-                &node_id,
-                &central_url,
-            )?;
+            let binding = if let Some(path) = worker_catalog_file {
+                ensure!(
+                    check_work || check_route,
+                    "Worker catalog requires a work or route check"
+                );
+                let catalog = crate::native_handoff::WorkerCheckScope::read(&path)?;
+                ensure!(
+                    catalog.node_id() == node_id,
+                    "Worker catalog belongs to another node"
+                );
+                catalog.check_current(
+                    &cfg,
+                    &context_dir,
+                    &expected_context,
+                    &central_url,
+                    check_work,
+                )?
+            } else {
+                check(
+                    &cfg,
+                    &context_dir,
+                    &expected_context,
+                    &node_id,
+                    &central_url,
+                )?
+            };
             println!(
                 "{}",
                 serde_json::json!({"binding":binding,"policy_current":true,"work_current":check_work.then_some(true),"route_current":(check_work || check_route).then_some(true),"execution_authorized":false})

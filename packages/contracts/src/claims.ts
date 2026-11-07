@@ -39,6 +39,30 @@ export interface NativeReservationRelease extends NativeClaimBinding {
   dispatch_started: boolean;
 }
 
+/** Authenticated worker metadata; no credentials or local executable paths. */
+export interface NativeWorkerCatalog {
+  protocol: 1;
+  node_id: string;
+  profile: string;
+  repo_id: string;
+  repo: string;
+  instances: Array<{
+    backend_instance: string;
+    logical_backend: string;
+    enabled: boolean;
+    executable_ready: boolean;
+    auth_ready: boolean | null;
+    supported_models: string[];
+  }>;
+}
+
+/** Canonical central ownership used to exclude already-reserved work. */
+export interface NativeHeldWork extends NativeClaimBinding {
+  profile: string;
+  work_id: string;
+  reserves_intake: boolean;
+}
+
 export interface NativeClaimHold extends NativeClaimBinding {
   phase: 'reserved' | 'offered' | 'running' | 'reconciling' | 'result_pending';
   held_at: string;

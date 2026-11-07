@@ -8,6 +8,7 @@ use git_agent_harness::cli::capabilities::*;
 fn native_context_and_current_policy_paths_remain_private() {
     let manifest = generate_manifest();
     for name in [
+        "plan",
         "prepare",
         "check",
         "check-current-policy",

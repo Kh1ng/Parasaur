@@ -58,7 +58,11 @@ pub fn decide_with_state(
         crate::clock::now_utc(),
         |backend| runner::backend_available_for_profile(profile, backend),
     )?;
-    Ok(with_resolved_executable(profile, decision))
+    Ok(if runtime.remote_instances.is_some() {
+        decision
+    } else {
+        with_resolved_executable(profile, decision)
+    })
 }
 
 /// Route an implementation request with deterministic task-class rules. A
@@ -84,7 +88,11 @@ pub fn decide_for_task_with_state(
         },
         |backend| runner::backend_available_for_profile(profile, backend),
     )?;
-    Ok(with_resolved_executable(profile, decision))
+    Ok(if runtime.remote_instances.is_some() {
+        decision
+    } else {
+        with_resolved_executable(profile, decision)
+    })
 }
 
 fn with_resolved_executable(profile: &Profile, mut decision: RouteDecision) -> RouteDecision {
@@ -968,7 +976,17 @@ where
         .executable
         .as_deref()
         .is_some_and(runner::is_executable_path);
-    let executable_available = if identity.explicit_instance {
+    let executable_available = if let Some(instances) = &runtime.remote_instances {
+        instances
+            .get(&identity.backend_instance)
+            .is_some_and(|instance| {
+                instance.backend == backend
+                    && (instance.models.is_empty()
+                        || model.is_some_and(|model| {
+                            instance.models.iter().any(|supported| supported == model)
+                        }))
+            })
+    } else if identity.explicit_instance {
         configured_executable_available
     } else {
         configured_executable_available || backend_available(backend)

@@ -25,6 +25,8 @@ mod issue_claim;
 mod issues;
 mod metrics;
 pub(crate) mod native_guard;
+mod native_plan;
+pub(crate) use native_plan::plan_native;
 mod prior_attempts;
 mod prompts;
 mod publish;

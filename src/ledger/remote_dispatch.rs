@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 pub const MAX_RECEIPT_BYTES: usize = 8 * 1024 * 1024;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct DispatchBinding {
     pub run_id: String,

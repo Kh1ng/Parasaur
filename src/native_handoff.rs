@@ -13,9 +13,11 @@ use std::{
     path::Path,
 };
 
+mod catalog;
 #[cfg(target_os = "linux")]
 mod credential_socket;
 mod current;
+pub use catalog::{WorkerCatalog, WorkerCheckScope};
 #[cfg(target_os = "linux")]
 pub mod execution;
 mod history;

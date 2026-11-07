@@ -6,7 +6,7 @@ import { join, isAbsolute } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import type { ProfileSummary } from '@git-agent-harness/contracts';
+import type { ProfileSummary,ConfigShowFull,NativeWorkerCatalog } from '@git-agent-harness/contracts';
 import { requireOwner } from './authMiddleware.js';
 import { NativeWorkerContext, nativeBinding } from './nativeWorkerContext.js';
 import type { NativeDispatchBinding, NativeStartGrant, NativeWorkerObservation } from './nativeDispatchBroker.js';
@@ -44,6 +44,18 @@ export class NativeWorker {
     if(!nativeBinding(binding) || binding.node_id!==this.options.nodeId) throw Error('Native worker identity changed');
     const profile=(await this.options.profiles()).find(profile=>profile.name===binding.profile);
     if(!profile || profile.repo!==binding.repo || profile.repo_id!==binding.repo_id) throw Error('Native worker profile changed');
+  }
+  async catalog(scope:{node_id:string;profile:string;repo_id:string;repo:string}):Promise<NativeWorkerCatalog> {
+    if(scope.node_id!==this.options.nodeId || !Object.values(scope).every(value=>typeof value==='string' && value.length>0 && value.length<=4096)) throw Error('Invalid worker catalog scope');
+    const profile=(await this.options.profiles()).find(profile=>profile.name===scope.profile);
+    if(!profile || profile.repo!==scope.repo || profile.repo_id!==scope.repo_id) throw Error('Worker catalog repository changed');
+    const configuration=await command(this.binary,['config','show','--json','--full','--profile',scope.profile,
+      ...(this.options.config?['--config-path',this.options.config]:[])]) as ConfigShowFull;
+    const instances=configuration.profiles[scope.profile]?.backend_instances;
+    if(!instances || instances.length>128) throw Error('Worker account metadata unavailable');
+    return {protocol:1,...scope,instances:instances.map(instance=>({backend_instance:instance.backend_instance,
+      logical_backend:instance.logical_backend,enabled:instance.enabled===true,executable_ready:instance.executable_resolved===true,
+      auth_ready:typeof instance.auth_ready==='boolean'?instance.auth_ready:null,supported_models:instance.supported_models}))};
   }
   private args(binding:NativeDispatchBinding,action:string,context=false):string[] {
     const paths=this.contexts.paths(binding);
@@ -134,6 +146,13 @@ export class NativeWorker {
 export function nativeWorkerRouter(worker:NativeWorker):Router {
   const router=Router();router.use(requireOwner);
   router.use(rateLimit({windowMs:60_000,limit:240,standardHeaders:true,legacyHeaders:false}));
+  router.post('/catalog',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    const body=req.body as {node_id:string;profile:string;repo_id:string;repo:string}|undefined;
+    if(!body || Object.keys(body).length!==4 || !['node_id','profile','repo_id','repo'].every(key=>Object.hasOwn(body,key))) return void res.sendStatus(400);
+    try {res.json(await worker.catalog(body));}
+    catch {res.status(409).json({error:'Worker account metadata unavailable'});}
+  });
   router.post('/',async(req,res)=>{
     res.set('Cache-Control','no-store');
     const body=req.body as Record<string,unknown>|undefined;

@@ -22,10 +22,14 @@ async function fixture() {
     files:Object.fromEntries(Object.entries(contents).map(([name,bytes])=>[name,{bytes:Buffer.byteLength(bytes),sha256:hash(bytes)}]))});
   for(const [name,bytes] of Object.entries({...contents,'manifest.json':manifest})) writeFileSync(join(context,name),bytes,{mode:0o600});
   const binding:NativeDispatchBinding={run_id:run,node_id:'worker',context_sha256:hash(manifest),profile:'fixture',repo:'fixture/repo',repo_id:'fixture',work_id:'#1',mode:'fix',backend:'codex',model:'fixture-model',backend_instance:null,branch:null,review_generation:null,dispatch_reason:'initial'};
-  const contexts=new NativeWorkerContext(destination);let stages=0,starts=0,loseUpload=false,member=true;
+  const contexts=new NativeWorkerContext(destination);let stages=0,starts=0,loseUpload=false,member=true,corruptCatalog=false;
   const check=async(candidate:NativeDispatchBinding)=>{if(!member || candidate.node_id!=='worker' || candidate.repo!==binding.repo) throw Error('Profile changed');};
   const ready=()=>({...binding,state:'ready',reservation:{...binding,id:'a'.repeat(32),expires_at:new Date(Date.now()+20_000).toISOString()}});
-  const worker={contexts,check,async action(candidate:NativeDispatchBinding,action:string){
+  const worker={contexts,check,async catalog(scope:Record<string,string>){
+    if(!member)throw Error('Profile changed');
+    return {protocol:1,...scope,instances:[{backend_instance:'codex',logical_backend:'codex',enabled:true,
+      executable_ready:true,auth_ready:null,supported_models:['fixture-model'],...(corruptCatalog?{private_token:'PRIVATE_UNEXPECTED_CATALOG_FIELD'}:{})}]};
+  },async action(candidate:NativeDispatchBinding,action:string){
     await check(candidate);
     if(action==='prepare') return {files:contexts.begin(candidate),stage_offered:contexts.stageOffered(candidate)};
     if(action==='stage') {if(contexts.offerStage(candidate)) stages++;return ready();}
@@ -51,6 +55,7 @@ async function fixture() {
   const transport=new NativeWorkerHttpTransport({contextRoot:source,worker:id=>id==='worker'?node:undefined,secret:()=> 'fixture-service'});
   return {binding,context,contexts,contents,source,node,url,transport,
     get stages(){return stages;},get starts(){return starts;},loseUpload(){loseUpload=true;},revoke(){member=false;},
+    corruptCatalog(){corruptCatalog=true;},
     close:()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()))};
 }
 test('real HTTP transfers immutable files and carries fixed lifecycle observations and proofs',async()=>{
@@ -88,4 +93,15 @@ test('worker HTTP requires owner service auth, exact local identity and register
     f.node.profiles=['fixture'];f.revoke();await assert.rejects(f.transport.stage(f.binding,f.context),/unconfirmed/);
     assert.equal(f.stages,0);assert.equal(f.starts,0);
   } finally {await f.close();}
+});
+
+test('catalog is owner-scoped, preserves unknown authentication and refuses extra credential fields',async()=>{
+  const f=await fixture();const scope={node_id:f.binding.node_id,profile:f.binding.profile,repo:f.binding.repo,repo_id:f.binding.repo_id};
+  try {
+    const response=await fetch(`${f.url}/api/native-worker/catalog`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(scope)});
+    assert.equal(response.status,403);
+    const catalog=await f.transport.catalog(scope);assert.equal(catalog.instances[0].auth_ready,null);
+    assert.equal(f.stages,0);assert.equal(f.starts,0);
+    f.corruptCatalog();await assert.rejects(f.transport.catalog(scope),error=>String(error).includes('Invalid worker account metadata') && !String(error).includes('PRIVATE_'));
+  }finally{await f.close();}
 });

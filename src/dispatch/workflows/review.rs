@@ -12,9 +12,10 @@ use super::super::review::context::{
     lookup_review_state_by_branch, prepare_review_diff, resolve_review_target, ReviewTarget,
 };
 use super::super::review::policy::{
-    check_review_budget, derive_reviewer_tier, next_escalatory_reviewer, next_review_candidate,
-    parse_review_verdict_with_context, review_escalation_reason, review_output_invalid_error,
-    reviewer_dedup_class, ReviewBudgetExhausted, ReviewGateContext,
+    check_review_budget, derive_reviewer_tier, ensure_pinned_review_route,
+    next_escalatory_reviewer, next_review_candidate, parse_review_verdict_with_context,
+    review_escalation_reason, review_output_invalid_error, reviewer_dedup_class,
+    ReviewBudgetExhausted, ReviewGateContext,
 };
 use super::super::text::{utf8_safe_prefix, utf8_safe_suffix};
 use super::super::DispatchArgs;
@@ -426,15 +427,7 @@ pub(in crate::dispatch) fn review(
     // review fallback must not substitute a previously used reviewer when
     // that exact route needs approval or is unavailable.
     let exact_route_required = next_reviewer.is_some();
-    if args.backend_instance.is_some()
-        && (requested_backend != config::canonical_backend_name(&args.backend)
-            || args
-                .model
-                .as_deref()
-                .is_some_and(|model| requested_model != Some(model)))
-    {
-        anyhow::bail!("review history requires a different route; the explicitly selected account/model cannot be substituted");
-    }
+    ensure_pinned_review_route(args, requested_backend, requested_model)?;
     let route_request = RouteRequest {
         last_failure_class: None,
         mode: "review",

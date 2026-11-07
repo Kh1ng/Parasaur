@@ -4,7 +4,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { opendir } from 'node:fs/promises';
-import type { NativeClaimBinding, NativeResultAcknowledgement, NativeReservationRelease } from '@git-agent-harness/contracts';
+import type { NativeClaimBinding, NativeResultAcknowledgement, NativeReservationRelease,NativeHeldWork } from '@git-agent-harness/contracts';
 import type { ClaimsService } from './claimsService.js';
 import { writeFileAtomic } from './atomicFile.js';
 
@@ -65,10 +65,11 @@ interface Journal {
   acknowledgement?: NativeResultAcknowledgement; history_cleaned?: boolean;
   worker_release?: WorkerRelease;
   reservation_release?: { reservation: NativeHostReservation; proof?: NativeReservationRelease; reason?: 'worker_release_unconfirmed' | 'worker_release_mismatch' };
+  activated?: boolean;
   start_grant?: { reservation: NativeHostReservation; issued_at: string; expires_at: string; token_sha256: string; consumed_at?: string };
   last_operation?: { sequence: number; purpose: NativeOperationRequest['purpose']; authorized_at: string };
 }
-export type NativeDispatchView = Pick<Journal, 'phase' | 'updated_at' | 'reason' | 'acknowledgement' | 'worker_release' | 'reservation_release'> & { binding: NativeDispatchBinding; grant_consumed_at?: string };
+export type NativeDispatchView = Pick<Journal, 'phase' | 'updated_at' | 'reason' | 'acknowledgement' | 'worker_release' | 'reservation_release' | 'activated'> & { binding: NativeDispatchBinding; grant_consumed_at?: string };
 type Deps = {
   root: string; centralUrl: string; coordinatorNodeId: string; claims: ClaimsService; transport: NativeWorkerTransport;
   authorizeStart: (binding: NativeDispatchBinding, reservation: NativeHostReservation, signal?: AbortSignal) => Promise<NativeAuthorization>;
@@ -107,6 +108,7 @@ function readPrivate(path: string): Buffer {
 const readJson = <T>(path: string): T => JSON.parse(readPrivate(path).toString('utf8')) as T;
 function view(journal: Journal): NativeDispatchView {
   return structuredClone({ binding: journal.binding, phase: journal.phase, updated_at: journal.updated_at,
+    ...(journal.activated!==undefined?{activated:journal.activated}:{}),
     ...(journal.worker_release ? { worker_release: journal.worker_release } : {}),
     ...(journal.reservation_release ? { reservation_release: journal.reservation_release } : {}),
     ...(journal.start_grant?.consumed_at ? { grant_consumed_at: journal.start_grant.consumed_at } : {}),
@@ -136,6 +138,24 @@ export class NativeDispatchBroker {
     if (process.platform !== 'win32' && (lstatSync(this.root).mode & 0o077) !== 0) throw Error('Native broker root must be private');
   }
 
+  /** Transfer central ownership without offering worker execution. The
+   * controller may release its matching local claim only after this returns;
+   * a separate offer then activates this durable run. */
+  reservePrepared(runId:string,contextSha256:string):Promise<NativeDispatchView> {
+    if(!isNativeRunId(runId) || !digest(contextSha256)) return Promise.reject(Error('Invalid native run binding'));
+    return this.serial(runId,async()=>{
+      const prepared=this.prepared(runId,contextSha256);const path=this.journalPath(runId);
+      if(!existsSync(path) && this.deps.claims.getLeases().some(lease=>lease.native_handoff?.run_id===runId)) throw Error('Native ownership exists without its broker journal');
+      let journal=existsSync(path)?this.read(runId):this.create(prepared,false);
+      if(journal.binding_sha256!==bindingHash(prepared)) throw Error('Native reservation conflicts with its durable binding');
+      if(!journal.stage_offered && ['prepared','reserved'].includes(journal.phase)) {
+        this.deps.claims.reserveNative(this.deps.coordinatorNodeId,prepared.profile,prepared.work_id,prepared);
+        journal=this.update(journal,{phase:'reserved'});
+      }
+      return view(journal);
+    });
+  }
+
   /** The context must already have been prepared by the trusted central CLI in
    * root/<run UUID>/context. Changed requests/policies produce another digest
    * and cannot replace this run. No caller supplies an arbitrary binding path. */
@@ -151,6 +171,7 @@ export class NativeDispatchBroker {
       if (journal.binding_sha256 !== bindingHash(prepared)) throw Error('Native offer conflicts with its durable run binding');
       if (journal.phase === 'terminal') return this.finishTerminal(journal);
       if (journal.reservation_release) return this.cancelReservation(journal);
+      if(journal.activated===false) journal=this.update(journal,{activated:true});
       if (journal.stage_offered) return this.reconcileRun(journal);
       this.deps.claims.reserveNative(this.deps.coordinatorNodeId, prepared.profile, prepared.work_id, prepared);
       journal = this.update(journal, { phase: 'reserved' });
@@ -170,6 +191,18 @@ export class NativeDispatchBroker {
   }
   get(runId: string): NativeDispatchView { return view(this.read(runId)); }
 
+  heldWork(profile:string):NativeHeldWork[] {
+    const leases=this.deps.claims.getLeases().filter(lease=>lease.profile===profile && lease.native_handoff);
+    if(leases.length>4096) throw Error('Native ownership observation exceeds its limit');
+    return leases.map(lease=>{
+      const hold=lease.native_handoff!;let reserves_intake=true;
+      try {const binding=this.get(hold.run_id).binding;
+        reserves_intake=binding.mode==='fix' && binding.branch===null && ['initial','retry','escalate'].includes(binding.dispatch_reason??'');
+      }catch{/* Unknown native work still reserves intake conservatively. */}
+      return {profile,work_id:lease.work_id,run_id:hold.run_id,node_id:hold.node_id,context_sha256:hold.context_sha256,reserves_intake};
+    });
+  }
+
   /** Stream durable offers on startup/poll without retaining an ever-growing
    * run map. One failed worker cannot erase or re-offer another run. */
   async reconcilePending():Promise<{checked:number;unconfirmed:number}> {
@@ -183,6 +216,7 @@ export class NativeDispatchBroker {
         if(journal.phase==='cancelled' || (journal.phase==='terminal' && journal.history_cleaned
           && journal.worker_release?.phase==='released' && journal.worker_release.context_history_cleaned)) continue;
         checked++;
+        if(journal.activated===false) {unconfirmed++;continue;}
         const current=journal.stage_offered?await this.reconcile(entry.name):await this.offerPrepared(entry.name,journal.binding.context_sha256);
         if(['reconciling','result_pending','cancelling'].includes(current.phase)) unconfirmed++;
       } catch {unconfirmed++;}
@@ -362,10 +396,10 @@ export class NativeDispatchBroker {
     if (bindingHash(binding) !== bindingHash(derived)) throw Error('Prepared binding differs from its manifest-bound request');
     return binding;
   }
-  private create(binding: NativeDispatchBinding): Journal {
+  private create(binding: NativeDispatchBinding,activated=true): Journal {
     // Persist the run directory entry as well as the journal inside it.
     syncDirectory(this.root);
-    const journal: Journal = { version: 1, binding, binding_sha256: bindingHash(binding), phase: 'prepared', stage_offered: false, start_offered: false, terminal_observed: false, updated_at: new Date(this.now()).toISOString() };
+    const journal: Journal = { version: 1, binding, activated, binding_sha256: bindingHash(binding), phase: 'prepared', stage_offered: false, start_offered: false, terminal_observed: false, updated_at: new Date(this.now()).toISOString() };
     this.write(journal); return journal;
   }
   private read(run: string): Journal {
@@ -377,6 +411,7 @@ export class NativeDispatchBroker {
     if (journal.version !== 1 || journal.binding?.run_id !== run || !digest(journal.binding.context_sha256)
       || !phases.includes(journal.phase) || typeof journal.stage_offered !== 'boolean' || typeof journal.start_offered !== 'boolean'
       || typeof journal.terminal_observed !== 'boolean' || journal.binding_sha256 !== bindingHash(journal.binding)
+      || (Object.hasOwn(journal,'activated') && typeof journal.activated!=='boolean') || (journal.activated===false && journal.stage_offered)
       || (grant && (!journal.start_offered || !same(grant.reservation, journal.binding) || !grant.reservation.id || !digest(grant.token_sha256)
         || !Number.isFinite(Date.parse(grant.issued_at)) || !Number.isFinite(Date.parse(grant.expires_at)) || !Number.isFinite(Date.parse(grant.reservation.expires_at))
         || Date.parse(grant.expires_at) <= Date.parse(grant.issued_at) || Date.parse(grant.expires_at) - Date.parse(grant.issued_at) > 10_000

@@ -29,7 +29,11 @@ use route_state::{record_capacity_deferral, route_state_fingerprint};
 mod action_execution;
 #[path = "runtime/dispatch_policy.rs"]
 mod dispatch_policy;
+#[path = "runtime/native_dispatch.rs"]
+mod native_dispatch;
 pub(crate) use action_execution::{action_prior_context, execute_action};
+#[cfg(unix)]
+pub(crate) use native_dispatch::project_native_holds;
 #[path = "runtime/dispatch_state.rs"]
 mod dispatch_state;
 use dispatch_state::{
@@ -332,6 +336,7 @@ fn run_pass(
     }
     let mut snapshot =
         crate::status::build_snapshot_from_entries(cfg, profile_name, now, &ledger_entries)?;
+    native_dispatch::apply_holds(cfg, profile_name, &mut snapshot)?;
     crate::prune::run_automatic(cfg, profile_name, &ledger_entries, &snapshot)?;
     crate::events::record(
         cfg,
@@ -589,10 +594,10 @@ fn run_selected_action(
                 &action,
                 prior_attempt_context,
                 skip_validation_gate,
-                Some(RouteNodeAdmission::single_worker(
-                    action.clone(),
-                    cfg.defaults.node_capacity,
-                )),
+                Some(
+                    RouteNodeAdmission::single_worker(action.clone(), cfg.defaults.node_capacity)
+                        .with_review_generation(original_review_generation.clone()),
+                ),
             ) {
                 Ok(outcome) => {
                     crate::work_claim::release_owned_work(claim_scope, &work_id)?;
@@ -611,10 +616,10 @@ fn run_selected_action(
             &action,
             prior_attempt_context,
             skip_validation_gate,
-            Some(RouteNodeAdmission::single_worker(
-                action.clone(),
-                cfg.defaults.node_capacity,
-            )),
+            Some(
+                RouteNodeAdmission::single_worker(action.clone(), cfg.defaults.node_capacity)
+                    .with_review_generation(original_review_generation.clone()),
+            ),
         )?
     };
     Ok((action, outcome))
@@ -709,12 +714,14 @@ fn run_parallel_once(
         profile_name: &str,
         ledger_entries: &[crate::ledger::LedgerEntry],
     ) -> Result<crate::status::StatusSnapshot> {
-        crate::status::build_snapshot_from_entries(
+        let mut snapshot = crate::status::build_snapshot_from_entries(
             cfg,
             profile_name,
             crate::clock::now_utc(),
             ledger_entries,
-        )
+        )?;
+        native_dispatch::apply_holds(cfg, profile_name, &mut snapshot)?;
+        Ok(snapshot)
     }
 
     std::thread::scope(|scope| -> Result<()> {
@@ -945,12 +952,15 @@ fn run_parallel_once(
                         saw_real_work = true;
 
                         let route_admission = if waits_for_route {
-                            Some(RouteNodeAdmission::new(
-                                sequence,
-                                action_for_thread.clone(),
-                                route_admission_tx.clone(),
-                                cfg.defaults.node_capacity,
-                            ))
+                            Some(
+                                RouteNodeAdmission::new(
+                                    sequence,
+                                    action_for_thread.clone(),
+                                    route_admission_tx.clone(),
+                                    cfg.defaults.node_capacity,
+                                )
+                                .with_review_generation(original_review_generation.clone()),
+                            )
                         } else {
                             None
                         };
@@ -1272,6 +1282,29 @@ pub(crate) fn run_dispatch_and_record(
     work_id: Option<&str>,
     args: &crate::dispatch::DispatchArgs,
 ) -> Result<Option<String>> {
+    if args.route_admission.is_some() && native_dispatch::enabled(cfg)? {
+        let offered = native_dispatch::submit(cfg, args);
+        let (run, detail) = match offered {
+            Ok(offered) => (
+                Some(offered.run_id),
+                format!("Deferred {label}: {}", offered.detail),
+            ),
+            Err(error) => (
+                args.run_id.clone(),
+                format!("Deferred {label}: native handoff unconfirmed: {error}"),
+            ),
+        };
+        crate::events::record_with_run_id_and_reason_code(
+            cfg,
+            crate::events::EventType::WorkDeferred,
+            Some(&args.profile),
+            work_id,
+            run.as_deref(),
+            detail.clone(),
+            Some("native_handoff"),
+        )?;
+        return Ok(Some(detail));
+    }
     let target_context = args
         .branch
         .as_deref()

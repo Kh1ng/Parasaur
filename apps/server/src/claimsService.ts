@@ -35,7 +35,7 @@ function claimKey(profile: string, workId: string): string {
 }
 
 /** Same issue aliases as Rust work_claim::normalize_work_identity. */
-function canonicalWorkId(value: string): string {
+export function canonicalWorkId(value: string): string {
   const trimmed = value.trim();
   const digits = trimmed.startsWith('TICKET-') ? trimmed.slice(7) : trimmed.startsWith('#') ? trimmed.slice(1) : trimmed;
   return /^[0-9]+$/.test(digits) ? `#${digits.replace(/^0+/, '') || '0'}` : trimmed;

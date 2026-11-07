@@ -18,6 +18,24 @@ mod routine_overlap;
 
 const TEST_REVIEW_GENERATION: &str = "review-v1:reviewed-sha:sha256:test";
 
+#[test]
+fn native_and_local_reviews_cannot_substitute_a_pinned_account_or_model() {
+    let mut args: crate::dispatch::DispatchArgs = serde_json::from_value(serde_json::json!({
+        "profile":"test", "mode":"review", "backend":"codex", "target":"gah/review",
+        "backend_instance":"work", "model":"fixture-model", "current_branch":false,
+        "dry_run":false, "retries":2, "allow_draft_fail":false, "prod":false,
+        "issue_intake_override":false, "allow_unknown_red_baseline":false,
+        "escalate":false, "skip_validation_gate":false
+    }))
+    .unwrap();
+    assert!(ensure_pinned_review_route(&args, "codex", Some("fixture-model")).is_ok());
+    assert!(ensure_pinned_review_route(&args, "claude", Some("fixture-model")).is_err());
+    assert!(ensure_pinned_review_route(&args, "codex", Some("other-model")).is_err());
+    assert!(ensure_pinned_review_route(&args, "codex", None).is_err());
+    args.backend_instance = None;
+    assert!(ensure_pinned_review_route(&args, "claude", Some("other-model")).is_ok());
+}
+
 fn review_ledger_entry(
     profile_name: &str,
     prof: &Profile,

@@ -6,7 +6,7 @@ import https from 'node:https';
 import { createReadStream, readFileSync, closeSync, fstatSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
-import type { RegisteredNode, NativeReservationRelease } from '@git-agent-harness/contracts';
+import type { RegisteredNode, NativeReservationRelease,NativeWorkerCatalog } from '@git-agent-harness/contracts';
 import type { NativeDispatchBinding, NativeHostReservation, NativeStartGrant, NativeWorkerObservation, NativeWorkerRelease, NativeWorkerTransport } from './nativeDispatchBroker.js';
 import { nativeContextManifest, openNativeFile } from './nativeWorkerContext.js';
 
@@ -16,7 +16,7 @@ export class NativeWorkerHttpTransport implements NativeWorkerTransport {
   constructor(private readonly options:{contextRoot:string;worker:(id:string)=>RegisteredNode|undefined;secret:(reference:string)=>string}) {
     this.root=resolve(options.contextRoot);
   }
-  private target(binding:NativeDispatchBinding) {
+  private target(binding:Pick<NativeDispatchBinding,'node_id'|'profile'>) {
     const node=this.options.worker(binding.node_id);
     if(!node?.profiles?.includes(binding.profile)) throw Error('Native worker membership unavailable');
     const url=new URL(node.advertised_url);
@@ -25,7 +25,7 @@ export class NativeWorkerHttpTransport implements NativeWorkerTransport {
     if((node.transport_mode==='authenticated_remote' && !token) || /[\x00-\x1f\x7f]/.test(token)) throw Error('Native worker credential unavailable');
     return {origin:url.origin,reference:node.secret_ref,token};
   }
-  private async request(binding:NativeDispatchBinding,path:string,payload:Record<string,unknown>|Readable,signal?:AbortSignal):Promise<unknown> {
+  private async request(binding:Pick<NativeDispatchBinding,'node_id'|'profile'>,path:string,payload:Record<string,unknown>|Readable,signal?:AbortSignal):Promise<unknown> {
     const target=this.target(binding);const url=new URL(path,target.origin);
     const streaming=typeof (payload as Readable).pipe==='function';
     const source=streaming?payload as Readable:undefined;
@@ -55,6 +55,21 @@ export class NativeWorkerHttpTransport implements NativeWorkerTransport {
   }
   private action(binding:NativeDispatchBinding,action:string,extra:Record<string,unknown>={},signal?:AbortSignal) {
     return this.request(binding,'/api/native-worker',{action,binding,...extra},signal);
+  }
+  async catalog(scope:Pick<NativeDispatchBinding,'node_id'|'profile'|'repo_id'|'repo'>,signal?:AbortSignal):Promise<NativeWorkerCatalog> {
+    const catalog=await this.request(scope,'/api/native-worker/catalog',scope,signal) as NativeWorkerCatalog;
+    const bounded=(value:unknown):value is string=>typeof value==='string' && value.length>0 && value.length<=4096 && !/[\x00-\x1f\x7f]/.test(value);
+    const ids=new Set<string>();
+    if(!catalog || catalog.protocol!==1 || catalog.node_id!==scope.node_id || catalog.profile!==scope.profile
+      || catalog.repo_id!==scope.repo_id || catalog.repo!==scope.repo || Object.keys(catalog).length!==6
+      || !Array.isArray(catalog.instances) || catalog.instances.length>128 || catalog.instances.some(instance=>{
+        if(!instance || Object.keys(instance).length!==6 || !bounded(instance.backend_instance) || !bounded(instance.logical_backend)
+          || ids.has(instance.backend_instance) || typeof instance.enabled!=='boolean' || typeof instance.executable_ready!=='boolean'
+          || (instance.auth_ready!==null && typeof instance.auth_ready!=='boolean') || !Array.isArray(instance.supported_models)
+          || instance.supported_models.length>256 || !instance.supported_models.every(bounded)) return true;
+        ids.add(instance.backend_instance);return false;
+      })) throw Error('Invalid worker account metadata');
+    return catalog;
   }
   stage(binding:NativeDispatchBinding,contextDirectory:string):Promise<NativeWorkerObservation> {
     if(resolve(contextDirectory)!==join(this.root,binding.run_id,'context')) return Promise.reject(Error('Native context is outside its broker root'));

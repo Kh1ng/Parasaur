@@ -1,18 +1,40 @@
-import { Router } from 'express';
+import { Router,type RequestHandler } from 'express';
 import rateLimit from 'express-rate-limit';
 import { requireOwner } from './authMiddleware.js';
 import { isNativeRunId, type NativeDispatchBroker, type NativeStartGrant, type NativeOperationRequest, type NativeAcknowledgementRequest } from './nativeDispatchBroker.js';
+import type { NativeDispatchProducer } from './nativeDispatchProducer.js';
+import type { NativeJobRequest } from './gahCli.js';
 
 /** Internal worker exchange only. A paired browser or GitLab identity cannot
  * consume the service credential. No paths, dispatch commands or token issue
  * operation are accepted here. The host must still fence its own reservation. */
 export function nativeGrantRouter(deps: {
   broker: NativeDispatchBroker;
+  producer?:NativeDispatchProducer;
   worker: (id: string) => { profiles?: string[] } | undefined;
 }): Router {
   const router = Router();
   router.use(requireOwner);
   router.use(rateLimit({windowMs:60_000,limit:60,standardHeaders:true,legacyHeaders:false}));
+  router.post('/reserve',async(req,res)=>{
+    if(!deps.producer) return void res.status(503).json({error:'Native controller preparation unavailable'});
+    try {res.set('Cache-Control','no-store').json(await deps.producer.reserve(req.body as NativeJobRequest));}
+    catch {res.status(409).json({error:'Native preparation unconfirmed; inspect its original work/run'});}
+  });
+  const holds:RequestHandler=(req,res)=>{
+    const profile=req.method==='POST'?req.body?.profile:req.query.profile;
+    if(typeof profile!=='string' || !profile || profile.length>128) return void res.sendStatus(400);
+    try {res.set('Cache-Control','no-store').json(deps.broker.heldWork(profile));}
+    catch {res.status(503).json({error:'Native ownership unavailable'});}
+  };
+  router.get('/holds',holds);router.post('/holds',holds);
+  router.get('/preparation',(req,res)=>{
+    if(!deps.producer || typeof req.query.profile!=='string' || typeof req.query.work_id!=='string'
+      || req.query.profile.length>128 || req.query.work_id.length>4096) return void res.sendStatus(400);
+    try {const state=deps.producer.status(req.query.profile,req.query.work_id);
+      res.set('Cache-Control','no-store').status(state?200:404).json(state??{error:'No native preparation'});
+    }catch {res.status(503).json({error:'Native preparation observation unavailable'});}
+  });
   router.post('/offer',async(req,res)=>{
     const request=req.body as {run_id?:unknown;context_sha256?:unknown}|undefined;
     if(!request || Object.keys(request).length!==2 || !isNativeRunId(request.run_id)

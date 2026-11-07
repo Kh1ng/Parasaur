@@ -68,6 +68,10 @@ pub(crate) fn execute_action(
             let args = crate::dispatch::DispatchArgs {
                 mode: "review".to_string(),
                 branch: Some(branch.clone()),
+                expected_review_generation: route_admission
+                    .as_ref()
+                    .and_then(|admission| admission.review_generation())
+                    .map(str::to_string),
                 dispatch_reason: Some("review".to_string()),
                 ..base_args()
             };

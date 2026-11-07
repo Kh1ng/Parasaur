@@ -1,5 +1,11 @@
 # Beta finishing pass: local validation
 
+Current controller source adds worker account discovery, central route planning,
+durable dormant preparation and explicit ownership transfer before activation.
+Canonical native holds now inform scheduling and fresh grant authority. Real HTTP
+tests cover transfer and lost replies; production rollout and complete end-to-end
+acceptance remain pending. See [controller native dispatch](native-controller-routing.md).
+
 Latest native release: the worker verifies central's durable exact-receipt
 acknowledgement, persists stop intent and proves its recorded kernel lease is
 free before confirming release. Original context history chunks are then cleaned;

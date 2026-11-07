@@ -11,6 +11,22 @@ use std::fmt;
 
 mod ci_wait;
 
+/// Review history may select another reviewer, but cannot rewrite an explicit
+/// account/model selection. Native planning and local execution share this fence.
+pub(in crate::dispatch) fn ensure_pinned_review_route(
+    args: &crate::dispatch::DispatchArgs,
+    backend: &str,
+    model: Option<&str>,
+) -> Result<()> {
+    anyhow::ensure!(
+        args.backend_instance.is_none()
+            || (backend == crate::config::canonical_backend_name(&args.backend)
+                && args.model.as_deref().is_none_or(|pinned| model == Some(pinned))),
+        "review history requires a different route; the explicitly selected account/model cannot be substituted"
+    );
+    Ok(())
+}
+
 /// Typed, terminal refusal used when a ticket has exhausted its configured
 /// review budget. Keeping this distinct from backend failures lets the
 /// controller close the run cleanly and makes the operator-visible event

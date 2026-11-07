@@ -88,6 +88,7 @@ async function grantEndpoint(broker: NativeDispatchBroker, worker: (id: string)=
     acknowledgement:(body:unknown,owner=true)=>fetch(url.replace('/consume','/acknowledgement'),{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify(body)}),
     offer:(body:unknown,owner=true)=>fetch(url.replace('/consume','/offer'),{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify(body)}),
     get:(run:string,owner=true)=>fetch(url.replace('/consume',`/runs/${run}`),{headers:{'x-test-principal':owner?'owner':'device'}}),
+    holds:(profile:string,owner=true)=>fetch(url.replace('/consume','/holds'),{method:'POST',headers:{'content-type':'application/json','x-test-principal':owner?'owner':'device'},body:JSON.stringify({profile})}),
     close:()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())),
   };
 }
@@ -236,6 +237,28 @@ test('startup reconciliation resumes durable work once and stops scanning comple
   f.recoverImport();assert.deepEqual(await f.reload().reconcilePending(),{checked:1,unconfirmed:0});
   assert.equal(f.resultReleases,1);assert.equal(f.starts,1);
   assert.deepEqual(await f.broker.reconcilePending(),{checked:0,unconfirmed:0});
+});
+
+test('controller reservation remains dormant across reload until a separate activation',async()=>{
+  const f=fixture();const held=await f.broker.reservePrepared(f.run,f.binding.context_sha256);
+  assert.equal(held.phase,'reserved');assert.equal(held.activated,false);assert.equal(f.stages,0);assert.equal(f.starts,0);
+  assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+  assert.deepEqual(await f.reload().reconcilePending(),{checked:1,unconfirmed:1});assert.equal(f.stages,0);
+  assert.equal((await f.broker.reservePrepared(f.run,f.binding.context_sha256)).activated,false);
+  assert.equal((await f.broker.offerPrepared(f.run,f.binding.context_sha256)).phase,'running');
+  assert.equal(f.stages,1);assert.equal(f.starts,1);
+});
+
+test('native ownership observation is owner-only and uses canonical held work identities',async()=>{
+  const f=fixture();await f.broker.reservePrepared(f.run,f.binding.context_sha256);
+  const api=await grantEndpoint(f.broker,()=>({profiles:['gah']}));
+  try {
+    assert.equal((await api.holds('gah',false)).status,403);
+    const held=await api.holds('gah');assert.equal(held.status,200);
+    assert.deepEqual(await held.json(),[{profile:'gah',work_id:'#1525',run_id:f.run,node_id:'worker',context_sha256:f.binding.context_sha256,reserves_intake:false}]);
+    assert.deepEqual(await (await api.holds('other')).json(),[]);
+    assert.equal(f.stages,0);
+  }finally{await api.close();}
 });
 
 test('prepared-offer HTTP and run observation remain owner-only and never return a start secret',async()=>{

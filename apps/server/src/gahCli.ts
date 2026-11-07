@@ -195,15 +195,27 @@ export function runReceiveNativeResult(options: { bindingFile: string; receiptFi
   return runJsonCommand(args, config, false, undefined, 64 * 1024);
 }
 
+export interface NativeJobRequest {args:Record<string,unknown>}
+export function runPlanNativeJob(request:NativeJobRequest,catalog:import('@git-agent-harness/contracts').NativeWorkerCatalog,config?:string):Promise<NativeJobRequest> {
+  const path=getConfigPath(config??process.env.GAH_CONFIG_PATH??process.env.GAH_CONFIG);
+  return runJsonCommand(['native-handoff','plan',...(path?['--config-path',path]:[])],path,false,JSON.stringify({request,catalog}),8*1024*1024);
+}
+export function runPrepareNativeJob(options:{requestFile:string;output:string;nodeId:string;centralUrl:string;config?:string}):Promise<import('./nativeDispatchBroker.js').NativeDispatchBinding> {
+  const path=getConfigPath(options.config??process.env.GAH_CONFIG_PATH??process.env.GAH_CONFIG);
+  return runJsonCommand(['native-handoff','prepare','--request-file',options.requestFile,'--output',options.output,
+    '--node-id',options.nodeId,'--central-url',options.centralUrl,...(path?['--config-path',path]:[])],path);
+}
+
 /** Trusted central prerequisite, not an execution grant. The caller owns the
  * context directory and must separately check loop/claim/work/host authority. */
 export async function runCheckNativePolicy(options: {
-  contextDirectory: string; contextSha256: string; nodeId: string; centralUrl: string; config?: string; signal?: AbortSignal; checkWork?: boolean; checkRoute?: boolean;
+  contextDirectory: string; contextSha256: string; nodeId: string; centralUrl: string; config?: string; signal?: AbortSignal; checkWork?: boolean; checkRoute?: boolean; workerCatalogFile?:string;
 }): Promise<import('./nativeDispatchBroker.js').NativeDispatchBinding> {
   const config = getConfigPath(options.config ?? process.env.GAH_CONFIG_PATH ?? process.env.GAH_CANONICAL_CONFIG);
   const args = ['native-handoff', 'check-current-policy', '--context-dir', options.contextDirectory,
     '--expected-context', options.contextSha256, '--node-id', options.nodeId, '--central-url', options.centralUrl,
-    ...(config ? ['--config-path', config] : []), ...(options.checkWork ? ['--check-work'] : []), ...(options.checkRoute ? ['--check-route'] : [])];
+    ...(config ? ['--config-path', config] : []), ...(options.checkWork ? ['--check-work'] : []), ...(options.checkRoute ? ['--check-route'] : []),
+    ...(options.workerCatalogFile?['--worker-catalog-file',options.workerCatalogFile]:[])];
   const result = await runJsonCommand<{ binding: import('./nativeDispatchBroker.js').NativeDispatchBinding; policy_current: boolean; execution_authorized: boolean; work_current?: boolean | null; route_current?: boolean | null }>(
     args, config, false, undefined, 64 * 1024, options.signal);
   if (result.policy_current !== true || result.execution_authorized !== false

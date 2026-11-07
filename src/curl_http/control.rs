@@ -11,6 +11,22 @@ const MAX_RESPONSE: usize = 64 * 1024;
 /// five-second deadline. An absolute executable and disabled curl config/
 /// proxy discovery keep profile environment changes out of credential routing.
 pub(crate) fn request_control(url: &str, body: &str, token: &str) -> Result<CurlResponse> {
+    request_bounded(url, body, token, 16 * 1024, 5)
+}
+
+/// Preparation may stream a complete history before acknowledging ownership.
+/// A lost reply still cannot activate that dormant reservation.
+pub(crate) fn request_controller(url: &str, body: &str, token: &str) -> Result<CurlResponse> {
+    request_bounded(url, body, token, 64 * 1024, 30)
+}
+
+fn request_bounded(
+    url: &str,
+    body: &str,
+    token: &str,
+    max_input: usize,
+    timeout: u64,
+) -> Result<CurlResponse> {
     let target = url::Url::parse(url)?;
     ensure!(
         url.len() <= 8192
@@ -20,7 +36,7 @@ pub(crate) fn request_control(url: &str, body: &str, token: &str) -> Result<Curl
             && target.password().is_none()
             && target.query().is_none()
             && target.fragment().is_none()
-            && body.len() <= 16 * 1024
+            && body.len() <= max_input
             && !token.is_empty()
             && token.len() <= 4096
             && !token.chars().any(char::is_control),
@@ -38,7 +54,7 @@ pub(crate) fn request_control(url: &str, body: &str, token: &str) -> Result<Curl
         "--proto",
         "=http,https",
         "--max-time",
-        "5",
+        &timeout.to_string(),
         "-K",
         "-",
         "-w",
@@ -74,7 +90,7 @@ pub(crate) fn request_control(url: &str, body: &str, token: &str) -> Result<Curl
     }
     let output = crate::runner::process::run_bounded_with_input(
         command,
-        Duration::from_secs(5),
+        Duration::from_secs(timeout),
         input.as_bytes(),
     )
     .context("Native control request timed out or could not be observed")?;

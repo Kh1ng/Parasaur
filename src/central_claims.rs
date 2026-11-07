@@ -40,6 +40,18 @@ pub mod observations;
 
 pub(crate) const DEFAULT_LEASE_SECONDS: u64 = 15 * 60;
 
+#[cfg(unix)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NativeHeldWork {
+    pub run_id: String,
+    pub node_id: String,
+    pub context_sha256: String,
+    pub profile: String,
+    pub work_id: String,
+    pub reserves_intake: bool,
+}
+
 /// Resolves this node's identity for claims calls from the same
 /// `coordinator-identity.json` `apps/server` reads/writes
 /// (`getCoordinatorIdentity()`), rather than generating a second one that

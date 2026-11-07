@@ -9,6 +9,7 @@ use super::*;
 
 pub(super) fn add_native_handoff_operations(manifest: &mut CapabilityManifest) {
     for action in [
+        "plan",
         "prepare",
         "check",
         "check-current-policy",
