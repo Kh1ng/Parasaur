@@ -17,8 +17,18 @@ export function defaultProfile(): string {
   return current;
 }
 
-/** Re-chooses the default from the configured profile names and returns it. */
-export function chooseDefaultProfile(configured: readonly string[]): string {
+/**
+ * Re-chooses the default from a profile listing (profile summaries or bare
+ * names) and returns it. A listing in any other shape names no profiles and
+ * leaves the default unchanged, so callers can pass what the CLI returned.
+ */
+export function chooseDefaultProfile(listing: unknown): string {
+  const configured = Array.isArray(listing)
+    ? listing.flatMap((entry) => {
+        const name = typeof entry === 'string' ? entry : (entry as { name?: unknown } | null)?.name;
+        return typeof name === 'string' && name ? [name] : [];
+      })
+    : [];
   if (configured.length > 0 && !configured.includes(current)) {
     current = configured.includes(LEGACY_DEFAULT) ? LEGACY_DEFAULT : [...configured].sort()[0];
   }

@@ -182,8 +182,10 @@ async function main() {
   const providerRegistry = getProviderRegistry();
   // Chosen before the first client connects, so nothing starts on a profile
   // this installation does not have.
+  // A CLI that cannot list profiles leaves the default alone; it must never
+  // stop the server from starting.
   if (cliAvailable) {
-    chooseDefaultProfile((await runProfileList().catch(() => [])).map((profile) => profile.name));
+    chooseDefaultProfile(await runProfileList().catch(() => null));
   }
   providerRegistry.setDefaultProfile(defaultProfile());
 

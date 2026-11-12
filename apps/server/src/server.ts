@@ -1748,7 +1748,7 @@ export function createServer(
   app.get('/api/profiles', async (req, res) => {
     try {
       const profiles = await listProfiles();
-      chooseDefaultProfile(profiles.map((profile) => profile.name));
+      chooseDefaultProfile(profiles);
       res.json(profiles);
     } catch (error) {
       res.status(502).json({
