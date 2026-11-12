@@ -182,7 +182,7 @@ pub(super) fn finish_improve_workflow(
 
     println!("Changes detected. Committing and pushing...");
     let push_url = profile.push_url()?;
-    let push_pat = profile.pat();
+    let push_pat = crate::provider::push_token(profile);
     if worktree::has_uncommitted_changes(wt)? {
         ledger.commit_attempted = true;
         worktree::stage_all(wt)?;

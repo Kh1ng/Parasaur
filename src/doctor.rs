@@ -267,8 +267,13 @@ fn check_profile(defaults: &Defaults, profile: &Profile) -> bool {
     let mut failed = false;
     failed |= !check_repo(profile);
     failed |= !check_provider_cli(profile);
-    failed |= !check_provider_auth(profile);
+    let authenticated = check_provider_auth(profile);
+    failed |= !authenticated;
     failed |= !check_push_url(profile);
+    // Only worth asking the server once its API accepted this profile.
+    if authenticated {
+        failed |= !check_push_access(profile);
+    }
     failed |= !check_writable_path("artifact_root", Path::new(&profile.artifact_root));
     failed |= !check_manager_memory(defaults, profile);
     failed |= !check_candidate_model_consistency(defaults, profile);
@@ -674,6 +679,39 @@ fn check_push_url(profile: &Profile) -> bool {
         }
         Err(err) => {
             print_check(CheckStatus::Fail, "push URL", &format!("{:#}", err));
+            false
+        }
+    }
+}
+
+/// API access and git push use different credentials paths, so a profile can
+/// read issues and still fail at the very end of a run. Ask the server.
+fn check_push_access(profile: &Profile) -> bool {
+    let Ok(url) = profile.push_url() else {
+        return true; // check_push_url has reported it
+    };
+    let token = crate::provider::push_token(profile);
+    match crate::worktree::probe_push_access(Path::new(&profile.local_path), &url, &token) {
+        Ok(()) => {
+            print_check(
+                CheckStatus::Pass,
+                "push access",
+                "the server accepts a push",
+            );
+            true
+        }
+        Err(err) => {
+            let first_line = format!("{err:#}");
+            let first_line = first_line.lines().next().unwrap_or_default();
+            print_check(
+                CheckStatus::Fail,
+                "push access",
+                &format!(
+                    "a push would be refused ({first_line}). Set {} in the profile's env file, or sign in with `{} auth login`",
+                    profile.pat_env_names().join(" or "),
+                    profile.provider_cli().unwrap_or("the provider CLI"),
+                ),
+            );
             false
         }
     }

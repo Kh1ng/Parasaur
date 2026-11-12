@@ -134,7 +134,7 @@ default_target_branch = \"{}\"\n",
 fn print_secret_hint(provider: &str) {
     match crate::provider_kind::ProviderKind::parse(provider) {
         Ok(crate::provider_kind::ProviderKind::Gitlab) => {
-            println!("Set a token in GITLAB_PAT or GITLAB_PAT2 before dispatch.")
+            println!("Parasaur reads issues and pushes with your `glab` login. Posting merge request reviews also needs a bot token in GITLAB_PAT or GITLAB_PAT2.")
         }
         Ok(crate::provider_kind::ProviderKind::Github) => {
             println!("Set a token in GITHUB_TOKEN or GH_TOKEN before dispatch.")

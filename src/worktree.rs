@@ -959,6 +959,48 @@ pub fn push_branch(
     push_branch_with_executable(Path::new("git"), worktree, &refspec, push_url, pat)
 }
 
+/// `git push -q <push_url>`, authenticating with `token` through `askpass`.
+/// Git asks configured credential helpers before askpass, and a helper may
+/// refuse a user name it does not hold: glab rejects the `oauth2` in a
+/// GitLab push URL. So when the URL names a user and a token is in hand,
+/// helpers are off for this one invocation and the token alone answers.
+fn push_command(
+    executable: &Path,
+    worktree: &Path,
+    push_url: &str,
+    token: &str,
+    askpass: &Path,
+) -> Command {
+    let names_user = push_url
+        .split_once("://")
+        .and_then(|(_, rest)| rest.split('/').next())
+        .is_some_and(|authority| authority.contains('@'));
+    let mut cmd = Command::new(executable);
+    if names_user && !token.is_empty() {
+        cmd.args(["-c", "credential.helper="]);
+    }
+    cmd.args(["push", "-q", push_url])
+        .env("GIT_ASKPASS", askpass)
+        .env(ASKPASS_SECRET_ENV, token)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .current_dir(worktree);
+    cmd
+}
+
+/// Whether a push from `repo` to `push_url` would authenticate. A dry run
+/// presents the credential to the server and changes nothing there.
+pub fn probe_push_access(repo: &Path, push_url: &str, token: &str) -> Result<()> {
+    let askpass = write_askpass()?;
+    let mut cmd = push_command(Path::new("git"), repo, push_url, token, &askpass);
+    cmd.args(["--dry-run", "HEAD:refs/heads/gah-doctor-probe"]);
+    let child = spawn_git(&mut cmd, "git push --dry-run")?;
+    let out = wait_with_timeout(child, "git push --dry-run")?;
+    if !out.status.success() {
+        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(())
+}
+
 fn push_branch_with_executable(
     executable: &Path,
     worktree: &Path,
@@ -968,12 +1010,8 @@ fn push_branch_with_executable(
 ) -> Result<()> {
     let askpass = write_askpass()?;
     let result = retry_transient_git_network("push", || {
-        let mut cmd = Command::new(executable);
-        cmd.args(["push", "-q", push_url, branch])
-            .env("GIT_ASKPASS", &askpass)
-            .env(ASKPASS_SECRET_ENV, pat)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .current_dir(worktree);
+        let mut cmd = push_command(executable, worktree, push_url, pat, &askpass);
+        cmd.arg(branch);
         let child = spawn_git(&mut cmd, "git push")?;
         let out = wait_with_timeout(child, "git push")?;
         if !out.status.success() {
@@ -1011,12 +1049,8 @@ fn delete_remote_branch_with_executable(
 ) -> Result<()> {
     let askpass = write_askpass()?;
     let result = retry_transient_git_network("push --delete", || {
-        let mut cmd = Command::new(executable);
-        cmd.args(["push", "-q", push_url, "--delete", branch])
-            .env("GIT_ASKPASS", &askpass)
-            .env(ASKPASS_SECRET_ENV, pat)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .current_dir(worktree);
+        let mut cmd = push_command(executable, worktree, push_url, pat, &askpass);
+        cmd.args(["--delete", branch]);
         let child = spawn_git(&mut cmd, "git push --delete")?;
         let out = wait_with_timeout(child, "git push --delete")?;
         if !out.status.success() {

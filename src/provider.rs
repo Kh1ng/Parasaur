@@ -112,6 +112,30 @@ fn gitlab_hostname(api_base: &str) -> Result<&str> {
     Ok(hostname)
 }
 
+/// The token git pushes with. A profile PAT wins. Without one, a GitLab
+/// profile pushes with the `glab` login that doctor verifies, so one login
+/// serves API calls and pushes alike. Empty when neither exists.
+pub fn push_token(profile: &Profile) -> String {
+    let pat = profile.pat();
+    if !pat.is_empty() || profile.provider_cli() != Some("glab") {
+        return pat;
+    }
+    let Some(host) = profile
+        .provider_api_base
+        .as_deref()
+        .and_then(|base| gitlab_hostname(base.trim()).ok())
+    else {
+        return pat;
+    };
+    provider_command("glab")
+        .args(["config", "get", "token", "--host", host])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
 pub(crate) fn gitlab_api(
     profile: &Profile,
     endpoint: &str,

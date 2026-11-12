@@ -1009,21 +1009,27 @@ where
     // A login block never expires, so nothing else notices the operator
     // signing in again. The backend's own login check is the re-probe: it
     // runs only while such a block stands, and only a positive answer lifts it.
-    if !decision.eligible
-        && decision.reason == Some(availability::Reason::AuthenticationError)
-        && crate::auth_health::login_confirmed(identity)
-    {
+    if !decision.eligible && decision.reason == Some(availability::Reason::AuthenticationError) {
         let mut blocked = identity.clone();
-        if decision.scope == Some(BlockScope::BackendWide) {
-            blocked.effective_model = None;
+        if blocked.executable.is_none() {
+            // A route's executable is resolved after it is chosen; candidates
+            // still being filtered have only the one on PATH to ask.
+            blocked.set_executable(crate::runner::resolve::resolve_executable_on_path(
+                &identity.runner_kind,
+            ));
         }
-        availability::record_available_for_identity(
-            state_path,
-            &blocked,
-            availability::Source::Reprobe,
-            now,
-        )?;
-        decision = availability::availability_for_identity(state_path, identity, now)?;
+        if crate::auth_health::login_confirmed(&blocked) {
+            if decision.scope == Some(BlockScope::BackendWide) {
+                blocked.effective_model = None;
+            }
+            availability::record_available_for_identity(
+                state_path,
+                &blocked,
+                availability::Source::Reprobe,
+                now,
+            )?;
+            decision = availability::availability_for_identity(state_path, identity, now)?;
+        }
     }
     if decision.eligible {
         let candidate_key = CandidateIdentity::from_execution_identity(identity);
