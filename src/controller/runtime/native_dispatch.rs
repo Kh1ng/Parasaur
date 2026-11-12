@@ -52,10 +52,20 @@ fn request(cfg: &GahConfig, path: &str, body: &serde_json::Value) -> Result<Vec<
         crate::curl_http::request_controller(url.as_str(), &serde_json::to_string(body)?, &token)?;
     ensure!(
         response.status == 200,
-        "Central native {path} unconfirmed (HTTP {})",
-        response.status
+        "Central native {path} unconfirmed (HTTP {}{})",
+        response.status,
+        refusal_reason(&response.body)
     );
     Ok(response.body)
+}
+
+/// The central's stated reason for refusing, so the loop's log says what to fix.
+#[cfg(target_os = "linux")]
+fn refusal_reason(body: &[u8]) -> String {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|reply| Some(format!(": {}", reply.get("reason")?.as_str()?)))
+        .unwrap_or_default()
 }
 
 #[cfg(target_os = "linux")]

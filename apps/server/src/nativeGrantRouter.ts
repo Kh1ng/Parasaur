@@ -5,6 +5,15 @@ import { isNativeRunId, type NativeDispatchBroker, type NativeStartGrant, type N
 import type { NativeDispatchProducer } from './nativeDispatchProducer.js';
 import type { NativeJobRequest } from './gahCli.js';
 
+/** Why a controller request was refused, for the owner who has to act on it.
+ * These routes are owner-only, so the reason goes back to the caller and into
+ * the service log: a bare 409 leaves nothing to inspect. */
+function refusal(operation:string,error:unknown):string {
+  const reason=(error instanceof Error?error.message:String(error)).replace(/[\x00-\x1f\x7f]+/g,' ').slice(0,1000);
+  console.error(`[native-dispatch] ${operation} refused: ${reason}`);
+  return reason;
+}
+
 /** Internal worker exchange only. A paired browser or GitLab identity cannot
  * consume the service credential. No paths, dispatch commands or token issue
  * operation are accepted here. The host must still fence its own reservation. */
@@ -19,7 +28,7 @@ export function nativeGrantRouter(deps: {
   router.post('/reserve',async(req,res)=>{
     if(!deps.producer) return void res.status(503).json({error:'Native controller preparation unavailable'});
     try {res.set('Cache-Control','no-store').json(await deps.producer.reserve(req.body as NativeJobRequest));}
-    catch {res.status(409).json({error:'Native preparation unconfirmed; inspect its original work/run'});}
+    catch (error) {res.status(409).json({error:'Native preparation unconfirmed; inspect its original work/run',reason:refusal('reserve',error)});}
   });
   const holds:RequestHandler=(req,res)=>{
     const profile=req.method==='POST'?req.body?.profile:req.query.profile;
@@ -49,7 +58,7 @@ export function nativeGrantRouter(deps: {
     }
     try {
       res.json(await deps.broker.offerPrepared(request.run_id,request.context_sha256));
-    } catch {res.status(409).json({error:'Native offer unconfirmed; inspect the original run'});}
+    } catch (error) {res.status(409).json({error:'Native offer unconfirmed; inspect the original run',reason:refusal('offer',error)});}
   });
   router.get('/runs/:run', (req,res)=>{
     if(!isNativeRunId(req.params.run)) return void res.sendStatus(400);

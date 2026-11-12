@@ -94,16 +94,21 @@ export class NativeDispatchProducer {
     const load=(id:string)=>holds.filter(lease=>lease.native_handoff?.node_id===id).length;
     const workers=this.deps.workers().filter(worker=>worker.node_id!==this.deps.coordinatorId && worker.profiles?.includes(scope.profile))
       .sort((left,right)=>load(left.node_id)-load(right.node_id) || left.node_id.localeCompare(right.node_id));
+    if(workers.length===0) throw Error(`No registered worker declares profile '${scope.profile}'`);
     let selected:{node:RegisteredNode;request:NativeJobRequest}|undefined;
+    const refused:string[]=[];
     for(const node of workers) {
       try {
         const catalog=await this.deps.transport.catalog({node_id:node.node_id,profile:scope.profile,repo_id:profile.repo_id,repo:profile.repo},AbortSignal.timeout(5000));
         const planned=await (this.deps.plan??runPlanNativeJob)(request,catalog);
         if(identity(planned).run!==scope.run || planned.args.profile!==scope.profile || planned.args.work_id!==scope.work) throw Error('Native route planner changed work identity');
         selected={node,request:planned};break;
-      } catch { /* Only a compatible worker with a canonical route may receive context. */ }
+      } catch (error) {
+        // Only a compatible worker with a canonical route may receive context.
+        refused.push(`${node.display_name||node.node_id}:${error instanceof Error?error.message:String(error)}`);
+      }
     }
-    if(!selected) throw Error('No compatible worker has an eligible native route');
+    if(!selected) throw Error(`No compatible worker has an eligible native route (${refused.join('; ')})`);
     const preparation:Preparation={version:1,profile:scope.profile,work_id:scope.work,run_id:scope.run,node_id:selected.node.node_id,phase:'preparing'};
     const run=join(this.deps.root,scope.run);directory(run);
     // Index intent precedes the potentially large context copy. A partial
