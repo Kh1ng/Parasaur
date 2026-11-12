@@ -316,6 +316,7 @@ fn login_status(host: &dyn Host, program: &str, args: &[&str]) -> Status {
                     .map(|check| (check.success, check.stderr))
             },
         ),
+        "glab" => auth_health::classify_glab_status(probe.success, stdout, stderr),
         _ => auth_health::classify_status_output(probe.success, stdout, stderr),
     };
     // Every classifier explains a state that is not Ok.

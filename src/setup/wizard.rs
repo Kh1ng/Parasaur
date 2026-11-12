@@ -288,12 +288,26 @@ impl<'a> Setup<'a> {
                     &format!("✓ Project {profile} is already configured."),
                 );
             } else {
-                self.effects
-                    .add_profile(project::init_args(&checkout, provider, &profile))?;
+                let mut args = project::init_args(&checkout, provider, &profile);
+                if provider == Provider::Gitlab {
+                    args.provider_project_id = project::gitlab_project_id(self.host, &checkout);
+                }
+                let needs_project_id =
+                    provider == Provider::Gitlab && args.provider_project_id.is_none();
+                self.effects.add_profile(args)?;
                 say(
                     &mut self,
                     &format!("✓ Added project {profile} ({}).", checkout.repo),
                 );
+                if needs_project_id {
+                    say(
+                        &mut self,
+                        &format!(
+                            "! Could not read the GitLab project ID for {} from {}. Parasaur cannot dispatch until you add it: gah profile set {profile} --provider-project-id <ID> (Settings → General on the project page shows the ID).",
+                            checkout.repo, checkout.host
+                        ),
+                    );
+                }
             }
         }
 

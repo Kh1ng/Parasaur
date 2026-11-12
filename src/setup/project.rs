@@ -14,6 +14,8 @@ pub struct Checkout {
     /// `None` for a host that is neither github.com nor recognizably GitLab.
     pub provider: Option<Provider>,
     pub host: String,
+    /// `scheme://host[:port]` of the provider's web and API endpoints.
+    pub origin: String,
     /// `owner/name` (GitLab may have nested groups).
     pub repo: String,
     pub default_branch: String,
@@ -35,6 +37,26 @@ pub fn parse_remote(url: &str) -> Option<(String, String)> {
         .and_then(|start| url.get(start..start + repo.len()))
         .unwrap_or(repo);
     Some((host.to_string(), repo.to_string()))
+}
+
+/// The web origin behind a remote URL. An HTTP(S) remote keeps its scheme
+/// and port: a self-hosted GitLab may answer only on plain HTTP or on a
+/// custom port. An SSH remote names neither, so it gets HTTPS on `host`.
+fn web_origin(url: &str, host: &str) -> String {
+    let url = url.trim();
+    for scheme in ["http://", "https://"] {
+        let Some(rest) = url
+            .get(..scheme.len())
+            .filter(|prefix| prefix.eq_ignore_ascii_case(scheme))
+            .map(|_| &url[scheme.len()..])
+        else {
+            continue;
+        };
+        let authority = rest.split('/').next().unwrap_or(rest);
+        let authority = authority.rsplit('@').next().unwrap_or(authority);
+        return format!("{scheme}{}", authority.to_lowercase());
+    }
+    format!("https://{host}")
 }
 
 pub fn provider_for_host(host: &str) -> Option<Provider> {
@@ -101,6 +123,7 @@ pub fn inspect(path: &Path) -> Result<Checkout> {
     Ok(Checkout {
         provider: provider_for_host(&host),
         local_path,
+        origin: web_origin(&remote, &host),
         host,
         repo,
         default_branch,
@@ -125,6 +148,17 @@ pub fn profile_name(repo: &str) -> String {
     }
 }
 
+/// The numeric GitLab project ID behind `checkout`, read through the `glab`
+/// login setup has just verified. Doctor and dispatch address the project by
+/// this ID, so a GitLab profile without it cannot run. `None` when the
+/// project cannot be read; the caller says how to add the ID by hand.
+pub fn gitlab_project_id(host: &dyn super::host::Host, checkout: &Checkout) -> Option<String> {
+    let project = format!("projects/{}", checkout.repo.replace('/', "%2F"));
+    let probe = host.probe("glab", &["api", "--hostname", &checkout.host, &project])?;
+    let body: serde_json::Value = serde_json::from_str(&probe.stdout).ok()?;
+    body.get("id")?.as_u64().map(|id| id.to_string())
+}
+
 pub fn init_args(checkout: &Checkout, provider: Provider, profile: &str) -> InitArgs {
     InitArgs {
         profile: profile.to_string(),
@@ -142,7 +176,7 @@ pub fn init_args(checkout: &Checkout, provider: Provider, profile: &str) -> Init
         local_path: checkout.local_path.display().to_string(),
         default_target_branch: checkout.default_branch.clone(),
         provider_api_base: (provider == Provider::Gitlab)
-            .then(|| format!("https://{}/api/v4", checkout.host)),
+            .then(|| format!("{}/api/v4", checkout.origin)),
         provider_project_id: None,
         artifact_root: None,
         worktree_base: None,
@@ -171,6 +205,29 @@ mod tests {
             Some(("github.com".into(), "o/r".into()))
         );
         assert_eq!(parse_remote("not a url"), None);
+    }
+
+    #[test]
+    fn the_api_origin_keeps_an_http_remotes_scheme_and_port() {
+        for (remote, host, origin) in [
+            (
+                "http://gitlab.lan/group/app.git",
+                "gitlab.lan",
+                "http://gitlab.lan",
+            ),
+            (
+                "HTTPS://token@GitLab.example.com:8443/group/app",
+                "gitlab.example.com",
+                "https://gitlab.example.com:8443",
+            ),
+            (
+                "git@gitlab.example.com:group/app.git",
+                "gitlab.example.com",
+                "https://gitlab.example.com",
+            ),
+        ] {
+            assert_eq!(web_origin(remote, host), origin, "{remote}");
+        }
     }
 
     #[test]
