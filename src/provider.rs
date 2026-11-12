@@ -136,6 +136,21 @@ pub fn push_token(profile: &Profile) -> String {
         .unwrap_or_default()
 }
 
+/// Why a push for `profile` would be refused, or `None` when the server
+/// accepts one. API calls and pushes authenticate separately, so a profile
+/// can read issues and still fail at the very end of a run.
+pub fn push_refusal(profile: &Profile) -> Option<String> {
+    let url = profile.push_url().ok()?;
+    let repo = std::path::Path::new(&profile.local_path);
+    let error = crate::worktree::probe_push_access(repo, &url, &push_token(profile)).err()?;
+    Some(format!(
+        "a push would be refused ({}). Set {} in the profile's env file, or sign in with `{} auth login`",
+        format!("{error:#}").lines().next().unwrap_or_default(),
+        profile.pat_env_names().join(" or "),
+        profile.provider_cli().unwrap_or("the provider CLI"),
+    ))
+}
+
 pub(crate) fn gitlab_api(
     profile: &Profile,
     endpoint: &str,

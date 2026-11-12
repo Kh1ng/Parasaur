@@ -347,8 +347,10 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
                     // deferral and the next loop tick re-observes CI.
                     wait_and_recheck_mrs.push(mr);
                 } else {
-                    // CI conclusively failed (or is otherwise not pending):
-                    // re-check later (no_op fallback).
+                    // Approved, but no CI result exists or will arrive (the
+                    // project runs no pipeline, or the provider reports no
+                    // checks). GAH merges only on green CI, so a person
+                    // decides.
                     human_blocked_mrs.push((mr, HumanRequiredReason::MergePolicy));
                 }
             }

@@ -684,37 +684,17 @@ fn check_push_url(profile: &Profile) -> bool {
     }
 }
 
-/// API access and git push use different credentials paths, so a profile can
-/// read issues and still fail at the very end of a run. Ask the server.
 fn check_push_access(profile: &Profile) -> bool {
-    let Ok(url) = profile.push_url() else {
-        return true; // check_push_url has reported it
-    };
-    let token = crate::provider::push_token(profile);
-    match crate::worktree::probe_push_access(Path::new(&profile.local_path), &url, &token) {
-        Ok(()) => {
-            print_check(
-                CheckStatus::Pass,
-                "push access",
-                "the server accepts a push",
-            );
-            true
-        }
-        Err(err) => {
-            let first_line = format!("{err:#}");
-            let first_line = first_line.lines().next().unwrap_or_default();
-            print_check(
-                CheckStatus::Fail,
-                "push access",
-                &format!(
-                    "a push would be refused ({first_line}). Set {} in the profile's env file, or sign in with `{} auth login`",
-                    profile.pat_env_names().join(" or "),
-                    profile.provider_cli().unwrap_or("the provider CLI"),
-                ),
-            );
-            false
-        }
+    let refusal = crate::provider::push_refusal(profile);
+    match &refusal {
+        Some(why) => print_check(CheckStatus::Fail, "push access", why),
+        None => print_check(
+            CheckStatus::Pass,
+            "push access",
+            "the server accepts a push",
+        ),
     }
+    refusal.is_none()
 }
 
 fn check_writable_path(label: &str, path: &Path) -> bool {

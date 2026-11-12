@@ -524,6 +524,7 @@ fn gitlab_mrs(
         MrFetchScope::FullHistory => "all",
     };
     let mut page = 1;
+    let mut project_runs_ci: Option<bool> = None;
     loop {
         let response = gitlab_api(
             profile,
@@ -547,10 +548,17 @@ fn gitlab_mrs(
                 .as_ref()
                 .map(|value| value.to_string().trim_matches('"').to_string());
             let mut pipeline_status = mr.head_pipeline.and_then(|pipeline| pipeline.status);
+            let mut awaits_ci = true;
             if pipeline_status.is_none() && mr.state.as_deref() == Some("opened") {
                 if let Some(iid) = iid.as_deref() {
                     pipeline_status = gitlab_latest_pipeline_status(profile, iid)?;
                 }
+                // No pipeline on the MR is "not yet" only where pipelines run
+                // at all. Asked once per sync; an unanswered question waits.
+                awaits_ci = pipeline_status.is_some()
+                    || *project_runs_ci.get_or_insert_with(|| {
+                        gitlab_project_has_pipelines(profile).unwrap_or(true)
+                    });
             }
             synced.push(SyncMr {
                 work_id: extract_work_id_from_title(&mr.title),
@@ -570,7 +578,7 @@ fn gitlab_mrs(
                 merged_at: mr.merged_at,
                 ci_failed: gitlab_ci_failed(pipeline_status.as_deref()),
                 ci_passed: gitlab_ci_passed(pipeline_status.as_deref()),
-                ci_pending: gitlab_ci_pending(pipeline_status.as_deref()),
+                ci_pending: awaits_ci && gitlab_ci_pending(pipeline_status.as_deref()),
             });
         }
         if count < PAGE_SIZE {
@@ -600,6 +608,14 @@ fn gitlab_latest_pipeline_status(
         .and_then(|pipeline| pipeline.get("status"))
         .and_then(serde_json::Value::as_str)
         .map(str::to_string))
+}
+
+/// Whether the project has ever run a pipeline. Without one there is no CI
+/// for an open MR to wait on, and waiting would never end.
+fn gitlab_project_has_pipelines(profile: &crate::config::Profile) -> Result<bool> {
+    let endpoint = format!("projects/{}/pipelines", gitlab_project_id(profile)?);
+    let response = crate::provider::gitlab_api(profile, &endpoint, "GET", &[("per_page", "1")])?;
+    Ok(response.as_array().is_some_and(|rows| !rows.is_empty()))
 }
 
 fn gitlab_ci_failed(pipeline_status: Option<&str>) -> bool {

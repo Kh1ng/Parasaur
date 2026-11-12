@@ -1256,6 +1256,11 @@ fn blocked_work_item_lines(blocked: &[Blocker]) -> Vec<String> {
             code,
             b.message.as_deref().unwrap_or(&b.kind)
         ));
+        // A reason code alone leaves the operator guessing; the plan says
+        // what releases the item.
+        if let Some(RemediationPlan::NoAutomaticRemediation { reason, .. }) = &b.remediation_plan {
+            lines.push(format!("      Next: {reason}"));
+        }
     }
     lines
 }
