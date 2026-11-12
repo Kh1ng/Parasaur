@@ -33,7 +33,7 @@ pub(super) fn append_ledger_entry(
             return Ok(true);
         }
     }
-    crate::ledger::append(cfg, ledger).map(|_| false)
+    crate::ledger::append_unless_repeated_refusal(cfg, ledger).map(|_| false)
 }
 
 pub(super) fn should_notify_dispatch_failure(error: &anyhow::Error) -> bool {

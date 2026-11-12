@@ -73,3 +73,6 @@ pub use self::summary::{is_strong_model, usage_summary_for_backend, BackendUsage
 pub(crate) mod test_util;
 
 pub(crate) use jsonl::{read_matching_entries, visit_entries};
+
+mod refusals;
+pub use refusals::append_unless_repeated_refusal;
