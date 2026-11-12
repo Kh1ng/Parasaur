@@ -524,7 +524,6 @@ fn gitlab_mrs(
         MrFetchScope::FullHistory => "all",
     };
     let mut page = 1;
-    let mut project_runs_ci: Option<bool> = None;
     loop {
         let response = gitlab_api(
             profile,
@@ -553,12 +552,8 @@ fn gitlab_mrs(
                 if let Some(iid) = iid.as_deref() {
                     pipeline_status = gitlab_latest_pipeline_status(profile, iid)?;
                 }
-                // No pipeline on the MR is "not yet" only where pipelines run
-                // at all. Asked once per sync; an unanswered question waits.
                 awaits_ci = pipeline_status.is_some()
-                    || *project_runs_ci.get_or_insert_with(|| {
-                        gitlab_project_has_pipelines(profile).unwrap_or(true)
-                    });
+                    || touched_within(mr.updated_at.as_deref(), NO_PIPELINE_GRACE);
             }
             synced.push(SyncMr {
                 work_id: extract_work_id_from_title(&mr.title),
@@ -610,12 +605,20 @@ fn gitlab_latest_pipeline_status(
         .map(str::to_string))
 }
 
-/// Whether the project has ever run a pipeline. Without one there is no CI
-/// for an open MR to wait on, and waiting would never end.
-fn gitlab_project_has_pipelines(profile: &crate::config::Profile) -> Result<bool> {
-    let endpoint = format!("projects/{}/pipelines", gitlab_project_id(profile)?);
-    let response = crate::provider::gitlab_api(profile, &endpoint, "GET", &[("per_page", "1")])?;
-    Ok(response.as_array().is_some_and(|rows| !rows.is_empty()))
+/// How long an open MR with no pipeline is still taken to be waiting for
+/// one. GitLab creates a pipeline within moments of a push, so an MR left
+/// alone this long without one has no CI coming: its project runs none, or
+/// runs none for this branch. Waiting longer would never end.
+const NO_PIPELINE_GRACE: time::Duration = time::Duration::minutes(10);
+
+/// Whether `updated_at` (RFC 3339) is within `window` of now. A missing or
+/// unreadable time counts as recent, so the caller keeps waiting.
+fn touched_within(updated_at: Option<&str>, window: time::Duration) -> bool {
+    updated_at
+        .and_then(|at| {
+            time::OffsetDateTime::parse(at, &time::format_description::well_known::Rfc3339).ok()
+        })
+        .is_none_or(|at| crate::clock::now_utc() - at < window)
 }
 
 fn gitlab_ci_failed(pipeline_status: Option<&str>) -> bool {
