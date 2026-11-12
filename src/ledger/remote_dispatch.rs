@@ -269,6 +269,12 @@ pub fn receive_acknowledged(
         receipt_sha256: receipt_sha256.clone(),
     });
     let outcome = super::jsonl::append_received_dispatch(cfg, &entry)?;
+    if outcome == ReceiveOutcome::Recorded {
+        // The result is recorded either way; attribution only feeds reports.
+        if let Err(error) = super::review_attribution::attribute_received_review(cfg, &entry) {
+            eprintln!("warning: failed to attribute the received review verdict: {error:#}");
+        }
+    }
     Ok(ReceiveAcknowledgement {
         outcome,
         run_id: binding.run_id.clone(),

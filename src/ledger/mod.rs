@@ -76,3 +76,5 @@ pub(crate) use jsonl::{read_matching_entries, visit_entries};
 
 mod refusals;
 pub use refusals::append_unless_repeated_refusal;
+mod review_attribution;
+pub use review_attribution::attribute_review_verdict;

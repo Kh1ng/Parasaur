@@ -968,7 +968,7 @@ pub(in crate::dispatch) fn review(
             // TICKET-125: attribute this verdict back to the branch's
             // implementation entry (the backend that wrote the code being
             // reviewed), not this review dispatch's own entry (the reviewer).
-            if let Err(err) = crate::ledger::backfill_review_verdict(
+            if let Err(err) = crate::ledger::attribute_review_verdict(
                 cfg,
                 &target.source_branch,
                 crate::ledger::ReviewVerdictBackfill {
@@ -1312,7 +1312,7 @@ fn record_review_output_invalid(
         }))?,
     )?;
 
-    if let Err(backfill_err) = crate::ledger::backfill_review_verdict(
+    if let Err(backfill_err) = crate::ledger::attribute_review_verdict(
         cfg,
         &target.source_branch,
         crate::ledger::ReviewVerdictBackfill {
