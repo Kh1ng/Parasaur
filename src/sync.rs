@@ -767,6 +767,31 @@ mod tests {
         sync_mr_to_json, GithubCheck, GithubPr, GitlabMr, RecommendedAction, SyncMr,
     };
 
+    /// An MR with no pipeline waits for one only while it is fresh.
+    #[test]
+    fn a_pipeline_is_awaited_only_within_the_grace_period() {
+        let now = time::OffsetDateTime::parse(
+            "2026-11-12T18:40:00Z",
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap();
+        let _clock = crate::clock::set_for_test(now);
+        let grace = super::NO_PIPELINE_GRACE;
+        assert!(super::touched_within(
+            Some("2026-11-12T18:35:36.152Z"),
+            grace
+        ));
+        assert!(!super::touched_within(
+            Some("2026-11-12T18:25:36.152Z"),
+            grace
+        ));
+        assert!(
+            super::touched_within(None, grace),
+            "unknown age keeps waiting"
+        );
+        assert!(super::touched_within(Some("not a time"), grace));
+    }
+
     #[test]
     fn gitlab_ci_status_only_passed_on_explicit_success() {
         assert!(gitlab_ci_passed(Some("success")));

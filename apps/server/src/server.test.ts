@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer, initializeSkillBank } from './server.js';
+import { chooseDefaultProfile } from './defaultProfile.js';
 import { resetCachedCoordinatorIdentity } from './coordinatorIdentity.js';
 import type { ConfigProfileSummary, DoctorSnapshot, ProfileSummary, SettingsConfigProfileSummary } from '@git-agent-harness/contracts';
 import http from 'node:http';
@@ -289,6 +290,8 @@ test('GET /api/doctor returns structured failed checks as data', async () => {
 
 test('GET /api/config/effective falls back to default profile when profile query is missing', async () => {
   let calledProfile = '';
+  // Earlier tests list fixture profiles, and the default follows the list.
+  chooseDefaultProfile(['gah']);
 
   await withTestServer(
     async (profile) => {
