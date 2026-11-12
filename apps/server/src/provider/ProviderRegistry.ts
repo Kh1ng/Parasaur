@@ -7,6 +7,7 @@
  * have been replaced with dynamic data from the GAH backend.
  */
 
+import { defaultProfile } from '../defaultProfile.js';
 import { generateProviderInstanceId, getSupportedProviders } from '@git-agent-harness/shared';
 import { runStatus, type StatusSnapshot } from '../gahCli.js';
 import { markReadinessCheck } from '../serverReadiness.js';
@@ -41,7 +42,7 @@ class ProviderRegistryImpl {
   private availableProviders: Set<ProviderKind> = new Set();
   private cachedStatus: CachedStatus | null = null;
   private refreshPromise: Promise<void> | null = null;
-  private defaultProfile: string = 'gah';
+  private defaultProfile: string = defaultProfile();
   
   constructor() {
     // Set default versions for known providers

@@ -1,3 +1,4 @@
+import { defaultProfile } from './defaultProfile.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { requiresDispatchExecutionOptions } from './dispatchExecutionOptions.js';
 import { dispatchRequestFingerprint, assertDispatchRequestIdentity } from './dispatchRequestIdentity.js';
@@ -442,7 +443,7 @@ class RemoteNodeTransport implements NodeDispatchTransport {
     private readonly pushBus: PushBusLike,
     private readonly coordinatorNodeId: string,
     private readonly onSessionUpdate: (session: Session) => void,
-    initialProfile = 'gah',
+    initialProfile = defaultProfile(),
     initialSession?: Session,
     private readonly headers: Record<string, string> = {}
   ) {

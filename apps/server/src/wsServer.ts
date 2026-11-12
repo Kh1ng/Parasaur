@@ -20,6 +20,7 @@ import { RegistryService } from './registryService.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { assertIssueNotManaged } from './managedIssues.js';
 import * as gahCli from './gahCli.js';
+import { defaultProfile } from './defaultProfile.js';
 import { sendManagerChatMessage, steerManagerChatTurn, cancelManagerChatTurn, getSessionView as getManagerChatSessionView, setChunkPublisher, setChatEventPublishers, setPreviewPublisher, listChatSessions, createChatSession, archiveChatSession, updateChatSession, respondManagerChatPermission } from './managerChat/ManagerChatManager.js';
 import { generateRequestId, GAHError, createErrorResponse } from '@git-agent-harness/shared';
 import type {
@@ -262,7 +263,7 @@ export function createWebSocketHandler(
       try {
         const message = JSON.parse(data.toString()) as ClientMessage;
         if (message.type === 'client.hello') {
-          const profile = message.profile ?? pendingProfiles.get(ws) ?? 'gah';
+          const profile = message.profile ?? pendingProfiles.get(ws) ?? defaultProfile();
           sessionStore.add(ws, message.clientVersion, message.capabilities, profile);
           pendingProfiles.delete(ws);
           await syncActivity(profile);
@@ -702,14 +703,14 @@ async function handleProviderList(ws: WebSocket, message: Extract<ClientMessage,
 async function sendWelcomeMessage(ws: WebSocket) {
   try {
     const providerRegistry = getProviderRegistry();
-    const defaultProfile = sessionStore.get(ws)?.profile ?? pendingProfiles.get(ws) ?? 'gah';
+    const profile = sessionStore.get(ws)?.profile ?? pendingProfiles.get(ws) ?? defaultProfile();
 
     const serverProviderCatalog = {
       providers: providerRegistry.getProviderInstances()
     };
 
-    await fleetDispatch.reconcileLeases(defaultProfile);
-    const sessions = fleetDispatch.getAllSessions(defaultProfile);
+    await fleetDispatch.reconcileLeases(profile);
+    const sessions = fleetDispatch.getAllSessions(profile);
     const providers = providerRegistry.getAllProviderStatuses();
 
     // Work observations load through REST; missing status is not an empty queue.
@@ -721,7 +722,7 @@ async function sendWelcomeMessage(ws: WebSocket) {
       serverProviderCatalog,
       sessions,
       providers,
-      profile: defaultProfile
+      profile
     };
 
     if (ws.readyState === WebSocket.OPEN && webSocketAccessValid(ws)) ws.send(JSON.stringify(welcomeMessage));

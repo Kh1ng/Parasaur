@@ -105,6 +105,7 @@ import { NativeWorkerHttpTransport } from './nativeWorkerTransport.js';
 import { NativeDispatchProducer } from './nativeDispatchProducer.js';
 import { nativeDispatchAuthority, nativeContinuationAuthority } from './nativeDispatchAuthority.js';
 import { runReceiveNativeResult } from './gahCli.js';
+import { chooseDefaultProfile, defaultProfile } from './defaultProfile.js';
 import { nativeWorkerRouter, type NativeWorker } from './nativeWorker.js';
 import { backendForProfile, helperRouteFor, readSettings as readManagerChatSettings, setBackendForProfile, validHelperRoute, writeSettings as writeManagerChatSettings } from './managerChat/settingsStore.js';
 import { gatewayBaseUrl, gatewayApiKey, gatewayHealth, recall } from './managerChat/memoryGatewayClient.js';
@@ -304,7 +305,6 @@ export function initializeSkillBank(node: NodeRoleStatus = { role: 'central', ce
 
 /** Same hardcoded default as wsServer.ts's welcome message, until Settings
  * gains real profile switching (see apps/web Settings page). */
-const DEFAULT_PROFILE = 'gah';
 
 function isReportGroupBy(value: unknown): value is ReportGroupBy {
   return REPORT_GROUP_BY_VALUES.some(groupBy => groupBy === value);
@@ -1221,7 +1221,7 @@ export function createServer(
   // observations), so it must be auth-gated even though loopback callers may
   // still access it without credentials via authMiddleware's local exemption.
   app.get('/api/status', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const light = req.query.light === '1';
     try {
       const status = await timed(res, 'gah', () => runStatus(profile, undefined, light));
@@ -1272,7 +1272,7 @@ export function createServer(
   }
 
   app.get('/api/quota', async (req, res) => {
-    const selectedProfile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const selectedProfile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const since = typeof req.query.since === 'string' ? req.query.since : '7d';
     try {
       const profile = await resolveQuotaProfile(selectedProfile);
@@ -1289,7 +1289,7 @@ export function createServer(
 
   app.get('/api/registry/quota', async (req, res) => {
     if (node.role !== 'central') return res.status(403).json({ error: 'central_only' });
-    const selectedProfile = req.query.profile ?? DEFAULT_PROFILE;
+    const selectedProfile = req.query.profile ?? defaultProfile();
     const since = req.query.since ?? '7d';
     if (typeof selectedProfile !== 'string' || (!selectedProfile.startsWith('gah-node:') && !/^[a-zA-Z0-9_.-]{1,128}$/.test(selectedProfile))
       || typeof since !== 'string' || !/^[1-9][0-9]{0,3}[mhdw]$/.test(since)) {
@@ -1426,7 +1426,7 @@ export function createServer(
   // don't cover manager-chat turns, so subscription-burn visibility comes
   // from here.
   app.get('/api/usage/rollup', (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const rawDays = Number.parseInt(typeof req.query.days === 'string' ? req.query.days : '', 10);
     const days = Number.isFinite(rawDays) ? Math.min(Math.max(rawDays, 1), 90) : 7;
     try {
@@ -1451,7 +1451,7 @@ export function createServer(
   });
 
   app.get('/api/doctor', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       res.json(await configEffectiveDeps.runDoctor(profile));
     } catch (error) {
@@ -1489,7 +1489,7 @@ export function createServer(
   });
   app.post('/api/model-prices/refresh', requireOwner, async (_req, res) => {
     try {
-      res.json(await refreshModelPrices({ extract: helperPriceExtractor(DEFAULT_PROFILE) }));
+      res.json(await refreshModelPrices({ extract: helperPriceExtractor(defaultProfile()) }));
     } catch (error) {
       res.status(502).json({ error: 'Failed to check model prices', message: error instanceof Error ? error.message : String(error) });
     }
@@ -1540,7 +1540,7 @@ export function createServer(
   });
 
   app.get('/api/sync', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       res.json(await runSync({ profile }));
     } catch (error) {
@@ -1570,7 +1570,7 @@ export function createServer(
   });
 
   app.post('/api/ledger/clear-attempts', mutation('ledger.clear_attempts'), async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const workId = typeof req.body?.workId === 'string' ? req.body.workId : undefined;
     const dryRun = req.body?.dryRun === true;
     if (!workId) {
@@ -1623,7 +1623,7 @@ export function createServer(
   // surfaced as StatusSnapshot.review_held_work_ids, so this reads status
   // rather than a dedicated CLI subcommand.
   app.get('/api/hold', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       const status = await runStatus(profile, undefined, true);
       res.json({ profile, workIds: status.review_held_work_ids ?? [] });
@@ -1636,7 +1636,7 @@ export function createServer(
   });
 
   app.post('/api/hold/set', mutation('hold.set'), async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const workId = typeof req.body?.workId === 'string' ? req.body.workId : undefined;
     const reason = typeof req.body?.reason === 'string' ? req.body.reason : undefined;
     if (!workId) {
@@ -1655,7 +1655,7 @@ export function createServer(
   });
 
   app.post('/api/hold/clear', mutation('hold.clear'), async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const workId = typeof req.body?.workId === 'string' ? req.body.workId : undefined;
     if (!workId) {
       res.status(400).json({ error: 'workId is required' });
@@ -1748,6 +1748,7 @@ export function createServer(
   app.get('/api/profiles', async (req, res) => {
     try {
       const profiles = await listProfiles();
+      chooseDefaultProfile(profiles.map((profile) => profile.name));
       res.json(profiles);
     } catch (error) {
       res.status(502).json({
@@ -2073,7 +2074,7 @@ export function createServer(
   }));
 
   app.get('/api/config/effective', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       const config = await configEffectiveDeps.runConfigShowProfile(profile);
       res.json(toSettingsConfigProfileSummary(config));
@@ -2227,7 +2228,7 @@ export function createServer(
   app.post('/api/context/recall', async (req, res) => {
     const { profile, query } = req.body as { profile?: string; query?: string };
     if (!query) return res.status(400).json({ error: 'query required' });
-    const p = typeof profile === 'string' && profile ? profile : DEFAULT_PROFILE;
+    const p = typeof profile === 'string' && profile ? profile : defaultProfile();
     // #878: recall is fail-open (never throws), so surface a degraded result
     // here explicitly -- this is a diagnostic endpoint, an empty 200 would
     // silently lie about why nothing came back.
@@ -2243,7 +2244,7 @@ export function createServer(
   // backend's own command registry (e.g. Hermes's ACP available-commands
   // push) -- not something GAH invents. Powers the "/" palette.
   app.get('/api/manager-chat/commands', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       const commands = await listManagerChatCommands(profile, typeof req.query.nodeId === 'string' ? req.query.nodeId : undefined);
       res.json({ commands });
@@ -2260,7 +2261,7 @@ export function createServer(
   // `backend` overrides the profile default (new-chat flow shows
   // per-backend lists).
   app.get('/api/manager-chat/models', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const backend = typeof req.query.backend === 'string' ? req.query.backend : undefined;
     try {
       const summary = backend
@@ -2276,7 +2277,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/model', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const modelId = typeof req.body?.modelId === 'string' ? req.body.modelId : undefined;
     if (!modelId) {
       res.status(400).json({ error: 'Missing required field: modelId' });
@@ -2296,7 +2297,7 @@ export function createServer(
   // Capability-aware reasoning effort: values come from the active ACP
   // backend's thought_level config option and are validated by that adapter.
   app.post('/api/manager-chat/reasoning-effort', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const effortId = typeof req.body?.effortId === 'string' ? req.body.effortId : undefined;
     if (!effortId) {
       res.status(400).json({ error: 'Missing required field: effortId' });
@@ -2337,7 +2338,7 @@ export function createServer(
   // themselves keep flowing over the WS manager.chat.* messages, which now
   // carry an optional sessionId.
   app.get('/api/manager-chat/sessions', (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     res.json({ sessions: listChatSessions(profile) });
   });
 
@@ -2364,7 +2365,7 @@ export function createServer(
   });
 
   app.get('/api/manager-chat/storage', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       res.json(await reclaimChatSessions({ profile, dryRun: true }));
     } catch (error) {
@@ -2389,7 +2390,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/sessions', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const backend = typeof req.body?.backend === 'string' ? req.body.backend : undefined;
     const model = typeof req.body?.model === 'string' ? req.body.model : null;
     const title = typeof req.body?.title === 'string' ? req.body.title : undefined;
@@ -2405,7 +2406,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/sessions/update', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
     if (!sessionId) {
       res.status(400).json({ error: 'Missing required field: sessionId' });
@@ -2429,7 +2430,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/sessions/archive', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
     const sessionIds: string[] = Array.isArray(req.body?.sessionIds)
       ? req.body.sessionIds.filter((id: unknown): id is string => typeof id === 'string')
@@ -2452,7 +2453,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/sessions/restore', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
     // The session id flows into worktree directory names on restore; hold it
     // to the same shape the worker surface validates before any git access.
@@ -2471,7 +2472,7 @@ export function createServer(
   // and grab one into a chat -- branch for it, mark in progress, seed the
   // session with the issue body.
   app.get('/api/manager-chat/issues', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       res.json({ issues: await listManagerChatIssues(profile) });
     } catch (error) {
@@ -2483,7 +2484,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/issues/start', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const issueNumber = typeof req.body?.issueNumber === 'number' ? req.body.issueNumber : undefined;
     const backend = typeof req.body?.backend === 'string' ? req.body.backend : undefined;
     const model = typeof req.body?.model === 'string' ? req.body.model : null;
@@ -2507,7 +2508,7 @@ export function createServer(
   // seeded with one -- no worktree, no branch, nothing at the provider is
   // touched (browsing a PR must never mutate it).
   app.get('/api/manager-chat/prs', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       res.json({ prs: await listManagerChatPrs(profile) });
     } catch (error) {
@@ -2519,7 +2520,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/prs/start', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const prNumber = typeof req.body?.prNumber === 'number' ? req.body.prNumber : undefined;
     const backend = typeof req.body?.backend === 'string' ? req.body.backend : undefined;
     const model = typeof req.body?.model === 'string' ? req.body.model : null;
@@ -2543,7 +2544,7 @@ export function createServer(
   // dev server. GET the current state; POST sets (or clears with port:null)
   // — auto-detection from agent tool output pushes manager.chat.preview.
   app.get('/api/manager-chat/preview', (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : '';
     if (!sessionId) {
       res.status(400).json({ error: 'Missing required query param: sessionId' });
@@ -2553,7 +2554,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/preview/set', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
     const port = req.body?.port === null ? null : typeof req.body?.port === 'number' ? req.body.port : undefined;
     if (!sessionId) {
@@ -2585,12 +2586,12 @@ export function createServer(
   // (acquire_profile_lock in src/controller.rs) -- see gahCli.ts for why the
   // check isn't reimplemented here.
   app.get('/api/loop/status', (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     res.json(getLoopStatus(profile));
   });
 
   app.post('/api/loop/start', mutation('loop.start'), async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     try {
       const result = await startLoop(profile);
       if (!result.started) {
@@ -2607,7 +2608,7 @@ export function createServer(
   });
 
   app.post('/api/loop/stop', mutation('loop.stop'), (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const result = stopLoop(profile);
     if (!result.stopped) {
       res.status(409).json(result);
@@ -2617,7 +2618,7 @@ export function createServer(
   });
 
   app.get('/api/events', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const since = typeof req.query.since === 'string' ? req.query.since : '7d';
     try {
       const events = await runEvents(profile, since);
@@ -2652,7 +2653,7 @@ export function createServer(
   });
 
   app.get('/api/loop/last-decision', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       res.json(deriveLastDecision(await runEvents(profile, '24h')));
     } catch (error) {
@@ -2664,7 +2665,7 @@ export function createServer(
   });
 
   app.get('/api/controller-activity', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const since = typeof req.query.since === 'string' ? req.query.since : '24h';
     try {
       const events = await runEvents(profile, since);
@@ -2707,7 +2708,7 @@ export function createServer(
   }
 
   app.get('/api/git/status', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
     const nodeId = typeof req.query.nodeId === 'string' ? req.query.nodeId : undefined;
     try {
@@ -2730,7 +2731,7 @@ export function createServer(
   });
 
   app.get('/api/git/review', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
     const nodeId = typeof req.query.nodeId === 'string' ? req.query.nodeId : undefined;
     const base = typeof req.query.base === 'string' ? req.query.base : undefined;
@@ -2783,7 +2784,7 @@ export function createServer(
   });
 
   app.post('/api/git/suggest', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
     const nodeId = typeof req.body?.nodeId === 'string' ? req.body.nodeId : undefined;
     const kind = req.body?.kind;
@@ -2848,7 +2849,7 @@ export function createServer(
   });
 
   app.get('/api/git/branches', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       const cwd = await resolveLocalPath(profile);
       if (!cwd) return res.status(404).json({ error: 'Profile not found' });
@@ -2860,7 +2861,7 @@ export function createServer(
   });
 
   app.get('/api/git/worktrees', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       const cwd = await resolveLocalPath(profile);
       if (!cwd) return res.status(404).json({ error: 'Profile not found' });
@@ -2871,7 +2872,7 @@ export function createServer(
   });
 
   app.get('/api/git/log', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const limit = typeof req.query.limit === 'string' ? Math.min(50, parseInt(req.query.limit, 10) || 20) : 20;
     try {
       const cwd = await resolveLocalPath(profile);
@@ -2884,7 +2885,7 @@ export function createServer(
   });
 
   app.get('/api/git/prs', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       res.json({ prs: await listManagerChatPrs(profile) });
     } catch (error) {
@@ -2893,7 +2894,7 @@ export function createServer(
   });
 
   app.post('/api/git/pr', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const { title, body = '', base, draft = false } = req.body ?? {};
     if (typeof title !== 'string' || !title.trim()) return res.status(400).json({ error: 'title required' });
     if (typeof body !== 'string' || typeof draft !== 'boolean'
@@ -2924,7 +2925,7 @@ export function createServer(
   });
 
   app.post('/api/git/commit', mutation('git.commit'), async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
     const { message, files, nodeId } = req.body as { message?: string; files?: unknown; nodeId?: unknown };
     if (!message || !message.trim()) return res.status(400).json({ error: 'message required' });
@@ -2944,7 +2945,7 @@ export function createServer(
   });
 
   app.post('/api/git/publish', mutation('git.publish'), async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
     const { title, body = '', base, draft = false, nodeId } = req.body ?? {};
     if (typeof title !== 'string' || !title.trim() || typeof body !== 'string' || typeof base !== 'string' || !base.trim()
@@ -2968,7 +2969,7 @@ export function createServer(
   });
 
   app.post('/api/git/pull-request/update', mutation('git.update'), async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
     const { number, title, body = '', draft, nodeId } = req.body ?? {};
     if (!Number.isSafeInteger(number) || number <= 0 || typeof title !== 'string' || !title.trim()

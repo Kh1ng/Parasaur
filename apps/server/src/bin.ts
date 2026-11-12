@@ -13,6 +13,7 @@ import { NativeWorker } from './nativeWorker.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isGahCliAvailable } from './gahCli.js';
+import { chooseDefaultProfile, defaultProfile } from './defaultProfile.js';
 import { getProviderRegistry } from './provider/ProviderRegistry.js';
 import { RegistryService } from './registryService.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
@@ -179,7 +180,12 @@ async function main() {
 
   // Initialize provider registry with default profile
   const providerRegistry = getProviderRegistry();
-  providerRegistry.setDefaultProfile('gah');
+  // Chosen before the first client connects, so nothing starts on a profile
+  // this installation does not have.
+  if (cliAvailable) {
+    chooseDefaultProfile((await runProfileList().catch(() => [])).map((profile) => profile.name));
+  }
+  providerRegistry.setDefaultProfile(defaultProfile());
 
   // Set up WebSocket handler
   createWebSocketHandler(wss, {
@@ -255,7 +261,7 @@ async function main() {
       markReadinessCheck('providerRegistry', false, 'Provider status initialization failed');
     });
     // Model prices: checked a few seconds after start when a day old, then daily.
-    if (process.env.GAH_DISABLE_PRICE_REFRESH !== '1') startModelPriceRefresh(helperPriceExtractor('gah'), logLifecycle);
+    if (process.env.GAH_DISABLE_PRICE_REFRESH !== '1') startModelPriceRefresh(helperPriceExtractor(defaultProfile()), logLifecycle);
     console.log(`WebSocket server available on ws://${HOST}:${PORT}`);
     console.log(`Health check available on http://${HOST}:${PORT}/health`);
     if (webRoot) {
