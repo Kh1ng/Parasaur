@@ -1005,7 +1005,26 @@ where
         return Ok(Some(skip));
     }
 
-    let decision = availability::availability_for_identity(state_path, identity, now)?;
+    let mut decision = availability::availability_for_identity(state_path, identity, now)?;
+    // A login block never expires, so nothing else notices the operator
+    // signing in again. The backend's own login check is the re-probe: it
+    // runs only while such a block stands, and only a positive answer lifts it.
+    if !decision.eligible
+        && decision.reason == Some(availability::Reason::AuthenticationError)
+        && crate::auth_health::login_confirmed(identity)
+    {
+        let mut blocked = identity.clone();
+        if decision.scope == Some(BlockScope::BackendWide) {
+            blocked.effective_model = None;
+        }
+        availability::record_available_for_identity(
+            state_path,
+            &blocked,
+            availability::Source::Reprobe,
+            now,
+        )?;
+        decision = availability::availability_for_identity(state_path, identity, now)?;
+    }
     if decision.eligible {
         let candidate_key = CandidateIdentity::from_execution_identity(identity);
         if exclude_attempted

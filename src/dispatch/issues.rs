@@ -113,7 +113,11 @@ impl IssueDisposition {
 enum IntakeRejection {
     MissingAuthor,
     MalformedAuthorIdentity,
-    UntrustedAuthor,
+    /// `list` is the publishing key that would admit `login`.
+    UntrustedAuthor {
+        login: String,
+        list: &'static str,
+    },
     CanonicalLabelRequired,
     Managed(ManagedBy),
     Disposition(IssueDisposition),
@@ -124,7 +128,7 @@ impl IntakeRejection {
         match self {
             Self::MissingAuthor => "missing_author",
             Self::MalformedAuthorIdentity => "malformed_author_identity",
-            Self::UntrustedAuthor => "untrusted_author",
+            Self::UntrustedAuthor { .. } => "untrusted_author",
             Self::CanonicalLabelRequired => "canonical_autonomous_label_required",
             Self::Managed(_) => MANAGED_REASON_CODE,
             Self::Disposition(disposition) => disposition.reason_code(),
@@ -137,7 +141,10 @@ impl IntakeRejection {
             Self::MalformedAuthorIdentity => {
                 "provider returned a malformed author identity".to_string()
             }
-            Self::UntrustedAuthor => "author is not trusted by this profile".to_string(),
+            // No flag overrides this check, so name the setting that does.
+            Self::UntrustedAuthor { login, list } => format!(
+                "author {login} is not trusted by this profile; to accept their issues, add them to {list} in the profile's [publishing] config"
+            ),
             Self::CanonicalLabelRequired => {
                 format!("missing canonical autonomous label '{canonical_label}'")
             }
@@ -463,7 +470,14 @@ fn evaluate_issue_intake(
         return Err(IntakeRejection::MalformedAuthorIdentity);
     }
     if !issue_author_is_trusted(profile, author) {
-        return Err(IntakeRejection::UntrustedAuthor);
+        return Err(IntakeRejection::UntrustedAuthor {
+            login: author.login.clone(),
+            list: if author.kind == IssueAuthorKind::Bot {
+                "trusted_issue_bot_authors"
+            } else {
+                "trusted_issue_human_authors"
+            },
+        });
     }
     if let Some(managed) = holders.and_then(|holders| managed_rejection(labels, holders)) {
         return Err(IntakeRejection::Managed(managed));

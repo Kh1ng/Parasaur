@@ -148,15 +148,32 @@ pub fn profile_name(repo: &str) -> String {
     }
 }
 
-/// The numeric GitLab project ID behind `checkout`, read through the `glab`
-/// login setup has just verified. Doctor and dispatch address the project by
-/// this ID, so a GitLab profile without it cannot run. `None` when the
-/// project cannot be read; the caller says how to add the ID by hand.
-pub fn gitlab_project_id(host: &dyn super::host::Host, checkout: &Checkout) -> Option<String> {
+/// What a GitLab profile needs that the checkout cannot say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitlabProject {
+    /// Doctor and dispatch address the project by this numeric ID, so a
+    /// GitLab profile without it cannot run.
+    pub id: String,
+    /// The user who owns the project's personal namespace; `None` for a
+    /// group project. GitLab profiles trust no issue author implicitly, so
+    /// setup lists the owner, as a GitHub profile trusts its repository owner.
+    pub owner: Option<String>,
+}
+
+/// Reads the project behind `checkout` through the `glab` login setup has
+/// just verified. `None` when it cannot be read; the caller says how to
+/// finish the profile by hand.
+pub fn gitlab_project(host: &dyn super::host::Host, checkout: &Checkout) -> Option<GitlabProject> {
     let project = format!("projects/{}", checkout.repo.replace('/', "%2F"));
     let probe = host.probe("glab", &["api", "--hostname", &checkout.host, &project])?;
     let body: serde_json::Value = serde_json::from_str(&probe.stdout).ok()?;
-    body.get("id")?.as_u64().map(|id| id.to_string())
+    let namespace = &body["namespace"];
+    Some(GitlabProject {
+        id: body.get("id")?.as_u64()?.to_string(),
+        owner: (namespace["kind"] == "user")
+            .then(|| namespace["path"].as_str().map(str::to_string))
+            .flatten(),
+    })
 }
 
 pub fn init_args(checkout: &Checkout, provider: Provider, profile: &str) -> InitArgs {
@@ -178,6 +195,7 @@ pub fn init_args(checkout: &Checkout, provider: Provider, profile: &str) -> Init
         provider_api_base: (provider == Provider::Gitlab)
             .then(|| format!("{}/api/v4", checkout.origin)),
         provider_project_id: None,
+        trusted_issue_human_authors: Vec::new(),
         artifact_root: None,
         worktree_base: None,
         oh_profile: None,

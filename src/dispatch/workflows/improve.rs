@@ -482,6 +482,11 @@ pub(crate) fn improve(
             "Backend finished: exit={} duration={:.0}s log={}",
             result.exit_code, result.duration_secs, result.log_path
         );
+        if result.exit_code != 0 {
+            if let Some(line) = super::super::terminal::last_backend_output_line(&result.log_path) {
+                println!("Backend's last output: {line}");
+            }
+        }
         ledger.backend_exit_code = Some(result.exit_code);
         conflict_session.snapshot_if_unresolved(attempt + 1)?;
         shutdown::pause_after_backend_result_if_requested()?;

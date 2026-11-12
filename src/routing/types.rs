@@ -256,6 +256,17 @@ impl fmt::Display for RouteError {
                 if let Some(reset) = earliest_reset {
                     write!(f, "; earliest reset: {}", reset)?;
                 }
+                // A login block has no reset time to wait for.
+                if let Some(skip) = skipped
+                    .iter()
+                    .find(|skip| skip.reason.ends_with("authentication_error"))
+                {
+                    write!(
+                        f,
+                        ". Sign in to {0} again and retry; if its login already works, run `gah availability clear --backend {0}`",
+                        skip.backend
+                    )?;
+                }
                 Ok(())
             }
             RouteError::ApprovalRequired {

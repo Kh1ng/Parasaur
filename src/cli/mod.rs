@@ -151,6 +151,7 @@ pub fn run() -> Result<()> {
             default_target_branch,
             provider_api_base,
             provider_project_id,
+            trusted_issue_human_authors: Vec::new(),
             artifact_root,
             worktree_base,
             oh_profile,

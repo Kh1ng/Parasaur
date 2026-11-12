@@ -9,6 +9,19 @@ pub(super) fn is_policy_approval_gate(entry: &LedgerEntry) -> bool {
             == Some(crate::ledger::FailureClass::HumanBlocked.as_str())
 }
 
+/// The last thing a failed backend said, for the operator's terminal: its
+/// final non-empty output line, shortened. The full output stays in the log.
+pub(super) fn last_backend_output_line(log_path: &str) -> Option<String> {
+    const LIMIT: usize = 400;
+    let text = std::fs::read_to_string(log_path).ok()?;
+    let line = text.lines().rev().find(|line| !line.trim().is_empty())?;
+    let line = line.trim();
+    Some(match line.char_indices().nth(LIMIT) {
+        Some((end, _)) => format!("{}…", &line[..end]),
+        None => line.to_string(),
+    })
+}
+
 pub(super) fn append_ledger_entry(
     cfg: &GahConfig,
     ledger: &LedgerEntry,

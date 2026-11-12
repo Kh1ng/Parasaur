@@ -289,24 +289,41 @@ impl<'a> Setup<'a> {
                 );
             } else {
                 let mut args = project::init_args(&checkout, provider, &profile);
-                if provider == Provider::Gitlab {
-                    args.provider_project_id = project::gitlab_project_id(self.host, &checkout);
+                let gitlab = (provider == Provider::Gitlab)
+                    .then(|| project::gitlab_project(self.host, &checkout));
+                if let Some(Some(project)) = &gitlab {
+                    args.provider_project_id = Some(project.id.clone());
+                    args.trusted_issue_human_authors = project.owner.iter().cloned().collect();
                 }
-                let needs_project_id =
-                    provider == Provider::Gitlab && args.provider_project_id.is_none();
+                let config = crate::config::resolve_config_path(None);
                 self.effects.add_profile(args)?;
                 say(
                     &mut self,
                     &format!("✓ Added project {profile} ({}).", checkout.repo),
                 );
-                if needs_project_id {
-                    say(
+                let trust = format!(
+                    "list them as trusted_issue_human_authors under [profiles.{profile}.publishing] in {}",
+                    config.display()
+                );
+                match gitlab {
+                    None => {}
+                    Some(None) => say(
                         &mut self,
                         &format!(
-                            "! Could not read the GitLab project ID for {} from {}. Parasaur cannot dispatch until you add it: gah profile set {profile} --provider-project-id <ID> (Settings → General on the project page shows the ID).",
+                            "! Could not read {} from {}, so two settings are missing. Before dispatching, run `gah profile set {profile} --provider-project-id <ID>` (the project's Settings → General page shows the ID), and {trust}.",
                             checkout.repo, checkout.host
                         ),
-                    );
+                    ),
+                    Some(Some(project)) => match &project.owner {
+                        Some(owner) => say(
+                            &mut self,
+                            &format!("  Parasaur works on issues written by {owner}. To accept other authors, {trust}."),
+                        ),
+                        None => say(
+                            &mut self,
+                            &format!("! No issue author is trusted yet, because a group owns this project. To accept authors, {trust}."),
+                        ),
+                    },
                 }
             }
         }
