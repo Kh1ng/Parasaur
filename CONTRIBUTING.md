@@ -45,12 +45,15 @@ These rules apply to human and agent changes in this repository.
 - Add a regression test for each corrected security or data-loss fault.
 - Do not copy a large fixture when a focused assertion proves the behavior.
 
-Run the checks for each changed area:
+Run the checks for each changed area. The Rust tests use
+[cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`),
+which runs them in about a quarter of the time `cargo test` takes;
+`.config/nextest.toml` says why.
 
 ```bash
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features
+cargo nextest run --all-features
 npm run typecheck
 npm run test:server
 ```
