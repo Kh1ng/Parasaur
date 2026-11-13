@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import http from 'node:http';
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +20,7 @@ test('handoff requires owner approval, the initiating verifier, TLS/origin, and 
   const app = express();
   app.locals.deviceAccess = access;
   app.set('trust proxy', 'loopback');
+  app.use(rateLimit({ windowMs: 60_000, limit: 120 }));
   app.use(express.json());
   app.use('/handoff', sessionHandoffRouter(access, () => now));
   app.get('/session', authMiddleware, (_req, res) => res.json(res.locals.authPrincipal));

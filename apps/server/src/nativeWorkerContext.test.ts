@@ -3,10 +3,10 @@ import { test } from 'node:test';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, parse } from 'node:path';
 import { Readable } from 'node:stream';
 import { NativeWorkerContext } from './nativeWorkerContext.js';
-import type { NativeDispatchBinding } from './nativeDispatchBroker.js';
+import { nativeRunPath, type NativeDispatchBinding } from './nativeDispatchBroker.js';
 
 function fixture() {
   const root=mkdtempSync(join(tmpdir(),'gah-native-transfer-'));chmodSync(root,0o700);
@@ -20,6 +20,15 @@ function fixture() {
     branch:null,review_generation:null,dispatch_reason:'initial'};
   return {root,contents,manifest,binding,store:new NativeWorkerContext(root)};
 }
+
+test('native run paths reject traversal, absolute paths and trailing control characters', () => {
+  const run=randomUUID(),root=resolve(tmpdir(),'native-path-boundary');
+  assert.equal(nativeRunPath(root,run),join(root,run));
+  assert.equal(nativeRunPath(parse(root).root,run),join(parse(root).root,run));
+  for(const invalid of ['../escape','..\\escape',root,`${run}/../escape`,`${run}\n`,`${run}\0`,'00000000-0000-0000-0000-000000000000']) {
+    assert.throws(()=>nativeRunPath(root,invalid),/Invalid native run/);
+  }
+});
 test('streamed context resumes missing files and commits one immutable stage fence',async()=>{
   const f=fixture();assert.deepEqual(f.store.begin(f.binding),['manifest.json']);
   await f.store.accept(f.binding,'manifest.json',Readable.from([f.manifest]));

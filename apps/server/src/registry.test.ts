@@ -503,7 +503,7 @@ test('RegistryService rejects an unrecognized transport_mode instead of silently
 });
 
 test('resolveSecret rejects file: references outside the configured secrets root', async () => {
-  const { mkdirSync, rmSync } = await import('node:fs');
+  const { mkdirSync, rmSync, symlinkSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const testRoot = resolve(tmpdir(), `gah-node-secrets-test-${crypto.randomBytes(6).toString('hex')}`);
   const previousRoot = process.env.PARASAUR_NODE_SECRETS_ROOT;
@@ -516,10 +516,23 @@ test('resolveSecret rejects file: references outside the configured secrets root
     // Outside the root entirely, and a `../` traversal attempt out of the root.
     assert.throws(() => resolveSecret('file:/etc/passwd'), /must be inside/);
     assert.throws(() => resolveSecret(`file:${testRoot}/../escape.txt`), /must be inside/);
+    assert.throws(() => resolveSecret(`file:${testRoot}`), /must be inside/);
 
     const allowedPath = resolve(testRoot, 'allowed-secret.txt');
     writeFileSync(allowedPath, 'super-secret-value\n');
     assert.equal(resolveSecret(`file:${allowedPath}`), 'super-secret-value');
+    assert.throws(() => resolveSecret(`file:${resolve(testRoot, 'missing')}`), /Failed to read secret/);
+    mkdirSync(resolve(testRoot, 'directory'));
+    assert.throws(() => resolveSecret(`file:${resolve(testRoot, 'directory')}`), /regular file/);
+    if (process.platform !== 'win32') {
+      // Both a final symlink and a symlinked parent must stay inside the store.
+      symlinkSync('/etc/passwd', resolve(testRoot, 'outside'));
+      symlinkSync('/etc', resolve(testRoot, 'parent'));
+      assert.throws(() => resolveSecret(`file:${resolve(testRoot, 'outside')}`), /must be inside/);
+      assert.throws(() => resolveSecret(`file:${resolve(testRoot, 'parent', 'passwd')}`), /must be inside/);
+      symlinkSync(allowedPath, resolve(testRoot, 'inside'));
+      assert.equal(resolveSecret(`file:${resolve(testRoot, 'inside')}`), 'super-secret-value');
+    }
   } finally {
     if (previousRoot === undefined) {
       delete process.env.PARASAUR_NODE_SECRETS_ROOT;

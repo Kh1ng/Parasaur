@@ -6,7 +6,7 @@ import { existsSync,mkdirSync,lstatSync,readFileSync,closeSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RegisteredNode,ProfileSummary } from '@git-agent-harness/contracts';
 import { canonicalWorkId,type ClaimsService } from './claimsService.js';
-import { NativeDispatchBroker,isNativeRunId,type NativeDispatchView,type NativeDispatchBinding } from './nativeDispatchBroker.js';
+import { NativeDispatchBroker,isNativeRunId,nativeRunPath,type NativeDispatchView,type NativeDispatchBinding } from './nativeDispatchBroker.js';
 import { NativeWorkerHttpTransport } from './nativeWorkerTransport.js';
 import { nativeBinding,openNativeFile } from './nativeWorkerContext.js';
 import { writeFileAtomic } from './atomicFile.js';
@@ -75,7 +75,7 @@ export class NativeDispatchProducer {
     }
     if(existsSync(path)) {
       const previous=this.readIndex(path,scope.profile,scope.work);
-      const run=join(this.deps.root,previous.run_id);directory(run);
+      const run=nativeRunPath(this.deps.root,previous.run_id);directory(run);
       const bindingPath=join(run,'context','binding.json');
       let old:NativeDispatchView|undefined;
       if(existsSync(join(run,'broker.json'))) old=this.deps.broker.get(previous.run_id);
@@ -110,7 +110,7 @@ export class NativeDispatchProducer {
     }
     if(!selected) throw Error(`No compatible worker has an eligible native route (${refused.join('; ')})`);
     const preparation:Preparation={version:1,profile:scope.profile,work_id:scope.work,run_id:scope.run,node_id:selected.node.node_id,phase:'preparing'};
-    const run=join(this.deps.root,scope.run);directory(run);
+    const run=nativeRunPath(this.deps.root,scope.run);directory(run);
     // Index intent precedes the potentially large context copy. A partial
     // preparation is inspected/recovered, never silently replaced or rerun.
     this.save(path,preparation);

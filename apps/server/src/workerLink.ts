@@ -30,9 +30,9 @@
  * is the `https` kind plus a Cloudflare Access service token, which `headers()`
  * would add; no caller changes. See docs/WORKER_LINKS.md.
  */
-import { readFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readFileSync, realpathSync } from 'node:fs';
 import { isIP } from 'node:net';
-import { resolve, sep } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { COORDINATOR_VERSION, type RegisteredNode, type WorkerLinkKind } from '@git-agent-harness/contracts';
 
 /** This central will not use the worker's address. The message names the
@@ -155,14 +155,23 @@ export function resolveSecret(secretRef: string): string {
   }
   if (secretRef.startsWith('file:')) {
     const root = nodeSecretsRoot();
-    const filePath = resolve(secretRef.slice(5));
-    if (filePath !== root && !filePath.startsWith(root + sep)) {
+    const requestedPath = resolve(secretRef.slice(5));
+    if (!requestedPath.startsWith(join(root, sep))) {
       throw new Error(`Secret file path must be inside ${root}`);
     }
     try {
-      return readFileSync(filePath, 'utf8').trim();
+      const canonicalRoot = realpathSync(root);
+      const filePath = realpathSync(requestedPath);
+      if (!filePath.startsWith(join(canonicalRoot, sep))) {
+        throw new Error(`Secret file path must be inside ${root}`);
+      }
+      const file = openSync(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+      try {
+        if (!fstatSync(file).isFile()) throw new Error('Secret must be a regular file');
+        return readFileSync(file, 'utf8').trim();
+      } finally { closeSync(file); }
     } catch (e: any) {
-      throw new Error(`Failed to read secret file ${filePath}: ${e.message}`);
+      throw new Error(`Failed to read secret file ${requestedPath}: ${e.message}`);
     }
   }
   throw new Error(`Unsupported secret reference format (must start with 'env:' or 'file:')`);

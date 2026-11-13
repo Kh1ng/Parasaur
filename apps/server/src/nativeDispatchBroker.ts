@@ -2,7 +2,7 @@
  * runs stay on disk rather than in an ever-growing in-memory receipt map. */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { opendir } from 'node:fs/promises';
 import type { NativeClaimBinding, NativeResultAcknowledgement, NativeReservationRelease,NativeHeldWork } from '@git-agent-harness/contracts';
 import { canonicalWorkId,type ClaimsService } from './claimsService.js';
@@ -82,7 +82,16 @@ type Deps = {
 const MAX_JSON = 8 * 1024 * 1024;
 const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
 const same = (left: NativeClaimBinding, right: NativeClaimBinding) => left?.run_id === right.run_id && left.node_id === right.node_id && left.context_sha256 === right.context_sha256;
-export const isNativeRunId = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value) && value !== '00000000-0000-0000-0000-000000000000';
+export const isNativeRunId = (value: unknown): value is string => typeof value === 'string' && value.length === 36 && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value) && value !== '00000000-0000-0000-0000-000000000000';
+
+/** Resolve a run below its configured store, checking containment at the filesystem boundary. */
+export function nativeRunPath(root: string, run: string): string {
+  if (!isNativeRunId(run)) throw Error('Invalid native run identity');
+  const prefix = join(resolve(root), sep);
+  const path = resolve(prefix, run);
+  if (!path.startsWith(prefix)) throw Error('Native run must be inside its store');
+  return path;
+}
 const digest = (value: string) => /^[a-f0-9]{64}$/.test(value);
 const phases: Phase[] = ['prepared', 'reserved', 'stage_offered', 'waiting_capacity', 'authorization_deferred', 'start_offered', 'running', 'reconciling', 'result_pending', 'terminal', 'cancelling', 'cancelled'];
 const bindingFields = ['run_id', 'node_id', 'context_sha256', 'profile', 'repo_id', 'repo', 'work_id', 'mode', 'backend', 'backend_instance', 'model', 'branch', 'review_generation', 'dispatch_reason'] as const;
@@ -384,7 +393,7 @@ export class NativeDispatchBroker {
   }
   private runPath(run: string): string {
     if (!isNativeRunId(run)) throw Error('Invalid native run identity');
-    const path = join(this.root, run); directory(path); return path;
+    const path = nativeRunPath(this.root, run); directory(path); return path;
   }
   private contextPath(run: string): string { const path = join(this.runPath(run), 'context'); directory(path); return path; }
   private journalPath(run: string): string { return join(this.runPath(run), 'broker.json'); }

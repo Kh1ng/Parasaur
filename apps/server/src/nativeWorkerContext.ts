@@ -8,7 +8,7 @@ import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { writeFileAtomic } from './atomicFile.js';
-import { isNativeRunId, type NativeDispatchBinding } from './nativeDispatchBroker.js';
+import { isNativeRunId, nativeRunPath, type NativeDispatchBinding } from './nativeDispatchBroker.js';
 
 const JSON_LIMIT=8*1024*1024, HISTORY_LIMIT=128*1024*1024;
 const fields=['run_id','node_id','context_sha256','profile','repo_id','repo','work_id','mode','backend','backend_instance','model','branch','review_generation','dispatch_reason'] as const;
@@ -72,14 +72,14 @@ export class NativeWorkerContext {
   }
   binding(runId:string):NativeDispatchBinding {
     if(!isNativeRunId(runId)) throw Error('Invalid native run identity');
-    const run=join(this.root,runId);privateDirectory(run);
+    const run=nativeRunPath(this.root,runId);privateDirectory(run);
     const binding=JSON.parse(readPrivate(join(run,'binding.json')).toString());
     if(!nativeBinding(binding) || binding.run_id!==runId) throw Error('Invalid stored native identity');
     this.paths(binding);return binding;
   }
   paths(binding:NativeDispatchBinding) {
     if(!nativeBinding(binding)) throw Error('Invalid native binding');
-    const run=join(this.root,binding.run_id);privateDirectory(run);
+    const run=nativeRunPath(this.root,binding.run_id);privateDirectory(run);
     const stored=JSON.parse(readPrivate(join(run,'binding.json')).toString());
     if(!isDeepStrictEqual(stored,binding)) throw Error('Native binding changed');
     const context=join(run,'context');privateDirectory(context);
@@ -87,7 +87,7 @@ export class NativeWorkerContext {
   }
   begin(binding:NativeDispatchBinding):string[] {
     if(!nativeBinding(binding)) throw Error('Invalid native binding');
-    const run=join(this.root,binding.run_id);
+    const run=nativeRunPath(this.root,binding.run_id);
     if(!existsSync(run)) {mkdirSync(run,{mode:0o700});syncDirectory(this.root);}
     privateDirectory(run);
     const bindingFile=join(run,'binding.json');

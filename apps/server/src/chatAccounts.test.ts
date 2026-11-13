@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { localChatAccounts } from './chatAccounts.js';
 import { createWorkerChatRouter } from './workerChat.js';
 import { parseWorkerChatReply } from './workerChatProtocol.js';
@@ -40,7 +41,7 @@ test('registered worker transport reads that node account list without starting 
   process.env.COORDINATOR_TOKEN = 'synthetic-account-read-token';
   const profile = { ...JSON.parse(readFileSync(new URL('../tests/fixtures/gah/responses/profile-list.json', import.meta.url), 'utf8'))[0], name: 'project' } as ProfileSummary;
   const app = express();
-  app.use(express.json(), authMiddleware);
+  app.use(rateLimit({ windowMs: 60_000, limit: 120 }), express.json(), authMiddleware);
   let reads = 0;
   app.use('/api/worker-chat', createWorkerChatRouter({
     node: { role: 'worker', central_url: 'https://central.test' }, nodeId: 'worker', profiles: async () => [profile],
