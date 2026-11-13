@@ -124,6 +124,34 @@ fn normal_exit_reaps_a_background_child_holding_the_log_pipes() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn cleanup_tracks_group_members_after_the_leader_exits() {
+    let _exec_guard = ExecGuard::new();
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("child.pid");
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", "sleep 30 & echo $! > \"$1\"; exit 0", "fixture"]);
+    command.arg(&marker);
+    prepare_process_group(&mut command);
+    let mut child = command.spawn().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !crate::runner::exited_without_reaping(&child).unwrap() {
+        assert!(Instant::now() < deadline, "fixture leader did not exit");
+        thread::sleep(Duration::from_millis(5));
+    }
+    let pid = crate::runner::pipes::read_pid(&marker);
+    let snapshot = linux_process_snapshot(pid).unwrap();
+    let tracked = linux_descendants(child.id()).contains(&snapshot.identity);
+    let cleanup_error = kill_process_group(&mut child);
+    let status = child.wait().unwrap();
+    assert!(status.success());
+    assert_ne!(snapshot.parent_pid, child.id(), "child must be reparented");
+    assert!(tracked, "reparented process-group member was not tracked");
+    assert_eq!(cleanup_error, None);
+    assert!(linux_process_snapshot(pid).is_none_or(|process| process.zombie));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn run_bounded_kills_descendant_process_on_timeout() {
     let _exec_guard = ExecGuard::new();
     let f = fixture();

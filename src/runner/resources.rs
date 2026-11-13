@@ -1,8 +1,8 @@
 //! Issue #116: best-effort process-tree resource sampling for supervised
 //! backend attempts. Split from `process.rs` to keep that file under the
 //! source-size guard. The sampler runs alongside the supervision loop
-//! (idle watch or review loop), walking the whole backend process tree by
-//! PPID so setsid escapees and the root agent PID both count.
+//! (idle watch or review loop), walking parent links and process-group
+//! membership so setsid escapees, reparented group members and the root count.
 
 #[cfg(target_os = "linux")]
 use super::process::{linux_descendants, linux_process_snapshot, ProcessIdentity};

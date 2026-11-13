@@ -362,6 +362,7 @@ pub(crate) struct ProcessIdentity {
 pub(crate) struct ProcessSnapshot {
     pub(crate) identity: ProcessIdentity,
     pub(crate) parent_pid: u32,
+    pub(crate) process_group: u32,
     pub(crate) zombie: bool,
 }
 
@@ -377,13 +378,14 @@ pub(crate) fn linux_process_snapshot(pid: u32) -> Option<ProcessSnapshot> {
             start_ticks: fields.get(19)?.parse().ok()?,
         },
         parent_pid: fields.get(1)?.parse().ok()?,
+        process_group: fields.get(2)?.parse().ok()?,
         zombie: fields.first().is_some_and(|state| *state == "Z"),
     })
 }
 
-/// Snapshot every live descendant by PPID, not process group. Agent CLIs may
-/// launch tool commands with `setsid`, which deliberately escapes the backend
-/// process group while remaining in its process tree.
+/// Snapshot live descendants by both PPID and membership in the root's group.
+/// PPID finds tools that escaped with `setsid`; group membership retains
+/// children reparented after their leader exits, before cleanup can run.
 #[cfg(target_os = "linux")]
 pub(crate) fn linux_descendants(root_pid: u32) -> Vec<ProcessIdentity> {
     let snapshots = fs::read_dir("/proc")
@@ -399,7 +401,9 @@ pub(crate) fn linux_descendants(root_pid: u32) -> Vec<ProcessIdentity> {
     loop {
         let mut added = false;
         for snapshot in &snapshots {
-            if ancestors.contains(&snapshot.parent_pid) && ancestors.insert(snapshot.identity.pid) {
+            if (ancestors.contains(&snapshot.parent_pid) || snapshot.process_group == root_pid)
+                && ancestors.insert(snapshot.identity.pid)
+            {
                 descendants.push(snapshot.identity);
                 added = true;
             }
@@ -548,8 +552,8 @@ fn worktree_changed_since(initial: Option<&[u8]>, worktree: &Path) -> bool {
 /// `setsid` deliberately escapes the backend process group while remaining in
 /// its process tree. Matching only on `pgrp` would miss it, causing GAH to
 /// classify a backend that is actively running the required tests as
-/// "no progress" and kill it. We therefore enumerate by PPID, so escaped
-/// verification descendants still count as observable progress. The backend
+/// "no progress" and kill it. We therefore follow parent links as well as
+/// group membership, so escaped verification descendants still count. The backend
 /// root itself is excluded: its activity is already represented by
 /// output/worktree progress, and counting a spinning root would mask a hang.
 #[cfg(target_os = "linux")]
