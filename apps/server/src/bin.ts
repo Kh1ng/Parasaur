@@ -188,7 +188,6 @@ async function main() {
   if (cliAvailable) {
     chooseDefaultProfile(await runProfileList().catch(() => null));
   }
-  providerRegistry.setDefaultProfile(defaultProfile());
 
   // Set up WebSocket handler
   createWebSocketHandler(wss, {
