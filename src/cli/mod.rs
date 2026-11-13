@@ -29,7 +29,12 @@ pub fn run() -> Result<()> {
     // children to stay unreaped until it has signalled their group.
     crate::runner::pipes::keep_exited_children_waitable()
         .context("restoring the default SIGCHLD disposition")?;
-    let cli = Cli::parse();
+    let cli = Cli::try_parse().unwrap_or_else(|exit| {
+        // `--version` and `--help` end here. They are often an upgraded
+        // binary's first run, so they add the missing alias too (#1364).
+        crate::update::heal_parasaur_alias();
+        exit.exit()
+    });
     // The private host protocol must not probe providers, repair aliases or
     // resolve ambient user configuration before supervising its exact job.
     if let Commands::IsolationHost(args) = cli.command {
