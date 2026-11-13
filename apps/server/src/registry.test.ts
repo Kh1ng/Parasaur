@@ -315,9 +315,9 @@ test('RegistryService validates non-loopback endpoints and TLS modes', () => {
 
     // Non-loopback URL + trusted_lan -> Fail closed by default (issue #944)
     const prevAllow = process.env.GAH_ALLOW_INSECURE_HTTP;
-    const prevLinks = process.env.GAH_WORKER_LINKS;
+    const prevLinks = process.env.PARASAUR_WORKER_LINKS;
     delete process.env.GAH_ALLOW_INSECURE_HTTP;
-    delete process.env.GAH_WORKER_LINKS;
+    delete process.env.PARASAUR_WORKER_LINKS;
     try {
       assert.throws(() => {
         registry.registerNode({
@@ -326,10 +326,10 @@ test('RegistryService validates non-loopback endpoints and TLS modes', () => {
           advertised_url: 'http://node.lan.com',
           transport_mode: 'trusted_lan'
         });
-      }, /'lan' to GAH_WORKER_LINKS/);
+      }, /'lan' to PARASAUR_WORKER_LINKS/);
 
       // A tailnet-only central takes a tailnet worker and still refuses the LAN one.
-      process.env.GAH_WORKER_LINKS = 'tailnet';
+      process.env.PARASAUR_WORKER_LINKS = 'tailnet';
       const resTailnet = registry.registerNode({
         ...baseNode,
         node_id: 'node-tailnet',
@@ -345,12 +345,12 @@ test('RegistryService validates non-loopback endpoints and TLS modes', () => {
           advertised_url: 'http://node.lan.com',
           transport_mode: 'trusted_lan'
         });
-      }, /'lan' to GAH_WORKER_LINKS/);
+      }, /'lan' to PARASAUR_WORKER_LINKS/);
     } finally {
       if (prevLinks === undefined) {
-        delete process.env.GAH_WORKER_LINKS;
+        delete process.env.PARASAUR_WORKER_LINKS;
       } else {
-        process.env.GAH_WORKER_LINKS = prevLinks;
+        process.env.PARASAUR_WORKER_LINKS = prevLinks;
       }
       if (prevAllow === undefined) {
         delete process.env.GAH_ALLOW_INSECURE_HTTP;

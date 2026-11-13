@@ -25,14 +25,14 @@ Requests never follow redirects and never leave the registered origin.
 |---|---|---|
 | `loopback` | `localhost`, `127.x`, `::1`. Also the near end of an SSH tunnel. | Always |
 | `https` | Any `https://` origin: a reverse proxy, Tailscale Serve. | Always |
-| `tailnet` | Plain HTTP to `100.64.0.0/10`, `fd7a:115c:a1e0::/48` or a `*.ts.net` name. WireGuard encrypts it. | When `GAH_WORKER_LINKS` lists `tailnet` |
-| `lan` | Plain HTTP to any other address, on a network the operator trusts. | When `GAH_WORKER_LINKS` lists `lan` |
+| `tailnet` | Plain HTTP to `100.64.0.0/10`, `fd7a:115c:a1e0::/48` or a `*.ts.net` name. WireGuard encrypts it. | When `PARASAUR_WORKER_LINKS` lists `tailnet` |
+| `lan` | Plain HTTP to any other address, on a network the operator trusts. | When `PARASAUR_WORKER_LINKS` lists `lan` |
 
 Set the list in the central server's environment, for example in
 `/etc/gah/server.env`:
 
 ```
-GAH_WORKER_LINKS=tailnet
+PARASAUR_WORKER_LINKS=tailnet
 ```
 
 Separate several kinds with commas. A central that lists only `tailnet` refuses
@@ -40,8 +40,8 @@ a worker that registers an ordinary LAN address.
 
 `GAH_ALLOW_INSECURE_HTTP=1` predates this setting and still enables both
 plain-HTTP kinds, so existing deployments keep working. It also lifts the TLS
-requirement for requests arriving at that server, which `GAH_WORKER_LINKS` does
-not. A central behind a TLS proxy can replace it with `GAH_WORKER_LINKS`.
+requirement for requests arriving at that server, which `PARASAUR_WORKER_LINKS` does
+not. A central behind a TLS proxy can replace it with `PARASAUR_WORKER_LINKS`.
 
 The Nodes API (`GET /api/registry/nodes`) reports each node's `link`, or `null`
 when the central refuses the address.

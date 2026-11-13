@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
 import { LinkRefused, linkEnabled, linkTo, type LinkRegistration } from './workerLink.js';
 
-const SETTINGS = ['GAH_WORKER_LINKS', 'GAH_ALLOW_INSECURE_HTTP', 'LINK_TEST_CREDENTIAL'] as const;
+const SETTINGS = ['PARASAUR_WORKER_LINKS', 'GAH_ALLOW_INSECURE_HTTP', 'LINK_TEST_CREDENTIAL'] as const;
 
 /** Each test states the whole link environment and leaves the process as it found it. */
 function environment(t: TestContext, values: Partial<Record<typeof SETTINGS[number], string>>) {
@@ -16,7 +16,7 @@ const worker = (advertised_url: string, transport_mode: LinkRegistration['transp
   ({ advertised_url, transport_mode, secret_ref: 'env:LINK_TEST_CREDENTIAL' });
 
 test('the kind of a link comes from the address alone', t => {
-  environment(t, { GAH_WORKER_LINKS: 'tailnet,lan' });
+  environment(t, { PARASAUR_WORKER_LINKS: 'tailnet,lan' });
   const kinds = Object.fromEntries([
     'http://127.0.0.1:3774', 'http://localhost:3774', 'http://[::1]:3774', 'https://localhost:3774',
     'https://worker.example.com', 'https://mac.tail82695.ts.net:4774',
@@ -37,26 +37,26 @@ test('a central sends plain HTTP only over the kinds its operator enabled', t =>
   const tailnet = worker('http://100.98.69.105:3774'), lan = worker('http://192.168.5.15:3774');
   environment(t, {});
   assert.throws(() => linkTo(tailnet), (error: unknown) => error instanceof LinkRefused
-    && /http:\/\/100\.98\.69\.105:3774/.test(error.message) && /'tailnet' to GAH_WORKER_LINKS/.test(error.message));
-  assert.throws(() => linkTo(lan), (error: unknown) => error instanceof LinkRefused && /'lan' to GAH_WORKER_LINKS/.test(error.message));
+    && /http:\/\/100\.98\.69\.105:3774/.test(error.message) && /'tailnet' to PARASAUR_WORKER_LINKS/.test(error.message));
+  assert.throws(() => linkTo(lan), (error: unknown) => error instanceof LinkRefused && /'lan' to PARASAUR_WORKER_LINKS/.test(error.message));
   assert.equal(linkTo(worker('https://worker.example.com')).kind, 'https');
   assert.equal(linkTo(worker('http://127.0.0.1:3774')).kind, 'loopback');
 
-  process.env.GAH_WORKER_LINKS = 'tailnet';
+  process.env.PARASAUR_WORKER_LINKS = 'tailnet';
   assert.equal(linkTo(tailnet).kind, 'tailnet');
   assert.throws(() => linkTo(lan), LinkRefused, 'a tailnet-only central still refuses an ordinary network address');
   assert.deepEqual([linkEnabled('tailnet'), linkEnabled('lan')], [true, false]);
 
-  process.env.GAH_WORKER_LINKS = 'lan, tailnet';
+  process.env.PARASAUR_WORKER_LINKS = 'lan, tailnet';
   assert.equal(linkTo(lan).kind, 'lan');
 
-  delete process.env.GAH_WORKER_LINKS;
+  delete process.env.PARASAUR_WORKER_LINKS;
   process.env.GAH_ALLOW_INSECURE_HTTP = '1';
   assert.deepEqual([linkTo(tailnet).kind, linkTo(lan).kind], ['tailnet', 'lan'], 'the older switch keeps enabling both');
 });
 
 test('a registration whose claimed mode contradicts its address is refused', t => {
-  environment(t, { GAH_WORKER_LINKS: 'tailnet,lan' });
+  environment(t, { PARASAUR_WORKER_LINKS: 'tailnet,lan' });
   assert.throws(() => linkTo(worker('http://100.98.69.105:3774', 'loopback')), /cannot use loopback transport mode/);
   assert.throws(() => linkTo(worker('http://192.168.5.15:3774', 'authenticated_remote')), /must use TLS/);
   for (const address of ['not a url', 'ftp://192.168.5.15', 'ws://192.168.5.15:3774', 'http://user:secret@192.168.5.15:3774']) {
@@ -65,7 +65,7 @@ test('a registration whose claimed mode contradicts its address is refused', t =
 });
 
 test('the worker credential goes on every link except a local worker that never asked for one', t => {
-  environment(t, { GAH_WORKER_LINKS: 'tailnet', LINK_TEST_CREDENTIAL: 'link-credential' });
+  environment(t, { PARASAUR_WORKER_LINKS: 'tailnet', LINK_TEST_CREDENTIAL: 'link-credential' });
   assert.equal(linkTo(worker('http://100.98.69.105:3774')).headers().Authorization, 'Bearer link-credential');
   assert.equal(linkTo(worker('https://worker.example.com', 'authenticated_remote')).headers().Authorization, 'Bearer link-credential');
   assert.equal(linkTo(worker('http://127.0.0.1:3774', 'authenticated_remote')).headers().Authorization, 'Bearer link-credential');
@@ -81,7 +81,7 @@ test('the worker credential goes on every link except a local worker that never 
 });
 
 test('a request stays on the worker address, carries the credential and refuses redirects', async t => {
-  environment(t, { GAH_WORKER_LINKS: 'tailnet', LINK_TEST_CREDENTIAL: 'link-credential' });
+  environment(t, { PARASAUR_WORKER_LINKS: 'tailnet', LINK_TEST_CREDENTIAL: 'link-credential' });
   const sent: { url: string; init: RequestInit }[] = [];
   const via = (async (url: URL, init: RequestInit) => { sent.push({ url: String(url), init }); return new Response('{}'); }) as unknown as typeof fetch;
   const link = linkTo(worker('http://100.98.69.105:3774/ignored?x=1'));

@@ -19,9 +19,9 @@
  *   https     Any TLS origin: a reverse proxy or Tailscale Serve today.
  *             Always.
  *   tailnet   Plain HTTP to a Tailscale address. WireGuard encrypts it.
- *             Only when GAH_WORKER_LINKS lists `tailnet`.
+ *             Only when PARASAUR_WORKER_LINKS lists `tailnet`.
  *   lan       Plain HTTP to any other address, on a network the operator
- *             trusts. Only when GAH_WORKER_LINKS lists `lan`.
+ *             trusts. Only when PARASAUR_WORKER_LINKS lists `lan`.
  *
  * GAH_ALLOW_INSECURE_HTTP=1 predates this module and still enables both
  * plain-HTTP kinds, so an existing deployment keeps working unchanged.
@@ -82,7 +82,7 @@ export function linkTo(node: LinkRegistration): WorkerLink {
   }
   if (!linkEnabled(kind)) {
     throw new LinkRefused(`Worker address ${origin} is plain HTTP on a ${kind === 'tailnet' ? 'tailnet' : 'local network'}, and this central does not accept ${kind} links. `
-      + `Add '${kind}' to GAH_WORKER_LINKS in the central server's environment, or register an HTTPS address.`);
+      + `Add '${kind}' to PARASAUR_WORKER_LINKS in the central server's environment, or register an HTTPS address.`);
   }
   // A worker on this machine trusts local callers. Sending it a credential it
   // was never given would turn a working request into a rejected one.
@@ -111,7 +111,7 @@ export function linkTo(node: LinkRegistration): WorkerLink {
 export function linkEnabled(kind: WorkerLinkKind): boolean {
   if (kind === 'loopback' || kind === 'https') return true;
   return process.env.GAH_ALLOW_INSECURE_HTTP === '1'
-    || (process.env.GAH_WORKER_LINKS ?? '').split(/[\s,]+/).includes(kind);
+    || (process.env.PARASAUR_WORKER_LINKS ?? '').split(/[\s,]+/).includes(kind);
 }
 
 function kindOf(url: URL): WorkerLinkKind {

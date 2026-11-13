@@ -116,7 +116,7 @@ export function nodeSetupRouter(): Router {
         return res.json({ command: unixSetupCommand(req.body.os, req.body.role, req.body.centralUrl, req.body.gatewayUrl, req.body.provider, req.body.providerEndpoint, req.body.llmModel, req.body.embeddingModel, req.body.memoryCorePath, req.body.embeddingDimensions) });
       }
       if (req.body.role !== 'desktop' && !linkEnabled('tailnet') && !linkEnabled('lan')) {
-        return res.status(409).json({ message: "A WSL worker is reached over plain HTTP on a tailnet or local network. Add 'tailnet' or 'lan' to GAH_WORKER_LINKS on the central server, or install the desktop only." });
+        return res.status(409).json({ message: "A WSL worker is reached over plain HTTP on a tailnet or local network. Add 'tailnet' or 'lan' to PARASAUR_WORKER_LINKS on the central server, or install the desktop only." });
       }
       const command = windowsSetupCommand(req.body.centralUrl, req.body.role, process.env.COORDINATOR_TOKEN ?? '');
       return res.json({ command });

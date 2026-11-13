@@ -900,7 +900,7 @@ to create its stable identity on the first loop start. The central reaches
 each worker over a link derived from the worker's address; see
 [WORKER_LINKS.md](WORKER_LINKS.md). For a **plain HTTP** address
 (e.g. `http://100.118.97.79` on a tailnet), the central must list the link's
-kind in `GAH_WORKER_LINKS` (`tailnet`, `lan`). The older
+kind in `PARASAUR_WORKER_LINKS` (`tailnet`, `lan`). The older
 `GAH_ALLOW_INSECURE_HTTP=1` enables both kinds, and the worker still needs it
 to accept plain-HTTP requests from the central. This flag is deliberately named for what it does —
 it lifts the TLS requirement for **every** `authMiddleware`-protected route
