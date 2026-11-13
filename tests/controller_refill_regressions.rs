@@ -348,6 +348,31 @@ fn setup_fix_dispatch_repo(
     (repo, home, cfg)
 }
 
+/// Publish a one-commit `gah/real-review` branch and return its head commit.
+/// A fake provider must report this commit as the pull request's head: the
+/// reviewer reads the head from the fetched branch, and refuses a review whose
+/// head differs from the one the controller selected.
+fn push_review_branch(repo: &std::path::Path, home: &std::path::Path) -> String {
+    let git = |args: &[&str]| {
+        let output = ProcessCommand::new("git")
+            .args(args)
+            .current_dir(repo)
+            .env("HOME", home)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?} failed");
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    };
+    git(&["switch", "-c", "gah/real-review"]);
+    fs::write(repo.join("review-change.txt"), "review me\n").unwrap();
+    git(&["add", "review-change.txt"]);
+    git(&["commit", "-m", "review fixture"]);
+    git(&["push", "-u", "origin", "gah/real-review"]);
+    let head = git(&["rev-parse", "HEAD"]);
+    git(&["switch", "main"]);
+    head
+}
+
 #[test]
 // #1539: spawn_bin points availability at /nonexistent-availability-path.json.
 // A loop tick must still dispatch and refill when maintenance cannot write there.
@@ -517,33 +542,7 @@ fn parallel_loop_selects_new_review_after_capacity_deferred_sibling() {
         .unwrap();
     }
 
-    ProcessCommand::new("git")
-        .args(["switch", "-c", "gah/real-review"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
-    fs::write(repo.join("review-change.txt"), "review me\n").unwrap();
-    ProcessCommand::new("git")
-        .args(["add", "review-change.txt"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
-    ProcessCommand::new("git")
-        .args(["commit", "-m", "review fixture"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
-    ProcessCommand::new("git")
-        .args(["push", "-u", "origin", "gah/real-review"])
-        .current_dir(&repo)
-        .env("HOME", &home)
-        .output()
-        .unwrap();
-    ProcessCommand::new("git")
-        .args(["switch", "main"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    let source_sha = push_review_branch(&repo, &home);
 
     let fake_bin = tmp.path().join("bin");
     let events_path = tmp.path().join("events.jsonl");
@@ -559,13 +558,13 @@ fn parallel_loop_selects_new_review_after_capacity_deferred_sibling() {
             "#!/bin/sh\n\
              case \"$4\" in\n\
                */pulls\\?*)\n\
-                 if grep -q deferred_capacity '{events_path}' 2>/dev/null; then echo '[{{\"title\":\"[GAH] Fix: TICKET-703\",\"body\":\"Review fixture\",\"head\":{{\"ref\":\"gah/real-review\",\"sha\":\"source-sha\"}},\"html_url\":\"https://github.com/owner/real/pull/7\",\"labels\":[],\"number\":7,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]'; else echo '[]'; fi\n\
+                 if grep -q deferred_capacity '{events_path}' 2>/dev/null; then echo '[{{\"title\":\"[GAH] Fix: TICKET-703\",\"body\":\"Review fixture\",\"head\":{{\"ref\":\"gah/real-review\",\"sha\":\"{source_sha}\"}},\"html_url\":\"https://github.com/owner/real/pull/7\",\"labels\":[],\"number\":7,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]'; else echo '[]'; fi\n\
                  exit 0 ;;\n\
                */pulls) echo '[{{\"number\":7}}]'; exit 0 ;;\n\
                */check-runs\\?*) echo '{{\"total_count\":1,\"check_runs\":[{{\"status\":\"completed\",\"conclusion\":\"success\"}}]}}'; exit 0 ;;\n\
              esac\n\
              if [ \"$1\" = \"api\" ]; then echo '[]'; exit 0; fi\n\
-             if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then echo '{{\"number\":7,\"url\":\"https://github.com/owner/real/pull/7\",\"title\":\"[GAH] Fix: TICKET-703\",\"body\":\"Review fixture\",\"headRefName\":\"gah/real-review\",\"baseRefName\":\"main\",\"headRefOid\":\"source-sha\",\"statusCheckRollup\":[{{\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}}]}}'; exit 0; fi\n\
+             if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then echo '{{\"number\":7,\"url\":\"https://github.com/owner/real/pull/7\",\"title\":\"[GAH] Fix: TICKET-703\",\"body\":\"Review fixture\",\"isDraft\":true,\"headRefName\":\"gah/real-review\",\"baseRefName\":\"main\",\"headRefOid\":\"{source_sha}\",\"statusCheckRollup\":[{{\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}}]}}'; exit 0; fi\n\
              if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"create\" ]; then echo 'https://github.com/owner/real/pull/1'; exit 0; fi\n\
              if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"comment\" ]; then exit 0; fi\n\
              exit 0\n",
@@ -659,9 +658,10 @@ fn parallel_loop_reviews_a_finished_ticket_while_a_slow_sibling_still_runs() {
         &format!(
             "#!/bin/sh\n\
              created='{created_pr}'\n\
+             head_sha() {{ git --git-dir='{origin}' rev-parse \"refs/heads/$1\"; }}\n\
              case \"$4\" in\n\
                */pulls\\?*)\n\
-                 if [ -f \"$created\" ] && [ ! -f '{review_started}' ]; then head=$(sed -n 1p \"$created\"); title=$(sed -n 2p \"$created\"); printf '[{{\"title\":\"%s\",\"body\":\"Follow-up fixture\",\"head\":{{\"ref\":\"%s\",\"sha\":\"source-sha\"}},\"html_url\":\"https://github.com/owner/real/pull/9\",\"labels\":[],\"number\":9,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]\\n' \"$title\" \"$head\"; else echo '[]'; fi\n\
+                 if [ -f \"$created\" ] && [ ! -f '{review_started}' ]; then head=$(sed -n 1p \"$created\"); title=$(sed -n 2p \"$created\"); printf '[{{\"title\":\"%s\",\"body\":\"Follow-up fixture\",\"head\":{{\"ref\":\"%s\",\"sha\":\"%s\"}},\"html_url\":\"https://github.com/owner/real/pull/9\",\"labels\":[],\"number\":9,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]\\n' \"$title\" \"$head\" \"$(head_sha \"$head\")\"; else echo '[]'; fi\n\
                  exit 0 ;;\n\
                */pulls) echo '[{{\"number\":9}}]'; exit 0 ;;\n\
                */check-runs\\?*) echo '{{\"total_count\":1,\"check_runs\":[{{\"status\":\"completed\",\"conclusion\":\"success\"}}]}}'; exit 0 ;;\n\
@@ -673,8 +673,9 @@ fn parallel_loop_reviews_a_finished_ticket_while_a_slow_sibling_still_runs() {
                if [ ! -f \"$created\" ]; then printf '%s\\n%s\\n' \"$head\" \"$title\" > \"$created\"; fi\n\
                echo 'https://github.com/owner/real/pull/9'; exit 0\n\
              fi\n\
-             if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then head=$(sed -n 1p \"$created\"); title=$(sed -n 2p \"$created\"); printf '{{\"number\":9,\"url\":\"https://github.com/owner/real/pull/9\",\"title\":\"%s\",\"body\":\"Follow-up fixture\",\"headRefName\":\"%s\",\"baseRefName\":\"main\",\"headRefOid\":\"source-sha\",\"statusCheckRollup\":[{{\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}}]}}\\n' \"$title\" \"$head\"; exit 0; fi\n\
+             if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then head=$(sed -n 1p \"$created\"); title=$(sed -n 2p \"$created\"); printf '{{\"number\":9,\"url\":\"https://github.com/owner/real/pull/9\",\"title\":\"%s\",\"body\":\"Follow-up fixture\",\"isDraft\":true,\"headRefName\":\"%s\",\"baseRefName\":\"main\",\"headRefOid\":\"%s\",\"statusCheckRollup\":[{{\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}}]}}\\n' \"$title\" \"$head\" \"$(head_sha \"$head\")\"; exit 0; fi\n\
              exit 0\n",
+            origin = tmp.path().join("github-root/owner/real.git").display(),
             created_pr = created_pr.display(),
             review_started = review_started.display(),
         ),
@@ -1053,33 +1054,7 @@ fn parallel_loop_uses_light_review_after_heavy_node_deferral() {
     )
     .unwrap();
 
-    ProcessCommand::new("git")
-        .args(["switch", "-c", "gah/real-review"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
-    fs::write(repo.join("review-change.txt"), "review me\n").unwrap();
-    ProcessCommand::new("git")
-        .args(["add", "review-change.txt"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
-    ProcessCommand::new("git")
-        .args(["commit", "-m", "review fixture"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
-    ProcessCommand::new("git")
-        .args(["push", "-u", "origin", "gah/real-review"])
-        .current_dir(&repo)
-        .env("HOME", &home)
-        .output()
-        .unwrap();
-    ProcessCommand::new("git")
-        .args(["switch", "main"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    let source_sha = push_review_branch(&repo, &home);
 
     let fake_bin = tmp.path().join("bin");
     let pulls_count = tmp.path().join("pulls-count");
@@ -1100,13 +1075,13 @@ fn parallel_loop_uses_light_review_after_heavy_node_deferral() {
              case \"$4\" in\n\
                */pulls\\?*)\n\
                  n=$(cat '{pulls_count}' 2>/dev/null || echo 0); n=$((n + 1)); echo \"$n\" > '{pulls_count}'\n\
-                 if [ \"$n\" -le 2 ]; then echo '[]'; else echo '[{{\"title\":\"[GAH] Fix: TICKET-701\",\"body\":\"Review fixture\",\"head\":{{\"ref\":\"gah/real-review\",\"sha\":\"source-sha\"}},\"html_url\":\"https://github.com/owner/real/pull/7\",\"labels\":[],\"number\":7,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]'; fi\n\
+                 if [ \"$n\" -le 2 ]; then echo '[]'; else echo '[{{\"title\":\"[GAH] Fix: TICKET-701\",\"body\":\"Review fixture\",\"head\":{{\"ref\":\"gah/real-review\",\"sha\":\"{source_sha}\"}},\"html_url\":\"https://github.com/owner/real/pull/7\",\"labels\":[],\"number\":7,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]'; fi\n\
                  exit 0 ;;\n\
                */pulls) echo '[{{\"number\":7}}]'; exit 0 ;;\n\
                */check-runs\\?*) echo '{{\"total_count\":1,\"check_runs\":[{{\"status\":\"completed\",\"conclusion\":\"success\"}}]}}'; exit 0 ;;\n\
              esac\n\
              if [ \"$1\" = \"api\" ]; then echo '[]'; exit 0; fi\n\
-             if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then echo '{{\"number\":7,\"url\":\"https://github.com/owner/real/pull/7\",\"title\":\"[GAH] Fix: TICKET-701\",\"body\":\"Review fixture\",\"headRefName\":\"gah/real-review\",\"baseRefName\":\"main\",\"headRefOid\":\"source-sha\",\"statusCheckRollup\":[{{\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}}]}}'; exit 0; fi\n\
+             if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then echo '{{\"number\":7,\"url\":\"https://github.com/owner/real/pull/7\",\"title\":\"[GAH] Fix: TICKET-701\",\"body\":\"Review fixture\",\"isDraft\":true,\"headRefName\":\"gah/real-review\",\"baseRefName\":\"main\",\"headRefOid\":\"{source_sha}\",\"statusCheckRollup\":[{{\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}}]}}'; exit 0; fi\n\
              if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"comment\" ]; then exit 0; fi\n\
              exit 0\n",
             pulls_count = pulls_count.display(),
