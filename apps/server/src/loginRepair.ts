@@ -19,7 +19,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { repositoryCli, loginRepairMethod, type LoginRepairState, type LoginRepairView } from '@git-agent-harness/contracts';
-import { nodeHeaders, type RegistryService } from './registryService.js';
+import type { RegistryService } from './registryService.js';
+import { LinkRefused, linkTo } from './workerLink.js';
 import { findGahBinary, getSpawnOptions, runBackendInstanceAuth, runBackendInstanceRuntime, terminateProcessTree } from './gahCli.js';
 
 const REPAIR_TTL_MS = 10 * 60_000;
@@ -530,20 +531,15 @@ export class LoginRepairBroker {
   private async worker(nodeId: string, body: Record<string, unknown>): Promise<LoginRepairView> {
     const node = this.deps.registry.getNode(nodeId);
     if (!node) throw new LoginRepairError(404, 'That node is no longer registered.');
-    const endpoint = new URL('/api/login-repair', node.advertised_url);
-    if (endpoint.protocol !== 'https:' && process.env.GAH_ALLOW_INSECURE_HTTP !== '1'
-      && !['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname)) {
-      throw new LoginRepairError(502, 'Login repair on this worker requires HTTPS or trusted LAN HTTP.');
-    }
     let response: Response;
     try {
-      response = await (this.deps.fetch ?? fetch)(endpoint, {
-        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(20_000),
-        headers: { ...nodeHeaders(node), 'Content-Type': 'application/json' },
+      response = await linkTo(node).fetch('/api/login-repair', {
+        method: 'POST', signal: AbortSignal.timeout(20_000),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
-      });
-    } catch {
-      throw new LoginRepairError(502, 'The worker could not be reached.');
+      }, this.deps.fetch);
+    } catch (error) {
+      throw new LoginRepairError(502, error instanceof LinkRefused ? error.message : 'The worker could not be reached.');
     }
     const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
     if (!response.ok) {

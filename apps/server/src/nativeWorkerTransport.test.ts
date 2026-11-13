@@ -51,8 +51,9 @@ async function fixture() {
   app.use('/api/native-worker',nativeWorkerRouter(worker));
   const server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));
   const url=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const node={node_id:'worker',advertised_url:url,transport_mode:'authenticated_remote',secret_ref:'fixture',profiles:['fixture']} as RegisteredNode;
-  const transport=new NativeWorkerHttpTransport({contextRoot:source,worker:id=>id==='worker'?node:undefined,secret:()=> 'fixture-service'});
+  process.env.NATIVE_TRANSPORT_TEST_CREDENTIAL='fixture-service';
+  const node={node_id:'worker',advertised_url:url,transport_mode:'authenticated_remote',secret_ref:'env:NATIVE_TRANSPORT_TEST_CREDENTIAL',profiles:['fixture']} as RegisteredNode;
+  const transport=new NativeWorkerHttpTransport({contextRoot:source,worker:id=>id==='worker'?node:undefined});
   return {binding,context,contexts,contents,source,node,url,transport,
     get stages(){return stages;},get starts(){return starts;},loseUpload(){loseUpload=true;},revoke(){member=false;},
     corruptCatalog(){corruptCatalog=true;},
@@ -86,7 +87,8 @@ test('worker HTTP requires owner service auth, exact local identity and register
   try {
     const response=await fetch(`${f.url}/api/native-worker`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'prepare',binding:f.binding})});
     assert.equal(response.status,403);
-    const bad=new NativeWorkerHttpTransport({contextRoot:f.source,worker:()=>f.node,secret:()=> 'PRIVATE_WRONG_TOKEN'});
+    process.env.NATIVE_TRANSPORT_TEST_WRONG='PRIVATE_WRONG_TOKEN';
+    const bad=new NativeWorkerHttpTransport({contextRoot:f.source,worker:()=>({...f.node,secret_ref:'env:NATIVE_TRANSPORT_TEST_WRONG'})});
     await assert.rejects(bad.stage(f.binding,f.context),error=>!String(error).includes('PRIVATE_WRONG_TOKEN'));
     await assert.rejects(f.transport.stage(f.binding,join(f.context,'escape')),/outside/);
     f.node.profiles=[];await assert.rejects(f.transport.observe(f.binding),/membership/);

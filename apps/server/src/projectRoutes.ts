@@ -5,7 +5,8 @@ import { requireOwner } from './authMiddleware.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { runProfileAdd, runProfileList } from './gahCli.js';
 import { addProject, addRemoteProject, CheckoutHasLocalWork, importGitProject, listProjects, parseGitUrl, projectProfile, removeProject } from './projectCatalog.js';
-import { nodeHeaders, type RegistryService } from './registryService.js';
+import type { RegistryService } from './registryService.js';
+import { LinkRefused, linkTo, type WorkerLink } from './workerLink.js';
 
 function importInput(value: Record<string, unknown>): ProjectImportData {
   if (typeof value?.gitUrl !== 'string' || !value.gitUrl.trim()) throw new Error('gitUrl is required');
@@ -28,17 +29,17 @@ function importInput(value: Record<string, unknown>): ProjectImportData {
 export async function importProjectOnNode(input: ProjectImportData, registry: RegistryService, localNodeId: string): Promise<ProjectImportResult> {
   const worker = registry.getNode(input.nodeId!);
   if (!worker) throw new Error('The selected worker is not registered. Add it in Settings, then retry.');
-  let headers: Record<string, string>;
-  try { headers = nodeHeaders(worker); }
-  catch { throw new Error('Cannot resolve the selected worker credential on central. Check its registration.'); }
+  let link: WorkerLink;
+  try { link = linkTo(worker); link.headers(); }
+  catch (error) { throw new Error(error instanceof LinkRefused ? error.message : 'Cannot resolve the selected worker credential on central. Check its registration.'); }
   // Validate the catalog before remote work so corruption cannot produce an uncatalogued import.
   listProjects([], localNodeId);
   const request = async (path: string, body?: unknown) => {
     try {
-      const response = await fetch(new URL(path, worker.advertised_url), {
-        method: body ? 'POST' : 'GET', headers: { ...headers, 'Content-Type': 'application/json' },
+      const response = await link.fetch(path, {
+        method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json' },
         ...(body ? { body: JSON.stringify(body) } : {}),
-        redirect: 'error', signal: AbortSignal.timeout(body ? 300_000 : 5_000)
+        signal: AbortSignal.timeout(body ? 300_000 : 5_000)
       });
       if (response.status === 401 || response.status === 403) throw new Error('Worker rejected its configured credential. Check its registration.');
       if (!response.ok) throw new Error(`Worker import endpoint returned HTTP ${response.status}. Check the worker logs and retry.`);

@@ -1,4 +1,5 @@
 import type { LoopDecision, NodeFactoryBlocker, NodeFactoryRead, NodeFactorySnapshot, RegisteredNode } from '@git-agent-harness/contracts';
+import type { WorkerLink } from './workerLink.js';
 
 export class NodeFactoryError extends Error {
   constructor(public readonly status: number, message: string) { super(message); }
@@ -12,18 +13,13 @@ function blocker(value: unknown): NodeFactoryBlocker {
     next_steps: Array.isArray(plan.safe_actions) ? plan.safe_actions.slice(0, 3).map(action => text(record(action).summary)).filter((step): step is string => step !== null) : [] };
 }
 
-/** Read only fixed endpoints on the registered origin, with one network/body
+/** Read only fixed endpoints over the worker's link, with one network/body
  * deadline and bounded projected output. Never relay remote mutation commands. */
-export async function readNodeFactory(node: RegisteredNode, profile: string, headers: Record<string, string>): Promise<NodeFactorySnapshot> {
-  const origin = new URL(node.advertised_url);
-  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname) || /^127\./.test(origin.hostname);
-  if (!['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password
-    || origin.protocol === 'http:' && !loopback && node.transport_mode !== 'trusted_lan') throw new NodeFactoryError(400, 'Worker transport is not permitted.');
+export async function readNodeFactory(node: RegisteredNode, profile: string, link: WorkerLink): Promise<NodeFactorySnapshot> {
   const signal = AbortSignal.timeout(5000);
   async function read<T>(path: string, project: (value: unknown) => T): Promise<NodeFactoryRead<T>> {
     try {
-      const url = new URL(path, origin); url.searchParams.set('profile', profile);
-      const response = await fetch(url, { headers, signal, redirect: 'error' });
+      const response = await link.fetch(`${path}?${new URLSearchParams({ profile })}`, { signal });
       if (!response.ok) {
         await response.body?.cancel();
         return { state: 'unavailable', reason: [401, 403].includes(response.status) ? 'authorization' : response.status === 404 ? 'unsupported' : 'transport' };

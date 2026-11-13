@@ -1,4 +1,4 @@
-/** Central native delivery over the existing registered worker HTTP endpoint.
+/** Central native delivery over the registered worker's link.
  * Context transfer can resume. Start is sent once by the broker; its unknown
  * outcome is observed, never replayed by this transport. */
 import http from 'node:http';
@@ -9,21 +9,19 @@ import type { Readable } from 'node:stream';
 import type { RegisteredNode, NativeReservationRelease,NativeWorkerCatalog } from '@git-agent-harness/contracts';
 import type { NativeDispatchBinding, NativeHostReservation, NativeStartGrant, NativeWorkerObservation, NativeWorkerRelease, NativeWorkerTransport } from './nativeDispatchBroker.js';
 import { nativeContextManifest, openNativeFile } from './nativeWorkerContext.js';
+import { linkTo } from './workerLink.js';
 
 export class NativeWorkerHttpTransport implements NativeWorkerTransport {
   private readonly transfers=new Map<string,Promise<NativeWorkerObservation>>();
   private readonly root:string;
-  constructor(private readonly options:{contextRoot:string;worker:(id:string)=>RegisteredNode|undefined;secret:(reference:string)=>string}) {
+  constructor(private readonly options:{contextRoot:string;worker:(id:string)=>RegisteredNode|undefined}) {
     this.root=resolve(options.contextRoot);
   }
   private target(binding:Pick<NativeDispatchBinding,'node_id'|'profile'>) {
     const node=this.options.worker(binding.node_id);
     if(!node?.profiles?.includes(binding.profile)) throw Error('Native worker membership unavailable');
-    const url=new URL(node.advertised_url);
-    if(!['http:','https:'].includes(url.protocol) || url.username || url.password || url.pathname!=='/' || url.search || url.hash) throw Error('Invalid native worker origin');
-    const token=node.secret_ref?this.options.secret(node.secret_ref):'';
-    if((node.transport_mode==='authenticated_remote' && !token) || /[\x00-\x1f\x7f]/.test(token)) throw Error('Native worker credential unavailable');
-    return {origin:url.origin,reference:node.secret_ref,token};
+    const link=linkTo(node);
+    return {origin:link.origin,headers:link.headers()};
   }
   private async request(binding:Pick<NativeDispatchBinding,'node_id'|'profile'>,path:string,payload:Record<string,unknown>|Readable,signal?:AbortSignal):Promise<unknown> {
     const target=this.target(binding);const url=new URL(path,target.origin);
@@ -31,7 +29,7 @@ export class NativeWorkerHttpTransport implements NativeWorkerTransport {
     const source=streaming?payload as Readable:undefined;
     const result=await new Promise<unknown>((resolve,reject)=>{
       const request=(url.protocol==='https:'?https:http).request(url,{method:'POST',signal,headers:{
-        ...(target.token?{authorization:`Bearer ${target.token}`} : {}),
+        ...target.headers,
         'content-type':streaming?'application/octet-stream':'application/json',
       }},response=>{
         let size=0;const chunks:Buffer[]=[];
@@ -50,7 +48,7 @@ export class NativeWorkerHttpTransport implements NativeWorkerTransport {
       else request.end(JSON.stringify(payload));
     });
     const current=this.target(binding);
-    if(current.origin!==target.origin || current.reference!==target.reference || current.token!==target.token) throw Error('Native worker access changed during delivery');
+    if(current.origin!==target.origin || current.headers.Authorization!==target.headers.Authorization) throw Error('Native worker access changed during delivery');
     return result;
   }
   private action(binding:NativeDispatchBinding,action:string,extra:Record<string,unknown>={},signal?:AbortSignal) {

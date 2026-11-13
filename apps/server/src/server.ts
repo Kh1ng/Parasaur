@@ -96,7 +96,7 @@ import { mutationSafety } from './mutationSafety.js';
 import { pairingRouter } from './pairing.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { resolveChatProject } from './projectCatalog.js';
-import { RegistryService, NodeDoctorError, resolveSecret } from './registryService.js';
+import { RegistryService, NodeDoctorError } from './registryService.js';
 import { ClaimsService } from './claimsService.js';
 import { claimsRouter } from './claimsRouter.js';
 import { nativeGrantRouter } from './nativeGrantRouter.js';
@@ -1198,7 +1198,7 @@ export function createServer(
     const identity=getCoordinatorIdentity(undefined,coordinatorPort);
     const root=configDeps.nativeDispatchRoot!;
     const centralUrl=node.central_url??identity.advertised_url;
-    const transport=root?new NativeWorkerHttpTransport({contextRoot:root,worker:id=>registryService.getNode(id),secret:resolveSecret}):undefined;
+    const transport=root?new NativeWorkerHttpTransport({contextRoot:root,worker:id=>registryService.getNode(id)}):undefined;
     const held=(profile:string)=>broker.heldWork(profile);
     const broker:NativeDispatchBroker=configDeps.nativeDispatchBroker??new NativeDispatchBroker({root,centralUrl,coordinatorNodeId:identity.node_id,
       claims:centralClaims(),transport:transport!,

@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from '
 import { parseNodeAuthHealth } from './authHealth.js';
 import { parseNodeCentralClaims } from './centralClaimObservation.js';
 import { NodeFactoryError, readNodeFactory } from './nodeFactory.js';
-import { resolve, dirname, sep } from 'node:path';
+import { resolve, dirname } from 'node:path';
 import { hostname, networkInterfaces } from 'node:os';
 import type {
   RunningWorker,
@@ -19,6 +19,7 @@ import type {
 } from '@git-agent-harness/contracts';
 import { COORDINATOR_MINIMUM_WORKER_VERSION, COORDINATOR_VERSION, compareVersions } from '@git-agent-harness/contracts';
 import { COORDINATOR_SCHEMA_DIGEST } from './coordinatorIdentity.js';
+import { LinkRefused, linkTo, type WorkerLink } from './workerLink.js';
 
 export function isLoopback(urlStr: string): boolean {
   try {
@@ -234,18 +235,13 @@ function emptyNodeObservation(
   };
 }
 
-/** The deadline covers response-body reads too; redirects cannot change the registered target. */
-async function fetchWithTimeout(url: string, headers: Record<string, string>, timeoutMs: number): Promise<Response> {
-  return fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
-}
-
-/** All registered-node requests use the same transport and secret-reference rules. */
-export function nodeHeaders(node: RegisteredNode): Record<string, string> {
-  const headers: Record<string, string> = { Accept: 'application/json', 'User-Agent': `GAH-Coordinator/${COORDINATOR_VERSION}` };
-  if (node.transport_mode === 'authenticated_remote' || (node.transport_mode === 'trusted_lan' && !isLoopback(node.advertised_url))) {
-    headers.Authorization = `Bearer ${resolveSecret(node.secret_ref)}`;
-  }
-  return headers;
+/** A usable link whose credential is readable, so a later request can only
+ * fail on the network or at the worker. Throws `LinkRefused` or the
+ * credential error. */
+function readyLink(node: RegisteredNode): WorkerLink {
+  const link = linkTo(node);
+  link.headers();
+  return link;
 }
 
 export class NodeDoctorError extends Error {
@@ -381,44 +377,6 @@ async function mapWithConcurrency<T, U>(
   return results;
 }
 
-/** Node health checks fetch an operator-supplied `advertised_url`, so a `file:`
- * secret ref must never resolve outside a known directory -- otherwise a
- * registrant could point advertised_url at a server they control and use the
- * coordinator as an oracle to read (and exfiltrate, via the Authorization
- * header it sends) any file readable by the server process. */
-const DEFAULT_NODE_SECRETS_ROOT = '/etc/gah/node-secrets';
-
-export function nodeSecretsRoot(): string {
-  return resolve(process.env.GAH_NODE_SECRETS_ROOT || DEFAULT_NODE_SECRETS_ROOT);
-}
-
-export function resolveSecret(secretRef: string): string {
-  if (!secretRef) {
-    throw new Error('Secret reference is empty');
-  }
-  if (secretRef.startsWith('env:')) {
-    const envVar = secretRef.slice(4);
-    const val = process.env[envVar];
-    if (val === undefined) {
-      throw new Error(`Environment variable ${envVar} is not set`);
-    }
-    return val;
-  }
-  if (secretRef.startsWith('file:')) {
-    const root = nodeSecretsRoot();
-    const filePath = resolve(secretRef.slice(5));
-    if (filePath !== root && !filePath.startsWith(root + sep)) {
-      throw new Error(`Secret file path must be inside ${root}`);
-    }
-    try {
-      return readFileSync(filePath, 'utf8').trim();
-    } catch (e: any) {
-      throw new Error(`Failed to read secret file ${filePath}: ${e.message}`);
-    }
-  }
-  throw new Error(`Unsupported secret reference format (must start with 'env:' or 'file:')`);
-}
-
 export class RegistryService {
   private quotaReads = new Map<string, { node: RegisteredNode; expiresAt: number; result: Promise<NodeQuotaRelay> }>();
   private observationRequests = new Map<string, number>();
@@ -499,10 +457,11 @@ export class RegistryService {
   }
 
   getNodesSummary(): NodeSummary[] {
-    return this.getNodes().map(({ secret_ref, ...summary }) => ({
-      ...summary,
-      update: nodeVersionStatus(summary.version)
-    }));
+    return this.getNodes().map(({ secret_ref, ...summary }) => {
+      let link: NodeSummary['link'] = null;
+      try { link = linkTo({ ...summary, secret_ref }).kind; } catch { /* Refused addresses show no link. */ }
+      return { ...summary, link, update: nodeVersionStatus(summary.version) };
+    });
   }
 
   /** Issue #1416: opt a node in or out of coordinator-driven automatic
@@ -602,22 +561,16 @@ export class RegistryService {
   private async readNodeQuota(node: RegisteredNode, profile: string, since: string): Promise<NodeQuotaRelay> {
     const base = { nodeId: node.node_id, displayName: node.display_name };
     try {
-      const url = new URL('/api/quota', node.advertised_url);
-      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
-        || (url.protocol === 'http:' && !isLoopback(url.toString()) && node.transport_mode !== 'trusted_lan')) {
-        throw new Error('Worker quota transport is not permitted.');
-      }
-      const headers = nodeHeaders(node);
-      url.searchParams.set('profile', profile);
-      url.searchParams.set('since', since);
-      const response = await fetchWithTimeout(url.toString(), headers, NODE_OBSERVATION_TIMEOUT_MS);
+      const response = await linkTo(node).fetch(`/api/quota?${new URLSearchParams({ profile, since })}`,
+        { signal: AbortSignal.timeout(NODE_OBSERVATION_TIMEOUT_MS) });
       if (!response.ok) return { ...base, state: 'unavailable', quota: null, error: `Worker quota returned HTTP ${response.status}.` };
       const quota = await readQuotaResponse(response);
       if (!isQuotaSnapshot(quota, profile, since)) return { ...base, state: 'unavailable', quota: null, error: 'Worker quota schema or profile did not match.' };
       if (this.nodes.get(node.node_id) !== node) return { ...base, state: 'unavailable', quota: null, error: 'Worker registration changed during the quota check.' };
       return { ...base, state: 'available', quota };
-    } catch {
-      return { ...base, state: 'unavailable', quota: null, error: 'Cannot read quota from the registered worker. Check its connection, credential, and response.' };
+    } catch (error) {
+      return { ...base, state: 'unavailable', quota: null, error: error instanceof LinkRefused ? error.message
+        : 'Cannot read quota from the registered worker. Check its connection, credential, and response.' };
     }
   }
 
@@ -685,29 +638,30 @@ export class RegistryService {
   private async fetchNodeObservation(node: RegisteredNode, profile?: string): Promise<NodeHealthCheckResult> {
     const start = Date.now();
     const observedAt = nowIso(start);
-    const snapshotUrl = new URL('/api/status', node.advertised_url);
     // Health needs backends and availability, not the forge-backed ticket queue.
-    snapshotUrl.searchParams.set('light', '1');
+    const query = new URLSearchParams({ light: '1' });
     // Workers may not have a profile named "gah" (the status endpoint's default).
     const observedProfile = profile ?? node.profiles?.[0];
     if (observedProfile) {
-      snapshotUrl.searchParams.set('profile', observedProfile);
+      query.set('profile', observedProfile);
     }
 
-    let headers: Record<string, string>;
+    let link: WorkerLink;
     try {
-      headers = nodeHeaders(node);
+      link = readyLink(node);
     } catch (e: any) {
+      const refused = e instanceof LinkRefused;
       return {
-        node_id: node.node_id, status: 'unhealthy', state: 'auth_failed', timestamp: start,
+        node_id: node.node_id, status: 'unhealthy', state: refused ? 'unreachable' : 'auth_failed', timestamp: start,
         last_seen_at: node.last_seen_at ?? null,
-        error: { kind: 'AUTH', message: `Failed to resolve secret reference: ${e.message}` }
+        error: refused ? { kind: 'NETWORK', message: e.message }
+          : { kind: 'AUTH', message: `Failed to resolve secret reference: ${e.message}` }
       };
     }
 
     let response: Response;
     try {
-      response = await fetchWithTimeout(snapshotUrl.toString(), headers, NODE_OBSERVATION_TIMEOUT_MS);
+      response = await link.fetch(`/api/status?${query}`, { signal: AbortSignal.timeout(NODE_OBSERVATION_TIMEOUT_MS) });
     } catch (err: any) {
       const errorMessage = err?.cause?.message || err?.message || String(err);
       const errorCode = err?.cause?.code || err?.code || '';
@@ -967,36 +921,13 @@ export class RegistryService {
       throw new Error('Secret reference must use references (starting with env: or file:), not raw credentials');
     }
 
-    // 7. Non-loopback endpoints require TLS plus authenticated node/client identity; localhost development remains explicit
-    const loopback = isLoopback(node.advertised_url);
-    if (!loopback) {
-      if (node.transport_mode === 'loopback') {
-        throw new Error('Non-loopback advertised URL cannot use loopback transport mode');
-      }
-      if (node.transport_mode === 'authenticated_remote') {
-        const url = node.advertised_url.toLowerCase();
-        if (!url.startsWith('https://') && !url.startsWith('wss://')) {
-          throw new Error('Non-loopback authenticated remote endpoints must use TLS (https:// or wss://)');
-        }
-      } else if (node.transport_mode === 'trusted_lan') {
-        // Issue #944: self-hosted tailnet/LAN workers legitimately advertise
-        // a plain-HTTP URL (e.g. http://100.118.97.79). Mirror the Rust side's
-        // GAH_COORDINATOR_INSECURE_TLS=1 opt-in: allow it only when the central
-        // operator explicitly opts in, so the fail-closed default is unchanged.
-        if (process.env.GAH_ALLOW_INSECURE_HTTP !== '1') {
-          throw new Error(
-            'Non-loopback trusted_lan endpoints require GAH_ALLOW_INSECURE_HTTP=1 on the central node (fail-closed default; use authenticated_remote over TLS otherwise)'
-          );
-        }
-        warnings.push('Non-loopback trusted_lan endpoint accepted over plain HTTP (GAH_ALLOW_INSECURE_HTTP=1)');
-      }
-    } else {
-      if (node.transport_mode === 'authenticated_remote') {
-        const url = node.advertised_url.toLowerCase();
-        if (!url.startsWith('https://') && !url.startsWith('wss://')) {
-          warnings.push('Loopback authenticated remote endpoint does not terminate TLS locally');
-        }
-      }
+    // 7. The address must be one this central will send to. A refusal says
+    // which setting or address would change the answer.
+    const link = linkTo(node);
+    if (link.kind === 'tailnet' || link.kind === 'lan') {
+      warnings.push(`Worker accepted over plain HTTP on a ${link.kind} link`);
+    } else if (link.kind === 'loopback' && node.transport_mode === 'authenticated_remote' && !link.origin.startsWith('https:')) {
+      warnings.push('Loopback authenticated remote endpoint does not terminate TLS locally');
     }
 
     // SECURITY (issue #951 review): UPDATING an existing node_id repoints
@@ -1056,10 +987,13 @@ export class RegistryService {
     const node = this.nodes.get(nodeId);
     if (!node) throw new NodeFactoryError(404, 'Node is not registered.');
     if (!profile || !node.profiles?.includes(profile)) throw new NodeFactoryError(400, 'Select a profile declared by this worker.');
-    let headers: Record<string, string>;
-    try { headers = nodeHeaders(node); }
-    catch { throw new NodeFactoryError(502, 'Cannot resolve the configured worker credential on central.'); }
-    const snapshot = await readNodeFactory(node, profile, headers);
+    let link: WorkerLink;
+    try { link = readyLink(node); }
+    catch (error) {
+      if (error instanceof LinkRefused) throw new NodeFactoryError(400, error.message);
+      throw new NodeFactoryError(502, 'Cannot resolve the configured worker credential on central.');
+    }
+    const snapshot = await readNodeFactory(node, profile, link);
     if (this.nodes.get(nodeId) !== node) throw new NodeFactoryError(409, 'Worker registration changed during the check. Read factory state again.');
     return snapshot;
   }
@@ -1069,13 +1003,13 @@ export class RegistryService {
     const node = this.nodes.get(nodeId);
     if (!node) throw new NodeDoctorError(404, 'Node is not registered.');
     if (!profile || !node.profiles?.includes(profile)) throw new NodeDoctorError(400, 'Select a profile declared by this worker. Configure or import a worker profile and register it first.');
-    let headers: Record<string, string>;
-    try { headers = nodeHeaders(node); }
-    catch { throw new NodeDoctorError(502, 'AUTH: Cannot resolve the worker credential on central.'); }
-    const url = new URL('/api/doctor', node.advertised_url);
-    url.searchParams.set('profile', profile);
+    let link: WorkerLink;
+    try { link = readyLink(node); }
+    catch (error) {
+      throw new NodeDoctorError(502, error instanceof LinkRefused ? `NETWORK: ${error.message}` : 'AUTH: Cannot resolve the worker credential on central.');
+    }
     try {
-      const response = await fetchWithTimeout(url.toString(), headers, 30_000);
+      const response = await link.fetch(`/api/doctor?${new URLSearchParams({ profile })}`, { signal: AbortSignal.timeout(30_000) });
       if (response.status === 401 || response.status === 403) throw new NodeDoctorError(502, 'AUTH: Worker rejected its configured credential.');
       if (!response.ok) throw new NodeDoctorError(502, `UPSTREAM: Worker doctor returned HTTP ${response.status}.`);
       const snapshot: unknown = await response.json();

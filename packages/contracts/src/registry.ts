@@ -47,6 +47,10 @@ export interface FleetQuotaSnapshot {
   nodes: NodeQuotaRelay[];
 }
 
+/** The kind of network path a central uses to reach a worker, derived from
+ * the worker's registered address. See apps/server/src/workerLink.ts. */
+export type WorkerLinkKind = 'loopback' | 'https' | 'tailnet' | 'lan';
+
 export interface RegisteredNode {
   node_id: string;
   display_name: string;
@@ -91,6 +95,8 @@ export interface NodeSummary {
   labels?: string[];
   profiles?: string[];
   transport_mode: 'loopback' | 'authenticated_remote' | 'trusted_lan';
+  /** How this central reaches the node; null when it refuses the address. */
+  link?: WorkerLinkKind | null;
   last_seen_at?: string | null;
   last_observed_state?: NodeObservationState | null;
   last_observed_at?: string | null;

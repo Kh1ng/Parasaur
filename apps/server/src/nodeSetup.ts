@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import { linkEnabled } from './workerLink.js';
 
 const exec = promisify(execFile);
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
@@ -114,8 +115,8 @@ export function nodeSetupRouter(): Router {
       if (req.body.os && req.body.os !== 'windows') {
         return res.json({ command: unixSetupCommand(req.body.os, req.body.role, req.body.centralUrl, req.body.gatewayUrl, req.body.provider, req.body.providerEndpoint, req.body.llmModel, req.body.embeddingModel, req.body.memoryCorePath, req.body.embeddingDimensions) });
       }
-      if (req.body.role !== 'desktop' && process.env.GAH_ALLOW_INSECURE_HTTP !== '1') {
-        return res.status(409).json({ message: 'WSL worker enrollment currently uses trusted LAN transport. Set GAH_ALLOW_INSECURE_HTTP=1 on the central server for a trusted LAN/VPN, or install the desktop only.' });
+      if (req.body.role !== 'desktop' && !linkEnabled('tailnet') && !linkEnabled('lan')) {
+        return res.status(409).json({ message: "A WSL worker is reached over plain HTTP on a tailnet or local network. Add 'tailnet' or 'lan' to GAH_WORKER_LINKS on the central server, or install the desktop only." });
       }
       const command = windowsSetupCommand(req.body.centralUrl, req.body.role, process.env.COORDINATOR_TOKEN ?? '');
       return res.json({ command });

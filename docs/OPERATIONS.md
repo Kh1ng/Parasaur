@@ -896,11 +896,13 @@ gah node register \
 default); the loop-start self-registration reads `GAH_REGISTRY_TRANSPORT_MODE`
 and `GAH_REGISTRY_SECRET_REF` env vars (defaults `trusted_lan` /
 `env:COORDINATOR_TOKEN`). A fresh worker can set `GAH_NODE_ADVERTISED_URL`
-to create its stable identity on the first loop start. For a non-loopback
-`trusted_lan` endpoint over **plain HTTP**
-(e.g. `http://100.118.97.79` on a tailnet), the central must opt in with
-`GAH_ALLOW_INSECURE_HTTP=1`; the worker needs the same opt-in for
-plain-HTTP status polling. This flag is deliberately named for what it does —
+to create its stable identity on the first loop start. The central reaches
+each worker over a link derived from the worker's address; see
+[WORKER_LINKS.md](WORKER_LINKS.md). For a **plain HTTP** address
+(e.g. `http://100.118.97.79` on a tailnet), the central must list the link's
+kind in `GAH_WORKER_LINKS` (`tailnet`, `lan`). The older
+`GAH_ALLOW_INSECURE_HTTP=1` enables both kinds, and the worker still needs it
+to accept plain-HTTP requests from the central. This flag is deliberately named for what it does —
 it lifts the TLS requirement for **every** `authMiddleware`-protected route
 (the registry, claims, and settings APIs), not just LAN registration — so
 treat it as "this host accepts plain HTTP for authenticated API traffic".

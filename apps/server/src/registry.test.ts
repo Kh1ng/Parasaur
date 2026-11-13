@@ -315,7 +315,9 @@ test('RegistryService validates non-loopback endpoints and TLS modes', () => {
 
     // Non-loopback URL + trusted_lan -> Fail closed by default (issue #944)
     const prevAllow = process.env.GAH_ALLOW_INSECURE_HTTP;
+    const prevLinks = process.env.GAH_WORKER_LINKS;
     delete process.env.GAH_ALLOW_INSECURE_HTTP;
+    delete process.env.GAH_WORKER_LINKS;
     try {
       assert.throws(() => {
         registry.registerNode({
@@ -324,8 +326,32 @@ test('RegistryService validates non-loopback endpoints and TLS modes', () => {
           advertised_url: 'http://node.lan.com',
           transport_mode: 'trusted_lan'
         });
-      }, /GAH_ALLOW_INSECURE_HTTP=1/);
+      }, /'lan' to GAH_WORKER_LINKS/);
+
+      // A tailnet-only central takes a tailnet worker and still refuses the LAN one.
+      process.env.GAH_WORKER_LINKS = 'tailnet';
+      const resTailnet = registry.registerNode({
+        ...baseNode,
+        node_id: 'node-tailnet',
+        advertised_url: 'http://100.98.69.105:3774',
+        transport_mode: 'trusted_lan'
+      });
+      assert.deepEqual(resTailnet.warnings, ['Worker accepted over plain HTTP on a tailnet link']);
+      assert.equal(registry.getNodesSummary().find(node => node.node_id === 'node-tailnet')?.link, 'tailnet');
+      assert.throws(() => {
+        registry.registerNode({
+          ...baseNode,
+          node_id: 'node-lan',
+          advertised_url: 'http://node.lan.com',
+          transport_mode: 'trusted_lan'
+        });
+      }, /'lan' to GAH_WORKER_LINKS/);
     } finally {
+      if (prevLinks === undefined) {
+        delete process.env.GAH_WORKER_LINKS;
+      } else {
+        process.env.GAH_WORKER_LINKS = prevLinks;
+      }
       if (prevAllow === undefined) {
         delete process.env.GAH_ALLOW_INSECURE_HTTP;
       } else {
@@ -485,7 +511,7 @@ test('resolveSecret rejects file: references outside the configured secrets root
 
   try {
     mkdirSync(testRoot, { recursive: true });
-    const { resolveSecret } = await import('./registryService.js');
+    const { resolveSecret } = await import('./workerLink.js');
 
     // Outside the root entirely, and a `../` traversal attempt out of the root.
     assert.throws(() => resolveSecret('file:/etc/passwd'), /must be inside/);

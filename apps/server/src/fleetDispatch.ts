@@ -17,7 +17,8 @@ import { COORDINATOR_VERSION, isSessionTerminal as sessionIsTerminal, isSessionE
 import { preserveCorruptFile, writeFileAtomic } from './atomicFile.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { getSessionManager, type SessionOptions } from './sessions/SessionManager.js';
-import { resolveSecret, type RegistryService } from './registryService.js';
+import type { RegistryService } from './registryService.js';
+import { linkTo } from './workerLink.js';
 
 type PushBusLike = {
   publish(message: ServerMessage): void;
@@ -670,10 +671,13 @@ class RemoteNodeTransport implements NodeDispatchTransport {
 
 function nodeAuthHeaders(registry: RegistryService, nodeId: string, nodeUrl: string): Record<string, string> {
   const node = registry.getNode(nodeId);
-  if (node?.secret_ref && new URL(node.advertised_url).origin !== new URL(nodeUrl).origin) {
+  if (!node) return {};
+  const link = linkTo(node);
+  if (link.origin !== new URL(nodeUrl).origin) {
     throw new GAHError('The registered node endpoint changed. Refusing to send its credential to an old address.', 'NODE_ENDPOINT_CHANGED');
   }
-  return node?.secret_ref ? { Authorization: `Bearer ${resolveSecret(node.secret_ref)}` } : {};
+  const { Authorization } = link.headers();
+  return Authorization ? { Authorization } : {};
 }
 
 function defaultTransportFactory(

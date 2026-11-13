@@ -1303,6 +1303,10 @@ for (const protocol of ['http:', 'https:']) {
     const { rmSync } = await import('node:fs');
     const previousToken = process.env.GAH_FLEET_TEST_TOKEN;
     process.env.GAH_FLEET_TEST_TOKEN = 'node-test-secret';
+    // worker.invalid over plain HTTP is a lan link, which a central accepts only when told to.
+    const previousLinks = process.env.GAH_WORKER_LINKS;
+    process.env.GAH_WORKER_LINKS = 'lan';
+    t.after(() => { if (previousLinks === undefined) delete process.env.GAH_WORKER_LINKS; else process.env.GAH_WORKER_LINKS = previousLinks; });
     const authorizations: (string | undefined)[] = [];
     const starts: Record<string, unknown>[] = [];
     const server = http.createServer();
