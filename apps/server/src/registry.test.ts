@@ -333,7 +333,7 @@ test('RegistryService validates non-loopback endpoints and TLS modes', () => {
       const resTailnet = registry.registerNode({
         ...baseNode,
         node_id: 'node-tailnet',
-        advertised_url: 'http://100.98.69.105:3774',
+        advertised_url: 'http://100.101.102.103:3774',
         transport_mode: 'trusted_lan'
       });
       assert.deepEqual(resTailnet.warnings, ['Worker accepted over plain HTTP on a tailnet link']);
