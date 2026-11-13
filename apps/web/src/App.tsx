@@ -240,7 +240,7 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
         )}
 
         <div className={`min-h-0 min-w-0 flex-1 flex-col ${sideView || chatDocked ? 'hidden xl:flex' : 'flex'} ${isChatPage ? '' : 'overflow-y-auto'}`}>
-          <main id="main-content" tabIndex={-1} className={`mx-auto w-full max-w-[1400px] px-4 py-4 sm:px-6 sm:py-6 ${isChatPage ? 'flex min-h-0 flex-1 flex-col' : ''}`}>
+          <main id="main-content" tabIndex={-1} className={`mx-auto w-full max-w-[1400px] px-4 py-4 sm:px-6 sm:py-6 ${isChatPage ? 'chat-main flex min-h-0 flex-1 flex-col' : ''}`}>
             {isChatPage && (
               <button type="button" onClick={() => expandChat(false)} className="mb-2 hidden items-center gap-1.5 self-end text-xs text-secondary hover:text-primary xl:inline-flex">
                 <PanelRight size={14} aria-hidden="true" />

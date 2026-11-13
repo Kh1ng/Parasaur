@@ -1,5 +1,9 @@
 import { expect, test } from '@playwright/test';
 
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 test('the fixture server identifies sample data across page navigation', async ({ page }) => {
   await page.goto('/');
   const sample = page.getByRole('complementary', { name: 'Sample data environment' });

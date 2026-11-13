@@ -2051,7 +2051,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork, gitlab
         </div>
         </div>
 
-        <div className="relative mx-auto mt-2 w-full max-w-3xl rounded-xl border border-subtle bg-raised focus-within:border-accent/60">
+        <div className="chat-composer relative mx-auto mt-2 w-full max-w-3xl shrink-0 rounded-xl border border-subtle bg-raised focus-within:border-accent/60">
           {paletteOpen && (
             <div className="absolute bottom-full left-0 mb-1 w-full max-w-sm bg-card border border-subtle rounded-md shadow-lg overflow-hidden z-10">
               {paletteMatches.map((cmd, i) => (

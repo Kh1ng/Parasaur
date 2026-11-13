@@ -208,6 +208,12 @@
     padding-top: env(safe-area-inset-top);
   }
 
+  @media (max-height: 500px) {
+    .app-shell .chat-main { padding-block: 0.5rem; }
+    .chat-main .chat-composer { margin-top: 0.25rem; }
+    .chat-composer textarea { height: 2.75rem; padding-block: 0.5rem; }
+  }
+
   .chat-menu-item {
     @apply flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm text-secondary hover:bg-overlay/5 hover:text-primary disabled:opacity-50 disabled:hover:bg-transparent;
   }

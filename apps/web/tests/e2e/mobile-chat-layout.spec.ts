@@ -150,8 +150,8 @@ test('chat keeps the composer inside short and offline viewports', async ({ page
   const expectComposerInsideViewport = async () => {
     await expect.poll(() => draft.evaluate((textarea) => {
       const composer = textarea.parentElement!.getBoundingClientRect();
-      return document.documentElement.scrollHeight <= window.innerHeight && composer.bottom <= window.innerHeight;
-    })).toBe(true);
+      return Math.max(document.documentElement.scrollHeight, composer.bottom) - window.innerHeight;
+    })).toBeLessThanOrEqual(0);
   };
 
   await expectComposerInsideViewport();
