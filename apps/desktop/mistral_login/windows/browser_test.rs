@@ -83,6 +83,7 @@ fn named_windows_keep_http_only_sessions_in_separate_stores() {
                                             .domain("127.0.0.1")
                                             .path("/")
                                             .http_only(true)
+                                            .secure(true)
                                             .build(),
                                     )
                                     .map_err(|_| "cookie write failed")?;
@@ -103,9 +104,11 @@ fn named_windows_keep_http_only_sessions_in_separate_stores() {
                                 if sessions.len() != 1
                                     || sessions[0].value() != expected
                                     || sessions[0].http_only() != Some(true)
+                                    || sessions[0].secure() != Some(true)
                                 {
                                     return Err(
-                                        "account cookies crossed stores or lost HttpOnly".into()
+                                        "account cookies crossed stores or lost HttpOnly/Secure"
+                                            .into(),
                                     );
                                 }
                             }
