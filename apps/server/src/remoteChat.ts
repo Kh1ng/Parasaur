@@ -1,7 +1,8 @@
 /** A remote agent implements the same adapter as a local agent. Only the
  * registered worker chooses paths and launches processes; central keeps history. */
 import { createHash, randomUUID } from 'node:crypto';
-import { nodeHeaders, type RegistryService } from './registryService.js';
+import type { RegistryService } from './registryService.js';
+import { linkTo } from './workerLink.js';
 import type { ManagerAdapter } from './managerChat/registry.js';
 import { parseWorkerChatEvent, readWorkerChatReply } from './workerChatProtocol.js';
 import type { ProfileSummary } from '@git-agent-harness/contracts';
@@ -11,19 +12,15 @@ export function workerChatConnection(registry: RegistryService, nodeId: string, 
   const origin = new URL(project.web_url).origin;
   const node = registry.getNode(nodeId);
   if (!node || !node.profiles?.includes(profile)) throw new Error('Worker is not registered for this project.');
-  const endpoint = new URL('/api/worker-chat', node.advertised_url);
-  if (endpoint.protocol !== 'https:' && process.env.GAH_ALLOW_INSECURE_HTTP !== '1'
-    && !['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname)) {
-    throw new Error('Worker chat requires HTTPS or explicit trusted LAN HTTP configuration.');
-  }
+  const link = linkTo(node);
   const assertRegistration = () => {
     if (registry.getNode(nodeId) !== node) throw new Error('Worker registration changed. Select the worker again.');
   };
   const post = async (body: Record<string, unknown>, signal: AbortSignal) => {
     assertRegistration();
-    const response = await fetch(endpoint, {
-      method: 'POST', redirect: 'error', signal,
-      headers: { ...nodeHeaders(node), 'Content-Type': 'application/json' },
+    const response = await link.fetch('/api/worker-chat', {
+      method: 'POST', signal,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...body, profile, repo: project.repo, provider: project.provider, origin, nodeId })
     });
     assertRegistration();

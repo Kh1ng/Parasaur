@@ -181,3 +181,56 @@ fn local_claims_still_cover_only_target_files() {
     assert_eq!(claimed, None);
     assert!(crate::ledger::read_entries(&cfg).unwrap().is_empty());
 }
+
+#[test]
+fn claim_observation_distinguishes_refusal_recovery_and_scope_without_recording_errors() {
+    use crate::central_claims::observations::{latest, CentralClaimObservation, ClaimOutcome};
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut cfg, prof, args) = central_fixture(tmp.path());
+    assert_eq!(
+        latest(&cfg, "test", &prof),
+        CentralClaimObservation::NotObserved
+    );
+    let failed = acquire_claim_with::<()>(&cfg, &prof, &args, tmp.path(), |_, _| {
+        anyhow::bail!("connection refused: private-error-canary")
+    });
+    assert!(failed.is_err());
+    assert!(
+        matches!(latest(&cfg, "test", &prof), CentralClaimObservation::Observed {
+        outcome: ClaimOutcome::Refused, work_id: Some(id), ..
+    } if id == "#500")
+    );
+    assert!(!fs::read_to_string(cfg.defaults.events_path())
+        .unwrap()
+        .contains("private-error-canary"));
+    assert!(crate::ledger::read_entries(&cfg).unwrap().is_empty());
+    assert_eq!(
+        latest(&cfg, "other", &prof),
+        CentralClaimObservation::NotObserved
+    );
+    let mut other_repo = prof.clone();
+    other_repo.repo_id = "other-repo".into();
+    assert_eq!(
+        latest(&cfg, "test", &other_repo),
+        CentralClaimObservation::NotObserved
+    );
+    cfg.defaults.registry_central_url = Some("http://other-central:3773".into());
+    assert_eq!(
+        latest(&cfg, "test", &prof),
+        CentralClaimObservation::NotObserved
+    );
+    cfg.defaults.registry_central_url = Some("http://central:3773".into());
+    acquire_claim_with(&cfg, &prof, &args, tmp.path(), |_, _| Ok(())).unwrap();
+    assert!(matches!(
+        latest(&cfg, "test", &prof),
+        CentralClaimObservation::Observed {
+            outcome: ClaimOutcome::Acquired,
+            ..
+        }
+    ));
+    fs::write(cfg.defaults.events_path(), "invalid event\n").unwrap();
+    assert_eq!(
+        latest(&cfg, "test", &prof),
+        CentralClaimObservation::Unavailable
+    );
+}

@@ -12,6 +12,8 @@ pub enum GroupBy {
     Skill,
     Difficulty,
     BackendDifficulty,
+    Project,
+    WorkItem,
 }
 
 impl std::str::FromStr for GroupBy {
@@ -25,8 +27,10 @@ impl std::str::FromStr for GroupBy {
             "skill" => Ok(GroupBy::Skill),
             "difficulty" => Ok(GroupBy::Difficulty),
             "backend-difficulty" | "backenddifficulty" => Ok(GroupBy::BackendDifficulty),
+            "project" => Ok(GroupBy::Project),
+            "work-item" | "workitem" => Ok(GroupBy::WorkItem),
             _ => Err(format!(
-                "Invalid group-by value: '{}'. Expected 'none', 'backend', 'model', 'skill', 'difficulty', or 'backend-difficulty'",
+                "Invalid group-by value: '{}'. Expected 'none', 'backend', 'model', 'skill', 'difficulty', 'backend-difficulty', 'project', or 'work-item'",
                 s
             )),
         }
@@ -157,6 +161,13 @@ pub struct SummaryData {
     pub grouped_by_difficulty: Option<Vec<GroupSummary>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grouped_by_backend_difficulty: Option<Vec<GroupSummary>>,
+    /// Keys are JSON tuples [profile, provider, repository], so equal repository
+    /// names in different forges or profiles cannot merge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grouped_by_project: Option<Vec<GroupSummary>>,
+    /// Project tuple plus nullable work id; unknown work is an explicit bucket.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grouped_by_work_item: Option<Vec<GroupSummary>>,
 }
 
 pub fn run_with_json(
@@ -240,6 +251,26 @@ pub fn run_with_json(
 
     if let Some(grouped) = &data.grouped_by_skill {
         super::skills::display(grouped);
+    }
+
+    for (label, groups) in [
+        ("project", &data.grouped_by_project),
+        ("work item", &data.grouped_by_work_item),
+    ] {
+        if let Some(groups) = groups {
+            println!("\nGrouped by {label}:");
+            for group in groups {
+                println!(
+                    "  {}: {} entries, {} attempts, tokens={}",
+                    group.group_key,
+                    group.entries,
+                    group.attempts,
+                    group
+                        .total_tokens
+                        .map_or_else(|| "unknown".into(), |n| n.to_string())
+                );
+            }
+        }
     }
 
     // TICKET-125: Display grouped data if requested
@@ -692,7 +723,42 @@ pub fn build_summary(
         grouped_by_model,
         grouped_by_difficulty,
         grouped_by_backend_difficulty,
+        grouped_by_project: (group_by == GroupBy::Project)
+            .then(|| build_scope_summary(&entries, false))
+            .flatten(),
+        grouped_by_work_item: (group_by == GroupBy::WorkItem)
+            .then(|| build_scope_summary(&entries, true))
+            .flatten(),
     })
+}
+
+/// Scope every attempt and its usage to the owning project/work item before
+/// applying canonical usage accounting. Never add an entry's mirrored usage to
+/// its per-attempt readings or clone the full ledger payload into each bucket.
+fn build_scope_summary(entries: &[LedgerEntry], work_item: bool) -> Option<Vec<GroupSummary>> {
+    let mut scopes: BTreeMap<String, Vec<&LedgerEntry>> = BTreeMap::new();
+    for entry in entries {
+        let key = if work_item {
+            serde_json::json!([entry.profile, entry.provider, entry.repo, entry.work_id])
+                .to_string()
+        } else {
+            serde_json::json!([entry.profile, entry.provider, entry.repo]).to_string()
+        };
+        scopes.entry(key).or_default().push(entry);
+    }
+    let groups: Vec<_> = scopes
+        .into_iter()
+        .flat_map(|(key, entries)| {
+            build_grouped_summary(
+                entries,
+                |_| key.clone(),
+                |_| key.clone(),
+                |_, _, _| key.clone(),
+            )
+            .unwrap_or_default()
+        })
+        .collect();
+    (!groups.is_empty()).then_some(groups)
 }
 
 /// TICKET-125: Build grouped summary data for a specific grouping key.
@@ -700,8 +766,8 @@ pub fn build_summary(
 /// Group summaries carry attempt usage, not per-attempt quota state.
 /// Account quota comes from the durable quota store and is selected by
 /// report/snapshot callers via `quota_store::latest_windows_for_identity`.
-pub fn build_grouped_summary<F, U, A>(
-    entries: &[super::LedgerEntry],
+pub fn build_grouped_summary<'a, F, U, A>(
+    entries: impl IntoIterator<Item = &'a super::LedgerEntry>,
     entry_group_key_fn: F,
     usage_group_key_fn: U,
     attempt_group_key_fn: A,
@@ -719,8 +785,8 @@ where
     )
 }
 /// Grouped-summary implementation shared by the public entry point.
-fn build_grouped_summary_inner<F, U, A>(
-    entries: &[super::LedgerEntry],
+fn build_grouped_summary_inner<'a, F, U, A>(
+    entries: impl IntoIterator<Item = &'a super::LedgerEntry>,
     entry_group_key_fn: F,
     usage_group_key_fn: U,
     attempt_group_key_fn: A,
@@ -730,10 +796,6 @@ where
     U: Fn(UsageObservation<'_>) -> String,
     A: Fn(&str, Option<&str>, Option<&str>) -> String,
 {
-    if entries.is_empty() {
-        return None;
-    }
-
     let mut groups: BTreeMap<String, Vec<&super::LedgerEntry>> = BTreeMap::new();
     let mut usage_groups: BTreeMap<String, Vec<UsageObservation<'_>>> = BTreeMap::new();
     let mut attempt_counts: BTreeMap<String, usize> = BTreeMap::new();
@@ -758,6 +820,9 @@ where
         }
     }
 
+    if groups.is_empty() {
+        return None;
+    }
     let mut summaries = Vec::new();
     let all_group_keys: std::collections::BTreeSet<String> = groups
         .keys()
@@ -1062,7 +1127,7 @@ pub struct UsageObservation<'a> {
     pub usage: &'a LedgerUsage,
 }
 
-fn usage_has_observation(usage: &LedgerUsage) -> bool {
+pub(crate) fn usage_has_observation(usage: &LedgerUsage) -> bool {
     usage.usage_unknown_reason.is_some()
         || usage.usage_source.is_some()
         || usage.input_tokens.is_some()
@@ -1076,7 +1141,7 @@ fn usage_has_observation(usage: &LedgerUsage) -> bool {
         || usage.actual_cost_usd.is_some()
 }
 
-fn canonical_usage_observations(entry: &LedgerEntry) -> Vec<UsageObservation<'_>> {
+pub(crate) fn canonical_usage_observations(entry: &LedgerEntry) -> Vec<UsageObservation<'_>> {
     let attempt_usage: Vec<_> = entry
         .attempts
         .iter()
@@ -1123,7 +1188,7 @@ fn print_counts(counts: &BTreeMap<String, usize>) {
 }
 
 pub(crate) fn parse_since(input: &str) -> Result<String> {
-    let now = OffsetDateTime::now_utc();
+    let now = crate::clock::now_utc();
     let trimmed = input.trim();
     if let Some(days) = trimmed.strip_suffix('d') {
         let days = days.parse::<i64>()?;

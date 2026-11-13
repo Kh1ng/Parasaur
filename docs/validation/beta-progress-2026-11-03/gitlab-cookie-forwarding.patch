@@ -1,0 +1,27 @@
+--- a/server/omnibus/gitlab.rb.snippet
++++ b/server/omnibus/gitlab.rb.snippet
+@@ -6,7 +6,7 @@
+ #
+ # GitLab's bundled nginx is built WITHOUT the auth_request module (an `auth_request` line here makes nginx refuse to
+ # start and takes GitLab down). So the "signed-in GitLab users only" check runs in the gate instead: this block drops
+-# every cookie and passes only the GitLab session as X-Gitlab-Session; the gate asks GitLab's /api/v4/user with it
++# GitLab cookies and passes its session only as X-Gitlab-Session; the gate asks GitLab's /api/v4/user with it
+ # and removes the header before Parasaur sees the request.
+ #
+ # Set PARASAUR_GATE below (host:port of the gate; firewall it so only GitLab can reach it). Test before reconfigure:
+@@ -28,6 +28,14 @@
+     proxy_set_header X-Forwarded-Prefix /parasaur;
+     proxy_set_header X-Forwarded-Proto https;      # set to $scheme if GitLab's nginx terminates TLS itself
+     proxy_set_header X-Gitlab-Session $cookie__gitlab_session;
+-    proxy_set_header Cookie "";                    # never hand GitLab cookies to Parasaur
++    # Forward only Parasaur credentials. GitLab's session goes only to the gate.
++    # Repeated credential names stay invalid rather than selecting one silently.
++    if ($http_cookie ~ "(^|;)[[:space:]]*gah_device=[^;]*(;[^;]*)*;[[:space:]]*gah_device=") { return 400; }
++    if ($http_cookie ~ "(^|;)[[:space:]]*gah_pairing_request=[^;]*(;[^;]*)*;[[:space:]]*gah_pairing_request=") { return 400; }
++    set $parasaur_cookies "";
++    if ($http_cookie ~ "(^|;)[[:space:]]*(gah_device=[^;]*)") { set $parasaur_cookies $2; }
++    if ($http_cookie ~ "(^|;)[[:space:]]*(gah_pairing_request=[^;]*)") { set $parasaur_cookies "${parasaur_cookies}; $2"; }
++    if ($parasaur_cookies ~ "^;[[:space:]]*(.*)$") { set $parasaur_cookies $1; }
++    proxy_set_header Cookie $parasaur_cookies;
+     proxy_read_timeout 3600s;
+   }

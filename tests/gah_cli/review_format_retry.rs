@@ -4,6 +4,50 @@ const FORMAT_VIOLATION: &str = "Found a worrying edge case.\nReview notes\n{\"ve
 const VALID_APPROVAL: &str = "Review notes\n{\"verdict\":\"APPROVE\",\"confidence\":\"high\",\"human_required\":false,\"blocking_findings\":[],\"non_blocking_findings\":[],\"risk_notes\":[],\"evidence\":[\"file:src.txt\"]}";
 
 #[test]
+fn oversized_review_never_publishes_or_records_approval_from_its_prefix() {
+    let tmp = test_tempdir();
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+    add_origin_and_feature_commit(&repo);
+    checkout_branch(&repo, "main");
+    let cfg = write_real_repo_config_with_extra(
+        &tmp,
+        &repo,
+        "github",
+        "[profiles.real.routing]\nreview_backend = \"claude\"\n",
+        "",
+    );
+    let fake_bin = tmp.path().join("bin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    make_fake_bin_with_body(&fake_bin, "claude", &format!("#!/bin/sh\ncat <<'EOF'\n{VALID_APPROVAL}\nEOF\nhead -c 33554432 /dev/zero | tr '\\000' x\n"));
+    make_fake_github_review_api(&fake_bin);
+    let ledger = tmp.path().join("ledger.jsonl");
+    bin()
+        .args([
+            "dispatch",
+            "--profile",
+            "real",
+            "--mode",
+            "review",
+            "--branch",
+            "feature/review",
+            "--config-path",
+            cfg.to_str().unwrap(),
+        ])
+        .env("PATH", prepend_path(&fake_bin))
+        .env("PARASAUR_LEDGER_PATH", &ledger)
+        .assert()
+        .failure();
+    let text = fs::read_to_string(ledger).unwrap();
+    let entry: Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    assert_ne!(entry["review_verdict"], "APPROVE");
+    assert_eq!(entry["validation_result"], "not_run");
+    let session = latest_child_dir(&tmp.path().join("artifacts/real/sessions"));
+    assert!(!session.join("review-verdict.json").exists());
+}
+
+#[test]
 fn review_writes_structured_verdict_and_posts_comment() {
     let tmp = test_tempdir();
     let repo = tmp.path().join("repo");
@@ -97,7 +141,7 @@ fn run_format_retry(sequence: Vec<Scenario>) -> (TempDir, FakeBackend, Value) {
             "PATH",
             backend.path_with(&std::env::var("PATH").unwrap_or_default()),
         )
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success();
 

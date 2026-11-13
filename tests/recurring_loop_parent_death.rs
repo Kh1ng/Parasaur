@@ -33,7 +33,7 @@ fn gah_command(gah: &str, root: &std::path::Path) -> Command {
     let mut command = Command::new(gah);
     command
         .env("HOME", root.join("home"))
-        .env("GAH_CANONICAL_CONFIG", root.join("canonical.toml"));
+        .env("PARASAUR_CANONICAL_CONFIG", root.join("canonical.toml"));
     command
 }
 
@@ -145,11 +145,11 @@ validation_commands = ["true"]
     fs::create_dir_all(tmp.path().join("home")).unwrap();
     let path = format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap());
     let launcher = r#"
-"$GAH_BIN" loop --profile test --config-path "$GAH_CONFIG" >"$GAH_LOG" 2>&1 &
+"$PARASAUR_BIN" loop --profile test --config-path "$PARASAUR_CONFIG" >"$PARASAUR_LOG" 2>&1 &
 child=$!
-echo "$child" >"$GAH_PID"
+echo "$child" >"$PARASAUR_PID"
 deadline=3000
-while [ ! -s "$GAH_BACKEND_PID" ]; do
+while [ ! -s "$PARASAUR_BACKEND_PID" ]; do
   kill -0 "$child" 2>/dev/null || exit 20
   deadline=$((deadline - 1))
   [ "$deadline" -gt 0 ] || exit 21
@@ -172,9 +172,9 @@ exit 0
             ])
             .env("PATH", &path)
             .env("XDG_STATE_HOME", &state_home)
-            .env("GAH_CLAIM_STATE_PATH", &claims_path)
-            .env("GAH_LEDGER_PATH", &ledger_path)
-            .env("GAH_EVENTS_PATH", &events_path)
+            .env("PARASAUR_CLAIM_STATE_PATH", &claims_path)
+            .env("PARASAUR_LEDGER_PATH", &ledger_path)
+            .env("PARASAUR_EVENTS_PATH", &events_path)
             .env("TMPDIR", &tmp_root)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -189,17 +189,20 @@ exit 0
     let status = Command::new("/bin/sh")
         .args(["-c", launcher])
         .env("HOME", tmp.path().join("home"))
-        .env("GAH_CANONICAL_CONFIG", tmp.path().join("canonical.toml"))
-        .env("GAH_BIN", gah)
-        .env("GAH_CONFIG", &config)
-        .env("GAH_LOG", &log_path)
-        .env("GAH_PID", &pid_path)
-        .env("GAH_BACKEND_PID", &backend_pid_path)
+        .env(
+            "PARASAUR_CANONICAL_CONFIG",
+            tmp.path().join("canonical.toml"),
+        )
+        .env("PARASAUR_BIN", gah)
+        .env("PARASAUR_CONFIG", &config)
+        .env("PARASAUR_LOG", &log_path)
+        .env("PARASAUR_PID", &pid_path)
+        .env("PARASAUR_BACKEND_PID", &backend_pid_path)
         .env("PATH", &path)
         .env("XDG_STATE_HOME", &state_home)
-        .env("GAH_CLAIM_STATE_PATH", &claims_path)
-        .env("GAH_LEDGER_PATH", &ledger_path)
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_CLAIM_STATE_PATH", &claims_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .env("TMPDIR", &tmp_root)
         .status()
         .unwrap();
@@ -242,7 +245,7 @@ exit 0
             "--config-path",
             config.to_str().unwrap(),
         ])
-        .env("GAH_CLAIM_STATE_PATH", &claims_path)
+        .env("PARASAUR_CLAIM_STATE_PATH", &claims_path)
         .env("TMPDIR", &tmp_root)
         .output()
         .unwrap();
@@ -260,9 +263,9 @@ exit 0
         ])
         .env("PATH", path)
         .env("XDG_STATE_HOME", state_home)
-        .env("GAH_LEDGER_PATH", ledger_path)
-        .env("GAH_EVENTS_PATH", events_path)
-        .env("GAH_CLAIM_STATE_PATH", claims_path)
+        .env("PARASAUR_LEDGER_PATH", ledger_path)
+        .env("PARASAUR_EVENTS_PATH", events_path)
+        .env("PARASAUR_CLAIM_STATE_PATH", claims_path)
         .env("TMPDIR", &tmp_root)
         .output()
         .unwrap();

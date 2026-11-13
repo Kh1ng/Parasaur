@@ -85,11 +85,11 @@ impl Fixture {
 
     fn env(&self, key: &str) -> Option<String> {
         match key {
-            "GAH_SUPABASE_URL" => Some(self.cloud_url.clone()),
-            "GAH_SUPABASE_ANON_KEY" => Some("fake-anon".into()),
-            "GAH_SUPABASE_ACCESS_TOKEN" => Some("fake-user-jwt".into()),
-            "GAH_SUPABASE_DEVICE_TOKEN" => Some("fake-device-token".into()),
-            "GAH_SUPABASE_WORKSPACE_ID" => Some("11111111-1111-4111-8111-111111111111".into()),
+            "PARASAUR_SUPABASE_URL" => Some(self.cloud_url.clone()),
+            "PARASAUR_SUPABASE_ANON_KEY" => Some("fake-anon".into()),
+            "PARASAUR_SUPABASE_ACCESS_TOKEN" => Some("fake-user-jwt".into()),
+            "PARASAUR_SUPABASE_DEVICE_TOKEN" => Some("fake-device-token".into()),
+            "PARASAUR_SUPABASE_WORKSPACE_ID" => Some("11111111-1111-4111-8111-111111111111".into()),
             _ => None,
         }
     }
@@ -206,7 +206,7 @@ fn node_register_cloud_missing_credentials_degrade_without_becoming_fatal() {
     cloud.sync(&cfg, None, |_| None);
     assert_eq!(
         cloud.state,
-        Some(CloudState::Configuration("GAH_SUPABASE_URL"))
+        Some(CloudState::Configuration("PARASAUR_SUPABASE_URL"))
     );
     assert_eq!(cloud.failures, 1);
 }

@@ -730,7 +730,8 @@ fn collect_managed_paths(repo: &Path, config_path: &Path) -> Result<ServerManage
         }
     }
     paths.extend([repo.join("config"), repo.join("apps/server/dist")]);
-    if let Some(web) = super::resolve_web_deploy_root(std::env::var_os("GAH_WEB_DEPLOY_ROOT"))? {
+    if let Some(web) = super::resolve_web_deploy_root(std::env::var_os("PARASAUR_WEB_DEPLOY_ROOT"))?
+    {
         paths.push(web);
     }
     Ok(ServerManagedPaths { paths, anchors })

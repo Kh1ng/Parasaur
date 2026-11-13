@@ -10,7 +10,7 @@
  *   with the context), `parasaur:close` to close itself, and
  *   `parasaur:navigate` to move GitLab to a same-origin path;
  * - inbound messages count only when `event.origin` is one of the origins
- *   the server configured through `GAH_GITLAB_ORIGIN`; everything else is
+ *   the server configured through `PARASAUR_GITLAB_ORIGIN`; everything else is
  *   ignored, and outbound messages are addressed to those origins only,
  *   never `*`.
  */
@@ -157,7 +157,7 @@ export type EmbedOutboundMessage =
   | { type: 'parasaur:navigate'; path: string };
 
 /** Origins allowed to message the embed view: the ones the server
- * configured through `GAH_GITLAB_ORIGIN` and injected with the document. */
+ * configured through `PARASAUR_GITLAB_ORIGIN` and injected with the document. */
 export function embedAllowedOrigins(): string[] {
   return readBootstrap().gitLabOrigins;
 }

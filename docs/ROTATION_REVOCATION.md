@@ -13,7 +13,7 @@ Parasaur implements a **secrets-by-reference** policy. Registry configuration fi
 1. **Environment Variables**: Prefix `env:`, followed by the environment variable name (e.g., `env:NODE_TOKEN_1`).
 2. **File References**: Prefix `file:`, followed by the absolute path to a file
    containing the secret/token. The path must live under the node-secrets root
-   (default `/etc/gah/node-secrets`, override with `GAH_NODE_SECRETS_ROOT`) --
+   (default `/etc/gah/node-secrets`, override with `PARASAUR_NODE_SECRETS_ROOT`) --
    e.g. `file:/etc/gah/node-secrets/node-1.token`. This restriction exists
    because health checks fetch an operator-supplied `advertised_url`; without
    it, a registrant could point that URL at a server they control and use the

@@ -46,11 +46,14 @@ type TerminalFailureCache = HashMap<TerminalFailureCacheKey, Option<TerminalFail
 
 const NOTIFICATION_ERROR_SUMMARY_MAX_BYTES: usize = 300;
 const TERMINAL_FAILURE_EVENT_DEDUPE_SECONDS: i64 = 900;
-const TERMINAL_FAILURE_EVENT_DEDUPE_SECONDS_ENV: &str = "GAH_TERMINAL_FAILURE_DEDUPE_SECONDS";
+const TERMINAL_FAILURE_EVENT_DEDUPE_SECONDS_ENV: &str = "PARASAUR_TERMINAL_FAILURE_DEDUPE_SECONDS";
 
 /// A notification-worthy controller/dispatch event. All fields are borrowed
 /// from the live dispatch/controller state to avoid cloning.
 pub enum NotifyEvent<'a> {
+    /// A configured recorded-spend ceiling or incomplete cost reading pauses
+    /// intake. The controller owns resumption; this never wakes an agent.
+    SpendBudgetHeld { profile: &'a str, reason: &'a str },
     /// A controller action was decided as `HumanRequired`.
     HumanRequired {
         reason: &'a str,
@@ -167,6 +170,7 @@ fn route_label(backend: &str, model: &str) -> String {
 /// `notify_command`. Pure and allocation-light; unit-tested below.
 pub fn format_message(event: &NotifyEvent) -> String {
     match event {
+        NotifyEvent::SpendBudgetHeld { profile, reason } => format!("[gah] {profile}: factory intake paused: {reason}"),
         NotifyEvent::HumanRequired {
             reason,
             reference,
@@ -434,7 +438,7 @@ pub fn format_wake_instruction(event: &NotifyEvent, autonomy: WakeAutonomy) -> O
         // The controller owns this bounded reroute. Waking a manager for each
         // malformed intermediate opinion would recreate the notification
         // spam this event is designed to explain.
-        NotifyEvent::ReviewOutputInvalid { .. } | NotifyEvent::PaidRouteApprovalRequired { .. } => {
+        NotifyEvent::ReviewOutputInvalid { .. } | NotifyEvent::PaidRouteApprovalRequired { .. } | NotifyEvent::SpendBudgetHeld { .. } => {
             return None
         }
         // Issue #653: external approvals are operator decisions; a woken
@@ -568,6 +572,9 @@ fn activity_url(central_url: &str) -> anyhow::Result<String> {
 
 fn activity_shape(event: &NotifyEvent<'_>) -> (&'static str, &'static str, &'static str) {
     match event {
+        NotifyEvent::SpendBudgetHeld { .. } => {
+            ("action_required", "warning", "Spend limit pauses factory")
+        }
         NotifyEvent::DispatchFailed { .. } => ("dispatch_failed", "error", "Work failed"),
         NotifyEvent::MrCreated { .. } | NotifyEvent::HandoffCreated { .. } => {
             ("review_ready", "success", "Review ready")
@@ -610,6 +617,11 @@ fn activity_body(profile: &Profile, event: &NotifyEvent<'_>) -> (String, String)
         }
     ) {
         id_seed["quota_transition"] = uuid::Uuid::new_v4().to_string().into();
+    }
+    // The profile receipt has already reserved this transition. A later
+    // recovery and re-hold in the same window must reach the central feed too.
+    if matches!(event, NotifyEvent::SpendBudgetHeld { .. }) {
+        id_seed["spend_transition"] = uuid::Uuid::new_v4().to_string().into();
     }
     let digest = format!("{:x}", Sha256::digest(id_seed.to_string().as_bytes()));
     let occurred_at = match event {
@@ -861,34 +873,26 @@ fn cache_terminal_failure_record(
     cache.insert(key, failure);
 }
 
-fn latest_unresolved_terminal_failure_from_events(
-    events: &[events::ControllerEvent],
-    profile: &str,
-    work_id: &str,
-) -> Option<TerminalFailureRecord> {
-    for event in events.iter().rev() {
-        let Some(failure) = terminal_failure_from_event(event) else {
-            continue;
-        };
-        if failure.profile != profile || failure.work_id != work_id {
-            continue;
-        }
-        match event.event_type.as_str() {
-            t if t == events::EventType::TerminalFailureResolved.as_str() => return None,
-            t if t == events::EventType::TerminalFailure.as_str() => return Some(failure),
-            _ => continue,
-        }
-    }
-    None
-}
-
 fn latest_unresolved_terminal_failure_record(
     cfg: &GahConfig,
     profile: &str,
     work_id: &str,
 ) -> Option<TerminalFailureRecord> {
-    let events = match events::read_events(cfg) {
-        Ok(events) => events,
+    let mut latest = None;
+    match events::visit_events(cfg, |event| {
+        let Some(failure) = terminal_failure_from_event(&event) else {
+            return;
+        };
+        if failure.profile != profile || failure.work_id != work_id {
+            return;
+        }
+        match event.event_type.as_str() {
+            t if t == events::EventType::TerminalFailureResolved.as_str() => latest = None,
+            t if t == events::EventType::TerminalFailure.as_str() => latest = Some(failure),
+            _ => {}
+        }
+    }) {
+        Ok(()) => {}
         Err(error) => {
             eprintln!(
                 "[gah] terminal failure dedupe fallback for profile={profile}, work_id={work_id}: {error:#}"
@@ -900,9 +904,8 @@ fn latest_unresolved_terminal_failure_record(
                 .get(&key)
                 .and_then(Clone::clone);
         }
-    };
+    }
 
-    let latest = latest_unresolved_terminal_failure_from_events(&events, profile, work_id);
     cache_terminal_failure_record(cfg, profile, work_id, latest.clone());
     latest
 }
@@ -1036,6 +1039,7 @@ fn record_terminal_failure_resolved(
 
 fn event_name(event: &NotifyEvent<'_>) -> &'static str {
     match event {
+        NotifyEvent::SpendBudgetHeld { .. } => "spend_budget_held",
         NotifyEvent::HumanRequired { .. } => "human_required",
         NotifyEvent::PaidRouteApprovalRequired { .. } => "paid_route_approval_required",
         NotifyEvent::ExternalApprovalRequested { .. } => "external_approval_requested",
@@ -1074,6 +1078,7 @@ fn event_run_id<'a>(event: &'a NotifyEvent<'a>) -> Option<&'a str> {
 
 fn event_profile<'a>(event: &'a NotifyEvent<'a>) -> Option<&'a str> {
     match event {
+        NotifyEvent::SpendBudgetHeld { profile, .. } => Some(profile),
         NotifyEvent::DispatchFailed { profile, .. }
         | NotifyEvent::PaidRouteApprovalRequired { profile, .. }
         | NotifyEvent::ExternalApprovalRequested { profile, .. }

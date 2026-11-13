@@ -108,19 +108,19 @@ test('bypass asks for requests it cannot classify', () => withWorktree((worktree
 
 test('a stored permission mode other than bypass reads as ask', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-permission-mode-'));
-  const previous = process.env.GAH_MANAGER_CHAT_SETTINGS_PATH;
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(dir, 'settings.json');
+  const previous = process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH;
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(dir, 'settings.json');
   try {
     assert.equal(readSettings().permissionMode, 'ask', 'missing file');
     for (const stored of [undefined, 'BYPASS', 'allow', true, 1, null]) {
-      writeFileSync(process.env.GAH_MANAGER_CHAT_SETTINGS_PATH, JSON.stringify({ defaultBackend: 'hermes', permissionMode: stored }));
+      writeFileSync(process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH, JSON.stringify({ defaultBackend: 'hermes', permissionMode: stored }));
       assert.equal(readSettings().permissionMode, 'ask', String(stored));
     }
-    writeFileSync(process.env.GAH_MANAGER_CHAT_SETTINGS_PATH, JSON.stringify({ permissionMode: 'bypass' }));
+    writeFileSync(process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH, JSON.stringify({ permissionMode: 'bypass' }));
     assert.equal(readSettings().permissionMode, 'bypass');
   } finally {
-    if (previous === undefined) delete process.env.GAH_MANAGER_CHAT_SETTINGS_PATH;
-    else process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = previous;
+    if (previous === undefined) delete process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH;
+    else process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = previous;
     rmSync(dir, { recursive: true, force: true });
   }
 });

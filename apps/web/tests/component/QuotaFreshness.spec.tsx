@@ -10,6 +10,24 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/registry/quota**', route => route.fulfill({ json: { profile: 'test-profile', since: '7d', nodes: [] } }));
 });
 
+test('routing usage details qualify backend totals and keep actual costs separate from estimates', async ({ mount, page }, testInfo) => {
+  const quota = JSON.parse(readFileSync(new URL('../../../server/tests/fixtures/gah/responses/quota.json', import.meta.url), 'utf8')) as QuotaSnapshot;
+  quota.quota_checks = [];
+  quota.candidates = [{ ...quota.candidates[0], backend_instance: 'work', usage: { ...quota.candidates[0].usage, actual_cost_usd: null, estimated_cost_usd: 3 } }];
+  await page.route('**/api/cli-router', route => route.fulfill({ json: { settings: { url: null, hasApiKey: false, hasManagementKey: false }, status: 'unconfigured', strategy: 'round-robin', sessionAffinity: false, accounts: [], models: [] } }));
+  const component = await mount(<MockStoreProvider statusData={null} quotaData={quota}><WebSocketProvider><QuotaPage /></WebSocketProvider></MockStoreProvider>);
+  const row = component.getByTestId(`quota-candidate-${quota.candidates[0].backend}-0`);
+  await row.getByText('Usage details', { exact: true }).click();
+  await expect(row).toContainText('These backend/model totals may include other accounts or models.');
+  await expect(row).toContainText('Recorded actual cost: Unknown');
+  await expect(row).toContainText('Estimated cost: $3.00');
+  for (const width of [1100, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await row.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await row.screenshot({ path: testInfo.outputPath(`routing-cost-${width}.png`) });
+  }
+});
+
 test('named API connections remain visible when their provider has no usage reading', async ({ mount, page }) => {
   const quota = JSON.parse(readFileSync(new URL('../../../server/tests/fixtures/gah/responses/quota.json', import.meta.url), 'utf8')) as QuotaSnapshot;
   quota.candidates = [];
@@ -279,9 +297,9 @@ for (const width of [390, 1440]) {
     await expect(component.getByRole('progressbar')).toHaveCount(0);
     await component.getByText('Usage and data freshness', { exact: true }).click();
     await expect(component.locator('.stat-tile').filter({ hasText: 'Usage (7d)' }).getByText('1.2k', { exact: true })).toBeVisible();
-    const withAllowance: QuotaSnapshot = { ...quota, quota_checks: [{ ...quota.quota_checks[0], quota_observations: [{ ...quota.quota_checks[0].quota_observations![0], quota_window: 'vibe-code-included-monthly', quota_remaining_percent: 40, quota_reset_at: '2026-11-01T00:00:00Z' }] }] };
+    const withAllowance: QuotaSnapshot = { ...quota, quota_checks: [{ ...quota.quota_checks[0], quota_observations: [{ ...quota.quota_checks[0].quota_observations![0], quota_window: 'vibe-code-included-monthly', quota_remaining_percent: 40, quota_reset_at: new Date(Date.now() + 30 * 86400_000).toISOString() }] }] };
     await component.update(<MockStoreProvider statusData={null} quotaData={withAllowance}><WebSocketProvider><QuotaPage /></WebSocketProvider></MockStoreProvider>);
-    await expect(dashboard.getByRole('progressbar', { name: 'Vibe Code included monthly allowance: 60% used, 40% remaining' })).toBeVisible();
+    await expect(dashboard.getByRole('progressbar', { name: 'Vibe Code included monthly allowance: 60% used, 40% remaining', exact: true })).toBeVisible();
     await expect(usage.getByText('$12.34', { exact: true })).toBeVisible();
     await expect(dashboard.getByText(/Resets/)).toBeVisible();
     await expect(dashboard.getByText('Quota unknown', { exact: true })).toHaveCount(0);
@@ -351,4 +369,22 @@ test("auth_required and not_configured source checks surface as needs login and 
     component.getByTestId("quota-check-vibe").getByText("Never checked on this node"),
   ).toBeVisible();
   await expect(component.getByTestId("quota-check-vibe").getByText("Stale")).toHaveCount(0);
+});
+
+
+test('a failed current source check cannot present cached percentages as current allowance in routing rows', async ({ mount, page }) => {
+  await page.clock.install({ time: new Date('2026-11-06T05:00:00Z') });
+  const quota = JSON.parse(readFileSync(new URL('../../../server/tests/fixtures/gah/responses/quota.json', import.meta.url), 'utf8')) as QuotaSnapshot;
+  const observation = { backend: 'codex', backend_instance: 'work', quota_window: 'weekly', quota_remaining_percent: 25, observed_at: '2026-11-06T04:59:00Z', quota_reset_at: '2026-11-13T00:00:00Z' };
+  quota.candidates = [{ ...quota.candidates[0], backend: 'codex', backend_instance: 'work', provider: 'openai', model: null, quota_pool: null, quota_observations: [observation] }];
+  quota.quota_checks = [{ backend: 'codex', backend_instance: 'work', status: 'failed', checked_at: '2026-11-06T05:00:00Z', quota_observations: [observation] }];
+  await page.route('**/api/cli-router', route => route.fulfill({ json: { settings: { url: null, hasApiKey: false, hasManagementKey: false }, status: 'unconfigured', strategy: 'round-robin', sessionAffinity: false, accounts: [], models: [] } }));
+  const component = await mount(<MockStoreProvider statusData={null} quotaData={quota}><WebSocketProvider><QuotaPage /></WebSocketProvider></MockStoreProvider>);
+  const row = component.getByTestId('quota-candidate-codex-0');
+  await expect(row).toContainText('Quota unknown');
+  await expect(row).toContainText('Provider usage check failed.');
+  await expect(row).toContainText('Last recorded: 75% used');
+  await expect(row).toContainText('Recorded reset');
+  await expect(row).not.toContainText('Resets in');
+  await expect(row.getByRole('progressbar')).toHaveAttribute('aria-label', /^Last recorded weekly:/);
 });

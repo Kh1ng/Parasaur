@@ -107,6 +107,7 @@ pub(crate) fn pm(
     let route_req = RouteRequest {
         mode: "pm",
         requested_backend: config::canonical_backend_name(&args.backend),
+        requested_instance: args.backend_instance.as_deref(),
         requested_model: args.model.as_deref(),
         recommended_backend: None,
         recommended_model: None,
@@ -116,7 +117,7 @@ pub(crate) fn pm(
         exact_route_required: false,
     };
     let mut plan_route = decide_route(cfg, profile, route_req.clone(), None, ledger)?;
-    apply_route_to_ledger(ledger, &plan_route);
+    apply_route_to_ledger(ledger, &plan_route)?;
     preflight_identity(profile, &plan_route.identity)?;
     let mut llm = resolve_llm(
         cfg,
@@ -155,29 +156,33 @@ pub(crate) fn pm(
             args.route_admission.as_ref(),
             attempt_index.saturating_sub(1),
             || {
-                record_route_attempt(ledger, &plan_route)?;
-                run_backend_with_reserved_route(
-                    &plan_route.identity,
-                    profile,
-                    repo,
-                    &task,
-                    &attempt_dir,
-                    &cargo_target,
-                    &llm,
-                    None,
-                    cfg,
-                    profile_name,
-                    ledger.work_id.clone().as_deref(),
-                    true,
-                    Some(remaining.as_secs().max(1)),
-                    crate::runner::WriteIntent::ReadOnly,
-                    Some(ledger),
-                )
+                crate::dispatch::native_guard::attempt(&plan_route.identity, || {
+                    record_route_attempt(ledger, &plan_route)?;
+                    run_backend_with_reserved_route(
+                        &plan_route.identity,
+                        profile,
+                        repo,
+                        &task,
+                        &attempt_dir,
+                        &cargo_target,
+                        &llm,
+                        None,
+                        cfg,
+                        profile_name,
+                        ledger.work_id.clone().as_deref(),
+                        true,
+                        Some(remaining.as_secs().max(1)),
+                        crate::runner::WriteIntent::ReadOnly,
+                        Some(ledger),
+                    )
+                })
             },
         ) {
             Ok(result) => result,
             Err(e) => {
-                if super::super::capacity_deferred_error(&e) {
+                if super::super::capacity_deferred_error(&e)
+                    || crate::dispatch::native_guard::authority_held(&e)
+                {
                     return Err(e);
                 }
                 eprintln!(
@@ -324,7 +329,7 @@ pub(crate) fn pm(
             parsed.kind
         );
         plan_route = rerouted;
-        apply_route_to_ledger(ledger, &plan_route);
+        apply_route_to_ledger(ledger, &plan_route)?;
         preflight_identity(profile, &plan_route.identity)?;
         llm = resolve_llm(
             cfg,

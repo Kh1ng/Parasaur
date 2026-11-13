@@ -97,13 +97,17 @@ impl FakeCloud {
             cfg,
             None,
             move |key| match key {
-                "GAH_SUPABASE_URL" => Some(url.clone()),
-                "GAH_SUPABASE_ANON_KEY" => Some("fake-anon".into()),
-                "GAH_SUPABASE_ACCESS_TOKEN" => Some("fake-user".into()),
-                "GAH_SUPABASE_DEVICE_TOKEN" => Some("fake-device".into()),
-                "GAH_SUPABASE_WORKSPACE_ID" => Some("11111111-1111-4111-8111-111111111111".into()),
-                "GAH_COORDINATOR_IDENTITY_PATH" => Some(identity.to_string_lossy().into_owned()),
-                "GAH_NODE_ADVERTISED_URL" => Some("http://127.0.0.1:3773".into()),
+                "PARASAUR_SUPABASE_URL" => Some(url.clone()),
+                "PARASAUR_SUPABASE_ANON_KEY" => Some("fake-anon".into()),
+                "PARASAUR_SUPABASE_ACCESS_TOKEN" => Some("fake-user".into()),
+                "PARASAUR_SUPABASE_DEVICE_TOKEN" => Some("fake-device".into()),
+                "PARASAUR_SUPABASE_WORKSPACE_ID" => {
+                    Some("11111111-1111-4111-8111-111111111111".into())
+                }
+                "PARASAUR_COORDINATOR_IDENTITY_PATH" => {
+                    Some(identity.to_string_lossy().into_owned())
+                }
+                "PARASAUR_NODE_ADVERTISED_URL" => Some("http://127.0.0.1:3773".into()),
                 _ => None,
             },
             move || shutdown.load(Ordering::SeqCst),

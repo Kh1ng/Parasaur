@@ -172,6 +172,7 @@ pub(super) fn add_request_schemas(manifest: &mut CapabilityManifest) {
             "Existing MR/PR number to repair or review.",
         ),
         ("backend", "string", false, "Explicit backend override."),
+        ("backendInstance", "string", false, "Exact declared account on nodeId; requires an explicit backend and node. Never falls back to another account."),
         ("model", "string", false, "Explicit model override."),
         ("manualWorker", "boolean", false, "Launch an explicit extra job outside automatic node and worker admission; retains work claims and route policy."),
         ("reasoningEffort", "string", false, "Native reasoning for this manual launch only."),

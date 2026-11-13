@@ -1,6 +1,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { parseNodeAuthHealth } from './authHealth.js';
-import { resolve, dirname, sep } from 'node:path';
+import { parseNodeCentralClaims } from './centralClaimObservation.js';
+import { NodeFactoryError, readNodeFactory } from './nodeFactory.js';
+import { resolve, dirname } from 'node:path';
 import { hostname, networkInterfaces } from 'node:os';
 import type {
   RunningWorker,
@@ -17,6 +19,7 @@ import type {
 } from '@git-agent-harness/contracts';
 import { COORDINATOR_MINIMUM_WORKER_VERSION, COORDINATOR_VERSION, compareVersions } from '@git-agent-harness/contracts';
 import { COORDINATOR_SCHEMA_DIGEST } from './coordinatorIdentity.js';
+import { LinkRefused, linkTo, type WorkerLink } from './workerLink.js';
 
 export function isLoopback(urlStr: string): boolean {
   try {
@@ -232,18 +235,13 @@ function emptyNodeObservation(
   };
 }
 
-/** The deadline covers response-body reads too; redirects cannot change the registered target. */
-async function fetchWithTimeout(url: string, headers: Record<string, string>, timeoutMs: number): Promise<Response> {
-  return fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
-}
-
-/** All registered-node requests use the same transport and secret-reference rules. */
-export function nodeHeaders(node: RegisteredNode): Record<string, string> {
-  const headers: Record<string, string> = { Accept: 'application/json', 'User-Agent': `GAH-Coordinator/${COORDINATOR_VERSION}` };
-  if (node.transport_mode === 'authenticated_remote' || (node.transport_mode === 'trusted_lan' && !isLoopback(node.advertised_url))) {
-    headers.Authorization = `Bearer ${resolveSecret(node.secret_ref)}`;
-  }
-  return headers;
+/** A usable link whose credential is readable, so a later request can only
+ * fail on the network or at the worker. Throws `LinkRefused` or the
+ * credential error. */
+function readyLink(node: RegisteredNode): WorkerLink {
+  const link = linkTo(node);
+  link.headers();
+  return link;
 }
 
 export class NodeDoctorError extends Error {
@@ -289,6 +287,27 @@ function isQuotaSnapshot(value: unknown, profile: string, since: string): value 
   if (!value || typeof value !== 'object') return false;
   const snapshot = value as Partial<QuotaSnapshot>;
   const optionalText = (value: unknown) => value == null || typeof value === 'string';
+  const accountSpendValid = (value: unknown): boolean => {
+    if (value === undefined) return true;
+    if (!Array.isArray(value)) return false;
+    const identities = new Set<string>();
+    const label = (value: unknown) => typeof value === 'string' && /^[a-zA-Z0-9_.:-]{1,128}$/.test(value);
+    const cost = (value: unknown) => value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+    return value.every(row => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)
+        || !Object.keys(row).every(key => ['backend', 'backend_instance', 'observations', 'actual_cost_usd', 'estimated_cost_usd', 'actual_cost_unknown_observations'].includes(key))
+        || !label(row.backend) || !(row.backend_instance === null || label(row.backend_instance))
+        || !Number.isSafeInteger(row.observations) || row.observations < 1
+        || !Number.isSafeInteger(row.actual_cost_unknown_observations) || row.actual_cost_unknown_observations < 0
+        || row.actual_cost_unknown_observations > row.observations
+        || !cost(row.actual_cost_usd) || !cost(row.estimated_cost_usd)
+        || (row.actual_cost_usd === null) !== (row.actual_cost_unknown_observations === row.observations)) return false;
+      const identity = JSON.stringify([row.backend, row.backend_instance]);
+      if (identities.has(identity)) return false;
+      identities.add(identity);
+      return true;
+    });
+  };
   const observationsValid = (value: unknown): boolean => value === undefined || (Array.isArray(value)
     && value.every(observation => observation && typeof observation.backend === 'string'
       && [observation.credential_id, observation.backend_instance, observation.model, observation.quota_pool, observation.quota_window,
@@ -301,6 +320,7 @@ function isQuotaSnapshot(value: unknown, profile: string, since: string): value 
   return (snapshot.schema_version === 2 || snapshot.schema_version === 3) && typeof snapshot.generated_at === 'string'
     && Number.isFinite(Date.parse(snapshot.generated_at)) && snapshot.profile?.profile === profile
     && snapshot.since === since && !!snapshot.freshness && typeof snapshot.freshness === 'object'
+    && accountSpendValid(snapshot.account_spend)
     && !!snapshot.usage && typeof snapshot.usage === 'object' && Array.isArray(snapshot.quota_checks)
     && snapshot.quota_checks.every(check => check && typeof check.backend === 'string'
       && (check.checked_at == null || (typeof check.checked_at === 'string' && Number.isFinite(Date.parse(check.checked_at))))
@@ -357,44 +377,6 @@ async function mapWithConcurrency<T, U>(
   return results;
 }
 
-/** Node health checks fetch an operator-supplied `advertised_url`, so a `file:`
- * secret ref must never resolve outside a known directory -- otherwise a
- * registrant could point advertised_url at a server they control and use the
- * coordinator as an oracle to read (and exfiltrate, via the Authorization
- * header it sends) any file readable by the server process. */
-const DEFAULT_NODE_SECRETS_ROOT = '/etc/gah/node-secrets';
-
-export function nodeSecretsRoot(): string {
-  return resolve(process.env.GAH_NODE_SECRETS_ROOT || DEFAULT_NODE_SECRETS_ROOT);
-}
-
-export function resolveSecret(secretRef: string): string {
-  if (!secretRef) {
-    throw new Error('Secret reference is empty');
-  }
-  if (secretRef.startsWith('env:')) {
-    const envVar = secretRef.slice(4);
-    const val = process.env[envVar];
-    if (val === undefined) {
-      throw new Error(`Environment variable ${envVar} is not set`);
-    }
-    return val;
-  }
-  if (secretRef.startsWith('file:')) {
-    const root = nodeSecretsRoot();
-    const filePath = resolve(secretRef.slice(5));
-    if (filePath !== root && !filePath.startsWith(root + sep)) {
-      throw new Error(`Secret file path must be inside ${root}`);
-    }
-    try {
-      return readFileSync(filePath, 'utf8').trim();
-    } catch (e: any) {
-      throw new Error(`Failed to read secret file ${filePath}: ${e.message}`);
-    }
-  }
-  throw new Error(`Unsupported secret reference format (must start with 'env:' or 'file:')`);
-}
-
 export class RegistryService {
   private quotaReads = new Map<string, { node: RegisteredNode; expiresAt: number; result: Promise<NodeQuotaRelay> }>();
   private observationRequests = new Map<string, number>();
@@ -416,7 +398,7 @@ export class RegistryService {
 
   constructor(configPath?: string | null, selfEndpoint?: string, listenerPort?: number) {
     // A worker uses local session transport without reading or writing a central registry.
-    this.configPath = configPath === null ? null : configPath || process.env.GAH_REGISTRY_CONFIG_PATH || resolve(process.cwd(), 'config/registry-config.json');
+    this.configPath = configPath === null ? null : configPath || process.env.PARASAUR_REGISTRY_CONFIG_PATH || resolve(process.cwd(), 'config/registry-config.json');
     this.selfUrl = selfEndpoint ?? null;
     this.listenerPort = listenerPort ?? (selfEndpoint ? urlPort(new URL(selfEndpoint)) : null);
     this.load();
@@ -475,10 +457,11 @@ export class RegistryService {
   }
 
   getNodesSummary(): NodeSummary[] {
-    return this.getNodes().map(({ secret_ref, ...summary }) => ({
-      ...summary,
-      update: nodeVersionStatus(summary.version)
-    }));
+    return this.getNodes().map(({ secret_ref, ...summary }) => {
+      let link: NodeSummary['link'] = null;
+      try { link = linkTo({ ...summary, secret_ref }).kind; } catch { /* Refused addresses show no link. */ }
+      return { ...summary, link, update: nodeVersionStatus(summary.version) };
+    });
   }
 
   /** Issue #1416: opt a node in or out of coordinator-driven automatic
@@ -578,22 +561,16 @@ export class RegistryService {
   private async readNodeQuota(node: RegisteredNode, profile: string, since: string): Promise<NodeQuotaRelay> {
     const base = { nodeId: node.node_id, displayName: node.display_name };
     try {
-      const url = new URL('/api/quota', node.advertised_url);
-      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
-        || (url.protocol === 'http:' && !isLoopback(url.toString()) && node.transport_mode !== 'trusted_lan')) {
-        throw new Error('Worker quota transport is not permitted.');
-      }
-      const headers = nodeHeaders(node);
-      url.searchParams.set('profile', profile);
-      url.searchParams.set('since', since);
-      const response = await fetchWithTimeout(url.toString(), headers, NODE_OBSERVATION_TIMEOUT_MS);
+      const response = await linkTo(node).fetch(`/api/quota?${new URLSearchParams({ profile, since })}`,
+        { signal: AbortSignal.timeout(NODE_OBSERVATION_TIMEOUT_MS) });
       if (!response.ok) return { ...base, state: 'unavailable', quota: null, error: `Worker quota returned HTTP ${response.status}.` };
       const quota = await readQuotaResponse(response);
       if (!isQuotaSnapshot(quota, profile, since)) return { ...base, state: 'unavailable', quota: null, error: 'Worker quota schema or profile did not match.' };
       if (this.nodes.get(node.node_id) !== node) return { ...base, state: 'unavailable', quota: null, error: 'Worker registration changed during the quota check.' };
       return { ...base, state: 'available', quota };
-    } catch {
-      return { ...base, state: 'unavailable', quota: null, error: 'Cannot read quota from the registered worker. Check its connection, credential, and response.' };
+    } catch (error) {
+      return { ...base, state: 'unavailable', quota: null, error: error instanceof LinkRefused ? error.message
+        : 'Cannot read quota from the registered worker. Check its connection, credential, and response.' };
     }
   }
 
@@ -643,6 +620,15 @@ export class RegistryService {
             .filter(worker => (worker.profile ?? previous?.profile) === (requested ?? previous?.profile))
             .map(worker => ({ ...worker, profile: worker.profile ?? previous?.profile ?? undefined, state: 'stale' as const }));
         });
+        observation.central_claim_observations = results.flatMap((reading, index) => {
+          const requested = profiles[index];
+          if (reading.snapshot && (!requested || reading.snapshot.profile === requested)) {
+            return reading.snapshot.central_claim_observations ?? [];
+          }
+          return (previous?.central_claim_observations ?? [])
+            .filter(claim => claim.profile === (requested ?? previous?.profile))
+            .map(claim => ({ ...claim, source_state: reading.snapshot ? 'incompatible' as const : reading.state }));
+        });
         this.observations.set(node.node_id, observation);
       }
     }
@@ -652,29 +638,30 @@ export class RegistryService {
   private async fetchNodeObservation(node: RegisteredNode, profile?: string): Promise<NodeHealthCheckResult> {
     const start = Date.now();
     const observedAt = nowIso(start);
-    const snapshotUrl = new URL('/api/status', node.advertised_url);
     // Health needs backends and availability, not the forge-backed ticket queue.
-    snapshotUrl.searchParams.set('light', '1');
+    const query = new URLSearchParams({ light: '1' });
     // Workers may not have a profile named "gah" (the status endpoint's default).
     const observedProfile = profile ?? node.profiles?.[0];
     if (observedProfile) {
-      snapshotUrl.searchParams.set('profile', observedProfile);
+      query.set('profile', observedProfile);
     }
 
-    let headers: Record<string, string>;
+    let link: WorkerLink;
     try {
-      headers = nodeHeaders(node);
+      link = readyLink(node);
     } catch (e: any) {
+      const refused = e instanceof LinkRefused;
       return {
-        node_id: node.node_id, status: 'unhealthy', state: 'auth_failed', timestamp: start,
+        node_id: node.node_id, status: 'unhealthy', state: refused ? 'unreachable' : 'auth_failed', timestamp: start,
         last_seen_at: node.last_seen_at ?? null,
-        error: { kind: 'AUTH', message: `Failed to resolve secret reference: ${e.message}` }
+        error: refused ? { kind: 'NETWORK', message: e.message }
+          : { kind: 'AUTH', message: `Failed to resolve secret reference: ${e.message}` }
       };
     }
 
     let response: Response;
     try {
-      response = await fetchWithTimeout(snapshotUrl.toString(), headers, NODE_OBSERVATION_TIMEOUT_MS);
+      response = await link.fetch(`/api/status?${query}`, { signal: AbortSignal.timeout(NODE_OBSERVATION_TIMEOUT_MS) });
     } catch (err: any) {
       const errorMessage = err?.cause?.message || err?.message || String(err);
       const errorCode = err?.cause?.code || err?.code || '';
@@ -827,8 +814,14 @@ export class RegistryService {
         ? payload.backend_configured
         : {},
       backend_instances: Array.isArray(payload.backend_instances) ? payload.backend_instances : [],
+      dispatch_backend_instances: payload.dispatch_backend_instances === true,
+      dispatch_execution_options: payload.dispatch_execution_options === true,
+      dispatch_execution_results: payload.dispatch_execution_results === true,
       availability: Array.isArray(payload.availability) ? payload.availability : [],
       auth_health: parseNodeAuthHealth(payload.auth_health),
+      central_claim_observations: parseNodeCentralClaims(payload.node,
+        typeof payload.profile?.profile === 'string' ? payload.profile.profile : typeof payload.profile === 'string' ? payload.profile : null,
+        state),
       recent_ledger: payload.recent_ledger ?? null,
       running_workers: Array.isArray(payload.running_workers) ? payload.running_workers.map((worker: RunningWorker) => ({ ...worker, node_id: node.node_id })) : [],
       active_claims: Array.isArray(payload.active_claims) ? payload.active_claims : [],
@@ -928,36 +921,13 @@ export class RegistryService {
       throw new Error('Secret reference must use references (starting with env: or file:), not raw credentials');
     }
 
-    // 7. Non-loopback endpoints require TLS plus authenticated node/client identity; localhost development remains explicit
-    const loopback = isLoopback(node.advertised_url);
-    if (!loopback) {
-      if (node.transport_mode === 'loopback') {
-        throw new Error('Non-loopback advertised URL cannot use loopback transport mode');
-      }
-      if (node.transport_mode === 'authenticated_remote') {
-        const url = node.advertised_url.toLowerCase();
-        if (!url.startsWith('https://') && !url.startsWith('wss://')) {
-          throw new Error('Non-loopback authenticated remote endpoints must use TLS (https:// or wss://)');
-        }
-      } else if (node.transport_mode === 'trusted_lan') {
-        // Issue #944: self-hosted tailnet/LAN workers legitimately advertise
-        // a plain-HTTP URL (e.g. http://100.118.97.79). Mirror the Rust side's
-        // GAH_COORDINATOR_INSECURE_TLS=1 opt-in: allow it only when the central
-        // operator explicitly opts in, so the fail-closed default is unchanged.
-        if (process.env.GAH_ALLOW_INSECURE_HTTP !== '1') {
-          throw new Error(
-            'Non-loopback trusted_lan endpoints require GAH_ALLOW_INSECURE_HTTP=1 on the central node (fail-closed default; use authenticated_remote over TLS otherwise)'
-          );
-        }
-        warnings.push('Non-loopback trusted_lan endpoint accepted over plain HTTP (GAH_ALLOW_INSECURE_HTTP=1)');
-      }
-    } else {
-      if (node.transport_mode === 'authenticated_remote') {
-        const url = node.advertised_url.toLowerCase();
-        if (!url.startsWith('https://') && !url.startsWith('wss://')) {
-          warnings.push('Loopback authenticated remote endpoint does not terminate TLS locally');
-        }
-      }
+    // 7. The address must be one this central will send to. A refusal says
+    // which setting or address would change the answer.
+    const link = linkTo(node);
+    if (link.kind === 'tailnet' || link.kind === 'lan') {
+      warnings.push(`Worker accepted over plain HTTP on a ${link.kind} link`);
+    } else if (link.kind === 'loopback' && node.transport_mode === 'authenticated_remote' && !link.origin.startsWith('https:')) {
+      warnings.push('Loopback authenticated remote endpoint does not terminate TLS locally');
     }
 
     // SECURITY (issue #951 review): UPDATING an existing node_id repoints
@@ -1012,18 +982,34 @@ export class RegistryService {
     this.changed();
   }
 
+  /** Read one registered worker's factory evidence without changing fleet health or routing. */
+  async checkNodeFactory(nodeId: string, profile: string) {
+    const node = this.nodes.get(nodeId);
+    if (!node) throw new NodeFactoryError(404, 'Node is not registered.');
+    if (!profile || !node.profiles?.includes(profile)) throw new NodeFactoryError(400, 'Select a profile declared by this worker.');
+    let link: WorkerLink;
+    try { link = readyLink(node); }
+    catch (error) {
+      if (error instanceof LinkRefused) throw new NodeFactoryError(400, error.message);
+      throw new NodeFactoryError(502, 'Cannot resolve the configured worker credential on central.');
+    }
+    const snapshot = await readNodeFactory(node, profile, link);
+    if (this.nodes.get(nodeId) !== node) throw new NodeFactoryError(409, 'Worker registration changed during the check. Read factory state again.');
+    return snapshot;
+  }
+
   /** Run readiness on one declared worker profile, without changing fleet health or routing eligibility. */
   async checkNodeDoctor(nodeId: string, profile: string): Promise<DoctorSnapshot> {
     const node = this.nodes.get(nodeId);
     if (!node) throw new NodeDoctorError(404, 'Node is not registered.');
     if (!profile || !node.profiles?.includes(profile)) throw new NodeDoctorError(400, 'Select a profile declared by this worker. Configure or import a worker profile and register it first.');
-    let headers: Record<string, string>;
-    try { headers = nodeHeaders(node); }
-    catch { throw new NodeDoctorError(502, 'AUTH: Cannot resolve the worker credential on central.'); }
-    const url = new URL('/api/doctor', node.advertised_url);
-    url.searchParams.set('profile', profile);
+    let link: WorkerLink;
+    try { link = readyLink(node); }
+    catch (error) {
+      throw new NodeDoctorError(502, error instanceof LinkRefused ? `NETWORK: ${error.message}` : 'AUTH: Cannot resolve the worker credential on central.');
+    }
     try {
-      const response = await fetchWithTimeout(url.toString(), headers, 30_000);
+      const response = await link.fetch(`/api/doctor?${new URLSearchParams({ profile })}`, { signal: AbortSignal.timeout(30_000) });
       if (response.status === 401 || response.status === 403) throw new NodeDoctorError(502, 'AUTH: Worker rejected its configured credential.');
       if (!response.ok) throw new NodeDoctorError(502, `UPSTREAM: Worker doctor returned HTTP ${response.status}.`);
       const snapshot: unknown = await response.json();

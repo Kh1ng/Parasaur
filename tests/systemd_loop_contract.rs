@@ -64,7 +64,7 @@ fn optional_gateway_renders_checkout_and_node_paths_without_developer_identity()
     ] {
         let output = std::process::Command::new("bash")
             .args(["-c", script])
-            .env("GAH_GATEWAY_MEMORYCORE_PATH", checkout)
+            .env("PARASAUR_GATEWAY_MEMORYCORE_PATH", checkout)
             .env("node_dir", "/opt/node 22/bin")
             .env("gateway_unit_dst", &target)
             .output()

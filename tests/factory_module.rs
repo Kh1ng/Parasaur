@@ -20,7 +20,7 @@ default_target_branch = "main"
     startup.defaults.factory_enabled = Some(true);
     // This test process owns its environment; never inherit an operator routing file.
     std::env::set_var(
-        "GAH_CANONICAL_CONFIG",
+        "PARASAUR_CANONICAL_CONFIG",
         directory.path().join("canonical.toml"),
     );
     git_agent_harness::controller::run_loop(&startup, "local", false, 1, false, &path)

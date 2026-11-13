@@ -2,27 +2,44 @@ use super::{dispatch_policy, merge, pm, run_dispatch_and_record, RouteNodeAdmiss
 use crate::controller::NextAction;
 use anyhow::Result;
 
-/// Executes at most one action. `FixMr` dispatches a fix operation reusing an
-/// existing branch (TICKET-118); Retry/Escalate reuse prior ledger evidence.
-pub(crate) fn execute_action(
+/// Select the bounded retry evidence needed by this action before handing it
+/// to a worker. The full ledger snapshot need not survive action execution.
+pub(crate) fn action_prior_context(
     cfg: &crate::config::GahConfig,
     profile_name: &str,
     action: &NextAction,
     ledger_entries: &[crate::ledger::LedgerEntry],
+) -> Result<Option<String>> {
+    match action {
+        NextAction::Retry { work_id, .. } | NextAction::Escalate { work_id, .. } => {
+            let profile = crate::config::get_profile(cfg, profile_name)?;
+            Ok(crate::dispatch::prior_attempt_context(
+                ledger_entries,
+                profile_name,
+                profile,
+                work_id,
+            ))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Executes at most one action. `FixMr` reuses its branch (TICKET-118);
+/// Retry/Escalate receive their bounded, already selected prior evidence.
+pub(crate) fn execute_action(
+    cfg: &crate::config::GahConfig,
+    profile_name: &str,
+    action: &NextAction,
+    prior_attempt_context: Option<String>,
     skip_validation_gate: bool,
     route_admission: Option<RouteNodeAdmission>,
 ) -> Result<String> {
     let profile = crate::config::get_profile(cfg, profile_name)?;
-    let prior_attempt_context = match action {
-        NextAction::Retry { work_id, .. } | NextAction::Escalate { work_id, .. } => {
-            crate::dispatch::prior_attempt_context(ledger_entries, profile_name, profile, work_id)
-        }
-        _ => None,
-    };
     let base_args = || crate::dispatch::DispatchArgs {
         profile: profile_name.to_string(),
         mode: "fix".to_string(),
         backend: "auto".to_string(),
+        backend_instance: None,
         target: String::new(),
         branch: None,
         mr: None,
@@ -51,10 +68,22 @@ pub(crate) fn execute_action(
             let args = crate::dispatch::DispatchArgs {
                 mode: "review".to_string(),
                 branch: Some(branch.clone()),
+                expected_review_generation: route_admission
+                    .as_ref()
+                    .and_then(|admission| admission.review_generation())
+                    .map(str::to_string),
                 dispatch_reason: Some("review".to_string()),
                 ..base_args()
             };
-            let deferred = run_dispatch_and_record(cfg, "review", action.work_id(), &args)?;
+            let deferred = match run_dispatch_and_record(cfg, "review", action.work_id(), &args) {
+                // A durable work-item hold must not put unrelated work into
+                // the daemon's infrastructure-error backoff. Direct dispatch
+                // retains its typed error and terminal event.
+                Err(error) if crate::dispatch::review_budget_exhausted_error(&error).is_some() => {
+                    return Ok(format!("Blocked review: {error:#}"));
+                }
+                result => result?,
+            };
             Ok(deferred.unwrap_or_else(|| format!("Dispatched review for branch '{branch}'")))
         }
         NextAction::MarkReadyForReview { branch, .. } => {
@@ -166,5 +195,63 @@ pub(crate) fn execute_action(
                 .unwrap_or_default()
         )),
         NextAction::NoOp { reason } => Ok(format!("No action: {reason}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redispatch_context_is_bounded_owned_and_absent_for_new_work() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut profile = crate::config::tests::test_profile_for_notifications();
+        profile.artifact_root = tmp.path().display().to_string();
+        let mut entry =
+            crate::ledger::LedgerEntry::new("test", &profile, "codex", "fix", "ticket", None, None);
+        entry.work_id = Some("TICKET-243".into());
+        entry.failure_class = Some("validation_failure".into());
+        entry.failure_stage = Some("post_validation".into());
+        entry.error_summary = Some("retained retry fact ".repeat(10_000));
+        let cfg = crate::config::GahConfig {
+            context: Default::default(),
+            defaults: Default::default(),
+            profiles: std::collections::HashMap::from([("test".into(), profile)]),
+        };
+        let entries = vec![entry];
+        let mut contexts = Vec::new();
+        for action in [
+            NextAction::Retry {
+                work_id: "TICKET-243".into(),
+                ticket_path: "ticket".into(),
+                reason: "retry".into(),
+            },
+            NextAction::Escalate {
+                work_id: "TICKET-243".into(),
+                ticket_path: "ticket".into(),
+                reason: "escalate".into(),
+            },
+        ] {
+            contexts.push(
+                action_prior_context(&cfg, "test", &action, &entries)
+                    .unwrap()
+                    .unwrap(),
+            );
+        }
+        let initial = NextAction::DispatchTicket {
+            ticket_path: "ticket".into(),
+            work_id: Some("TICKET-243".into()),
+            recommended_backend: None,
+            recommended_model: None,
+            reason: "initial".into(),
+        };
+        assert!(action_prior_context(&cfg, "test", &initial, &entries)
+            .unwrap()
+            .is_none());
+        drop(entries);
+        for context in contexts {
+            assert!(context.len() <= 4_096);
+            assert!(context.contains("retained retry fact"));
+        }
     }
 }

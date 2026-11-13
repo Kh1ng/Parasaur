@@ -15,7 +15,7 @@ const options = { checkPolicy: async () => {}, probe: async () => [row], readUpd
 
 test('agents routes enforce owner, admin flag, idempotency and valid backend before launching', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-agent-routes-'));
-  const old = process.env.GAH_ENABLE_ADMIN_UPDATE;
+  const old = process.env.PARASAUR_ENABLE_ADMIN_UPDATE;
   let launches = 0;
   const local = new AgentCliVersions(node, { ...options, launch: async () => { launches++; } });
   const app = express(); app.use(express.json());
@@ -27,9 +27,9 @@ test('agents routes enforce owner, admin flag, idempotency and valid backend bef
   const base = `http://127.0.0.1:${addr.port}/api/agents`;
   const post = (body: object, headers: Record<string, string> = {}) => fetch(`${base}/update`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
   try {
-    delete process.env.GAH_ENABLE_ADMIN_UPDATE;
+    delete process.env.PARASAUR_ENABLE_ADMIN_UPDATE;
     assert.equal((await post({ backend: 'codex' })).status, 403);
-    process.env.GAH_ENABLE_ADMIN_UPDATE = '1';
+    process.env.PARASAUR_ENABLE_ADMIN_UPDATE = '1';
     assert.equal((await post({ backend: 'codex' }, { 'X-Test-Role': 'device' })).status, 403);
     assert.equal((await post({ backend: 'codex' })).status, 400);
     assert.equal((await post({ backend: 'codex;sh' }, { 'Idempotency-Key': 'invalid-agent-0001' })).status, 400);
@@ -42,7 +42,7 @@ test('agents routes enforce owner, admin flag, idempotency and valid backend bef
     assert.equal(launches, 1);
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
-    if (old === undefined) delete process.env.GAH_ENABLE_ADMIN_UPDATE; else process.env.GAH_ENABLE_ADMIN_UPDATE = old;
+    if (old === undefined) delete process.env.PARASAUR_ENABLE_ADMIN_UPDATE; else process.env.PARASAUR_ENABLE_ADMIN_UPDATE = old;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -74,7 +74,7 @@ test('agents fleet includes unavailable nodes and relays only fixed registry des
 
 test('owner and scheduled updates refuse node policy before any installer launch', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-agent-policy-'));
-  const old = process.env.GAH_ENABLE_ADMIN_UPDATE;
+  const old = process.env.PARASAUR_ENABLE_ADMIN_UPDATE;
   let launches = 0;
   const local = new AgentCliVersions(node, { ...options, optedIn: () => true,
     checkPolicy: async () => { throw new AgentCliError(403, 'agent_update_policy_blocked', 'POLICY BLOCKED: update-agent-cli'); },
@@ -85,7 +85,7 @@ test('owner and scheduled updates refuse node policy before any installer launch
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
-  process.env.GAH_ENABLE_ADMIN_UPDATE = '1';
+  process.env.PARASAUR_ENABLE_ADMIN_UPDATE = '1';
   try {
     for (const route of ['update', 'scheduled-update']) {
       const response = await fetch(`http://127.0.0.1:${address.port}/api/agents/${route}`, {
@@ -97,7 +97,7 @@ test('owner and scheduled updates refuse node policy before any installer launch
     assert.equal(launches, 0);
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
-    if (old === undefined) delete process.env.GAH_ENABLE_ADMIN_UPDATE; else process.env.GAH_ENABLE_ADMIN_UPDATE = old;
+    if (old === undefined) delete process.env.PARASAUR_ENABLE_ADMIN_UPDATE; else process.env.PARASAUR_ENABLE_ADMIN_UPDATE = old;
     rmSync(dir, { recursive: true, force: true });
   }
 });

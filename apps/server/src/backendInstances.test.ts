@@ -122,3 +122,32 @@ async function exercise(real: boolean) {
 test('backend instance toggles are owner-gated, validated, and audit-logged', async () => {
   await exercise(false);
 });
+
+test('an unavailable auth probe stays unknown without hiding healthy sibling accounts', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'gah-account-probe-'));
+  const app = express();
+  const router = backendInstancesRouter(
+    mutationSafety('test-node', join(directory, 'mutations')),
+    async () => ({ backend_instances: [instance('codex-work', true), instance('codex-personal', true)] }) as ConfigProfileSummary,
+    undefined, undefined, undefined,
+    async (_profile, name) => {
+      if (name === 'codex-personal') throw new Error('private-provider-output');
+      return { backend_instance: name, auth_ready: true };
+    },
+  );
+  app.use('/instances', router);
+  const server = http.createServer(app);
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/instances?profile=real`);
+    assert.equal(response.status, 200);
+    const data = await response.json() as { backend_instances: BackendInstanceSummary[] };
+    assert.deepEqual(data.backend_instances.map(row => [row.backend_instance, row.auth_ready, row.healthy]), [
+      ['codex-work', true, true], ['codex-personal', null, null],
+    ]);
+    assert.doesNotMatch(JSON.stringify(data), /private-provider-output/);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

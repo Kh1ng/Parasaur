@@ -6,7 +6,7 @@ use std::path::Path;
 
 #[cfg(debug_assertions)]
 pub(super) fn pause_after_backend_result_if_requested() -> Result<()> {
-    if let Some(path) = std::env::var_os("GAH_TEST_PAUSE_AFTER_BACKEND_RESULT_FILE") {
+    if let Some(path) = std::env::var_os("PARASAUR_TEST_PAUSE_AFTER_BACKEND_RESULT_FILE") {
         let gate = std::path::PathBuf::from(path);
         let ready = gate.with_extension("ready");
         fs::write(&ready, "ready\n")?;

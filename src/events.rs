@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use time::format_description::well_known::Rfc3339;
 
 /// Plain lowercase string on the wire (not a serde-tagged enum), same
@@ -23,6 +23,7 @@ pub enum EventType {
     ActionOverridden,
     DispatchStarted,
     DispatchFinished,
+    CentralClaimAttempt,
     /// Not yet emitted: would require `dispatch.rs`'s own
     /// `mark_backend_unavailable_from_output` to call into `events::record`,
     /// a separate change from `gah loop --once`'s own decision/execution
@@ -36,6 +37,7 @@ pub enum EventType {
     /// the controller run (not an in-flight dispatch) and is intentionally
     /// distinct from a backend failure.
     ReviewBudgetExhausted,
+    SpendBudgetHeld,
     DuplicateGuardTriggered,
     PmPlanned,
     PmPublished,
@@ -66,10 +68,12 @@ impl EventType {
             Self::ActionOverridden => "action_overridden",
             Self::DispatchStarted => "dispatch_started",
             Self::DispatchFinished => "dispatch_finished",
+            Self::CentralClaimAttempt => "central_claim_attempt",
             Self::BackendMarkedUnavailable => "backend_marked_unavailable",
             Self::WaitSelected => "wait_selected",
             Self::HumanRequired => "human_required",
             Self::ReviewBudgetExhausted => "review_budget_exhausted",
+            Self::SpendBudgetHeld => "spend_budget_held",
             Self::DuplicateGuardTriggered => "duplicate_guard_triggered",
             Self::PmPlanned => "pm_planned",
             Self::PmPublished => "pm_published",
@@ -114,6 +118,8 @@ pub struct ControllerEvent {
     /// `details` for people; readers that need it use this field.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skipped: Vec<SkippedRoute>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub central_claim: Option<crate::central_claims::observations::CentralClaimEvidence>,
 }
 
 /// One backend and model the router considered and passed over.
@@ -245,6 +251,7 @@ pub fn record_with_reason_code_and_plan(
             review_contract_version: Some(crate::ledger::CURRENT_REVIEW_CONTRACT_VERSION),
             remediation_plan: remediation_plan.cloned(),
             skipped: Vec::new(),
+            central_claim: None,
         },
     )
 }
@@ -271,6 +278,7 @@ pub fn record_with_run_id_and_reason_code(
             review_contract_version: Some(crate::ledger::CURRENT_REVIEW_CONTRACT_VERSION),
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         },
     )
 }
@@ -301,24 +309,74 @@ pub(crate) fn record_dispatch_error(
             review_contract_version: Some(crate::ledger::CURRENT_REVIEW_CONTRACT_VERSION),
             remediation_plan: None,
             skipped: skipped_routes(error),
+            central_claim: None,
         },
     )
 }
 
 pub fn read_events(cfg: &GahConfig) -> Result<Vec<ControllerEvent>> {
+    let mut events = Vec::new();
+    visit_events(cfg, |event| events.push(event))?;
+    Ok(events)
+}
+
+/// Decode one record at a time without retaining a second copy of the entire
+/// journal. Validate every record, including those a consumer does not retain.
+pub(crate) fn visit_events(cfg: &GahConfig, mut visit: impl FnMut(ControllerEvent)) -> Result<()> {
     let path = cfg.defaults.events_path();
-    if !path.exists() {
-        return Ok(vec![]);
-    }
-    let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let mut events = vec![];
-    for (idx, line) in text.lines().enumerate() {
+    let file = match fs::File::open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
+    };
+    for (idx, line) in BufReader::new(file).lines().enumerate() {
+        let line = line.with_context(|| format!("reading {}", path.display()))?;
         if line.trim().is_empty() {
             continue;
         }
-        let event = serde_json::from_str::<ControllerEvent>(line)
+        let event = serde_json::from_str::<ControllerEvent>(&line)
             .with_context(|| format!("parsing event {} from {}", idx + 1, path.display()))?;
-        events.push(event);
+        visit(event);
+    }
+    Ok(())
+}
+
+/// Keep the newest matching events by timestamp, breaking ties by append
+/// order. Limited queries retain at most N records plus the current record;
+/// survivors are returned in append order, as for an unlimited query.
+fn read_matching_events(
+    cfg: &GahConfig,
+    cutoff: &str,
+    profile: Option<&str>,
+    limit: Option<usize>,
+) -> Result<Vec<ControllerEvent>> {
+    let mut events = Vec::new();
+    let mut newest = std::collections::BTreeMap::new();
+    let mut index = 0usize;
+    visit_events(cfg, |event| {
+        let position = index;
+        index += 1;
+        if event.timestamp.as_str() < cutoff
+            || profile.is_some_and(|profile| event.profile.as_deref() != Some(profile))
+        {
+            return;
+        }
+        if let Some(limit) = limit {
+            if limit == 0 {
+                return;
+            }
+            newest.insert((event.timestamp.clone(), position), event);
+            if newest.len() > limit {
+                newest.pop_first();
+            }
+        } else {
+            events.push(event);
+        }
+    })?;
+    if limit.is_some() {
+        let mut ordered: Vec<_> = newest.into_iter().collect();
+        ordered.sort_unstable_by_key(|((_, position), _)| *position);
+        events = ordered.into_iter().map(|(_, event)| event).collect();
     }
     Ok(events)
 }
@@ -329,6 +387,7 @@ pub fn read_events(cfg: &GahConfig) -> Result<Vec<ControllerEvent>> {
 /// by `run_id`, matching the dashboard's `deriveControllerActivity`
 /// (apps/server/src/controllerActivity.ts) so Rust and the dashboard agree
 /// on what "still running" means.
+#[cfg(test)]
 pub(crate) fn orphaned_dispatch_runs(
     events: &[ControllerEvent],
     profile: &str,
@@ -356,6 +415,31 @@ pub(crate) fn orphaned_dispatch_runs(
         .collect()
 }
 
+/// Read lifecycle identities without keeping historical event payloads alive.
+/// Validate the complete journal before a caller records any reconciliation.
+pub(crate) fn read_orphaned_dispatch_runs(
+    cfg: &GahConfig,
+    profile: &str,
+) -> Result<Vec<(String, Option<String>)>> {
+    let mut started = Vec::new();
+    let mut finished = std::collections::HashSet::new();
+    visit_events(cfg, |event| {
+        if event.profile.as_deref() != Some(profile) {
+            return;
+        }
+        let Some(run_id) = event.run_id else { return };
+        match event.event_type.as_str() {
+            "dispatch_started" => started.push((run_id, event.work_id)),
+            "dispatch_finished" | "duplicate_guard_triggered" | "review_budget_exhausted" => {
+                finished.insert(run_id);
+            }
+            _ => {}
+        }
+    })?;
+    started.retain(|(run_id, _)| !finished.contains(run_id));
+    Ok(started)
+}
+
 /// Close out every `dispatch_started` for `profile` that never got a
 /// terminal event -- i.e. whatever process started it (a `gah loop`
 /// daemon) was killed/restarted before recording completion. Call once,
@@ -368,8 +452,7 @@ pub(crate) fn orphaned_dispatch_runs(
 /// Returns the number of orphans reconciled.
 #[allow(dead_code)] // controller reconciliation also persists a ledger record
 pub fn reconcile_abandoned_dispatches(cfg: &GahConfig, profile_name: &str) -> Result<usize> {
-    let events = read_events(cfg)?;
-    let orphans = orphaned_dispatch_runs(&events, profile_name);
+    let orphans = read_orphaned_dispatch_runs(cfg, profile_name)?;
     for (run_id, work_id) in &orphans {
         record_with_run_id(
             cfg,
@@ -402,31 +485,7 @@ pub fn run(
     limit: Option<usize>,
 ) -> Result<()> {
     let cutoff = crate::ledger::summary::parse_since(since)?;
-    let mut events = read_events(cfg)?;
-    events.retain(|e| e.timestamp >= cutoff);
-    if let Some(profile) = profile {
-        events.retain(|e| e.profile.as_deref() == Some(profile));
-    }
-    if let Some(limit) = limit {
-        // Stable sort by timestamp (ties keep append order -- the same
-        // string convention as the since filter above, since every
-        // recorder writes UTC RFC3339), keep the newest N, then emit the
-        // survivors in their original stream order. Index-based so the
-        // (potentially huge) payloads move once, no clones.
-        let mut order: Vec<usize> = (0..events.len()).collect();
-        order.sort_by_key(|&i| &events[i].timestamp);
-        order.drain(..events.len().saturating_sub(limit));
-        let mut keep = vec![false; events.len()];
-        for i in order {
-            keep[i] = true;
-        }
-        let mut index = 0;
-        events.retain(|_| {
-            let keep_event = keep[index];
-            index += 1;
-            keep_event
-        });
-    }
+    let events = read_matching_events(cfg, &cutoff, profile, limit)?;
 
     if json {
         println!("{}", serde_json::to_string(&events)?);
@@ -620,6 +679,62 @@ mod tests {
     }
 
     #[test]
+    fn streaming_queries_match_full_history_selection_and_validate_discarded_records() {
+        let (_tmp, cfg) = test_config();
+        // Delayed appends, timestamp ties, another profile, stale records and
+        // blank/CRLF records exercise the existing selection contract.
+        let mut file = std::fs::File::create(cfg.defaults.events_path()).unwrap();
+        for index in 0..120 {
+            let event = serde_json::json!({
+                "timestamp": format!("2026-11-{:02}T00:00:00Z", 1 + index * 7 % 20),
+                "event_type": "action_decided",
+                "profile": if index % 3 == 0 { "other" } else { "real" },
+                "work_id": index.to_string(),
+                "details": "payload".repeat(256),
+            });
+            use std::io::Write;
+            writeln!(file, "{event}\r\n").unwrap();
+        }
+        drop(file);
+        let cutoff = "2026-11-05T00:00:00Z";
+        for profile in [None, Some("real"), Some("missing")] {
+            for limit in [None, Some(0), Some(1), Some(7), Some(120)] {
+                let mut expected: Vec<_> = read_events(&cfg)
+                    .unwrap()
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(_, event)| {
+                        event.timestamp.as_str() >= cutoff
+                            && profile.is_none_or(|p| event.profile.as_deref() == Some(p))
+                    })
+                    .collect();
+                if let Some(limit) = limit {
+                    expected.sort_by(|a, b| a.1.timestamp.cmp(&b.1.timestamp));
+                    expected.drain(..expected.len().saturating_sub(limit));
+                    expected.sort_by_key(|(index, _)| *index);
+                }
+                let expected: Vec<_> = expected.into_iter().map(|(_, event)| event).collect();
+                let actual = super::read_matching_events(&cfg, cutoff, profile, limit).unwrap();
+                assert_eq!(
+                    serde_json::to_value(actual).unwrap(),
+                    serde_json::to_value(expected).unwrap()
+                );
+            }
+        }
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(cfg.defaults.events_path())
+            .unwrap();
+        writeln!(file, "invalid").unwrap();
+        for limit in [None, Some(0), Some(1)] {
+            let error =
+                super::read_matching_events(&cfg, cutoff, Some("missing"), limit).unwrap_err();
+            assert!(error.to_string().contains("parsing event 241"));
+        }
+    }
+
+    #[test]
     fn append_never_rewrites_prior_lines() {
         let (_tmp, cfg) = test_config();
         let event = ControllerEvent {
@@ -633,6 +748,7 @@ mod tests {
             details: String::new(),
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         };
         append(&cfg, &event).unwrap();
         append(&cfg, &event).unwrap();

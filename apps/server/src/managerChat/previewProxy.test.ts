@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import { previewProxy, detectDevPort, loopbackPortListening, PreviewTargetRefusedError, PREVIEW_SECRET_PARAM } from './previewProxy.js';
+import { previewProxy, detectDevPort, loopbackHttpReady, PreviewTargetRefusedError, PREVIEW_SECRET_PARAM } from './previewProxy.js';
 import { authMiddleware } from '../authMiddleware.js';
 
 // Below every common ephemeral range (Linux 32768+, macOS 49152+), so a
@@ -170,13 +170,16 @@ test('preview proxy re-points a session to a new dev port (stable URL) and repor
 });
 
 test('preview proxy skips an occupied port and reports the port it actually bound', async () => {
-  previewProxy.configure({ basePort: TEST_BASE_PORT, maxPort: TEST_MAX_PORT, advertiseHost: '127.0.0.1', bindHost: '127.0.0.1' });
+  // Keep the intentional collision apart from previews earlier tests just
+  // closed: a host/WSL port relay can release those listeners asynchronously.
+  const busyPort = TEST_BASE_PORT + 20;
+  previewProxy.configure({ basePort: busyPort, maxPort: TEST_MAX_PORT, advertiseHost: '127.0.0.1', bindHost: '127.0.0.1' });
   const squatter = http.createServer();
-  await new Promise<void>((done) => squatter.listen(TEST_BASE_PORT, '127.0.0.1', done));
+  await new Promise<void>((done) => squatter.listen(busyPort, '127.0.0.1', done));
   const dev = await fakeDevServer((_req, res) => { res.end('dev'); });
   try {
     const preview = await previewProxy.set('p', 'busy', dev.port);
-    assert.notEqual(preview.listenPort, TEST_BASE_PORT);
+    assert.notEqual(preview.listenPort, busyPort);
     assert.equal(new URL(preview.url).port, String(preview.listenPort));
     const served = await fetchPreview(preview.url);
     assert.match(served.body, /dev/);
@@ -395,21 +398,37 @@ test('an app\'s no-referrer policy still lets its own pages name it in the Refer
   }
 });
 
-test('auto-detection probes the loopback: a port with no listener is not adopted', async () => {
-  const dev = await fakeDevServer((_req, res) => { res.end('ok'); });
+test('auto-detection requires an HTTP listener, including an app that returns an HTTP error', async () => {
+  let request: { method?: string; host?: string } = {};
+  const dev = await fakeDevServer((req, res) => {
+    request = { method: req.method, host: req.headers.host };
+    res.writeHead(401).end();
+  });
   const dead = await fakeDevServer(() => { /* never used */ });
   await dead.close();
   try {
-    assert.equal(await loopbackPortListening(dev.port), true);
-    assert.equal(await loopbackPortListening(dead.port), false);
+    assert.equal(await loopbackHttpReady(dev.port), true);
+    assert.deepEqual(request, { method: 'HEAD', host: `localhost:${dev.port}` });
+    assert.equal(await loopbackHttpReady(dead.port), false);
   } finally {
     await dev.close();
   }
 });
 
+test('a TCP listener without an HTTP response is not adopted as a web preview', async () => {
+  const tcp = net.createServer(socket => { socket.resume(); });
+  await new Promise<void>(resolve => tcp.listen(0, '127.0.0.1', resolve));
+  try {
+    assert.equal(await loopbackHttpReady((tcp.address() as AddressInfo).port, 25), false);
+    assert.equal(await loopbackHttpReady(0), false);
+  } finally {
+    await new Promise<void>(resolve => tcp.close(() => resolve()));
+  }
+});
+
 test('a preview refuses the memory gateway port', async () => {
-  const saved = { url: process.env.TDAI_GATEWAY_URL, settings: process.env.GAH_GATEWAY_SETTINGS_PATH };
-  process.env.GAH_GATEWAY_SETTINGS_PATH = '/nonexistent/gateway-settings.json';
+  const saved = { url: process.env.TDAI_GATEWAY_URL, settings: process.env.PARASAUR_GATEWAY_SETTINGS_PATH };
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = '/nonexistent/gateway-settings.json';
   previewProxy.configure({ basePort: TEST_BASE_PORT, maxPort: TEST_MAX_PORT, advertiseHost: '127.0.0.1', bindHost: '127.0.0.1', protectedPorts: [] });
   try {
     delete process.env.TDAI_GATEWAY_URL;
@@ -431,6 +450,6 @@ test('a preview refuses the memory gateway port', async () => {
     assert.equal(previewProxy.get('p', 'gw'), null);
   } finally {
     if (saved.url === undefined) delete process.env.TDAI_GATEWAY_URL; else process.env.TDAI_GATEWAY_URL = saved.url;
-    if (saved.settings === undefined) delete process.env.GAH_GATEWAY_SETTINGS_PATH; else process.env.GAH_GATEWAY_SETTINGS_PATH = saved.settings;
+    if (saved.settings === undefined) delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH; else process.env.PARASAUR_GATEWAY_SETTINGS_PATH = saved.settings;
   }
 });

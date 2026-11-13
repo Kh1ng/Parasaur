@@ -45,17 +45,32 @@ These rules apply to human and agent changes in this repository.
 - Add a regression test for each corrected security or data-loss fault.
 - Do not copy a large fixture when a focused assertion proves the behavior.
 
-Run the checks for each changed area:
+Run the checks for each changed area. The Rust tests use
+[cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`),
+which runs them in about a quarter of the time `cargo test` takes;
+`.config/nextest.toml` says why.
 
 ```bash
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features
+cargo nextest run --all-features
 npm run typecheck
 npm run test:server
 ```
 
 Run the platform build when a change affects the desktop or mobile application.
+
+The full server integration suite uses POSIX executable fixtures and must run
+inside Linux, macOS, or WSL with dependencies installed in that environment.
+Its runner refuses native Windows before starting tests: otherwise a fixture
+that cannot execute can fall through to a real installed provider CLI. Focused
+portable tests and browser tests can still run on Windows. Keep Linux and
+Windows `node_modules` separate.
+
+The colocated-provider component suite keeps its UI assertions portable, but
+executes generated shell commands only on POSIX hosts. Windows `bash` can
+forward into WSL and bypass a Windows temporary PATH fixture, launching the
+real installer. Run that shell test with Linux Node inside WSL or on Linux/macOS.
 
 ### When a Parasaur profile works on this repository
 

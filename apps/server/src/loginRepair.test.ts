@@ -3,9 +3,11 @@ import { test } from 'node:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ChildProcess } from 'node:child_process';
 import type { LoginRepairView } from '@git-agent-harness/contracts';
 import { LoginRepairBroker, LoginRepairError, LoginRepairs, loadProviderKeys, parseLoginRepairView } from './loginRepair.js';
 import type { RegistryService } from './registryService.js';
+import type { BackendInstanceRuntime } from './gahCli.js';
 
 function sandbox() {
   const root = mkdtempSync(join(tmpdir(), 'gah-login-repair-'));
@@ -28,6 +30,77 @@ async function until(read: () => LoginRepairView | null, status: LoginRepairView
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
+
+test('named accounts use the Rust isolated-login command and lock shared state across profiles', async () => {
+  const box = sandbox();
+  try {
+    box.tool('gah-login', `printf '%s\\n' "$@" > "$HOME/args-$6"
+printf 'https://auth.openai.com/codex/device\\nOne-time code K7QD-M2XPA\\n'
+sleep 0.2`);
+    let rechecked = 0;
+    const repairs = new LoginRepairs({ env: box.env, gahBinary: () => join(box.root, 'bin/gah-login'),
+      instanceAuth: async (_profile, instance) => ({ backend_instance: instance, auth_ready: true }),
+      instanceRuntime: async (_profile, instance) => ({ backend_instance: instance, runner_kind: 'codex', logical_backend: 'codex',
+        executable: '/must-not-launch-this-directly', state_root: join(box.root, instance), account_label: instance }),
+      onSuccess: async () => { rechecked++; } });
+    const first = await repairs.startInstance('alpha', 'personal');
+    await assert.rejects(repairs.startInstance('beta', 'personal'), /already in progress/);
+    const second = await repairs.startInstance('alpha', 'work');
+    await until(() => repairs.view(first.id), 'open_url');
+    await until(() => repairs.view(second.id), 'open_url');
+    assert.deepEqual(readFileSync(join(box.root, 'args-personal'), 'utf8').trim().split('\n'),
+      ['config', 'authenticate-backend-instance', '--profile', 'alpha', '--instance', 'personal']);
+    assert.deepEqual(readFileSync(join(box.root, 'args-work'), 'utf8').trim().split('\n'),
+      ['config', 'authenticate-backend-instance', '--profile', 'alpha', '--instance', 'work']);
+    await until(() => repairs.view(first.id), 'succeeded');
+    await until(() => repairs.view(second.id), 'succeeded');
+    assert.equal(rechecked, 2);
+  } finally { box.done(); }
+});
+
+test('named account login refuses saved credentials, shared state, unsupported runners, and unavailable runtime', async () => {
+  const base: BackendInstanceRuntime = { backend_instance: 'work', runner_kind: 'codex', logical_backend: 'codex',
+    executable: '/tools/codex', state_root: '/isolated/work', account_label: 'Work' };
+  for (const runtime of [{ ...base, credential_id: 'saved-token' }, { ...base, state_root: null }, { ...base, runner_kind: 'vibe' }, null]) {
+    const repairs = new LoginRepairs({ instanceRuntime: async () => { if (!runtime) throw new Error('missing'); return runtime; },
+      spawn: (() => { throw new Error('No process may launch'); }) as never });
+    await assert.rejects(repairs.startInstance('alpha', 'work'), error => error instanceof LoginRepairError && error.status === 409);
+  }
+});
+
+test('cancelling a finished repair never signals an old process ID', async t => {
+  const child = new ChildProcess();
+  Object.defineProperty(child, 'pid', { value: 12345 });
+  const kill = t.mock.method(process, 'kill', () => true);
+  const repairs = new LoginRepairs({ spawn: (() => child) as never });
+  const repair = repairs.start({ backend: 'codex', provider: null });
+  child.emit('close', 0);
+  await until(() => repairs.view(repair.id), 'succeeded');
+  repairs.cancel(repair.id);
+  assert.equal(kill.mock.callCount(), 0);
+  assert.equal(repairs.view(repair.id)?.status, 'succeeded');
+});
+
+test('a named login only reports success after its exact account passes its auth check', async () => {
+  for (const ready of [false, null, 'error'] as const) {
+    const child = new ChildProcess();
+    const checks: string[][] = [];
+    const repairs = new LoginRepairs({ spawn: (() => child) as never, gahBinary: () => '/tools/gah',
+      instanceRuntime: async (_profile, instance) => ({ backend_instance: instance, runner_kind: 'codex', logical_backend: 'codex',
+        executable: '/tools/codex', state_root: '/isolated/work', account_label: 'Work' }),
+      instanceAuth: async (profile, instance) => {
+        checks.push([profile, instance]);
+        if (ready === 'error') throw new Error('private provider output');
+        return { backend_instance: instance, auth_ready: ready };
+      } });
+    const repair = await repairs.startInstance('alpha', 'codex-work');
+    child.emit('close', 0);
+    const failed = await until(() => repairs.view(repair.id), 'failed');
+    assert.deepEqual(checks, [['alpha', 'codex-work']]);
+    assert.match(failed.status === 'failed' ? failed.reason : '', /Use Test in Profile/);
+    assert.doesNotMatch(JSON.stringify(failed), /private provider output/);
+  }
+});
 
 test('codex device auth shows only the link and code, then re-checks the login (#1272)', async () => {
   const box = sandbox();

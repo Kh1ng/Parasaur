@@ -13,8 +13,8 @@ const parent = {
   COORDINATOR_TOKEN: 'owner-token',
   TDAI_GATEWAY_API_KEY: 'gateway-key',
   TELEGRAM_BOT_TOKEN: 'bot-token',
-  GAH_TELEGRAM_WEBHOOK_SECRET: 'webhook-secret',
-  GAH_GATEWAY_LLM_API_KEY: 'gateway-llm-key',
+  PARASAUR_TELEGRAM_WEBHOOK_SECRET: 'webhook-secret',
+  PARASAUR_GATEWAY_LLM_API_KEY: 'gateway-llm-key',
   MISTRAL_ADMIN_API_KEY: 'admin-key'
 };
 
@@ -28,7 +28,7 @@ test('agent children inherit the runtime allow-list but no control-plane secret'
   assert.equal(env.NODE_EXTRA_CA_CERTS, '/etc/ca.pem');
   assert.equal(env.MISTRAL_API_KEY, 'backend-key');
   for (const name of ['COORDINATOR_TOKEN', 'TDAI_GATEWAY_API_KEY', 'TELEGRAM_BOT_TOKEN',
-    'GAH_TELEGRAM_WEBHOOK_SECRET', 'GAH_GATEWAY_LLM_API_KEY', 'MISTRAL_ADMIN_API_KEY']) {
+    'PARASAUR_TELEGRAM_WEBHOOK_SECRET', 'PARASAUR_GATEWAY_LLM_API_KEY', 'MISTRAL_ADMIN_API_KEY']) {
     assert.equal(env[name], undefined, name);
   }
 });

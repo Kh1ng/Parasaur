@@ -24,7 +24,7 @@ fi
   try {
     await channelDelivery('https://central.example', () => gah)({ id: 'failed', profile: 'gah', kind: 'chat_turn_failed', occurredAt: new Date().toISOString(), title: 'Chat failed', message: 'ACP connection closed', severity: 'error' });
     await withFixtureServer(async (baseUrl) => {
-      process.env.GAH_BINARY = gah;
+      process.env.PARASAUR_BINARY = gah;
       const config = async () => (await (await fetch(`${baseUrl}/api/config`)).json()) as { notifications: NotificationSettingsSummary };
       assert.match((await config()).notifications.last_error ?? '', /HTTP 400/);
       const saved = await fetch(`${baseUrl}/api/settings/notifications`, {

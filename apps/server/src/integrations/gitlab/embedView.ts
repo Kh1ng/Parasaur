@@ -11,7 +11,7 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
  * docs/parasaur-contract.md; this module owns the server side:
  *
  * - `/embed` HTML is frameable only by the origins configured through
- *   `GAH_GITLAB_ORIGIN` (space- or comma-separated http(s) origins). With
+ *   `PARASAUR_GITLAB_ORIGIN` (space- or comma-separated http(s) origins). With
  *   no valid origin configured the route fails closed: `frame-ancestors
  *   'none'`, so no site may frame it.
  * - Every other served HTML document keeps `X-Frame-Options: DENY`, so
@@ -26,13 +26,13 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 /** Maximum distinct origins one server accepts framing from. */
 const MAX_FRAME_ORIGINS = 8;
 
-/** Origins allowed to frame the embed view: `GAH_GITLAB_ORIGIN`, split on
+/** Origins allowed to frame the embed view: `PARASAUR_GITLAB_ORIGIN`, split on
  * whitespace or commas. Each entry must be a bare http(s) origin — exactly
  * `http:` or `https:`, no wildcard anywhere (an entry containing `*` would
  * become an active CSP wildcard, not an exact origin), no credentials, no
  * path. Invalid entries are dropped, and with none left the route fails
  * closed. */
-export function gitLabFrameOrigins(raw: string | undefined = process.env.GAH_GITLAB_ORIGIN): string[] {
+export function gitLabFrameOrigins(raw: string | undefined = process.env.PARASAUR_GITLAB_ORIGIN): string[] {
   const valid: string[] = [];
   for (const entry of (raw ?? '').split(/[\s,]+/)) {
     if (entry.length === 0 || valid.length >= MAX_FRAME_ORIGINS) continue;
@@ -88,15 +88,15 @@ function injectedDocument(html: string, basePath: string, origins: string[]): st
 }
 
 export type EmbedViewOptions = {
-  /** Built web app root (GAH_WEB_ROOT), already resolved by the caller. */
+  /** Built web app root (PARASAUR_WEB_ROOT), already resolved by the caller. */
   webRoot: string;
   /** Configuration source; read per request so tests can flip it live. */
-  env?: { GAH_GITLAB_ORIGIN?: string };
+  env?: { PARASAUR_GITLAB_ORIGIN?: string };
 };
 
-/** `GAH_GITLAB_ORIGIN` from the injected env, or the process environment. */
+/** `PARASAUR_GITLAB_ORIGIN` from the injected env, or the process environment. */
 function configuredOrigin(options: EmbedViewOptions): string | undefined {
-  return options.env ? options.env.GAH_GITLAB_ORIGIN : process.env.GAH_GITLAB_ORIGIN;
+  return options.env ? options.env.PARASAUR_GITLAB_ORIGIN : process.env.PARASAUR_GITLAB_ORIGIN;
 }
 
 /** The API boundary: requests under it never fall through to the SPA. */

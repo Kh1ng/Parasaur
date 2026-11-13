@@ -1,5 +1,5 @@
 //! Seeds a project's existing memory and handoff docs into the memory
-//! gateway, so chat has continuity from day one (`GAH_IMPORT_REPO` at
+//! gateway, so chat has continuity from day one (`PARASAUR_IMPORT_REPO` at
 //! install). Uses /capture, not /seed: /seed writes into a disposable
 //! per-call directory that /recall never reads (issue #884).
 

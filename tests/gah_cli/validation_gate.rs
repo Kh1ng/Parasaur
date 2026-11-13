@@ -28,7 +28,7 @@ fn dispatch_refuses_on_broken_validation_gate() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_VALIDATION_CHECK_PATH", &state_path)
+        .env("PARASAUR_VALIDATION_CHECK_PATH", &state_path)
         .assert()
         .failure()
         .stderr(predicate::str::contains("VALIDATION GATE FAILED"));

@@ -47,8 +47,8 @@ fn export(
     let output = cli_support::gah_command()
         .args(["diag", "export", "--server", &url, "--out"])
         .arg(out)
-        .env("GAH_SERVER_TOKEN", "test-owner-token")
-        .env_remove("GAH_SERVER_URL")
+        .env("PARASAUR_SERVER_TOKEN", "test-owner-token")
+        .env_remove("PARASAUR_SERVER_URL")
         .output()
         .unwrap();
     (output, server.join().unwrap())

@@ -2,14 +2,16 @@ import crypto from 'node:crypto';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { authMiddleware, isTrustedLocalRequest, requireOwner, sameOriginRequest } from './authMiddleware.js';
+import { DEVICE_COOKIE, DEVICE_LIFETIME, type DeviceAccess } from './deviceAccess.js';
 
 const hash = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
 const validSecret = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/.test(value);
 
 /** A sign-in tab can approve a code, but only its initiating iframe knows the
- * verifier needed to claim it. Nothing persists; memory holds only hashes.
- * Claims consume the approval synchronously and expire after sixty seconds. */
-export function sessionHandoffRouter(now = Date.now): Router {
+ * verifier needed to claim it. Pending approvals hold only hashes and expire
+ * after sixty seconds. A claim pairs the panel with an ordinary persistent
+ * controller cookie; it never exposes or transfers the owner's credential. */
+export function sessionHandoffRouter(access: DeviceAccess, now = Date.now): Router {
   const router = Router();
   const pending = new Map<string, { verifierHash: string; origin: string; expires: number; approvedHash?: string }>();
   router.use(rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false }));
@@ -47,11 +49,18 @@ export function sessionHandoffRouter(now = Date.now): Router {
       return res.status(410).json({ message: 'Sign-in expired or belongs to another panel.' });
     }
     if (!entry.approvedHash) return res.status(202).json({ pending: true });
-    pending.delete(hash(code));
     if (!process.env.COORDINATOR_TOKEN || entry.approvedHash !== hash(process.env.COORDINATOR_TOKEN)) {
+      pending.delete(hash(code));
       return res.status(410).json({ message: 'Owner session changed. Reopen the sign-in link from the panel.' });
     }
-    res.json({ token: process.env.COORDINATOR_TOKEN });
+    try {
+      const { device, token } = access.pairApprovedDevice('GitLab panel');
+      pending.delete(hash(code));
+      res.cookie(DEVICE_COOKIE, token, { httpOnly: true, secure: req.secure, sameSite: 'strict', path: '/', maxAge: DEVICE_LIFETIME });
+      res.json({ device });
+    } catch {
+      res.status(503).json({ message: 'Cannot save this device session. Ask the owner to check paired-device storage, then retry.' });
+    }
   });
   return router;
 }

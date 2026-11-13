@@ -120,8 +120,9 @@ test('every job sits in the column its records put it in, with a reason in plain
   await expect(column('Ready')).toContainText("Next in line: starts on the loop's next pass");
   await expect(column('Waiting')).toContainText('Retry refused: saved work from an earlier attempt is still in the way');
   await expect(column('Waiting')).toContainText('attempt 3');
-  await expect(column('In review')).toContainText('Waiting for a reviewer: Claude at its job limit, Codex sign-in failed');
-  await expect(column('In review')).toContainText('built by Antigravity · Gemini 3.1 Pro (High)');
+  await expect(column('Waiting')).toContainText('Last attempt waited for provider capacity');
+  await expect(column('Waiting')).toContainText('built by Antigravity · Gemini 3.1 Pro (High)');
+  await expect(column('In review')).toContainText('Nothing here');
   await expect(column('Fixing')).toContainText('An agent is fixing what review or CI flagged');
   await expect(column('Fixing')).toContainText('Claude · opus[1m] · attempt 2 · fix 1 of 2 · working 17m');
   await expect(column('Needs you')).toContainText('Stuck: the same step repeated with no change, so it was stopped');
@@ -155,10 +156,57 @@ test('before the status snapshot loads, the navbar does not infer workers from c
   expect(agents.find((agent) => agent.backend === 'agy')?.reason).toBe('Idle');
 });
 
+test('stale-only worker observations do not advertise running or idle execution', async ({ mount, page }, testInfo) => {
+  const observed = workingNow({ ...input, status: { ...status, running_workers: status.running_workers!.map(worker => ({ ...worker, state: 'stale' })) } });
+  const component = await mount(<WorkingNowMenu {...observed} onOpenBoard={() => {}} />);
+  const chip = component.getByRole('button', { name: 'Worker activity unconfirmed', exact: true });
+  await expect(chip).toBeVisible();
+  await expect(chip.locator('.animate-pulse')).toHaveCount(0);
+  await chip.click();
+  const menu = component.getByRole('dialog');
+  await expect(menu).toContainText('#4 (fix) · stale');
+  await expect(menu).toContainText('Last activity: 2026-10-05T18:30:00Z');
+  await expect(menu).toContainText('Node: node');
+  await expect(menu).toContainText('does not prove a process stopped');
+  await expect(menu).toContainText('a visible process does not confirm job progress');
+  await expect(menu).not.toContainText('Nothing is running.');
+  await page.screenshot({ path: testInfo.outputPath('stale-worker-menu.png') });
+});
+
+test('mixed observations name and count only confirmed running work regardless of roster order', async ({ mount }) => {
+  const old = { ...status.running_workers![0], state: 'stale' as const };
+  const current = { ...old, work_id: '#8', run_id: 'current', state: 'running' as const };
+  const observed = workingNow({ ...input, status: { ...status, running_workers: [old, current] } });
+  const component = await mount(<WorkingNowMenu {...observed} onOpenBoard={() => {}} />);
+  const chip = component.getByRole('button', { name: 'Working on #8 · 1 stale: 1 job running', exact: true });
+  await expect(chip).toBeVisible();
+  await chip.click();
+  await expect(component.getByRole('dialog')).toContainText('#4 (fix) · stale');
+  await expect(component.getByRole('dialog')).toContainText('#8 (fix)');
+});
+
 test('navbar jobs and capacity use the roster despite conflicting claims and controller events', () => {
   const snapshot = { ...status, running_workers: [] };
   expect(workingNow({ ...input, status: snapshot }).jobs).toEqual([]);
   expect(buildKanban({ ...input, status: snapshot }).gates.some(gate => gate.detail === '0 of 4 busy')).toBe(true);
+  expect(buildKanban({ ...input, status: snapshot }).cards.find(card => card.workId === '#4')).toMatchObject({ working: false, column: 'waiting' });
+});
+
+test('a claim without execution evidence shows its machine and recovery guidance on desktop and mobile', async ({ mount, page }, testInfo) => {
+  const claimed = buildKanban({ ...input, controllerRuns: [], factoryAgents: [], status: { ...status, running_workers: [] } });
+  const component = await mount(<KanbanView board={claimed} now={NOW} onOpenWork={() => {}} />);
+  const waiting = component.getByRole('region', { name: /^Waiting, / });
+  await expect(waiting).toContainText('Claimed by host; execution is not confirmed');
+  await waiting.getByRole('button', { name: /Issue #4/ }).click();
+  const why = component.getByRole('region', { name: "Why isn't #4 running?" });
+  await expect(why).toContainText('Claimed by host at 2026-10-05T18:13:00Z');
+  await expect(why).toContainText('claim ownership alone does not confirm execution');
+  await expect(component.getByRole('img', { name: 'Running now' })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('claimed-work-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(why).toBeVisible();
+  expect(await why.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('claimed-work-mobile.png') });
 });
 
 test('the board has no agents panel: nothing sits beside it until a card is selected', async ({ mount }) => {
@@ -216,7 +264,7 @@ test('approved PRs follow controller lifecycle gates rather than always needing 
     status: {
       ...status,
       profile: { ...status.profile, merge_policy: 'squash' },
-      available_tickets: [], active_claims: [], blocked_work_items: [],
+      available_tickets: [], active_claims: [], running_workers: [], blocked_work_items: [],
       publishing_allow_pr: true,
       merge_requests: [mergeRequest('#8', 'READY_FOR_HUMAN', fields)],
       ...snapshot

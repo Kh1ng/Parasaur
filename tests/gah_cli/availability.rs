@@ -1,7 +1,7 @@
 use super::*;
 
 /// CLI-level smoke test for `gah availability`. Unit tests cover eligibility
-/// and scope logic; this proves the command uses GAH_AVAILABILITY_PATH and
+/// and scope logic; this proves the command uses PARASAUR_AVAILABILITY_PATH and
 /// preserves the legacy human/JSON shapes end to end.
 #[test]
 fn availability_human_and_json_views() {
@@ -18,7 +18,7 @@ fn availability_human_and_json_views() {
 
     bin()
         .args(["availability"])
-        .env("GAH_AVAILABILITY_PATH", &state_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &state_path)
         .assert()
         .success()
         .stdout(predicate::str::contains("claude"))
@@ -29,7 +29,7 @@ fn availability_human_and_json_views() {
 
     let out = bin()
         .args(["availability", "--json"])
-        .env("GAH_AVAILABILITY_PATH", &state_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &state_path)
         .assert()
         .success();
     let parsed: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
@@ -49,14 +49,14 @@ fn availability_with_no_state_file_reports_eligible_by_default() {
 
     bin()
         .args(["availability"])
-        .env("GAH_AVAILABILITY_PATH", &state_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &state_path)
         .assert()
         .success()
         .stdout(predicate::str::contains("eligible by default"));
 
     bin()
         .args(["availability", "--json"])
-        .env("GAH_AVAILABILITY_PATH", &state_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &state_path)
         .assert()
         .success()
         .stdout("[]\n");
@@ -86,13 +86,13 @@ fn availability_clear_can_target_one_backend_instance() {
             "--model",
             "shared-model",
         ])
-        .env("GAH_AVAILABILITY_PATH", &state_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &state_path)
         .assert()
         .success();
 
     let output = bin()
         .args(["availability", "--json"])
-        .env("GAH_AVAILABILITY_PATH", &state_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &state_path)
         .assert()
         .success();
     let rows: Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
@@ -155,8 +155,8 @@ fn chat_routes_record_exact_account_exhaustion_and_keep_the_sibling_available() 
             "--config-path",
         ])
         .arg(&config)
-        .env("GAH_AVAILABILITY_PATH", &availability)
-        .env("GAH_QUOTA_STORE_PATH", &quota)
+        .env("PARASAUR_AVAILABILITY_PATH", &availability)
+        .env("PARASAUR_QUOTA_STORE_PATH", &quota)
         .write_stdin("Individual quota reached. Resets in 162h54m28s.")
         .assert()
         .success();
@@ -169,8 +169,8 @@ fn chat_routes_record_exact_account_exhaustion_and_keep_the_sibling_available() 
     let output = bin()
         .args(["route", "--profile", "test", "--config-path"])
         .arg(&config)
-        .env("GAH_AVAILABILITY_PATH", &availability)
-        .env("GAH_QUOTA_STORE_PATH", &quota)
+        .env("PARASAUR_AVAILABILITY_PATH", &availability)
+        .env("PARASAUR_QUOTA_STORE_PATH", &quota)
         .assert()
         .success();
     let candidates: Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
@@ -189,7 +189,7 @@ fn chat_routes_record_exact_account_exhaustion_and_keep_the_sibling_available() 
             "--config-path",
         ])
         .arg(&config)
-        .env("GAH_AVAILABILITY_PATH", &availability)
+        .env("PARASAUR_AVAILABILITY_PATH", &availability)
         .write_stdin("request failed with code 429")
         .assert()
         .success()

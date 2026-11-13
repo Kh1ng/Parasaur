@@ -34,7 +34,7 @@ fn claims_list_filters_by_profile() {
             "--config-path",
             cfg.to_str().unwrap(),
         ])
-        .env("GAH_CLAIM_STATE_PATH", claim_state.to_str().unwrap())
+        .env("PARASAUR_CLAIM_STATE_PATH", claim_state.to_str().unwrap())
         .assert()
         .success();
 
@@ -70,8 +70,8 @@ fn claims_clear_removes_existing_claim() {
 
     bin()
         .args(["claims", "clear", "--work-id", "#436", "--profile", "real"])
-        .env("GAH_CONFIG", cfg.to_str().unwrap())
-        .env("GAH_CLAIM_STATE_PATH", claim_state.to_str().unwrap())
+        .env("PARASAUR_CONFIG", cfg.to_str().unwrap())
+        .env("PARASAUR_CLAIM_STATE_PATH", claim_state.to_str().unwrap())
         .assert()
         .success()
         .stdout(predicate::str::contains(
@@ -88,7 +88,7 @@ fn claims_clear_removes_existing_claim() {
             "--config-path",
             cfg.to_str().unwrap(),
         ])
-        .env("GAH_CLAIM_STATE_PATH", claim_state.to_str().unwrap())
+        .env("PARASAUR_CLAIM_STATE_PATH", claim_state.to_str().unwrap())
         .assert()
         .success();
 

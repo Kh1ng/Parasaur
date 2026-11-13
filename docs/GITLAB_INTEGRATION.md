@@ -13,12 +13,12 @@ repository; the epic is [#1591](https://github.com/Kh1ng/git-agent-harness/issue
 
 Set these environment variables on the central server:
 
-- `GAH_GITLAB_HOOK_SECRET`: required shared secret. Use the file hook's `PARASAUR_HOOK_SECRET` value. Never put this secret in committed configuration.
-- `GAH_GITLAB_BOT_USERNAME`: bot username. Default: `parasaur`.
-- `GAH_GITLAB_PIPELINE_REPAIR`: set `1` to enable failed-pipeline repair. Default: off.
-- `GAH_GITLAB_PANEL_URL`: required public dashboard base URL, including any path prefix. Example: `https://panel.example.com/parasaur/`.
-- `GAH_GITLAB_EVENTS_RATE_LIMIT`: positive integer requests per minute per source IP. Default: `600`, also used for invalid values. Applies before secret verification and event classification, including unsupported events and invalid secrets.
-- `GAH_GITLAB_EVENTS_STORE_PATH`: optional receipt-file path. Default: `$XDG_STATE_HOME/gah/gitlab-events.json`, or `~/.local/state/gah/gitlab-events.json`.
+- `PARASAUR_GITLAB_HOOK_SECRET`: required shared secret. Use the file hook's `PARASAUR_HOOK_SECRET` value. Never put this secret in committed configuration.
+- `PARASAUR_GITLAB_BOT_USERNAME`: bot username. Default: `parasaur`.
+- `PARASAUR_GITLAB_PIPELINE_REPAIR`: set `1` to enable failed-pipeline repair. Default: off.
+- `PARASAUR_GITLAB_PANEL_URL`: required public dashboard base URL, including any path prefix. Example: `https://panel.example.com/parasaur/`.
+- `PARASAUR_GITLAB_EVENTS_RATE_LIMIT`: positive integer requests per minute per source IP. Default: `600`, also used for invalid values. Applies before secret verification and event classification, including unsupported events and invalid secrets.
+- `PARASAUR_GITLAB_EVENTS_STORE_PATH`: optional receipt-file path. Default: `$XDG_STATE_HOME/gah/gitlab-events.json`, or `~/.local/state/gah/gitlab-events.json`.
 
 Configure a GitLab profile with `provider`, `repo`, `provider_api_base`, and `provider_project_id`.
 Authenticate `glab` as the configured bot with the existing provider credentials.
@@ -198,7 +198,7 @@ path>&kind=<issue|merge_request|file|tree|pipeline|job>&iid=<number>&ref=<ref>&p
 ### Framing policy
 
 - `/embed` is frameable **only** by the origins configured in
-  `GAH_GITLAB_ORIGIN`: the response carries
+  `PARASAUR_GITLAB_ORIGIN`: the response carries
   `Content-Security-Policy: frame-ancestors <origins>`. The value is a
   space- or comma-separated list of exact http(s) origins
   (`https://gitlab.example.com`). Entries containing a wildcard (`*`), a
@@ -210,7 +210,7 @@ path>&kind=<issue|merge_request|file|tree|pipeline|job>&iid=<number>&ref=<ref>&p
   carries `X-Frame-Options: DENY`; the rest of the app stays
   non-frameable.
 - The framing headers are emitted by the Parasaur server, so the server
-  install must serve the web app itself (`GAH_WEB_ROOT` set, the default
+  install must serve the web app itself (`PARASAUR_WEB_ROOT` set, the default
   service setup). If nginx serves the static files directly, it must add
   the same headers itself.
 
@@ -250,7 +250,7 @@ restart; already paired device sessions are unaffected.
 ### postMessage API
 
 All messages are validated against `event.origin` matching
-`GAH_GITLAB_ORIGIN`; everything else is ignored. Outbound messages are
+`PARASAUR_GITLAB_ORIGIN`; everything else is ignored. Outbound messages are
 addressed to the configured origins only, never `*`.
 
 | Direction | Message |
@@ -294,12 +294,12 @@ location /parasaur/ {
 }
 ```
 
-- `GAH_WS_ALLOWED_ORIGINS=https://gitlab.example` must be set on the
+- `PARASAUR_WS_ALLOWED_ORIGINS=https://gitlab.example` must be set on the
   server: the WebSocket origin check requires public hostnames to be
   allow-listed (`docs/WEBSOCKET_AUTH_532.md`).
-- Set on the server: `GAH_GITLAB_ORIGIN=https://gitlab.example`
-  (framing + postMessage), and `GAH_WEB_ROOT` to the built web app.
-- `GAH_GITLAB_PANEL_URL` (from #1592) should name the same public base
+- Set on the server: `PARASAUR_GITLAB_ORIGIN=https://gitlab.example`
+  (framing + postMessage), and `PARASAUR_WEB_ROOT` to the built web app.
+- `PARASAUR_GITLAB_PANEL_URL` (from #1592) should name the same public base
   URL, `https://gitlab.example/parasaur/`, for run links.
 
 ## Panel identity hook for enterprise sign-in
@@ -318,7 +318,7 @@ The companion contract currently defines only the nginx gate and cookie strippin
 The gate admits signed-in GitLab users to `/parasaur/` and removes the entire `Cookie` header upstream.
 It does not currently issue a signed identity assertion.
 `X-Parasaur-Identity-Assertion` is the public-core extension contract for the future enterprise module.
-Neither the gate, `GAH_GITLAB_ORIGIN`, nor a forwarded username grants identity by itself.
+Neither the gate, `PARASAUR_GITLAB_ORIGIN`, nor a forwarded username grants identity by itself.
 
 Register the enterprise provider through `createServer({ deviceAccess, gitLabIdentityProvider })` before the server starts.
 Registration is local to that central server, never a request parameter or environment-selected module.
@@ -488,7 +488,7 @@ API references: [Discussions](https://docs.gitlab.com/api/discussions/) and [Mer
 This section supersedes the receipt-only storage and manual-replay behavior
 described under "Redelivery and limits" above.
 
-`GAH_GITLAB_EVENTS_STORE_PATH` now holds receipts, pending deliveries, and
+`PARASAUR_GITLAB_EVENTS_STORE_PATH` now holds receipts, pending deliveries, and
 dead letters together. The default remains
 `$XDG_STATE_HOME/gah/gitlab-events.json`, or
 `~/.local/state/gah/gitlab-events.json` when `XDG_STATE_HOME` is unset.
@@ -508,8 +508,8 @@ can own this file. Keep the file on persistent storage.
 
 Pending entries retain the accepted JSON payload, the optional
 `X-Gitlab-Event-UUID`, the receipt hash, and the acceptance-time
-`GAH_GITLAB_BOT_USERNAME`, `GAH_GITLAB_PIPELINE_REPAIR`, and
-`GAH_GITLAB_PANEL_URL` settings. The server never stores hook-secret headers.
+`PARASAUR_GITLAB_BOT_USERNAME`, `PARASAUR_GITLAB_PIPELINE_REPAIR`, and
+`PARASAUR_GITLAB_PANEL_URL` settings. The server never stores hook-secret headers.
 The existing JSON body limit remains 100 KiB. The saved JSON payload also
 has a 100 KiB limit. If serialization exceeds this limit, acceptance returns
 `503 gitlab_event_store_unavailable` before it reserves a receipt.
@@ -553,7 +553,7 @@ using `createServer`, call `app.locals.gitLabEventsQueue.start()` after
 initializing fleet dispatch and `.stop()` during shutdown. The standard
 `bin.ts` does both. Worker nodes have no GitLab event queue.
 
-`GAH_GITLAB_EVENTS_QUEUE_CAPACITY` sets the pending limit, with a default
+`PARASAUR_GITLAB_EVENTS_QUEUE_CAPACITY` sets the pending limit, with a default
 of 256. It accepts a positive safe integer. Invalid values use the default.
 Dead letters have a separate limit of 64 and do not consume pending capacity.
 Nothing in either list expires or gets evicted. If the dead-letter list is
@@ -566,7 +566,7 @@ Without an outstanding lease or retry, the delay is 30 seconds.
 The existing 10,000-receipt bound still returns
 `503 gitlab_event_store_full`. Unsupported events still return `204` and
 invalid hook credentials still return `401` before storage access. The
-rate limiter and `GAH_GITLAB_EVENTS_RATE_LIMIT` behavior are unchanged.
+rate limiter and `PARASAUR_GITLAB_EVENTS_RATE_LIMIT` behavior are unchanged.
 
 Dispatch failures retry after at least 30 seconds, on the background
 worker's 30-second tick or a new acceptance. Attempt counts and retry times
@@ -607,10 +607,10 @@ For example, with an owner token already in `COORDINATOR_TOKEN`:
 
 ```sh
 curl -fsS -H "Authorization: Bearer $COORDINATOR_TOKEN" \
-  "$GAH_SERVER_URL/api/integrations/gitlab/queue"
+  "$PARASAUR_SERVER_URL/api/integrations/gitlab/queue"
 curl -fsS -X POST -H "Authorization: Bearer $COORDINATOR_TOKEN" \
   -H "Idempotency-Key: $(uuidgen)" \
-  "$GAH_SERVER_URL/api/integrations/gitlab/queue/dead-letters/$EVENT_ID/retry"
+  "$PARASAUR_SERVER_URL/api/integrations/gitlab/queue/dead-letters/$EVENT_ID/retry"
 # To discard instead, use a new idempotency key and replace /retry with /discard.
 ```
 

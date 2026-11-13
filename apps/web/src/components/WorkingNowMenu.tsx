@@ -10,7 +10,7 @@ const STATE_LABEL: Record<KanbanAgent['state'], string> = { working: 'Working', 
  * now. Hovering or clicking it lists every running job with its agent, and
  * each agent with what it is doing or why it is idle.
  */
-export function WorkingNowMenu({ jobs, agents, onOpenBoard }: { jobs: WorkingJob[]; agents: KanbanAgent[]; onOpenBoard: () => void }) {
+export function WorkingNowMenu({ jobs, agents, unavailable = false, onOpenBoard }: { jobs: WorkingJob[]; agents: KanbanAgent[]; unavailable?: boolean; onOpenBoard: () => void }) {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -27,29 +27,36 @@ export function WorkingNowMenu({ jobs, agents, onOpenBoard }: { jobs: WorkingJob
     return () => { window.clearInterval(timer); document.removeEventListener('mousedown', close); document.removeEventListener('keydown', close); };
   }, [open]);
 
-  if (jobs.length === 0 && agents.length === 0) return null;
-  const first = jobs[0];
-  const summary = !first ? 'Idle' : `Working on ${first.workId ?? first.label}${jobs.length > 1 ? ` +${jobs.length - 1}` : ''}`;
+  if (!unavailable && jobs.length === 0 && agents.length === 0) return null;
+  const running = jobs.filter(job => job.state === 'running');
+  const stale = jobs.length - running.length;
+  const first = running[0];
+  const onlyStale = !first && stale > 0;
+  const summary = unavailable ? 'Factory activity unavailable' : onlyStale ? 'Worker activity unconfirmed' : !first ? 'Idle'
+    : `Working on ${first.workId ?? first.label}${running.length > 1 ? ` +${running.length - 1}` : ''}${stale ? ` · ${stale} stale` : ''}`;
   return (
     <div className="relative hidden items-center sm:flex" ref={menu} onMouseLeave={() => { if (!pinned) setOpen(false); }}>
       <button type="button" aria-expanded={open} aria-haspopup="true"
-        aria-label={first ? `${summary}: ${jobs.length} ${jobs.length === 1 ? 'job' : 'jobs'} running` : 'No job is running'}
+        aria-label={unavailable || onlyStale ? summary : first ? `${summary}: ${running.length} ${running.length === 1 ? 'job' : 'jobs'} running` : 'No job is running'}
         onMouseEnter={() => { if (!pinned) { setOpen(true); setNow(Date.now()); } }}
         onClick={() => { setPinned(!open || !pinned); setOpen(true); setNow(Date.now()); }}
         className={`flex h-9 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs hover:bg-overlay/5 ${open ? 'bg-overlay/5' : ''} ${first ? 'text-primary' : 'text-muted'}`}>
-        <span className={`h-2 w-2 shrink-0 rounded-full ${first ? 'animate-pulse bg-good' : 'bg-muted'}`} aria-hidden="true" />
+        <span className={`h-2 w-2 shrink-0 rounded-full ${unavailable || onlyStale ? 'bg-warning' : first ? 'animate-pulse bg-good' : 'bg-muted'}`} aria-hidden="true" />
         {summary}
       </button>
       {open && (
         <div className="absolute right-0 top-full z-40 mt-1 w-80 max-w-[calc(100vw-1.5rem)] rounded-lg border border-subtle bg-raised shadow-xl" role="dialog" aria-label="What the factory is doing now">
           <div className="px-3 py-2">
-            <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted">Running now</h2>
-            {jobs.length === 0 && <p className="mt-1 text-xs text-secondary">Nothing is running.</p>}
+            <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted">{unavailable || onlyStale ? 'Last recorded jobs' : 'Running now'}</h2>
+            {unavailable && <p className="mt-1 text-xs text-warning">Factory state is unavailable. Open the board to check; current execution is unconfirmed.</p>}
+            {!unavailable && stale > 0 && <p className="mt-1 text-xs text-warning">{stale} {stale === 1 ? 'worker has' : 'workers have'} stale activity. Execution is unconfirmed; this does not prove a process stopped. Open the board to inspect recovery.</p>}
+            {jobs.length === 0 && <p className="mt-1 text-xs text-secondary">{unavailable ? 'No retained job observations.' : 'Nothing is running.'}</p>}
             <ul className="mt-1 space-y-1.5">
               {jobs.map((job) => (
                 <li key={job.runId} className="text-xs">
                   <span className="font-medium text-primary">{job.label}</span>
-                  <span className="block text-[11px] text-muted">{job.agent ?? 'Agent not visible yet'} · {formatDuration(Math.max(0, (now - Date.parse(job.since)) / 1000))}</span>
+                  <span className="block text-[11px] text-muted">{job.agent ?? 'Agent not visible yet'} · {unavailable || job.state === 'stale' ? `Last activity: ${job.lastActivity}` : formatDuration(Math.max(0, (now - Date.parse(job.since)) / 1000))}</span>
+                  {job.nodeId && <span className="block break-words text-[11px] text-muted">Node: {job.nodeId}</span>}
                 </li>
               ))}
             </ul>
@@ -57,6 +64,7 @@ export function WorkingNowMenu({ jobs, agents, onOpenBoard }: { jobs: WorkingJob
           {agents.length > 0 && (
             <div className="border-t border-subtle px-3 py-2">
               <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted">Agents</h2>
+              {(unavailable || stale > 0) && <p className="mt-1 text-xs text-secondary">Agent processes are observed separately; a visible process does not confirm job progress.</p>}
               <ul className="mt-1 space-y-1.5">
                 {agents.map((agent) => (
                   <li key={agent.id} className="flex items-start gap-2 text-xs">

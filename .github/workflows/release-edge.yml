@@ -139,8 +139,8 @@ jobs:
           npm ci
           npm run build:server
           npm run build:web
-      - name: Test the bundle script
-        run: node --test scripts/build-release-bundle.test.mjs
+      - name: Test release runtime and bundle scripts
+        run: node --test scripts/build-release-bundle.test.mjs scripts/link-release-runtime.test.mjs scripts/clean-server-runtime.test.mjs
       - name: Archive the release bundle
         run: bash scripts/build-release-bundle.sh gah-server-bundle.tar.gz
       - uses: actions/upload-artifact@v4

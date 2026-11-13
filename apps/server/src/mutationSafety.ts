@@ -4,6 +4,8 @@ import { closeSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, rea
 import { join, resolve } from 'node:path';
 
 type Operation =
+  | 'compute_output.discard'
+  | 'compute_journal.cleanup'
   | 'gitlab.dead_letter.retry'
   | 'gitlab.dead_letter.discard'
   | 'agents.update'
@@ -20,6 +22,7 @@ type Operation =
   | 'external_approval.revoke'
   | 'backend_instance.set_enabled'
   | 'backend_instance.configure'
+  | 'backend_instance.authenticate'
   | 'git.commit'
   | 'git.publish'
   | 'git.update'
@@ -54,7 +57,7 @@ function canonical(value: unknown): string {
  * Duplicate requests return 409: callers must inspect current state, never
  * silently retry with a new key. No response bodies or credentials are stored.
  */
-export function mutationSafety(nodeId: string, directory = process.env.GAH_MUTATION_STORE_PATH ?? resolve('config/mutations')): (operation: Operation) => RequestHandler {
+export function mutationSafety(nodeId: string, directory = process.env.PARASAUR_MUTATION_STORE_PATH ?? resolve('config/mutations')): (operation: Operation) => RequestHandler {
   function syncDirectory(): void {
     const folder = openSync(directory, 'r');
     try { fsyncSync(folder); } finally { closeSync(folder); }
@@ -92,6 +95,8 @@ export function mutationSafety(nodeId: string, directory = process.env.GAH_MUTAT
     if ((
       operation === 'agents.update' ||
       operation === 'ledger.clear_attempts' ||
+      operation === 'compute_output.discard' ||
+      operation === 'compute_journal.cleanup' ||
       operation.startsWith('gitlab.dead_letter.') ||
       operation.startsWith('route_approval.') ||
       operation.startsWith('external_approval.') ||

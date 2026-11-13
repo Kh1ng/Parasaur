@@ -147,7 +147,7 @@ source "$worker_env" >/dev/null 2>&1
 python3 - <<'PY'
 import json, os, pathlib, subprocess
 identity = json.loads((pathlib.Path.home() / '.local/share/gah/worker/identity.json').read_text())
-profiles = json.loads(subprocess.check_output([os.environ['GAH_BINARY'], 'profile', 'list', '--json']))
+profiles = json.loads(subprocess.check_output([os.environ['PARASAUR_BINARY'], 'profile', 'list', '--json']))
 print(json.dumps({'node_id': identity['node_id'], 'profiles': profiles}))
 PY
 "#;

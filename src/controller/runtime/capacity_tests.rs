@@ -76,6 +76,7 @@ fn empty_snapshot() -> crate::status::StatusSnapshot {
         open_managed_mr_count: 0,
         inflight_implementation_count: 0,
         implementation_intake_paused: false,
+        spend_budget: None,
         backend_configured: std::collections::HashMap::new(),
         backend_instances: vec![],
         export_health: Default::default(),
@@ -164,6 +165,7 @@ fn capacity_event(work_id: &str, details: &str) -> crate::events::ControllerEven
         details: details.into(),
         remediation_plan: None,
         skipped: Vec::new(),
+        central_claim: None,
     }
 }
 

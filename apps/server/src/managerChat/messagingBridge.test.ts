@@ -182,16 +182,16 @@ test('HTTP bridge requires the Telegram secret and owner mutation receipts for p
     transport: fake,
     sendTurn: async () => { turns++; return 'round trip'; }
   });
-  const priorIdentity = process.env.GAH_COORDINATOR_IDENTITY_PATH;
-  const priorMutations = process.env.GAH_MUTATION_STORE_PATH;
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(directory, 'identity.json');
-  process.env.GAH_MUTATION_STORE_PATH = join(directory, 'mutations');
+  const priorIdentity = process.env.PARASAUR_COORDINATOR_IDENTITY_PATH;
+  const priorMutations = process.env.PARASAUR_MUTATION_STORE_PATH;
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(directory, 'identity.json');
+  process.env.PARASAUR_MUTATION_STORE_PATH = join(directory, 'mutations');
   resetCachedCoordinatorIdentity();
   const server = http.createServer(createServer({ messagingBridge: bridge, registryService: new RegistryService(null) }));
-  if (priorIdentity === undefined) delete process.env.GAH_COORDINATOR_IDENTITY_PATH;
-  else process.env.GAH_COORDINATOR_IDENTITY_PATH = priorIdentity;
-  if (priorMutations === undefined) delete process.env.GAH_MUTATION_STORE_PATH;
-  else process.env.GAH_MUTATION_STORE_PATH = priorMutations;
+  if (priorIdentity === undefined) delete process.env.PARASAUR_COORDINATOR_IDENTITY_PATH;
+  else process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = priorIdentity;
+  if (priorMutations === undefined) delete process.env.PARASAUR_MUTATION_STORE_PATH;
+  else process.env.PARASAUR_MUTATION_STORE_PATH = priorMutations;
   resetCachedCoordinatorIdentity();
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

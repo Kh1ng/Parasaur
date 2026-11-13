@@ -50,13 +50,13 @@ async function exercise(real: boolean) {
     assert.equal(granted.find(row => row.backend_instance === 'paid-a')?.approved, true);
     assert.equal(granted.find(row => row.backend_instance === 'paid-b')?.approved, false);
     if (real) {
-      const configPath = process.env.GAH_CONFIG_PATH!;
+      const configPath = process.env.PARASAUR_CONFIG_PATH!;
       writeFileSync(configPath, readFileSync(configPath, 'utf8').replace(/\n\[profiles.real.routing.backend_instances.paid-a\][\s\S]*?(?=\n\[|$)/, ''));
     }
     assert.equal((await post('revoke', body, 'owner-paid-revoke-822')).status, 200);
     assert.equal((await list()).every(row => !row.approved), true);
     if (real) {
-      const ledger = readFileSync(process.env.GAH_LEDGER_PATH!, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const ledger = readFileSync(process.env.PARASAUR_LEDGER_PATH!, 'utf8').trim().split('\n').map(line => JSON.parse(line));
       const grants = ledger.filter(row => row.mode === 'paid_route_approval_grant');
       const revokes = ledger.filter(row => row.mode === 'paid_route_approval_revoke');
       assert.equal(grants.length, 1); assert.equal(revokes.length, 1);
@@ -73,4 +73,4 @@ async function exercise(real: boolean) {
 }
 
 test('paid-route HTTP controls enforce exact owner decisions and durable replay protection', () => exercise(false));
-test('paid-route HTTP controls change a real CLI ledger fixture', { skip: !process.env.GAH_REAL_PAID_ROUTE_TEST }, () => exercise(true));
+test('paid-route HTTP controls change a real CLI ledger fixture', { skip: !process.env.PARASAUR_REAL_PAID_ROUTE_TEST }, () => exercise(true));

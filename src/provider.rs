@@ -18,7 +18,7 @@ pub use publication::{
 };
 pub(crate) use relations::{link_provider_child, link_provider_dependency};
 
-const GAH_REVIEW_STATE_LABELS: [&str; 5] = [
+const PARASAUR_REVIEW_STATE_LABELS: [&str; 5] = [
     "gah-needs-fix",
     "gah-ready-for-human",
     "gah-human-review",
@@ -110,6 +110,45 @@ fn gitlab_hostname(api_base: &str) -> Result<&str> {
         anyhow::bail!("invalid GitLab provider_api_base: missing hostname");
     }
     Ok(hostname)
+}
+
+/// The token git pushes with. A profile PAT wins. Without one, a GitLab
+/// profile pushes with the `glab` login that doctor verifies, so one login
+/// serves API calls and pushes alike. Empty when neither exists.
+pub fn push_token(profile: &Profile) -> String {
+    let pat = profile.pat();
+    if !pat.is_empty() || profile.provider_cli() != Some("glab") {
+        return pat;
+    }
+    let Some(host) = profile
+        .provider_api_base
+        .as_deref()
+        .and_then(|base| gitlab_hostname(base.trim()).ok())
+    else {
+        return pat;
+    };
+    provider_command("glab")
+        .args(["config", "get", "token", "--host", host])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Why a push for `profile` would be refused, or `None` when the server
+/// accepts one. API calls and pushes authenticate separately, so a profile
+/// can read issues and still fail at the very end of a run.
+pub fn push_refusal(profile: &Profile) -> Option<String> {
+    let url = profile.push_url().ok()?;
+    let repo = std::path::Path::new(&profile.local_path);
+    let error = crate::worktree::probe_push_access(repo, &url, &push_token(profile)).err()?;
+    Some(format!(
+        "a push would be refused ({}). Set {} in the profile's env file, or sign in with `{} auth login`",
+        format!("{error:#}").lines().next().unwrap_or_default(),
+        profile.pat_env_names().join(" or "),
+        profile.provider_cli().unwrap_or("the provider CLI"),
+    ))
 }
 
 pub(crate) fn gitlab_api(
@@ -495,17 +534,19 @@ pub fn set_review_state_labels(profile: &Profile, branch: &str, labels: &[&str])
             "delivery_mode=handoff: set_review_state_labels is disallowed in handoff mode"
         );
     }
-    match ProviderKind::parse(&profile.provider) {
-        Ok(ProviderKind::Gitlab) => {
-            let mr = gitlab_find_mr_by_branch(profile, branch)?;
-            gitlab_set_review_state_labels(profile, &mr.id, labels)
+    crate::dispatch::native_guard::publication(profile, || {
+        match ProviderKind::parse(&profile.provider) {
+            Ok(ProviderKind::Gitlab) => {
+                let mr = gitlab_find_mr_by_branch(profile, branch)?;
+                gitlab_set_review_state_labels(profile, &mr.id, labels)
+            }
+            Ok(ProviderKind::Github) => {
+                let pr_number = github_find_pr_number_by_branch(profile, branch)?;
+                github_set_review_state_labels(profile, &pr_number, labels)
+            }
+            Err(_) => anyhow::bail!("unsupported provider: {}", profile.provider),
         }
-        Ok(ProviderKind::Github) => {
-            let pr_number = github_find_pr_number_by_branch(profile, branch)?;
-            github_set_review_state_labels(profile, &pr_number, labels)
-        }
-        Err(_) => anyhow::bail!("unsupported provider: {}", profile.provider),
-    }
+    })
 }
 
 pub fn find_review_target_by_branch(profile: &Profile, branch: &str) -> Result<ReviewTarget> {
@@ -532,7 +573,7 @@ pub fn find_review_target_by_mr(profile: &Profile, mr: &str) -> Result<ReviewTar
 fn gitlab_set_review_state_labels(profile: &Profile, iid: &str, labels: &[&str]) -> Result<()> {
     let project_id = gitlab_project_id(profile)?;
     let endpoint = format!("projects/{project_id}/merge_requests/{iid}");
-    let remove_labels = GAH_REVIEW_STATE_LABELS
+    let remove_labels = PARASAUR_REVIEW_STATE_LABELS
         .iter()
         .copied()
         .filter(|candidate| !labels.contains(candidate))
@@ -580,7 +621,7 @@ fn github_set_review_state_labels(
         .filter(|label| !label.is_empty())
         .collect::<std::collections::HashSet<_>>();
 
-    for stale in GAH_REVIEW_STATE_LABELS
+    for stale in PARASAUR_REVIEW_STATE_LABELS
         .iter()
         .copied()
         .filter(|label| current.contains(label) && !labels.contains(label))
@@ -778,15 +819,17 @@ pub fn github_close_issue(profile: &Profile, issue_number: &str) -> Result<()> {
     if profile.delivery_mode == crate::config::DeliveryMode::Handoff {
         anyhow::bail!("delivery_mode=handoff: github_close_issue is disallowed in handoff mode");
     }
-    let out = provider_command("gh")
-        .args(["issue", "close", issue_number, "--repo", &profile.repo])
-        .output()
-        .context("gh issue close")?;
+    crate::dispatch::native_guard::publication(profile, || {
+        let out = provider_command("gh")
+            .args(["issue", "close", issue_number, "--repo", &profile.repo])
+            .output()
+            .context("gh issue close")?;
 
-    if !out.status.success() {
-        anyhow::bail!("gh issue close failed: {}", redacted_stderr(&out));
-    }
-    Ok(())
+        if !out.status.success() {
+            anyhow::bail!("gh issue close failed: {}", redacted_stderr(&out));
+        }
+        Ok(())
+    })
 }
 
 /// Close a GitLab issue by number.
@@ -794,11 +837,13 @@ pub fn gitlab_close_issue(profile: &Profile, issue_number: &str) -> Result<()> {
     if profile.delivery_mode == crate::config::DeliveryMode::Handoff {
         anyhow::bail!("delivery_mode=handoff: gitlab_close_issue is disallowed in handoff mode");
     }
-    let project_id = gitlab_project_id(profile)?;
-    let endpoint = format!("projects/{project_id}/issues/{issue_number}");
-    gitlab_api(profile, &endpoint, "PUT", &[("state_event", "close")])?;
+    crate::dispatch::native_guard::publication(profile, || {
+        let project_id = gitlab_project_id(profile)?;
+        let endpoint = format!("projects/{project_id}/issues/{issue_number}");
+        gitlab_api(profile, &endpoint, "PUT", &[("state_event", "close")])?;
 
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Get the state of a GitHub issue.

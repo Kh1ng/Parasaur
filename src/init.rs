@@ -11,6 +11,9 @@ pub struct InitArgs {
     pub default_target_branch: String,
     pub provider_api_base: Option<String>,
     pub provider_project_id: Option<String>,
+    /// Issue authors the new profile trusts for intake. A GitLab profile
+    /// trusts nobody without this list.
+    pub trusted_issue_human_authors: Vec<String>,
     pub artifact_root: Option<String>,
     pub worktree_base: Option<String>,
     pub oh_profile: Option<String>,
@@ -112,13 +115,26 @@ default_target_branch = \"{}\"\n",
         out.push_str(&format!("oh_profile = \"{}\"\n", oh_profile));
     }
     out.push_str("validation_commands = []\n");
+    if !args.trusted_issue_human_authors.is_empty() {
+        // TOML basic strings and JSON strings quote a username the same way.
+        let authors: Vec<String> = args
+            .trusted_issue_human_authors
+            .iter()
+            .map(|author| serde_json::Value::from(author.as_str()).to_string())
+            .collect();
+        out.push_str(&format!(
+            "\n[profiles.{}.publishing]\ntrusted_issue_human_authors = [{}]\n",
+            args.profile,
+            authors.join(", ")
+        ));
+    }
     out
 }
 
 fn print_secret_hint(provider: &str) {
     match crate::provider_kind::ProviderKind::parse(provider) {
         Ok(crate::provider_kind::ProviderKind::Gitlab) => {
-            println!("Set a token in GITLAB_PAT or GITLAB_PAT2 before dispatch.")
+            println!("Parasaur reads issues and pushes with your `glab` login. Posting merge request reviews also needs a bot token in GITLAB_PAT or GITLAB_PAT2.")
         }
         Ok(crate::provider_kind::ProviderKind::Github) => {
             println!("Set a token in GITHUB_TOKEN or GH_TOKEN before dispatch.")
@@ -234,6 +250,7 @@ mod tests {
             default_target_branch: "main".into(),
             provider_api_base: Some("https://gitlab.example.com/api/v4".into()),
             provider_project_id: Some("42".into()),
+            trusted_issue_human_authors: vec!["maintainer".into()],
             artifact_root: None,
             worktree_base: None,
             oh_profile: Some("cloud".into()),
@@ -241,6 +258,11 @@ mod tests {
             print: true,
         };
         let block = render_profile(&args, "/tmp/artifacts");
+        let parsed: toml::Value = toml::from_str(&block).unwrap();
+        assert_eq!(
+            parsed["profiles"]["sample"]["publishing"]["trusted_issue_human_authors"][0].as_str(),
+            Some("maintainer")
+        );
         assert!(block.contains("provider_api_base = \"https://gitlab.example.com/api/v4\""));
         assert!(block.contains("provider_project_id = \"42\""));
         assert!(block.contains("oh_profile = \"cloud\""));

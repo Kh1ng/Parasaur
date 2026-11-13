@@ -1,6 +1,7 @@
 mod approvals;
 mod dispatch_notify;
 mod entry;
+pub(crate) mod execution_usage;
 pub mod skills;
 mod usage_unknown;
 pub use self::usage_unknown::UsageUnknownReason;
@@ -8,6 +9,7 @@ mod jsonl;
 mod locking;
 mod paid_route_notify;
 mod paid_routes;
+pub mod remote_dispatch;
 pub use paid_routes::{paid_route_approvals_from_entries, PaidRouteApproval};
 
 pub(crate) use paid_route_notify::notify_paid_route_skips;
@@ -69,3 +71,10 @@ pub use self::summary::{is_strong_model, usage_summary_for_backend, BackendUsage
 
 #[cfg(test)]
 pub(crate) mod test_util;
+
+pub(crate) use jsonl::{read_matching_entries, visit_entries};
+
+mod refusals;
+pub use refusals::append_unless_repeated_refusal;
+mod review_attribution;
+pub use review_attribution::attribute_review_verdict;

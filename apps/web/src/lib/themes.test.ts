@@ -4,7 +4,7 @@ import { THEMES } from './themes.js';
 
 // A token a theme block leaves out silently falls back to Dark's value (the
 // `:root` block), and the contrast test would then pass on Dark's numbers.
-const css = readFileSync(join(__dirname, '..', 'index.css'), 'utf8');
+const css = readFileSync(join(__dirname, '..', 'index.css'), 'utf8').replace(/\r\n/g, '\n');
 
 function themeBlock(id: string): string | undefined {
   const selector = id === 'dark' ? ":root,\n[data-theme='dark']" : `[data-theme='${id}']`;

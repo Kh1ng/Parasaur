@@ -1,8 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const port = process.env.GAH_WEB_TEST_PORT ?? '3000';
+const port = process.env.PARASAUR_WEB_TEST_PORT ?? '3000';
 const baseURL = `http://localhost:${port}`;
-const mockPort = process.env.GAH_MOCK_TEST_PORT ?? '3774';
+const mockPort = process.env.PARASAUR_MOCK_TEST_PORT ?? '3774';
+// Fixture API requests must reach the same server as the browser's proxy,
+// including when occupied local ports require a different test port.
+process.env.PARASAUR_MOCK_BASE_URL = `http://127.0.0.1:${mockPort}`;
 
 /**
  * Hermetic Playwright setup (issue #636). Two webServers:
@@ -12,7 +15,7 @@ const mockPort = process.env.GAH_MOCK_TEST_PORT ?? '3774';
  *    state in memory. It imports no provider/worktree/production-state code.
  *    Port 3774 (not 3773) so a real control plane / t3 server on 3773 never
  *    leaks into the test.
- * 2. The Vite dev server on GAH_WEB_TEST_PORT (default 3000), whose /api +
+ * 2. The Vite dev server on PARASAUR_WEB_TEST_PORT (default 3000), whose /api +
  *    /ws proxies target :3774.
  *
  * This is what makes `npm run e2e --workspace=apps/web` pass on a machine

@@ -6,7 +6,7 @@ function option(name: string): string | undefined {
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
-const scenarioValue = option('--scenario') ?? process.env.GAH_MOCK_SCENARIO ?? 'normal';
+const scenarioValue = option('--scenario') ?? process.env.PARASAUR_MOCK_SCENARIO ?? 'normal';
 if (!isMockScenarioName(scenarioValue)) {
   console.error(`Unknown mock scenario: ${scenarioValue}`);
   process.exit(1);

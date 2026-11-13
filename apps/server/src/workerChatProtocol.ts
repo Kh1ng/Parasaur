@@ -70,6 +70,7 @@ type WorkerChatReply = import('./gahCli.js').SubscriptionRoute[] | import('./gah
   | HelperTaskResult
   | { branch: string; commit: string }
   | { success: true }
+  | { accounts: import('@git-agent-harness/contracts').ChatAccountInfo[] }
   | { version: string | null };
 const timestamp = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 const optionalString = (value: unknown): value is string | undefined => value === undefined || typeof value === 'string';
@@ -78,6 +79,22 @@ const optionalString = (value: unknown): value is string | undefined => value ==
  * Project only the action's response fields before central stores or renders them. */
 export function parseWorkerChatReply(value: unknown, request: Record<string, unknown>): WorkerChatReply {
   const invalid = () => new Error('Worker returned an invalid chat response.');
+  if (request.action === 'accounts') {
+    if (!object(value) || !Array.isArray(value.accounts) || value.accounts.length > 128) throw invalid();
+    const seen = new Set<string>();
+    const accounts = value.accounts.map(account => {
+      if (!object(account) || typeof account.instance !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(account.instance)
+        || seen.has(account.instance) || account.backend !== request.backend
+        || typeof account.label !== 'string' || !account.label || account.label.length > 128 || /[\x00-\x1f\x7f]/.test(account.label)
+        || typeof account.enabled !== 'boolean'
+        || !(account.executableReady === null || typeof account.executableReady === 'boolean')
+        || !(account.authReady === null || typeof account.authReady === 'boolean')) throw invalid();
+      seen.add(account.instance);
+      return { instance: account.instance, backend: account.backend as string, label: account.label,
+        enabled: account.enabled, executableReady: account.executableReady, authReady: account.authReady };
+    });
+    return { accounts };
+  }
   if (request.action === 'models' && request.catalogVersionOnly === true && object(value) && 'version' in value) {
     if (!nullableString(value.version) || (typeof value.version === 'string' && value.version.length > 256)) throw invalid();
     return { version: value.version };

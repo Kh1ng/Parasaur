@@ -37,13 +37,13 @@ pub(in crate::dispatch) fn profile_env_file(profile: &Profile, prod: bool) -> &s
     file.as_deref().unwrap_or("")
 }
 
-/// Keys a profile env file may not set. `GAH_ENFORCE_JOB_FILE` carries the
+/// Keys a profile env file may not set. `PARASAUR_ENFORCE_JOB_FILE` carries the
 /// `gah dispatch --enforce-job-file` opt-in, which decides whether commands
 /// from a job file are executed (issue #1474): only that flag may set it, so
 /// an env file can neither switch enforcement on for every direct dispatch
 /// nor silently switch the flag off.
 fn is_reserved(key: &str) -> bool {
-    key == "GAH_ENFORCE_JOB_FILE"
+    key == "PARASAUR_ENFORCE_JOB_FILE"
 }
 
 #[cfg(test)]
@@ -57,22 +57,22 @@ mod tests {
         let env_file = tmp.path().join("profile.env");
         std::fs::write(
             &env_file,
-            "GAH_ENFORCE_JOB_FILE=1\nGAH_TEST_1474_CONTROL=exported\n",
+            "PARASAUR_ENFORCE_JOB_FILE=1\nPARASAUR_TEST_1474_CONTROL=exported\n",
         )
         .unwrap();
         let mut profile = crate::dispatch::test_util::profile(tmp.path());
         profile.env_file = Some(env_file.to_string_lossy().into_owned());
-        let before = std::env::var("GAH_ENFORCE_JOB_FILE").ok();
-        std::env::remove_var("GAH_TEST_1474_CONTROL");
+        let before = std::env::var("PARASAUR_ENFORCE_JOB_FILE").ok();
+        std::env::remove_var("PARASAUR_TEST_1474_CONTROL");
 
         export_profile_env(&profile, false);
 
-        assert_eq!(std::env::var("GAH_ENFORCE_JOB_FILE").ok(), before);
+        assert_eq!(std::env::var("PARASAUR_ENFORCE_JOB_FILE").ok(), before);
         assert_eq!(
-            std::env::var("GAH_TEST_1474_CONTROL").as_deref(),
+            std::env::var("PARASAUR_TEST_1474_CONTROL").as_deref(),
             Ok("exported"),
             "ordinary keys are still exported"
         );
-        std::env::remove_var("GAH_TEST_1474_CONTROL");
+        std::env::remove_var("PARASAUR_TEST_1474_CONTROL");
     }
 }

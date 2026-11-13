@@ -23,6 +23,7 @@ import type { Writable as NodeWritable, Readable as NodeReadable } from 'node:st
 import type { ChatTranscriptTurn, ChatUsage } from '@git-agent-harness/contracts';
 import type { PermissionAsk } from './permissionPolicy.js';
 import { agentChildEnv } from './childEnv.js';
+import { terminateProcessTree } from '../gahCli.js';
 
 export interface ManagerCommandInfo {
   name: string;
@@ -97,7 +98,9 @@ class AcpClient implements acp.Client {
   permissionRequest?: (request: PermissionAsk) => Promise<string>;
   toolCalls = new Map<string, acp.ToolCallUpdate>();
   usageUpdate: acp.UsageUpdate | null = null;
-  cumulativeUsage: acp.Usage | null = null;
+  // null starts a new session; undefined means a completed/failed turn left
+  // no baseline, so the next cumulative report cannot be charged to one turn.
+  cumulativeUsage: acp.Usage | null | undefined = null;
   sessionCostUsd = 0;
   configOptions: acp.SessionConfigOption[] = [];
 
@@ -172,7 +175,7 @@ class AcpClient implements acp.Client {
 
 export function toChatUsage(
   usage: acp.Usage | null | undefined,
-  previousUsage: acp.Usage | null,
+  previousUsage: acp.Usage | null | undefined,
   update: acp.UsageUpdate | null,
   costBeforeUsd: number,
   durationMs: number
@@ -182,16 +185,21 @@ export function toChatUsage(
     ? Math.max(0, update.cost.amount - costBeforeUsd)
     : null;
   return {
-    input_tokens: usage ? counterDelta(usage.inputTokens, previousUsage?.inputTokens) : null,
-    output_tokens: usage ? counterDelta(usage.outputTokens, previousUsage?.outputTokens) : null,
-    total_tokens: usage ? counterDelta(usage.totalTokens, previousUsage?.totalTokens) : null,
+    input_tokens: counterDelta(usage?.inputTokens, previousUsage === null ? 0 : previousUsage?.inputTokens),
+    output_tokens: counterDelta(usage?.outputTokens, previousUsage === null ? 0 : previousUsage?.outputTokens),
+    total_tokens: counterDelta(usage?.totalTokens, previousUsage === null ? 0 : previousUsage?.totalTokens),
+    cache_read_tokens: counterDelta(usage?.cachedReadTokens, previousUsage === null ? 0 : previousUsage?.cachedReadTokens),
+    cache_write_tokens: counterDelta(usage?.cachedWriteTokens, previousUsage === null ? 0 : previousUsage?.cachedWriteTokens),
+    reasoning_tokens: counterDelta(usage?.thoughtTokens, previousUsage === null ? 0 : previousUsage?.thoughtTokens),
     estimated_cost_usd: cost,
     duration_seconds: durationMs / 1000
   };
 }
 
-function counterDelta(current: number, previous: number | undefined): number {
-  return previous === undefined || current < previous ? current : current - previous;
+function counterDelta(current: number | null | undefined, previous: number | null | undefined): number | null {
+  if (current == null || !Number.isSafeInteger(current) || current < 0
+    || previous == null || !Number.isSafeInteger(previous) || previous < 0) return null;
+  return current < previous ? current : current - previous;
 }
 
 /** Validates the raw usage_update payload before it reaches the UI
@@ -446,9 +454,13 @@ export function opencodeSpawnSpec(runtime?: { executable: string; state_root: st
 export function createAcpBackend(
   label: string,
   spawnSpec: () => SpawnSpec,
-  options: { consecutiveFailureReconnectThreshold?: number } = {}
+  options: {
+    consecutiveFailureReconnectThreshold?: number;
+    environment?: (conversation: ManagerConversation, signal?: AbortSignal) => Promise<Record<string, string>>;
+  } = {}
 ) {
   const connections = new Map<string, ProfileConnection>();
+  const starting = new Map<string, { controller: AbortController; promise: Promise<ProfileConnection> }>();
 
   function updateSessionConfig(state: ProfileConnection, options: acp.SessionConfigOption[]): void {
     const model = readModelConfig(options);
@@ -503,18 +515,32 @@ export function createAcpBackend(
     }
   }
 
-  async function connect(gahProfile: string, cwd?: string): Promise<ProfileConnection> {
+  async function connect(conversation: ManagerConversation, cwd?: string): Promise<ProfileConnection> {
+    const { key: gahProfile } = conversation;
+    const pending = starting.get(gahProfile);
+    if (pending) return pending.promise;
     const existing = connections.get(gahProfile);
     if (existing) {
       await existing.ready;
       return existing;
     }
+    const controller = new AbortController();
+    const promise = startConnection(conversation, cwd, controller.signal);
+    starting.set(gahProfile, { controller, promise });
+    try { return await promise; }
+    finally { if (starting.get(gahProfile)?.promise === promise) starting.delete(gahProfile); }
+  }
 
+  async function startConnection(conversation: ManagerConversation, cwd: string | undefined, signal: AbortSignal): Promise<ProfileConnection> {
+    const { key: gahProfile } = conversation;
+    const workspaceEnv = await options.environment?.(conversation, signal);
+    signal.throwIfAborted();
     const client = new AcpClient(label);
     const spec = spawnSpec();
     const child = spawn(spec.command, spec.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: agentChildEnv(spec.env)
+      detached: process.platform !== 'win32',
+      env: agentChildEnv({ ...workspaceEnv, ...spec.env })
     });
 
     const stream = acp.ndJsonStream(
@@ -589,12 +615,15 @@ export function createAcpBackend(
     });
 
     connections.set(gahProfile, state);
-    await state.ready;
+    const stopStartup = () => { child.kill(); };
+    signal.addEventListener('abort', stopStartup, { once: true });
+    try { await state.ready; signal.throwIfAborted(); }
+    finally { signal.removeEventListener('abort', stopStartup); }
     return state;
   }
 
   async function runTurn(
-    { key: gahProfile }: ManagerConversation,
+    conversation: ManagerConversation,
     input: {
       prompt: string;
       history: ChatTranscriptTurn[];
@@ -632,7 +661,8 @@ export function createAcpBackend(
       reasoningEffort?: string | null;
     }
   ): Promise<{ reply: string; model: string | null; usage: ChatUsage | null }> {
-    const state = await connect(gahProfile, input.cwd);
+    const { key: gahProfile } = conversation;
+    const state = await connect(conversation, input.cwd);
     if (input.model && input.model !== state.currentModelId && state.models.some((m) => m.id === input.model)) {
       await selectModel(state, input.model);
     }
@@ -679,6 +709,7 @@ export function createAcpBackend(
       result = await activePrompt;
       state.consecutiveFailures = 0;
     } catch (error) {
+      state.client.cumulativeUsage = undefined;
       state.consecutiveFailures += 1;
       const threshold = options.consecutiveFailureReconnectThreshold;
       const evicted = threshold !== undefined && state.consecutiveFailures >= threshold;
@@ -723,7 +754,7 @@ export function createAcpBackend(
       costBeforeUsd,
       Date.now() - startedAt
     );
-    state.client.cumulativeUsage = result.usage ?? state.client.cumulativeUsage;
+    state.client.cumulativeUsage = result.usage ?? undefined;
     return {
       reply,
       model: state.currentModelId,
@@ -734,12 +765,12 @@ export function createAcpBackend(
   /** Backs the "/" command palette. Lazily connects (the same session
    * that'll be reused for the first real message) if none exists yet. */
   async function listCommands(gahProfile: string): Promise<ManagerCommandInfo[]> {
-    const state = await connect(gahProfile);
+    const state = await connect({ key: gahProfile, profile: gahProfile });
     return state.client.availableCommands;
   }
 
-  async function listModels({ key: gahProfile }: ManagerConversation, cwd?: string) {
-    const state = await connect(gahProfile, cwd);
+  async function listModels(conversation: ManagerConversation, cwd?: string) {
+    const state = await connect(conversation, cwd);
     return {
       models: state.models,
       currentModelId: state.currentModelId,
@@ -750,16 +781,16 @@ export function createAcpBackend(
     };
   }
 
-  async function setModel({ key: gahProfile }: ManagerConversation, modelId: string): Promise<void> {
-    const state = await connect(gahProfile);
+  async function setModel(conversation: ManagerConversation, modelId: string): Promise<void> {
+    const state = await connect(conversation);
     if (!state.models.some((m) => m.id === modelId)) {
       throw new Error(`Unknown model "${modelId}" for ${label}`);
     }
     await selectModel(state, modelId);
   }
 
-  async function setReasoningEffort({ key: gahProfile }: ManagerConversation, effortId: string): Promise<void> {
-    const state = await connect(gahProfile);
+  async function setReasoningEffort(conversation: ManagerConversation, effortId: string): Promise<void> {
+    const state = await connect(conversation);
     if (!state.reasoningEfforts.some((effort) => effort.id === effortId)) {
       throw new Error(`Unknown reasoning effort "${effortId}" for ${label}`);
     }
@@ -791,6 +822,7 @@ export function createAcpBackend(
    * (#960). The ACP session itself survives -- only the current turn is
    * aborted, and the same connection is reused for the next turn. */
   async function cancelTurn(gahProfile: string): Promise<void> {
+    starting.get(gahProfile)?.controller.abort(new Error('Agent startup cancelled.'));
     const state = connections.get(gahProfile);
     const activePrompt = state?.activePrompt;
     if (!state || !state.sessionId || !activePrompt) return;
@@ -824,7 +856,20 @@ export function createAcpBackend(
     }
   }
 
+  async function releaseConversation(key: string): Promise<void> {
+    starting.get(key)?.controller.abort(new Error('Agent startup cancelled.'));
+    const state = connections.get(key);
+    if (!state) return;
+    if (state.activePrompt) throw new Error('Stop this turn before releasing its agent.');
+    if (state.process.pid && !await terminateProcessTree(state.process.pid, state.process)) {
+      throw new Error('Agent processes did not stop; the workspace remains available.');
+    }
+    if (connections.get(key) === state) connections.delete(key);
+  }
+
   function dispose(): void {
+    for (const pending of starting.values()) pending.controller.abort(new Error('Agent startup cancelled.'));
+    starting.clear();
     for (const state of connections.values()) {
       if (state.activePrompt) {
         void state.activePrompt.then(() => state.process.kill(), () => state.process.kill());
@@ -835,5 +880,5 @@ export function createAcpBackend(
     connections.clear();
   }
 
-  return { runTurn, listCommands, listModels, setModel, setReasoningEffort, steerTurn, cancelTurn, dispose, invalidateModels };
+  return { runTurn, listCommands, listModels, setModel, setReasoningEffort, steerTurn, cancelTurn, releaseConversation, dispose, invalidateModels };
 }

@@ -34,6 +34,7 @@ pub(crate) enum AdmissionMessage {
 /// dispatch, so any rejection or shutdown drops it before the backend starts.
 #[derive(Clone, Debug)]
 pub struct RouteNodeAdmission {
+    review_generation: Option<String>,
     sequence: usize,
     action: NextAction,
     requests: Option<Sender<AdmissionMessage>>,
@@ -50,6 +51,7 @@ impl RouteNodeAdmission {
         settings: crate::config::NodeCapacitySettings,
     ) -> Self {
         Self {
+            review_generation: None,
             sequence,
             action,
             requests: Some(requests),
@@ -64,11 +66,21 @@ impl RouteNodeAdmission {
         settings: crate::config::NodeCapacitySettings,
     ) -> Self {
         Self {
+            review_generation: None,
             sequence: 0,
             action,
             requests: None,
             settings,
         }
+    }
+
+    pub(crate) fn with_review_generation(mut self, generation: Option<String>) -> Self {
+        self.review_generation = generation;
+        self
+    }
+
+    pub(crate) fn review_generation(&self) -> Option<&str> {
+        self.review_generation.as_deref()
     }
 
     pub(crate) fn wait_for_node(&self) -> Result<WorkerNodeLease> {

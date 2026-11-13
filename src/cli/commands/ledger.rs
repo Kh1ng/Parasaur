@@ -9,6 +9,39 @@ use serde_json;
 
 pub fn run(command: LedgerCommands) -> Result<()> {
     match command {
+        LedgerCommands::ReceiveDispatch {
+            binding_file,
+            receipt_file,
+            acknowledgement,
+            config_path,
+        } => {
+            use std::io::Read;
+            fn read(path: &std::path::Path) -> Result<Vec<u8>> {
+                let mut bytes = Vec::new();
+                std::fs::File::open(path)?
+                    .take(ledger::remote_dispatch::MAX_RECEIPT_BYTES as u64 + 1)
+                    .read_to_end(&mut bytes)?;
+                anyhow::ensure!(
+                    bytes.len() <= ledger::remote_dispatch::MAX_RECEIPT_BYTES,
+                    "Native dispatch input exceeds 8 MiB; retain it for reconciliation"
+                );
+                Ok(bytes)
+            }
+            let cfg = config::load(config_path.as_deref())?;
+            let binding = serde_json::from_slice(&read(&binding_file)?).map_err(|_| {
+                anyhow::anyhow!("Native dispatch input does not match the supported schema")
+            })?;
+            let outcome = ledger::remote_dispatch::receive_acknowledged(
+                &cfg,
+                &binding,
+                &read(&receipt_file)?,
+            )?;
+            if acknowledgement {
+                println!("{}", serde_json::to_string(&outcome)?);
+            } else {
+                println!("{}", serde_json::to_string(&outcome.outcome)?);
+            }
+        }
         LedgerCommands::RepairTail {
             config_path,
             dry_run,

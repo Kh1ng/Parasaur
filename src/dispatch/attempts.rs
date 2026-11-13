@@ -327,23 +327,25 @@ pub(super) fn run_backend(
         effective_model,
         None::<String>,
     );
-    run_backend_with_reserved_route(
-        &identity,
-        profile,
-        wt,
-        task,
-        session_dir,
-        cargo_target,
-        llm,
-        env_path,
-        cfg,
-        profile_name,
-        work_id,
-        false,
-        hard_timeout_seconds,
-        runner::WriteIntent::Implementation,
-        None,
-    )
+    super::native_guard::attempt(&identity, || {
+        run_backend_with_reserved_route(
+            &identity,
+            profile,
+            wt,
+            task,
+            session_dir,
+            cargo_target,
+            llm,
+            env_path,
+            cfg,
+            profile_name,
+            work_id,
+            false,
+            hard_timeout_seconds,
+            runner::WriteIntent::Implementation,
+            None,
+        )
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -363,23 +365,25 @@ pub(super) fn run_backend_for_identity(
     write_intent: runner::WriteIntent,
     ledger: Option<&mut LedgerEntry>,
 ) -> Result<runner::RunResult> {
-    run_backend_with_reserved_route(
-        identity,
-        profile,
-        wt,
-        task,
-        session_dir,
-        cargo_target,
-        llm,
-        env_path,
-        cfg,
-        profile_name,
-        work_id,
-        false,
-        hard_timeout_seconds,
-        write_intent,
-        ledger,
-    )
+    super::native_guard::attempt(identity, || {
+        run_backend_with_reserved_route(
+            identity,
+            profile,
+            wt,
+            task,
+            session_dir,
+            cargo_target,
+            llm,
+            env_path,
+            cfg,
+            profile_name,
+            work_id,
+            false,
+            hard_timeout_seconds,
+            write_intent,
+            ledger,
+        )
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -672,11 +676,11 @@ pub(super) fn attempt_usage(
                     let log_usage = usage::parse_generic_usage(&text, "attempt_output_log");
                     merged = usage::merge_usage(merged, log_usage);
                     // Optionally enrich with a live `/usage` PTY probe (issue
-                    // #153). Gated behind GAH_CLAUDE_LIVE_USAGE so normal
+                    // #153). Gated behind PARASAUR_CLAUDE_LIVE_USAGE so normal
                     // dispatch stays bounded — the probe only runs when the
                     // operator explicitly opts in.
                     if let Some(path) = claude_path {
-                        if std::env::var_os("GAH_CLAUDE_LIVE_USAGE").is_some() {
+                        if std::env::var_os("PARASAUR_CLAUDE_LIVE_USAGE").is_some() {
                             if let Ok(capture) =
                                 crate::claude_monitor::capture_usage_via_pty(path, None)
                             {
@@ -916,7 +920,8 @@ pub(super) fn ensure_bin(bin: &str) -> Result<()> {
     }
 }
 
-pub(super) fn apply_route_to_ledger(ledger: &mut LedgerEntry, route: &RouteDecision) {
+pub(super) fn apply_route_to_ledger(ledger: &mut LedgerEntry, route: &RouteDecision) -> Result<()> {
+    super::native_guard::verify_identity(&route.identity)?;
     ledger.backend = route.effective_backend.clone();
     ledger.requested_backend = route.requested_backend.clone();
     ledger.effective_backend = route.effective_backend.clone();
@@ -928,6 +933,7 @@ pub(super) fn apply_route_to_ledger(ledger: &mut LedgerEntry, route: &RouteDecis
     ledger.human_required_reason_code = None;
     ledger.human_required = route.human_required;
     ledger.routing_diagnostics = route.routing_diagnostics.clone();
+    Ok(())
 }
 
 /// Live-observed bug: `worktree::create`/`create_existing` failures (e.g. a
@@ -1118,7 +1124,7 @@ pub(super) fn routing_runtime_state(
     cfg: &GahConfig,
     current: &LedgerEntry,
 ) -> Result<RoutingRuntimeState> {
-    let entries = ledger::read_entries(cfg)?;
+    let entries = read_routing_history(cfg, &current.profile)?;
     let mut state = routing_runtime_state_from_entries(&entries, current);
     let reconciliations = ledger::reconcile::read_reconciliation_entries(cfg).unwrap_or_default();
     state.reviewer_outcomes = crate::routing::reviewer_outcome_metrics(
@@ -1128,6 +1134,26 @@ pub(super) fn routing_runtime_state(
         &current.repo_id,
     );
     Ok(state)
+}
+
+/// Route statistics need execution receipts, approvals and repair correlations.
+/// Empty review refusals contribute to none of those; validating them without
+/// retaining their payload prevents repeated admission failures from making
+/// every worker allocate another complete ledger snapshot.
+fn read_routing_history(cfg: &GahConfig, profile: &str) -> Result<Vec<LedgerEntry>> {
+    ledger::read_matching_entries(cfg, |entry| {
+        entry.profile == profile
+            && !(entry.mode == "review"
+                && matches!(
+                    entry.validation_result.as_deref(),
+                    Some("deferred_capacity" | "review_budget_exhausted")
+                )
+                && entry.attempts.is_empty()
+                && entry.attempts_completed.unwrap_or(0) == 0
+                && entry.backend_exit_code.is_none()
+                && entry.review_verdict.is_none()
+                && entry.dispatch_reason.as_deref() != Some("post_review_repair"))
+    })
 }
 
 pub(crate) fn routing_runtime_state_from_entries(

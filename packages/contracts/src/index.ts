@@ -1,5 +1,6 @@
 export * from './ws.js';
 export * from './gah.js';
+export * from './usage-report.js';
 export * from './gitlab.js';
 export * from './registry.js';
 export * from './claims.js';
@@ -13,3 +14,5 @@ export * from './cli-capabilities.js';
 export * from './cli-router.js';
 
 export * from './agent-versions.js';
+export * from './compute-output.js';
+export type { ComputeAdmissionState } from './compute-admission.js';

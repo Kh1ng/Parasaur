@@ -16,11 +16,11 @@ test('issue and PR starts use a healthy equivalent checkout instead of the offli
   const savedEnv = { ...process.env };
   const fixtures = new URL('../tests/fixtures/', import.meta.url).pathname;
   Object.assign(process.env, {
-    GAH_BINARY: join(fixtures, 'gah/gah'), GAH_FIXTURE_PROFILE_LIST: join(root, 'profiles.json'),
-    GAH_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json'), GAH_PROJECT_CATALOG_PATH: join(root, 'projects.json'),
-    GAH_CHAT_STATE_DIR: join(root, 'chat'), GAH_GATEWAY_SETTINGS_PATH: join(root, 'gateway.json'),
-    GAH_MANAGER_CHAT_SETTINGS_PATH: join(root, 'manager.json'),
-    GAH_FAKE_GH_FIXTURE: join(fixtures, 'gh/data'), GAH_FAKE_GH_STATE: join(root, 'gh-state'),
+    PARASAUR_BINARY: join(fixtures, 'gah/gah'), PARASAUR_FIXTURE_PROFILE_LIST: join(root, 'profiles.json'),
+    PARASAUR_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json'), PARASAUR_PROJECT_CATALOG_PATH: join(root, 'projects.json'),
+    PARASAUR_CHAT_STATE_DIR: join(root, 'chat'), PARASAUR_GATEWAY_SETTINGS_PATH: join(root, 'gateway.json'),
+    PARASAUR_MANAGER_CHAT_SETTINGS_PATH: join(root, 'manager.json'),
+    PARASAUR_FAKE_GH_FIXTURE: join(fixtures, 'gh/data'), PARASAUR_FAKE_GH_STATE: join(root, 'gh-state'),
     PATH: `${join(fixtures, 'gh')}:${process.env.PATH}`
   });
   resetCachedCoordinatorIdentity();
@@ -33,7 +33,7 @@ test('issue and PR starts use a healthy equivalent checkout instead of the offli
   execFileSync('git', ['commit', '--quiet', '-m', 'initial'], { cwd: checkout });
   const fixture: ProfileSummary = JSON.parse(readFileSync(join(fixtures, 'gah/responses/profile-list.json'), 'utf8'))[0];
   const profile = { ...fixture, name: 'source-project', local_path: checkout, worktree_base: join(root, 'worktrees') };
-  writeFileSync(process.env.GAH_FIXTURE_PROFILE_LIST!, JSON.stringify([profile]));
+  writeFileSync(process.env.PARASAUR_FIXTURE_PROFILE_LIST!, JSON.stringify([profile]));
   const registry = new RegistryService(join(root, 'registry.json'));
   registry.registerNode({ node_id: 'offline', display_name: 'Offline owner', advertised_url: 'http://127.0.0.1:1', version: central.version, schema_digest: central.schema_digest, transport_mode: 'loopback', secret_ref: 'env:COORDINATOR_TOKEN', profiles: [profile.name], last_observed_at: new Date().toISOString(), last_observed_state: 'unreachable' });
   const project = addRemoteProject('offline', profile);
@@ -55,7 +55,7 @@ test('issue and PR starts use a healthy equivalent checkout instead of the offli
       body: JSON.stringify({ profile: project.chat_profile, [`${source}Number`]: number, backend: 'codex', nodeId: 'offline' })
     });
     assert.equal(pinned.status, 502, 'an explicit offline pin is never silently replaced');
-    if (source === 'issue') assert.equal(existsSync(process.env.GAH_FAKE_GH_STATE!), false, 'readiness failure never claims the issue');
+    if (source === 'issue') assert.equal(existsSync(process.env.PARASAUR_FAKE_GH_STATE!), false, 'readiness failure never claims the issue');
     const response = await fetch(`${base}/api/manager-chat/${source}s/start`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ profile: project.chat_profile, [`${source}Number`]: number, backend: 'codex', ...(source === 'issue' ? { nodeId: central.node_id } : {}) })
@@ -73,5 +73,5 @@ test('issue and PR starts use a healthy equivalent checkout instead of the offli
     assert.equal(unpinned.status, 201, 'legacy callers without a node recover from an offline owner');
     assert.equal((await unpinned.json() as { session: ChatSessionSummary }).session.id, body.session.id, 'idempotent source opening stays intact');
   }
-  assert.ok(existsSync(process.env.GAH_FAKE_GH_STATE!), 'issue is claimed after successful routing');
+  assert.ok(existsSync(process.env.PARASAUR_FAKE_GH_STATE!), 'issue is claimed after successful routing');
 });

@@ -11,6 +11,22 @@ use std::fmt;
 
 mod ci_wait;
 
+/// Review history may select another reviewer, but cannot rewrite an explicit
+/// account/model selection. Native planning and local execution share this fence.
+pub(in crate::dispatch) fn ensure_pinned_review_route(
+    args: &crate::dispatch::DispatchArgs,
+    backend: &str,
+    model: Option<&str>,
+) -> Result<()> {
+    anyhow::ensure!(
+        args.backend_instance.is_none()
+            || (backend == crate::config::canonical_backend_name(&args.backend)
+                && args.model.as_deref().is_none_or(|pinned| model == Some(pinned))),
+        "review history requires a different route; the explicitly selected account/model cannot be substituted"
+    );
+    Ok(())
+}
+
 /// Typed, terminal refusal used when a ticket has exhausted its configured
 /// review budget. Keeping this distinct from backend failures lets the
 /// controller close the run cleanly and makes the operator-visible event
@@ -111,37 +127,13 @@ pub(in crate::dispatch) fn check_review_budget(
     };
     let routing = profile.effective_routing(&cfg.defaults);
     let entries = ledger::entries_for_work_id(cfg, work_id)?;
-    // `clear-attempts` is an operator reset for this work item's bounded
-    // automation budgets. Keep the append-only history, but do not let review
-    // calls from before the latest matching tombstone permanently block the
-    // ticket. Scope the reset to this profile/repository just like the review
-    // records themselves so an identically-numbered issue elsewhere cannot
-    // reset this budget.
-    let active_entries = entries
-        .iter()
-        .rposition(|entry| {
-            entry.profile == profile_name
-                && entry.repo_id == profile.repo_id
-                && entry.mode == "clear_attempts"
-        })
-        .map_or(entries.as_slice(), |index| &entries[index + 1..]);
-    let reviews: Vec<_> = active_entries
-        .iter()
-        .filter(|entry| {
-            entry.profile == profile_name
-                && entry.repo_id == profile.repo_id
-                && JobKind::parse(&entry.mode) == Ok(JobKind::Review)
-                && entry.review_contract_version == Some(ledger::CURRENT_REVIEW_CONTRACT_VERSION)
-                && super::head::same_head(entry, review_generation)
-                && !matches!(
-                    entry.validation_result.as_deref(),
-                    Some("review_budget_exhausted")
-                        | Some("skipped_duplicate_review")
-                        | Some("deferred_capacity")
-                        | Some("cancelled_shutdown")
-                )
-        })
-        .collect();
+    let reviews = counted_review_entries(
+        &entries,
+        profile_name,
+        &profile.repo_id,
+        work_id,
+        review_generation,
+    );
 
     let cycle_count = reviews.len() as u32;
     let cycle_cap = routing.max_review_cycles_per_ticket();
@@ -184,6 +176,120 @@ pub(in crate::dispatch) fn check_review_budget(
     Ok(None)
 }
 
+/// A terminal preflight error is not a review cycle. Require explicit zero
+/// counters and the persisted non-invocation marker; missing or contradictory
+/// evidence must retain its budget charge.
+fn review_stopped_before_attempt(entry: &LedgerEntry) -> bool {
+    if entry.attempts_started != Some(0)
+        || entry.attempts_completed != Some(0)
+        || !entry.attempts.is_empty()
+        || !entry.attempt_routing.is_empty()
+        || entry.backend_exit_code.is_some()
+        || entry.validation_result.is_some()
+        || entry.review_verdict.is_some()
+        || entry.usage.usage_unknown_reason != Some(ledger::UsageUnknownReason::NoAttemptStarted)
+    {
+        return false;
+    }
+    let usage = ledger::LedgerUsage {
+        usage_unknown_reason: None,
+        ..entry.usage.clone()
+    };
+    !crate::usage_attribution::usage_has_observation(&usage)
+}
+
+fn counted_review_entries<'a>(
+    entries: &'a [LedgerEntry],
+    profile_name: &str,
+    repo_id: &str,
+    work_id: &str,
+    review_generation: Option<&str>,
+) -> Vec<&'a LedgerEntry> {
+    let aliases = ledger::work_id_aliases(work_id);
+    let in_scope = |entry: &LedgerEntry| {
+        entry.profile == profile_name
+            && entry.repo_id == repo_id
+            && entry
+                .work_id
+                .as_ref()
+                .is_some_and(|id| aliases.contains(id))
+    };
+    // Preserve history while honoring only this work item's latest reset.
+    let active = entries
+        .iter()
+        .rposition(|entry| in_scope(entry) && entry.mode == "clear_attempts")
+        .map_or(entries, |index| &entries[index + 1..]);
+    active
+        .iter()
+        .filter(|entry| {
+            in_scope(entry)
+                && JobKind::parse(&entry.mode) == Ok(JobKind::Review)
+                && entry.review_contract_version == Some(ledger::CURRENT_REVIEW_CONTRACT_VERSION)
+                && super::head::same_head(entry, review_generation)
+                && !review_stopped_before_attempt(entry)
+                && !matches!(
+                    entry.validation_result.as_deref(),
+                    Some(
+                        "review_budget_exhausted"
+                            | "skipped_duplicate_review"
+                            | "deferred_capacity"
+                            | "cancelled_shutdown"
+                    )
+                )
+        })
+        .collect()
+}
+
+/// Reevaluate only a recorded review-budget refusal. A corrected receipt
+/// count or owner-raised limit can release the projection without resetting
+/// history; unrelated approvals and genuinely spent budgets stay held.
+pub(crate) fn review_budget_gate_is_resolved(
+    cfg: &GahConfig,
+    profile_name: &str,
+    profile: &Profile,
+    entries: &[LedgerEntry],
+    work_id: &str,
+    gate: &ledger::EffectiveHumanGate,
+) -> bool {
+    if gate.mode != "review"
+        || gate.review_generation.is_none()
+        || gate.review_contract_version != Some(ledger::CURRENT_REVIEW_CONTRACT_VERSION)
+        || gate.reason_code.as_deref() != Some("retry_budget_exhausted")
+    {
+        return false;
+    }
+    let aliases = ledger::work_id_aliases(work_id);
+    let refusal = entries.iter().rev().find(|entry| {
+        entry.profile == profile_name
+            && entry.repo_id == profile.repo_id
+            && entry.timestamp == gate.timestamp
+            && entry
+                .work_id
+                .as_ref()
+                .is_some_and(|id| aliases.contains(id))
+    });
+    if !refusal.is_some_and(|entry| {
+        entry.validation_result.as_deref() == Some("review_budget_exhausted")
+            && entry.review_generation == gate.review_generation
+    }) {
+        return false;
+    }
+    let reviews = counted_review_entries(
+        entries,
+        profile_name,
+        &profile.repo_id,
+        work_id,
+        gate.review_generation.as_deref(),
+    );
+    let routing = profile.effective_routing(&cfg.defaults);
+    reviews.len() < routing.max_review_cycles_per_ticket() as usize
+        && reviews
+            .iter()
+            .filter(|entry| entry.usage.usage_classification.as_deref() == Some("api_key_backed"))
+            .count()
+            < routing.max_paid_reviews_per_ticket() as usize
+}
+
 /// The routine reviewer (`review_backend`, e.g. Vibe/Mistral) is fast and
 /// cheap but was never meant to be the last word on a genuinely hard or
 /// repeatedly-failing review. The repeated-failure trigger follows the
@@ -212,7 +318,7 @@ pub(in crate::dispatch) fn review_escalation_reason(
         .effective_routing(&cfg.defaults)
         .max_fix_attempts_per_mr() as usize;
 
-    let entries = ledger::read_entries(cfg).ok()?;
+    let entries = read_branch_history(cfg, profile_name, branch).ok()?;
     let active_entries = active_branch_review_entries(&entries, profile, profile_name, branch);
     let recent: Vec<&LedgerEntry> = active_entries
         .iter()
@@ -353,7 +459,7 @@ pub(in crate::dispatch) fn next_review_candidate(
     review_generation: Option<&str>,
     state_path: &std::path::Path,
 ) -> Option<CandidateConfig> {
-    let entries = ledger::read_entries(cfg).ok()?;
+    let entries = read_branch_history(cfg, profile_name, branch).ok()?;
     let active_entries = active_branch_review_entries(&entries, profile, profile_name, branch);
     let mut attempted: HashSet<(String, Option<String>)> = active_entries
         .iter()
@@ -406,7 +512,7 @@ pub(in crate::dispatch) fn next_escalatory_reviewer(
     review_generation: Option<&str>,
     state_path: &std::path::Path,
 ) -> Option<CandidateConfig> {
-    let entries = ledger::read_entries(cfg).ok()?;
+    let entries = read_branch_history(cfg, profile_name, branch).ok()?;
     let active_entries = active_branch_review_entries(&entries, profile, profile_name, branch);
     let mut attempted: HashSet<(String, Option<String>)> = active_entries
         .iter()
@@ -451,6 +557,22 @@ pub(in crate::dispatch) fn next_escalatory_reviewer(
         .filter(|c| routing.allows_candidate("review", c))
         .collect();
     pick_next_untried(state_path, candidates, profile, &attempted)
+}
+
+/// Retain branch reviews and branchless reset tombstones in append order.
+/// Repository attribution and reset aliases remain the responsibility of
+/// `active_branch_review_entries`, including legacy cross-repository history.
+fn read_branch_history(
+    cfg: &GahConfig,
+    profile_name: &str,
+    branch: &str,
+) -> Result<Vec<LedgerEntry>> {
+    ledger::read_matching_entries(cfg, |entry| {
+        entry.profile == profile_name
+            && (entry.mode == "clear_attempts"
+                || (JobKind::parse(&entry.mode) == Ok(JobKind::Review)
+                    && entry.branch.as_deref() == Some(branch)))
+    })
 }
 
 /// Return the append-only branch history after the latest operator reset for
@@ -821,6 +943,16 @@ pub(in crate::dispatch) fn derive_reviewer_tier(
         .routing
         .effective_routine_reviewer()
         .or_else(|| cfg.defaults.routing.effective_routine_reviewer());
+    // An exact routine identity stays first-line even when an escalation
+    // entry covers the same backend. Otherwise it gains the untried-escalation
+    // cycle-budget exemption without actually selecting a different reviewer.
+    if let Some(routine) = &routine {
+        if routine.model.is_some()
+            && selected(Some(routine.backend.as_str()), routine.model.as_deref())
+        {
+            return ReviewerTier::Strong;
+        }
+    }
     let escalatory = profile
         .routing
         .escalatory_reviewers

@@ -7,6 +7,16 @@ use std::rc::Rc;
 const MICHAEL: &str = "Ram-Rod6198";
 const COLTON: &str = "Kh1ng";
 
+#[test]
+fn handoff_delivery_refuses_provider_claims_before_any_assignment() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut profile = profile(directory.path());
+    profile.delivery_mode = crate::config::DeliveryMode::Handoff;
+    profile.publishing.allow_issue_comments = true;
+    let error = GithubBoard::for_writing(&profile).err().unwrap();
+    assert!(error.to_string().contains("delivery_mode=handoff"));
+}
+
 fn policy(priority_logins: &[&str]) -> IssueClaimPolicy {
     IssueClaimPolicy {
         mode: IssueClaimMode::GithubAssignee,
@@ -1272,7 +1282,8 @@ fn a_lost_claim_does_not_count_as_an_attempt_on_the_issue() {
     lost.work_id = Some("TICKET-302".into());
     lost.validation_result = Some(crate::ledger::gates::CLAIM_LOST.into());
     lost.failure_class = Some("harness_error".into());
-    let index = crate::ledger::index_entries_by_work_id(&[lost]);
+    let index_history = [lost];
+    let index = crate::ledger::index_entries_by_work_id(&index_history);
 
     let scan =
         crate::dispatch::claims::scan_available_tickets_with_dependencies(&prof, &[], &index, &[]);

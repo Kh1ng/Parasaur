@@ -184,11 +184,13 @@ pub fn post_review_comment(
         anyhow::bail!("delivery_mode=handoff: post_review_comment is disallowed in handoff mode");
     }
     let body = publication_body(body);
-    match ProviderKind::parse(&profile.provider) {
-        Ok(ProviderKind::Gitlab) => gitlab_post_review_comment(profile, branch, &body, labels),
-        Ok(ProviderKind::Github) => github_post_review_comment(profile, branch, &body, labels),
-        Err(_) => anyhow::bail!("unsupported provider: {}", profile.provider),
-    }
+    crate::dispatch::native_guard::publication(profile, || {
+        match ProviderKind::parse(&profile.provider) {
+            Ok(ProviderKind::Gitlab) => gitlab_post_review_comment(profile, branch, &body, labels),
+            Ok(ProviderKind::Github) => github_post_review_comment(profile, branch, &body, labels),
+            Err(_) => anyhow::bail!("unsupported provider: {}", profile.provider),
+        }
+    })
 }
 
 /// Publish positioned findings on GitLab while retaining GitHub's existing summary path.
@@ -207,10 +209,18 @@ pub fn post_review_findings(
             if profile.delivery_mode == crate::config::DeliveryMode::Handoff {
                 anyhow::bail!("delivery_mode=handoff: review publication is disallowed");
             }
-            Ok(super::gitlab_review::soft_failure(
-                super::gitlab_review::publish(profile, branch, head, body, findings, labels),
-                "review publication",
-            ))
+            crate::dispatch::native_guard::publication_observed(
+                profile,
+                || {
+                    Ok(super::gitlab_review::soft_failure(
+                        super::gitlab_review::publish(
+                            profile, branch, head, body, findings, labels,
+                        ),
+                        "review publication",
+                    ))
+                },
+                |published| *published,
+            )
         }
     }
 }
@@ -222,24 +232,26 @@ pub fn post_issue_comment(profile: &Profile, issue_number: &str, body: &str) -> 
         anyhow::bail!("delivery_mode=handoff: post_issue_comment is disallowed in handoff mode");
     }
     let body = publication_body(body);
-    match ProviderKind::parse(&profile.provider) {
-        Ok(ProviderKind::Github) => github_post_issue_comment(profile, issue_number, &body),
-        Ok(ProviderKind::Gitlab) => {
-            let project_id = gitlab_project_id(profile)?;
-            let endpoint = format!("projects/{project_id}/issues/{issue_number}/notes");
-            let existing = gitlab_api(profile, &endpoint, "GET", &[])?;
-            if existing.as_array().is_some_and(|notes| {
-                notes
-                    .iter()
-                    .any(|note| note["body"].as_str() == Some(body.as_str()))
-            }) {
-                return Ok(());
+    crate::dispatch::native_guard::publication(profile, || {
+        match ProviderKind::parse(&profile.provider) {
+            Ok(ProviderKind::Github) => github_post_issue_comment(profile, issue_number, &body),
+            Ok(ProviderKind::Gitlab) => {
+                let project_id = gitlab_project_id(profile)?;
+                let endpoint = format!("projects/{project_id}/issues/{issue_number}/notes");
+                let existing = gitlab_api(profile, &endpoint, "GET", &[])?;
+                if existing.as_array().is_some_and(|notes| {
+                    notes
+                        .iter()
+                        .any(|note| note["body"].as_str() == Some(body.as_str()))
+                }) {
+                    return Ok(());
+                }
+                gitlab_api(profile, &endpoint, "POST", &[("body", &body)])?;
+                Ok(())
             }
-            gitlab_api(profile, &endpoint, "POST", &[("body", &body)])?;
-            Ok(())
+            Err(_) => anyhow::bail!("unsupported provider: {}", profile.provider),
         }
-        Err(_) => anyhow::bail!("unsupported provider: {}", profile.provider),
-    }
+    })
 }
 
 fn gitlab_mr(profile: &Profile, branch: &str, title: &str, body: &str) -> Result<MrResult> {

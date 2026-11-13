@@ -142,11 +142,11 @@ fn resolve_state_path_from_env(xdg_state_home: Option<&str>, home: Option<&str>)
         .join("validation_check.json")
 }
 
-/// Resolve the state file path from the real environment. `GAH_VALIDATION_CHECK_PATH`
-/// is an explicit override, matching the existing `GAH_AVAILABILITY_PATH` /
-/// `GAH_LEDGER_PATH` convention so tests and CI can redirect it.
+/// Resolve the state file path from the real environment. `PARASAUR_VALIDATION_CHECK_PATH`
+/// is an explicit override, matching the existing `PARASAUR_AVAILABILITY_PATH` /
+/// `PARASAUR_LEDGER_PATH` convention so tests and CI can redirect it.
 pub fn resolve_state_path() -> PathBuf {
-    if let Ok(path) = std::env::var("GAH_VALIDATION_CHECK_PATH") {
+    if let Ok(path) = std::env::var("PARASAUR_VALIDATION_CHECK_PATH") {
         return PathBuf::from(path);
     }
     resolve_state_path_from_env(

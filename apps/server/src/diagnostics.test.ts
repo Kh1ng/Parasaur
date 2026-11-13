@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { buildDiagnosticsBundle, parseProcesses } from './diagnostics.js';
+import { spawnSync } from 'node:child_process';
+import { buildDiagnosticsBundle, parseProcesses, parseWindowsProcesses, takeSample } from './diagnostics.js';
 import { createServer } from './server.js';
 
 test('keeps the largest processes and every server descendant, without arguments', () => {
@@ -22,6 +23,54 @@ test('keeps the largest processes and every server descendant, without arguments
   assert.deepEqual(result.map((p) => p.pid), [100, 1, 200, 300, 400]);
   assert.equal(result[0].cmd, 'parasaur');
   assert.equal(result.at(-1)!.cpu, 12.5);
+});
+
+test('Windows snapshots retain descendants, convert bytes and preserve unknown CPU without command lines', () => {
+  const rows = [
+    { ProcessId: 1, ParentProcessId: 0, WorkingSetSize: '9216000', Name: 'System' },
+    { ProcessId: 100, ParentProcessId: 1, WorkingSetSize: 51200000, Name: 'C:\\apps\\gah-desktop.exe' },
+    { ProcessId: 200, ParentProcessId: 1, WorkingSetSize: '4096000', Name: 'node.exe', CommandLine: 'synthetic-secret' },
+    { ProcessId: 300, ParentProcessId: 200, WorkingSetSize: 102400, Name: 'claude.exe' },
+    { ProcessId: 400, ParentProcessId: 300, WorkingSetSize: 51200, Name: 'agent.exe' },
+    { ProcessId: 500, ParentProcessId: 1, WorkingSetSize: 10240, Name: 'other.exe' },
+    { ProcessId: 600, ParentProcessId: 1, WorkingSetSize: null, Name: 'unavailable.exe' },
+    { ProcessId: 601, ParentProcessId: 1, WorkingSetSize: '-1', Name: 'invalid.exe' },
+    null,
+  ];
+  const result = parseWindowsProcesses(JSON.stringify(rows), 200, 2);
+  assert.deepEqual(result.map((p) => p.pid), [100, 1, 200, 300, 400]);
+  assert.equal(result[0].cmd, 'gah-desktop.exe');
+  assert.equal(result[0].rss_kb, 50_000);
+  assert.ok(result.every((p) => p.cpu === null));
+  assert.ok(!JSON.stringify(result).includes('synthetic-secret'));
+  assert.equal(parseWindowsProcesses(JSON.stringify(rows[2]), 200)[0].rss_kb, 4_000);
+  assert.deepEqual(parseWindowsProcesses('null', 200), []);
+  assert.throws(() => parseWindowsProcesses('invalid', 200));
+});
+
+test('native Windows diagnostics include the sampling process with a real working set', { skip: process.platform !== 'win32' }, async () => {
+  const sample = await takeSample();
+  assert.equal(sample.processes_status, 'available');
+  assert.equal(sample.load1, null, 'Windows has no Unix load average');
+  const server = sample.processes.find((p) => p.pid === process.pid);
+  assert.ok(server && server.rss_kb > 0);
+  assert.equal(server.cpu, null);
+  assert.deepEqual(Object.keys(server).sort(), ['cmd', 'cpu', 'pid', 'ppid', 'rss_kb']);
+});
+
+test('a missing process collector is unavailable while server memory remains measured', () => {
+  const script = `import { takeSample } from ${JSON.stringify(new URL('./diagnostics.js', import.meta.url).href)};
+    const sample = await takeSample();
+    console.log(JSON.stringify({ status: sample.processes_status, processes: sample.processes, rss: sample.server.rss_bytes }));`;
+  const child = spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), '--input-type=module', '-e', script], {
+    cwd: mkdtempSync(join(tmpdir(), 'gah-diag-no-collector-')),
+    env: { ...process.env, PATH: '' }, encoding: 'utf8', timeout: 10_000,
+  });
+  assert.equal(child.status, 0, child.stderr);
+  const sample = JSON.parse(child.stdout);
+  assert.equal(sample.status, 'unavailable');
+  assert.deepEqual(sample.processes, []);
+  assert.ok(sample.rss > 0);
 });
 
 test('bundle carries the rotated and current timeline and skips torn lines', async () => {

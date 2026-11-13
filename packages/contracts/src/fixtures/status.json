@@ -1,14 +1,13 @@
 {
   "active_claims": [],
-  "running_workers": [],
   "availability": [],
   "available_tickets": [],
   "backend_configured": {
     "agy": false,
     "agy-main": false,
     "agy-second": false,
-    "claude": false,
-    "codex": false,
+    "claude": true,
+    "codex": true,
     "hermes": false,
     "opencode": false,
     "openhands": false,
@@ -28,7 +27,7 @@
     "last_success_at": null,
     "record_count": 0,
     "retry_pending": false,
-    "schema_version": 11,
+    "schema_version": 13,
     "status": "never_run"
   },
   "fix_attempt_counts": {},
@@ -47,7 +46,7 @@
     "**/.pytest_cache/**",
     "**/*.tsbuildinfo"
   ],
-  "generated_at": "2026-08-06T21:12:52.112857263Z",
+  "generated_at": "2026-11-13T04:40:34.901024748Z",
   "implementation_intake_paused": true,
   "inflight_implementation_count": 0,
   "issue_intake_rejections": [
@@ -122,7 +121,7 @@
         "owner"
       ]
     },
-    "local_path": "/tmp/.tmpewCJpV/repo",
+    "local_path": "/tmp/.tmptgNCLh/repo",
     "max_fix_attempts_per_mr": 2,
     "max_implementation_failures_per_ticket": 8,
     "max_open_managed_mrs": 1,
@@ -135,8 +134,10 @@
   "recent_ledger": null,
   "review_contract_version": 1,
   "review_held_work_ids": [],
+  "running_workers": [],
   "schema_version": 1,
   "skill_inventory": [],
+  "spend_budget": null,
   "work_waypoint_evidence": {},
   "worker_limits": {
     "baseline_workers": 1,

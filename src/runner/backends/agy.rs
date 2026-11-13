@@ -298,7 +298,7 @@ pub(crate) fn run_with_executable(
     // Read captured stdout to detect silent failures. (A kill-for-idle
     // already leaves exit_code at -1, so the exit_code == 0 guard below
     // naturally skips this diagnosis for that case.)
-    let output = fs::read_to_string(&log_path).unwrap_or_default();
+    let output = crate::runner::output::read_capture_log(&log_path);
     let trimmed = output.trim();
 
     // AGY sometimes exits 0 with empty output when quota is exhausted or
@@ -344,7 +344,9 @@ pub(crate) fn run_with_executable(
         exit_code,
         duration_secs,
         log_path: log_path.to_string_lossy().into_owned(),
-        final_summary: crate::runner::output::extract_agy_json_summary(&output),
+        final_summary: crate::runner::output::log_capture_complete(&log_path)
+            .then(|| crate::runner::output::extract_agy_json_summary(&output))
+            .flatten(),
         agy_cli_log_delta: log_delta(&agy_cli_log, agy_cli_log_pre_offset),
         internal_log_delta: None,
         internal_log_path: None,

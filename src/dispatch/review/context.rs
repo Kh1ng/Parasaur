@@ -145,7 +145,14 @@ pub(in crate::dispatch) fn lookup_review_state(
     target: &str,
     ticket: &TicketMetadata,
 ) -> Option<ReviewTarget> {
-    let entries = ledger::read_entries(cfg).ok()?;
+    let entries = ledger::read_matching_entries(cfg, |entry| {
+        entry.profile == profile_name
+            && matches!(
+                JobKind::parse(&entry.mode),
+                Ok(JobKind::Fix) | Ok(JobKind::Improve)
+            )
+    })
+    .ok()?;
     let ticket_id = ticket.ticket_id.as_deref();
     let ticket_title = ticket.title.as_deref().map(normalize_match);
     entries
@@ -197,7 +204,15 @@ pub(in crate::dispatch) fn lookup_review_state_by_branch(
     profile_name: &str,
     branch: &str,
 ) -> Option<String> {
-    let entries = ledger::read_entries(cfg).ok()?;
+    let entries = ledger::read_matching_entries(cfg, |entry| {
+        entry.profile == profile_name
+            && entry.branch.as_deref() == Some(branch)
+            && matches!(
+                JobKind::parse(&entry.mode),
+                Ok(JobKind::Fix) | Ok(JobKind::Improve)
+            )
+    })
+    .ok()?;
     entries
         .into_iter()
         .rev()

@@ -192,3 +192,92 @@ test('an instance that does not answer keeps its default selectable and offers a
   await expect(browser.getByRole('button', { name: /Default model\s+Codex · personal/ })).toBeVisible();
   await expect(browser.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
 });
+
+test('a silent instance cannot hide healthy models or configured defaults, and its read times out', async ({ mount, page }, testInfo) => {
+  await page.clock.install();
+  let silentReads = 0;
+  let silent = true;
+  await page.route('**/api/manager-chat/models*', route => {
+    if (silent && new URL(route.request().url()).searchParams.get('backend') === 'codex-personal') {
+      silentReads++;
+      return; // No response: a real pending fetch, rather than an HTTP error.
+    }
+    return route.fulfill({ json: { models: codexModels } });
+  });
+  const selected: ProviderSelection[] = [];
+  const component = await mount(picker(selected));
+  await component.getByRole('button', { name: 'Provider picker' }).click();
+  await page.getByRole('dialog', { name: 'Provider picker' }).getByRole('button', { name: 'Browse all models' }).click();
+  const browser = page.getByRole('dialog', { name: 'Browse models' });
+  await expect.poll(() => silentReads).toBe(1);
+  await expect(browser.getByRole('button', { name: /GPT-5.3 Codex Mini\s+Codex · work/ })).toBeVisible();
+  await expect(browser.getByRole('button', { name: /Default model\s+Codex · personal/ })).toBeEnabled();
+  await expect(browser.getByRole('status')).toContainText('Loading models from 1 provider');
+  await page.screenshot({ path: testInfo.outputPath('model-loading-desktop.png') });
+  await page.clock.fastForward(15_001);
+  await expect(browser.getByRole('status')).toContainText('1 provider did not answer');
+  await expect(browser.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled();
+  await expect(browser.getByRole('button', { name: /Default model\s+Codex · personal/ })).toContainText('Model list unavailable');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: testInfo.outputPath('model-timeout-mobile.png') });
+  silent = false;
+  await browser.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(browser.getByRole('status')).toHaveText('7 of 7 shown');
+  await expect(browser.getByRole('listitem')).toHaveCount(7);
+  await browser.getByRole('button', { name: /GPT-5.3 Codex Mini\s+Codex · work/ }).click();
+  expect(selected.at(-1)).toEqual({ backendId: 'codex-work', modelId: 'gpt-5.3-codex-mini', reasoningEffortId: 'medium' });
+});
+
+test('closing the model browser cancels pending reads and reopening can discover recovered providers', async ({ mount, page }) => {
+  let reads = 0;
+  let cancelled = 0;
+  page.on('requestfailed', request => {
+    if (request.url().includes('/api/manager-chat/models')) cancelled++;
+  });
+  await page.route('**/api/manager-chat/models*', route => {
+    reads++;
+    if (reads <= 2) return;
+    return route.fulfill({ json: { models: codexModels } });
+  });
+  const component = await mount(picker([]));
+  const trigger = component.getByRole('button', { name: 'Provider picker' });
+  const browse = page.getByRole('dialog', { name: 'Provider picker' }).getByRole('button', { name: 'Browse all models' });
+  await trigger.click();
+  await browse.click();
+  await expect.poll(() => reads).toBe(2);
+  const browser = page.getByRole('dialog', { name: 'Browse models' });
+  await expect(browser.getByRole('button', { name: /Default model\s+Codex · work/ })).toBeEnabled();
+  await browser.getByRole('button', { name: 'Close model browser' }).click();
+  await expect.poll(() => cancelled).toBe(2);
+  await trigger.click();
+  await browse.click();
+  await expect(browser.getByRole('listitem')).toHaveCount(7);
+  await expect(browser.getByRole('status')).toHaveText('7 of 7 shown');
+});
+
+test('catalog discovery scopes the selected runner to its named account without sending it to other runners', async ({ mount, page }) => {
+  const reads: URL[] = [];
+  await page.route('**/api/manager-chat/models*', route => {
+    const url = new URL(route.request().url());
+    reads.push(url);
+    return route.fulfill({ json: { models: [{ id: 'work-only', name: 'Work-only model' }] } });
+  });
+  const selections: ProviderSelection[] = [];
+  const component = await mount(<ProviderPicker
+    backends={[{ id: 'codex', displayName: 'Codex', implemented: true }, { id: 'claude', displayName: 'Claude', implemented: true }]}
+    selectedBackendId="codex" selectedInstanceLabel="Work login" models={[]} currentModelId={null}
+    reasoningEfforts={efforts} currentReasoningEffortId="medium" modelsLoaded busy={false} variant="session"
+    catalog={{ profile: 'work', nodeId: 'worker-one', instance: { backendId: 'codex', id: 'codex-work', label: 'Work login' } }}
+    onSelect={selection => { selections.push(selection); }}
+  />);
+  await component.getByRole('button', { name: 'Provider picker' }).click();
+  await page.getByRole('dialog', { name: 'Provider picker' }).getByRole('button', { name: 'Browse all models' }).click();
+  const browser = page.getByRole('dialog', { name: 'Browse models' });
+  const selected = browser.getByRole('button', { name: /Work-only model\s+Codex · Work login/ });
+  await expect(selected).toBeVisible();
+  expect(reads.find(url => url.searchParams.get('backend') === 'codex')?.searchParams.get('backendInstance')).toBe('codex-work');
+  expect(reads.find(url => url.searchParams.get('backend') === 'claude')?.searchParams.has('backendInstance')).toBe(false);
+  expect(reads.every(url => url.searchParams.get('profile') === 'work' && url.searchParams.get('nodeId') === 'worker-one')).toBe(true);
+  await selected.click();
+  expect(selections.at(-1)).toEqual({ backendId: 'codex', modelId: 'work-only', reasoningEffortId: 'medium' });
+});

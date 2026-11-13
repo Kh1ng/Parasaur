@@ -58,7 +58,7 @@ test('reports the configured gateway URL and whether an API key is set, without 
 });
 
 test('GET /api/settings/gateway omits a configured API key from serialized output', async () => {
-  const canary = 'GAH_TEST_CANARY_1014_GATEWAY_GET';
+  const canary = 'PARASAUR_TEST_CANARY_1014_GATEWAY_GET';
   const savedKey = process.env.TDAI_GATEWAY_API_KEY;
   process.env.TDAI_GATEWAY_API_KEY = canary;
   try {
@@ -78,7 +78,7 @@ test('GET /api/settings/gateway omits a configured API key from serialized outpu
 });
 
 test('POST /api/settings/gateway/bootstrap-command explicitly returns the remote setup command', async () => {
-  const canary = 'GAH_TEST_CANARY_1014_GATEWAY_REVEAL';
+  const canary = 'PARASAUR_TEST_CANARY_1014_GATEWAY_REVEAL';
   const savedUrl = process.env.TDAI_GATEWAY_URL;
   const savedKey = process.env.TDAI_GATEWAY_API_KEY;
   process.env.TDAI_GATEWAY_URL = 'http://127.0.0.1:8420';
@@ -92,7 +92,7 @@ test('POST /api/settings/gateway/bootstrap-command explicitly returns the remote
       assert.equal(res.headers.get('cache-control'), 'no-store');
       assert.equal(typeof body.command, 'string');
       assert.equal(serialized.includes(canary), true);
-      assert.equal(body.command?.includes('GAH_GATEWAY_MODE=remote'), true);
+      assert.equal(body.command?.includes('PARASAUR_GATEWAY_MODE=remote'), true);
       assert.equal(body.command?.includes('100.64.0.42:8420'), true);
     }, { detectTailscaleIPv4: async () => '100.64.0.42' });
   } finally {
@@ -107,7 +107,7 @@ test('POST /api/settings/gateway/bootstrap-command explicitly returns the remote
 
 test('gatewaySettingsStore: reads defaults when file missing', () => {
   const path = join(tmpdir(), `gah-test-settings-${Date.now()}.json`);
-  process.env.GAH_GATEWAY_SETTINGS_PATH = path;
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = path;
   try {
     const s = readGatewaySettings();
     assert.equal(s.url, null);
@@ -115,13 +115,13 @@ test('gatewaySettingsStore: reads defaults when file missing', () => {
     assert.equal(s.enabled, true);
     assert.deepEqual(s.disabledProfiles, []);
   } finally {
-    delete process.env.GAH_GATEWAY_SETTINGS_PATH;
+    delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH;
   }
 });
 
 test('gatewaySettingsStore: write then read round-trips', () => {
   const path = join(tmpdir(), `gah-test-settings-${Date.now()}.json`);
-  process.env.GAH_GATEWAY_SETTINGS_PATH = path;
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = path;
   try {
     writeGatewaySettings({ url: 'http://192.168.5.15:8420', apiKey: 'key1', enabled: false, disabledProfiles: ['qa'] });
     const s = readGatewaySettings();
@@ -132,7 +132,7 @@ test('gatewaySettingsStore: write then read round-trips', () => {
     assert.equal(s.enabled, false);
     assert.deepEqual(s.disabledProfiles, ['qa']);
   } finally {
-    delete process.env.GAH_GATEWAY_SETTINGS_PATH;
+    delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH;
     if (existsSync(path)) rmSync(path);
   }
 });
@@ -140,7 +140,7 @@ test('gatewaySettingsStore: write then read round-trips', () => {
 test('gateway credentials use env then quoted private file, and migrate the legacy settings key', () => {
   const savedKey = process.env.TDAI_GATEWAY_API_KEY;
   const path = join(testHome, 'legacy-settings.json');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = path;
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = path;
   try {
     writeGatewaySettings({ apiKey: 'file-$`key\\quote"' });
     delete process.env.TDAI_GATEWAY_API_KEY;
@@ -153,7 +153,7 @@ test('gateway credentials use env then quoted private file, and migrate the lega
     assert.equal(effectiveGatewayApiKey(), 'legacy-key');
     assert.equal(readFileSync(path, 'utf8').includes('legacy-key'), false);
   } finally {
-    delete process.env.GAH_GATEWAY_SETTINGS_PATH;
+    delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH;
     rmSync(gatewayKeyFile(), { force: true });
     if (savedKey === undefined) delete process.env.TDAI_GATEWAY_API_KEY;
     else process.env.TDAI_GATEWAY_API_KEY = savedKey;
@@ -162,7 +162,7 @@ test('gateway credentials use env then quoted private file, and migrate the lega
 
 test('gatewaySettingsStore: partial write merges with existing', () => {
   const path = join(tmpdir(), `gah-test-settings-${Date.now()}.json`);
-  process.env.GAH_GATEWAY_SETTINGS_PATH = path;
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = path;
   try {
     writeGatewaySettings({ url: 'http://original:8420', apiKey: 'k', enabled: true, disabledProfiles: [] });
     writeGatewaySettings({ enabled: false }); // partial update
@@ -170,21 +170,21 @@ test('gatewaySettingsStore: partial write merges with existing', () => {
     assert.equal(s.url, 'http://original:8420'); // preserved
     assert.equal(s.enabled, false);              // updated
   } finally {
-    delete process.env.GAH_GATEWAY_SETTINGS_PATH;
+    delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH;
     if (existsSync(path)) rmSync(path);
   }
 });
 
 test('gatewaySettingsStore: effectiveGatewayUrl falls back to env var', () => {
   const path = join(tmpdir(), `gah-test-settings-${Date.now()}.json`);
-  process.env.GAH_GATEWAY_SETTINGS_PATH = path;
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = path;
   const savedEnv = process.env.TDAI_GATEWAY_URL;
   process.env.TDAI_GATEWAY_URL = 'http://env-host:8420';
   try {
     const url = effectiveGatewayUrl();
     assert.equal(url, 'http://env-host:8420');
   } finally {
-    delete process.env.GAH_GATEWAY_SETTINGS_PATH;
+    delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH;
     if (savedEnv !== undefined) process.env.TDAI_GATEWAY_URL = savedEnv;
     else delete process.env.TDAI_GATEWAY_URL;
     if (existsSync(path)) rmSync(path);
@@ -193,7 +193,7 @@ test('gatewaySettingsStore: effectiveGatewayUrl falls back to env var', () => {
 
 test('gatewaySettingsStore: stored url wins over env var', () => {
   const path = join(tmpdir(), `gah-test-settings-${Date.now()}.json`);
-  process.env.GAH_GATEWAY_SETTINGS_PATH = path;
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = path;
   const savedEnv = process.env.TDAI_GATEWAY_URL;
   process.env.TDAI_GATEWAY_URL = 'http://env-host:8420';
   try {
@@ -201,7 +201,7 @@ test('gatewaySettingsStore: stored url wins over env var', () => {
     const url = effectiveGatewayUrl();
     assert.equal(url, 'http://stored-host:8420');
   } finally {
-    delete process.env.GAH_GATEWAY_SETTINGS_PATH;
+    delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH;
     if (savedEnv !== undefined) process.env.TDAI_GATEWAY_URL = savedEnv;
     else delete process.env.TDAI_GATEWAY_URL;
     if (existsSync(path)) rmSync(path);
@@ -210,13 +210,13 @@ test('gatewaySettingsStore: stored url wins over env var', () => {
 
 test('gatewaySettingsStore: per-profile opt-out respects disabledProfiles', () => {
   const path = join(tmpdir(), `gah-test-settings-${Date.now()}.json`);
-  process.env.GAH_GATEWAY_SETTINGS_PATH = path;
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = path;
   try {
     writeGatewaySettings({ url: 'http://configured-host:8420', apiKey: null, enabled: true, disabledProfiles: ['staging'] });
     assert.equal(gatewayEnabledForProfile('prod'), true);
     assert.equal(gatewayEnabledForProfile('staging'), false);
   } finally {
-    delete process.env.GAH_GATEWAY_SETTINGS_PATH;
+    delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH;
     if (existsSync(path)) rmSync(path);
   }
 });
@@ -225,7 +225,7 @@ test('gatewaySettingsStore: per-profile opt-out respects disabledProfiles', () =
 
 test('gatewaySettingsStore: context policy defaults are empty (unaffected profiles)', () => {
   const path = join(tmpdir(), `gah-test-settings-${Date.now()}.json`);
-  process.env.GAH_GATEWAY_SETTINGS_PATH = path;
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = path;
   try {
     const s = readGatewaySettings();
     assert.deepEqual(s.contextPolicy, {});
@@ -234,14 +234,14 @@ test('gatewaySettingsStore: context policy defaults are empty (unaffected profil
     assert.equal(policy.budgetChars, undefined);
     assert.equal(policy.tiers, undefined);
   } finally {
-    delete process.env.GAH_GATEWAY_SETTINGS_PATH;
+    delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH;
     if (existsSync(path)) rmSync(path);
   }
 });
 
 test('gatewaySettingsStore: per-profile policy merges over the global default field-by-field', () => {
   const path = join(tmpdir(), `gah-test-settings-${Date.now()}.json`);
-  process.env.GAH_GATEWAY_SETTINGS_PATH = path;
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = path;
   try {
     writeGatewaySettings({
       url: null, apiKey: null, enabled: true, disabledProfiles: [],
@@ -251,20 +251,20 @@ test('gatewaySettingsStore: per-profile policy merges over the global default fi
     assert.deepEqual(effectiveContextPolicy('prod'), { settleIdleSeconds:900, budgetChars: 2000, tiers: ['L0', 'L1'] });
     assert.deepEqual(effectiveContextPolicy('qa'), { settleIdleSeconds:900, budgetChars: 500, tiers: ['L0', 'L1'] });
   } finally {
-    delete process.env.GAH_GATEWAY_SETTINGS_PATH;
+    delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH;
     if (existsSync(path)) rmSync(path);
   }
 });
 
 test('gatewaySettingsStore: a change to policy is visible on the next read (live reload)', () => {
   const path = join(tmpdir(), `gah-test-settings-${Date.now()}.json`);
-  process.env.GAH_GATEWAY_SETTINGS_PATH = path;
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = path;
   try {
     assert.equal(effectiveContextPolicy('gah').budgetChars, undefined);
     writeGatewaySettings({ url: null, apiKey: null, enabled: true, disabledProfiles: [], contextPolicy: { budgetChars: 100 } });
     assert.equal(effectiveContextPolicy('gah').budgetChars, 100);
   } finally {
-    delete process.env.GAH_GATEWAY_SETTINGS_PATH;
+    delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH;
     if (existsSync(path)) rmSync(path);
   }
 });
@@ -285,7 +285,7 @@ test('applyContextBudget truncates deterministically to the highest-relevance he
 
 test('PUT /api/settings/gateway persists url and returns updated settings', async () => {
   const path = join(tmpdir(), `gah-test-settings-${Date.now()}.json`);
-  process.env.GAH_GATEWAY_SETTINGS_PATH = path;
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = path;
   const savedUrl = process.env.TDAI_GATEWAY_URL;
   process.env.TDAI_GATEWAY_URL = 'http://127.0.0.1:8420';
   try {
@@ -303,7 +303,7 @@ test('PUT /api/settings/gateway persists url and returns updated settings', asyn
       assert.equal(stored.url, 'http://192.168.5.15:8420');
     });
   } finally {
-    delete process.env.GAH_GATEWAY_SETTINGS_PATH;
+    delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH;
     if (savedUrl !== undefined) process.env.TDAI_GATEWAY_URL = savedUrl;
     else delete process.env.TDAI_GATEWAY_URL;
     if (existsSync(path)) rmSync(path);
@@ -312,7 +312,7 @@ test('PUT /api/settings/gateway persists url and returns updated settings', asyn
 
 test('PUT /api/settings/gateway disabling sets enabled=false', async () => {
   const path = join(tmpdir(), `gah-test-settings-${Date.now()}.json`);
-  process.env.GAH_GATEWAY_SETTINGS_PATH = path;
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = path;
   try {
     await withServer(async (url) => {
       const res = await fetch(`${url}/api/settings/gateway`, {
@@ -325,7 +325,7 @@ test('PUT /api/settings/gateway disabling sets enabled=false', async () => {
       assert.equal(stored.enabled, false);
     });
   } finally {
-    delete process.env.GAH_GATEWAY_SETTINGS_PATH;
+    delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH;
     if (existsSync(path)) rmSync(path);
   }
 });

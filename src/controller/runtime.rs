@@ -1,10 +1,11 @@
 use super::decision::decide_next_action;
 use super::human_required_reason::HumanRequiredReason;
 use super::recovery::{
-    defer_if_branch_attached, detect_stuck_loop, human_required_already_reported,
-    human_required_report_identity, latest_clear_attempts_timestamp, no_admission_diagnostics,
-    recently_capacity_deferred_work_ids, reconcile_abandoned_dispatches, record_action_events,
-    remediation_plan_for_action, report_blocked_work_items_once, retain_snapshot_candidates,
+    defer_if_branch_attached, human_required_already_reported, human_required_report_identity,
+    latest_clear_attempts_timestamp, no_admission_diagnostics, read_recovery_reports,
+    read_stuck_loop, recently_capacity_deferred_work_ids, reconcile_abandoned_dispatches,
+    record_action_events, remediation_plan_for_action, report_blocked_work_items_once,
+    retain_snapshot_candidates,
 };
 use super::NextAction;
 use anyhow::Result;
@@ -28,7 +29,11 @@ use route_state::{record_capacity_deferral, route_state_fingerprint};
 mod action_execution;
 #[path = "runtime/dispatch_policy.rs"]
 mod dispatch_policy;
-pub(crate) use action_execution::execute_action;
+#[path = "runtime/native_dispatch.rs"]
+mod native_dispatch;
+pub(crate) use action_execution::{action_prior_context, execute_action};
+#[cfg(unix)]
+pub(crate) use native_dispatch::project_native_holds;
 #[path = "runtime/dispatch_state.rs"]
 mod dispatch_state;
 use dispatch_state::{
@@ -49,6 +54,11 @@ mod merge;
 mod node_capacity;
 #[cfg(test)]
 pub(crate) use node_capacity::test_lease as test_node_lease;
+#[cfg(target_os = "linux")]
+pub(crate) use node_capacity::{
+    try_acquire as acquire_node_capacity, try_acquire_native as acquire_native_capacity,
+    LiveAdmission as NodeCapacityAdmission,
+};
 #[path = "runtime/node_reprobe.rs"]
 mod node_reprobe;
 pub use admission::RouteNodeAdmission;
@@ -326,6 +336,7 @@ fn run_pass(
     }
     let mut snapshot =
         crate::status::build_snapshot_from_entries(cfg, profile_name, now, &ledger_entries)?;
+    native_dispatch::apply_holds(cfg, profile_name, &mut snapshot)?;
     crate::prune::run_automatic(cfg, profile_name, &ledger_entries, &snapshot)?;
     crate::events::record(
         cfg,
@@ -334,7 +345,7 @@ fn run_pass(
         None,
         format!("profile={profile_name}"),
     )?;
-    let history = crate::events::read_events(cfg)?;
+    let history = read_recovery_reports(cfg, profile_name)?;
     let capacity_deferred_work_ids = suppress_recent_capacity_deferrals(
         cfg,
         &mut snapshot,
@@ -346,15 +357,18 @@ fn run_pass(
 
     // Issue #1381: blocked items are reported once even when other work is
     // dispatched this tick.
-    report_blocked_work_items_once(cfg, profile_name, &snapshot)?;
+    report_blocked_work_items_once(cfg, profile_name, &snapshot, &history)?;
+    drop(history);
 
     // For parallel > 1, we need to decide multiple actions
     if parallel > 1 {
+        // Parallel admission rebuilds fresh evidence for each slot. Its
+        // initial observations need not remain resident while workers run.
+        drop(ledger_entries);
         run_parallel_once(
             cfg,
             profile_name,
             &snapshot,
-            &ledger_entries,
             json,
             parallel,
             skip_validation_gate,
@@ -362,16 +376,20 @@ fn run_pass(
     } else {
         // Original single action behavior, moving past work another worker
         // or loop holds (issue #1430).
+        let mut initial_evidence = Some(ledger_entries);
         let (action, outcome) =
             run_moving_past_held_work(&snapshot, &capacity_deferred_work_ids, |view, excluded| {
+                let entries = match initial_evidence.take() {
+                    Some(entries) => entries,
+                    None => crate::ledger::read_entries(cfg)?,
+                };
                 run_selected_action(
                     cfg,
                     profile_name,
                     &claim_scope,
                     view,
                     excluded,
-                    &history,
-                    &ledger_entries,
+                    entries,
                     skip_validation_gate,
                 )
             })?;
@@ -392,14 +410,8 @@ fn run_pass(
                 .flatten();
             no_admission_diagnostics(&snapshot, 0, 1, node_deferral)
         });
-        let newly_reported = record_stop_event(
-            cfg,
-            profile_name,
-            &history,
-            &action,
-            stop_event_type,
-            &outcome,
-        )?;
+        let newly_reported =
+            record_stop_event(cfg, profile_name, &action, stop_event_type, &outcome)?;
 
         if json {
             println!(
@@ -476,8 +488,7 @@ fn run_selected_action(
     claim_scope: &str,
     snapshot: &crate::status::StatusSnapshot,
     excluded_work_ids: &HashSet<String>,
-    history: &[crate::events::ControllerEvent],
-    ledger_entries: &[crate::ledger::LedgerEntry],
+    ledger_entries: Vec<crate::ledger::LedgerEntry>,
     skip_validation_gate: bool,
 ) -> Result<(NextAction, String)> {
     let original_action = decide_next_action(snapshot);
@@ -485,19 +496,19 @@ fn run_selected_action(
     let mut action = original_action.clone();
     let reset_after = original_action.work_id().and_then(|work_id| {
         latest_clear_attempts_timestamp(
-            ledger_entries,
+            &ledger_entries,
             profile_name,
             &crate::config::get_profile(cfg, profile_name).ok()?.repo_id,
             work_id,
         )
     });
-    if let Some(reason) = detect_stuck_loop(
-        history,
+    if let Some(reason) = read_stuck_loop(
+        cfg,
         profile_name,
         &original_action,
         reset_after,
         original_review_generation.as_deref(),
-    ) {
+    )? {
         // Persist a work-item-scoped durable human gate so that
         // subsequent loop iterations see human_required=true for this
         // work_id via ledger_lookup_for_ticket and skip it, rather than
@@ -525,7 +536,7 @@ fn run_selected_action(
             cfg,
             profile_name,
             crate::clock::now_utc(),
-            ledger_entries,
+            &ledger_entries,
         )?;
         let mut scoped = fresh;
         let mut excluded_work_ids = excluded_work_ids.clone();
@@ -561,6 +572,8 @@ fn run_selected_action(
         original_review_generation.as_deref(),
     )?;
 
+    let prior_attempt_context = action_prior_context(cfg, profile_name, &action, &ledger_entries)?;
+    drop(ledger_entries);
     let outcome = if let Some(work_id) = action
         .work_id()
         .map(crate::work_claim::normalize_work_identity)
@@ -579,12 +592,12 @@ fn run_selected_action(
                 cfg,
                 profile_name,
                 &action,
-                ledger_entries,
+                prior_attempt_context,
                 skip_validation_gate,
-                Some(RouteNodeAdmission::single_worker(
-                    action.clone(),
-                    cfg.defaults.node_capacity,
-                )),
+                Some(
+                    RouteNodeAdmission::single_worker(action.clone(), cfg.defaults.node_capacity)
+                        .with_review_generation(original_review_generation.clone()),
+                ),
             ) {
                 Ok(outcome) => {
                     crate::work_claim::release_owned_work(claim_scope, &work_id)?;
@@ -601,12 +614,12 @@ fn run_selected_action(
             cfg,
             profile_name,
             &action,
-            ledger_entries,
+            prior_attempt_context,
             skip_validation_gate,
-            Some(RouteNodeAdmission::single_worker(
-                action.clone(),
-                cfg.defaults.node_capacity,
-            )),
+            Some(
+                RouteNodeAdmission::single_worker(action.clone(), cfg.defaults.node_capacity)
+                    .with_review_generation(original_review_generation.clone()),
+            ),
         )?
     };
     Ok((action, outcome))
@@ -620,12 +633,11 @@ fn run_selected_action(
 fn record_stop_event(
     cfg: &crate::config::GahConfig,
     profile_name: &str,
-    _history: &[crate::events::ControllerEvent],
     action: &NextAction,
     stop_event_type: crate::events::EventType,
     outcome: &str,
 ) -> Result<bool> {
-    let history = crate::events::read_events(cfg)?;
+    let history = read_recovery_reports(cfg, profile_name)?;
     if human_required_already_reported(&history, profile_name, action) {
         return Ok(false);
     }
@@ -652,12 +664,25 @@ fn record_stop_event(
     }
 }
 
-/// TICKET-096: Parallel execution for multiple actions
+/// A busy queue must eventually release pass-local results/exclusions and let
+/// the recurring loop reload configuration. Always allow one complete wave.
+fn parallel_pass_action_limit(parallel: usize) -> usize {
+    const LIMIT: usize = 128;
+    #[cfg(debug_assertions)]
+    if let Some(limit) = std::env::var_os("PARASAUR_TEST_PARALLEL_PASS_ACTION_LIMIT")
+        .and_then(|value| value.to_str().and_then(|value| value.parse::<usize>().ok()))
+    {
+        return limit.clamp(1, LIMIT).max(parallel);
+    }
+    LIMIT.max(parallel)
+}
+
+/// TICKET-096: Parallel execution for multiple actions. A pass admits a bounded
+/// number of actions, drains its active workers, then releases its results.
 fn run_parallel_once(
     cfg: &crate::config::GahConfig,
     profile_name: &str,
     _snapshot: &crate::status::StatusSnapshot,
-    ledger_entries: &[crate::ledger::LedgerEntry],
     json: bool,
     max_parallel: usize,
     skip_validation_gate: bool,
@@ -676,6 +701,7 @@ fn run_parallel_once(
     // that list is sparse and only contains observed scopes, not every
     // configured backend.
     let effective_parallel_limit = max_parallel;
+    let action_limit = parallel_pass_action_limit(effective_parallel_limit);
 
     let mut results: Vec<(usize, LoopOnceResult)> = Vec::new();
     // Issue #1381: why the most recent fill attempt admitted nothing.
@@ -688,12 +714,14 @@ fn run_parallel_once(
         profile_name: &str,
         ledger_entries: &[crate::ledger::LedgerEntry],
     ) -> Result<crate::status::StatusSnapshot> {
-        crate::status::build_snapshot_from_entries(
+        let mut snapshot = crate::status::build_snapshot_from_entries(
             cfg,
             profile_name,
             crate::clock::now_utc(),
             ledger_entries,
-        )
+        )?;
+        native_dispatch::apply_holds(cfg, profile_name, &mut snapshot)?;
+        Ok(snapshot)
     }
 
     std::thread::scope(|scope| -> Result<()> {
@@ -720,7 +748,10 @@ fn run_parallel_once(
                 continue;
             }
 
-            while active < effective_parallel_limit && fill_attempts_remaining > 0 {
+            while active < effective_parallel_limit
+                && fill_attempts_remaining > 0
+                && next_sequence < action_limit
+            {
                 if crate::runner::shutdown_requested() {
                     break;
                 }
@@ -738,7 +769,7 @@ fn run_parallel_once(
                 // another process or spawned earlier in this refill cycle.
                 retain_unclaimed_work(&mut fresh_snapshot, &claimed_work_ids, &executed_work_ids);
 
-                let history = crate::events::read_events(cfg)?;
+                let history = read_recovery_reports(cfg, profile_name)?;
                 let capacity_deferred_work_ids = suppress_recent_capacity_deferrals(
                     cfg,
                     &mut fresh_snapshot,
@@ -747,6 +778,7 @@ fn run_parallel_once(
                     profile_name,
                     &crate::config::get_profile(cfg, profile_name)?.repo_id,
                 );
+                drop(history);
 
                 let original_action = decide_next_action(&fresh_snapshot);
                 let original_review_generation =
@@ -761,13 +793,13 @@ fn run_parallel_once(
                         work_id,
                     )
                 });
-                if let Some(reason) = detect_stuck_loop(
-                    &history,
+                if let Some(reason) = read_stuck_loop(
+                    cfg,
                     profile_name,
                     &original_action,
                     reset_after,
                     original_review_generation.as_deref(),
-                ) {
+                )? {
                     if let Some(wid) = original_action.work_id() {
                         if let Err(error) = append_stuck_loop_gate_if_transition(
                             cfg,
@@ -920,12 +952,15 @@ fn run_parallel_once(
                         saw_real_work = true;
 
                         let route_admission = if waits_for_route {
-                            Some(RouteNodeAdmission::new(
-                                sequence,
-                                action_for_thread.clone(),
-                                route_admission_tx.clone(),
-                                cfg.defaults.node_capacity,
-                            ))
+                            Some(
+                                RouteNodeAdmission::new(
+                                    sequence,
+                                    action_for_thread.clone(),
+                                    route_admission_tx.clone(),
+                                    cfg.defaults.node_capacity,
+                                )
+                                .with_review_generation(original_review_generation.clone()),
+                            )
                         } else {
                             None
                         };
@@ -933,7 +968,9 @@ fn run_parallel_once(
                             admission_coordinator.register_lifecycle_worker(sequence);
                         }
                         let done_tx = done_tx.clone();
-                        let ledger_entries_for_thread = ledger_entries;
+                        let prior_attempt_context =
+                            action_prior_context(cfg, profile_name, &action, &ledger_entries)?;
+                        drop(ledger_entries);
                         active += 1;
                         scope.spawn(move || {
                             let _node_capacity_lease = node_capacity_lease;
@@ -955,7 +992,7 @@ fn run_parallel_once(
                                         cfg,
                                         &profile_for_thread,
                                         &action_for_thread,
-                                        &ledger_entries_for_thread,
+                                        prior_attempt_context,
                                         skip_validation_gate,
                                         route_admission,
                                     )
@@ -1015,7 +1052,7 @@ fn run_parallel_once(
                             cfg,
                             profile_name,
                             &action,
-                            ledger_entries,
+                            None,
                             skip_validation_gate,
                             None,
                         )?;
@@ -1028,11 +1065,9 @@ fn run_parallel_once(
                             NextAction::NoOp { .. } => crate::events::EventType::LoopStopped,
                             _ => unreachable!(),
                         };
-                        let history = crate::events::read_events(cfg)?;
                         if !record_stop_event(
                             cfg,
                             profile_name,
-                            &history,
                             &action,
                             stop_event_type,
                             &outcome,
@@ -1046,29 +1081,32 @@ fn run_parallel_once(
                 break;
             }
 
-            let (sequence, result) = if node_capacity_reprobe.is_scheduled() {
-                match node_capacity_reprobe.wait(
-                    &done_rx,
-                    admission_coordinator.active_node_workers(),
-                    effective_parallel_limit,
-                    cfg.defaults.node_capacity,
-                )? {
-                    ReprobeWaitOutcome::WorkerCompleted(result) => result,
-                    ReprobeWaitOutcome::RetryFill => {
-                        node_capacity_reprobe.readmit(&mut executed_work_ids);
-                        fill_attempts_remaining = 1;
-                        continue;
+            // Once the pass is full, wait only for existing workers. A ready
+            // node re-probe cannot reopen admission or spin while draining.
+            let (sequence, result) =
+                if next_sequence < action_limit && node_capacity_reprobe.is_scheduled() {
+                    match node_capacity_reprobe.wait(
+                        &done_rx,
+                        admission_coordinator.active_node_workers(),
+                        effective_parallel_limit,
+                        cfg.defaults.node_capacity,
+                    )? {
+                        ReprobeWaitOutcome::WorkerCompleted(result) => result,
+                        ReprobeWaitOutcome::RetryFill => {
+                            node_capacity_reprobe.readmit(&mut executed_work_ids);
+                            fill_attempts_remaining = 1;
+                            continue;
+                        }
+                        ReprobeWaitOutcome::KeepWaiting => continue,
+                        ReprobeWaitOutcome::Shutdown => break,
                     }
-                    ReprobeWaitOutcome::KeepWaiting => continue,
-                    ReprobeWaitOutcome::Shutdown => break,
-                }
-            } else {
-                match admission::recv_worker_done(&done_rx)? {
-                    Some(result) => result,
-                    None if crate::runner::shutdown_requested() => break,
-                    None => continue,
-                }
-            };
+                } else {
+                    match admission::recv_worker_done(&done_rx)? {
+                        Some(result) => result,
+                        None if crate::runner::shutdown_requested() => break,
+                        None => continue,
+                    }
+                };
             admission_coordinator.complete_worker(sequence);
             active -= 1;
             if active == 0 {
@@ -1101,6 +1139,11 @@ fn run_parallel_once(
                 );
             }
             results.push((sequence, result));
+        }
+        if next_sequence >= action_limit && active == 0 {
+            eprintln!(
+                "gah loop: parallel pass reached its {action_limit}-action limit; active workers drained; remaining work is eligible for another pass"
+            );
         }
         Ok(())
     })?;
@@ -1170,6 +1213,7 @@ fn run_parallel_once(
 /// initial deferral or a lost claim does not.
 fn action_admitted_work(action: &NextAction, outcome: &str) -> bool {
     selects_work(action)
+        && !outcome.starts_with("Blocked ")
         && !outcome_held_elsewhere(outcome)
         && (!outcome.starts_with("Deferred ") || !outcome.contains("no backend launched"))
 }
@@ -1210,6 +1254,7 @@ fn has_follow_up_in_batch(action: &NextAction, outcome: &str) -> bool {
             | NextAction::Escalate { .. }
             | NextAction::ReviewMr { .. }
     ) && !outcome.starts_with("Error:")
+        && !outcome.starts_with("Blocked ")
         && !outcome.starts_with("Deferred ")
         && !outcome_held_elsewhere(outcome)
 }
@@ -1237,6 +1282,29 @@ pub(crate) fn run_dispatch_and_record(
     work_id: Option<&str>,
     args: &crate::dispatch::DispatchArgs,
 ) -> Result<Option<String>> {
+    if args.route_admission.is_some() && native_dispatch::enabled(cfg)? {
+        let offered = native_dispatch::submit(cfg, args);
+        let (run, detail) = match offered {
+            Ok(offered) => (
+                Some(offered.run_id),
+                format!("Deferred {label}: {}", offered.detail),
+            ),
+            Err(error) => (
+                args.run_id.clone(),
+                format!("Deferred {label}: native handoff unconfirmed: {error}"),
+            ),
+        };
+        crate::events::record_with_run_id_and_reason_code(
+            cfg,
+            crate::events::EventType::WorkDeferred,
+            Some(&args.profile),
+            work_id,
+            run.as_deref(),
+            detail.clone(),
+            Some("native_handoff"),
+        )?;
+        return Ok(Some(detail));
+    }
     let target_context = args
         .branch
         .as_deref()
@@ -1267,6 +1335,27 @@ pub(crate) fn run_dispatch_and_record(
         Err(e) if crate::dispatch::capacity_deferred_error(&e) => {
             record_capacity_deferral(cfg, args, label, work_id, &e)
         }
+        Err(e)
+            if e.downcast_ref::<crate::spend_budget::SpendBudgetHeld>()
+                .is_some() =>
+        {
+            crate::events::record_with_run_id_and_reason_code(
+                cfg,
+                crate::events::EventType::DispatchFinished,
+                Some(&args.profile),
+                work_id,
+                args.run_id.as_deref(),
+                format!("{label}: {e}"),
+                Some("spend_budget"),
+            )?;
+            if args.route_admission.is_none() {
+                // A direct CLI command must not exit successfully if spend
+                // crossed its ceiling while it waited for the profile lock.
+                Err(e)
+            } else {
+                Ok(Some(format!("Deferred {label}: {e}; no backend launched")))
+            }
+        }
         // Another loop holds the issue. That is a skip, not a failed dispatch.
         Err(e) if crate::dispatch::issue_claim_lost(&e).is_some() => {
             crate::events::record_with_run_id(
@@ -1287,22 +1376,26 @@ pub(crate) fn run_dispatch_and_record(
             } else {
                 crate::events::EventType::DispatchFinished
             };
-            let reason_code = if crate::policy::policy_blocked(&e).is_some()
-                || (matches!(event_type, crate::events::EventType::DispatchFinished)
-                    && e.chain().any(|cause| {
-                        cause
-                            .downcast_ref::<crate::routing::RouteError>()
-                            .is_some_and(|route_error| {
-                                matches!(
-                                    route_error,
-                                    crate::routing::RouteError::ApprovalRequired { .. }
-                                )
-                            })
-                    })) {
-                Some(HumanRequiredReason::PolicyApproval.as_str())
-            } else {
-                None
-            };
+            let reason_code =
+                if matches!(event_type, crate::events::EventType::ReviewBudgetExhausted) {
+                    Some(HumanRequiredReason::RetryBudgetExhausted.as_str())
+                } else if crate::policy::policy_blocked(&e).is_some()
+                    || (matches!(event_type, crate::events::EventType::DispatchFinished)
+                        && e.chain().any(|cause| {
+                            cause
+                                .downcast_ref::<crate::routing::RouteError>()
+                                .is_some_and(|route_error| {
+                                    matches!(
+                                        route_error,
+                                        crate::routing::RouteError::ApprovalRequired { .. }
+                                    )
+                                })
+                        }))
+                {
+                    Some(HumanRequiredReason::PolicyApproval.as_str())
+                } else {
+                    None
+                };
             crate::events::record_dispatch_error(
                 cfg,
                 event_type,

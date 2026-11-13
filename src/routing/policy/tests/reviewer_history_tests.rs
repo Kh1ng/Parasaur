@@ -33,6 +33,7 @@ fn reviewer_history_reorders_only_after_the_minimum_sample() {
         RouteRequest {
             mode: "review",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -91,6 +92,7 @@ fn missing_reviewer_samples_and_configured_last_glm_preserve_order() {
         RouteRequest {
             mode: "review",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,

@@ -52,6 +52,24 @@ pub(crate) enum Admission {
 pub(crate) struct NodeCapacityLease {
     path: PathBuf,
     _file: std::fs::File,
+    retain_path: bool,
+}
+
+impl NodeCapacityLease {
+    #[cfg(target_os = "linux")]
+    pub(crate) fn monitor_file(&self) -> std::io::Result<std::fs::File> {
+        self._file.try_clone()
+    }
+
+    /// Keep the registry entry when transferring its lock to a durable owner.
+    /// Uncertain transfers must leave the entry intact: the ordinary scanner
+    /// reclaims it only after the kernel proves no descriptor holds the lock.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn persistent_monitor_file(&mut self) -> std::io::Result<std::fs::File> {
+        let file = self._file.try_clone()?;
+        self.retain_path = true;
+        Ok(file)
+    }
 }
 
 #[derive(Debug)]
@@ -72,18 +90,9 @@ fn reservation_for(
         NextAction::DispatchTicket { .. }
         | NextAction::FixMr { .. }
         | NextAction::Retry { .. }
-        | NextAction::Escalate { .. } => WorkerReservation {
-            memory_bytes: settings.worker_memory_mib * 1024 * 1024,
-            cpu_units: f64::from(settings.worker_cpu_cores),
-        },
-        NextAction::DecomposeIssue { .. } => WorkerReservation {
-            memory_bytes: 2 * GIB,
-            cpu_units: 1.0,
-        },
-        NextAction::ReviewMr { .. } => WorkerReservation {
-            memory_bytes: GIB,
-            cpu_units: 0.5,
-        },
+        | NextAction::Escalate { .. } => WorkerKind::Implementation.reservation(settings),
+        NextAction::DecomposeIssue { .. } => WorkerKind::Decomposition.reservation(settings),
+        NextAction::ReviewMr { .. } => WorkerKind::Review.reservation(settings),
         NextAction::MarkReadyForReview { .. }
         | NextAction::MergeMr { .. }
         | NextAction::ReconcilePmParent { .. } => WorkerReservation {
@@ -93,6 +102,31 @@ fn reservation_for(
         NextAction::WaitUntil { .. }
         | NextAction::HumanRequired { .. }
         | NextAction::NoOp { .. } => WorkerReservation::default(),
+    }
+}
+
+enum WorkerKind {
+    Implementation,
+    Decomposition,
+    Review,
+}
+
+impl WorkerKind {
+    fn reservation(self, settings: crate::config::NodeCapacitySettings) -> WorkerReservation {
+        match self {
+            Self::Implementation => WorkerReservation {
+                memory_bytes: settings.worker_memory_mib * 1024 * 1024,
+                cpu_units: f64::from(settings.worker_cpu_cores),
+            },
+            Self::Decomposition => WorkerReservation {
+                memory_bytes: 2 * GIB,
+                cpu_units: 1.0,
+            },
+            Self::Review => WorkerReservation {
+                memory_bytes: GIB,
+                cpu_units: 0.5,
+            },
+        }
     }
 }
 
@@ -112,6 +146,7 @@ pub(crate) fn admission_for(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn admission_for_settings(
     action: &NextAction,
     active_workers: usize,
@@ -120,6 +155,16 @@ pub(crate) fn admission_for_settings(
     settings: crate::config::NodeCapacitySettings,
 ) -> Admission {
     let requested = reservation_for(action, settings);
+    admission_for_reservation(requested, active_workers, committed, pressure, settings)
+}
+
+fn admission_for_reservation(
+    requested: WorkerReservation,
+    active_workers: usize,
+    committed: WorkerReservation,
+    pressure: NodePressure,
+    settings: crate::config::NodeCapacitySettings,
+) -> Admission {
     // One formula for the free-memory floor, shared with the CLI and the
     // Settings page (review of #1383): NodeCapacitySettings owns it.
     let memory_reserve = settings.memory_reserve_bytes(pressure.memory_total_bytes);
@@ -193,9 +238,9 @@ pub(crate) fn admission_for_settings(
 }
 
 /// Atomically account for projected worker demand across every GAH profile on
-/// this host. A lock is held on each lease file for the worker lifetime. If a
-/// controller is killed, the kernel releases that lock and the next admission
-/// sweep removes the stale file, so crashed managers cannot strand capacity.
+/// this host. A lock is held on each lease file for the worker lifetime. After
+/// the last owner closes its descriptor, the next admission sweep removes the
+/// stale file. A transferred lock remains counted beyond its creator's exit.
 pub(crate) fn try_acquire(
     action: &NextAction,
     local_active_workers: usize,
@@ -210,9 +255,51 @@ pub(crate) fn try_acquire(
     )
 }
 
+/// Native jobs share the same host-wide registry and live pressure checks as
+/// controller workers. Only executable factory modes have a reservation.
+#[cfg(target_os = "linux")]
+pub(crate) fn try_acquire_native(
+    mode: &str,
+    settings: crate::config::NodeCapacitySettings,
+) -> std::io::Result<LiveAdmission> {
+    let kind = match mode {
+        "fix" => WorkerKind::Implementation,
+        "pm" => WorkerKind::Decomposition,
+        "review" => WorkerKind::Review,
+        _ => {
+            return Err(std::io::Error::other(
+                "Unsupported native factory capacity mode",
+            ))
+        }
+    };
+    acquire_reservation_in_dir(
+        &capacity_dir(),
+        kind.reservation(settings),
+        sample()?,
+        0,
+        settings,
+    )
+}
+
 fn acquire_in_dir(
     dir: &Path,
     action: &NextAction,
+    pressure: NodePressure,
+    local_active_workers: usize,
+    settings: crate::config::NodeCapacitySettings,
+) -> std::io::Result<LiveAdmission> {
+    acquire_reservation_in_dir(
+        dir,
+        reservation_for(action, settings),
+        pressure,
+        local_active_workers,
+        settings,
+    )
+}
+
+fn acquire_reservation_in_dir(
+    dir: &Path,
+    requested: WorkerReservation,
     pressure: NodePressure,
     local_active_workers: usize,
     settings: crate::config::NodeCapacitySettings,
@@ -252,8 +339,8 @@ fn acquire_in_dir(
     }
 
     let admission_active_workers = active_workers.max(local_active_workers);
-    let reservation = match admission_for_settings(
-        action,
+    let reservation = match admission_for_reservation(
+        requested,
         admission_active_workers,
         committed,
         pressure,
@@ -279,11 +366,15 @@ fn acquire_in_dir(
     Ok(LiveAdmission::Admit(NodeCapacityLease {
         path: lease_path,
         _file: lease_file,
+        retain_path: false,
     }))
 }
 
 impl Drop for NodeCapacityLease {
     fn drop(&mut self) {
+        if self.retain_path {
+            return;
+        }
         // Serialize release with scans so a scanner never observes a directory
         // entry disappear midway through validation. On an I/O failure, leave
         // the path behind; once this File drops, its lock is released and the
@@ -371,7 +462,7 @@ pub(crate) fn sample() -> std::io::Result<NodePressure> {
     // file to make pressure-sensitive process tests deterministic. Release
     // binaries do not compile this branch and always read the live kernel.
     #[cfg(debug_assertions)]
-    if let Some(path) = std::env::var_os("GAH_TEST_NODE_PRESSURE_FILE") {
+    if let Some(path) = std::env::var_os("PARASAUR_TEST_NODE_PRESSURE_FILE") {
         eprintln!(
             "gah loop: using explicit debug-only node pressure fixture {}",
             Path::new(&path).display()
@@ -546,6 +637,7 @@ pub(crate) fn test_lease(dir: &Path) -> std::io::Result<(NodeCapacityLease, Path
         NodeCapacityLease {
             path: path.clone(),
             _file: file,
+            retain_path: false,
         },
         path,
     ))
@@ -554,6 +646,50 @@ pub(crate) fn test_lease(dir: &Path) -> std::io::Result<(NodeCapacityLease, Path
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn transferred_lock_stays_accounted_until_last_owner_exits() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = crate::config::NodeCapacitySettings::default();
+        let node = pressure(15, 10, 0.0);
+        let LiveAdmission::Admit(mut lease) =
+            acquire_in_dir(dir.path(), &implementation(), node, 0, settings).unwrap()
+        else {
+            panic!("first admission refused")
+        };
+        let path = lease.path.clone();
+        let monitor = lease.persistent_monitor_file().unwrap();
+        drop(lease);
+        assert!(path.exists());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "4294967296 2.000\n"
+        );
+        let LiveAdmission::Admit(_second) =
+            acquire_in_dir(dir.path(), &implementation(), node, 0, settings).unwrap()
+        else {
+            panic!("second admission refused")
+        };
+        let LiveAdmission::Admit(_third) =
+            acquire_in_dir(dir.path(), &implementation(), node, 0, settings).unwrap()
+        else {
+            panic!("third admission refused")
+        };
+        assert!(matches!(
+            acquire_in_dir(dir.path(), &implementation(), node, 0, settings).unwrap(),
+            LiveAdmission::Defer(_)
+        ));
+        drop(monitor);
+        assert!(matches!(
+            acquire_in_dir(dir.path(), &implementation(), node, 0, settings).unwrap(),
+            LiveAdmission::Admit(_)
+        ));
+        assert!(
+            !path.exists(),
+            "scanner must reclaim a transferred lock only after its last owner exits"
+        );
+    }
 
     fn pressure(available_gib: u64, cpus: usize, load_one: f64) -> NodePressure {
         NodePressure {

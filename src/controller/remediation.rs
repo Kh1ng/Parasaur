@@ -398,7 +398,7 @@ pub fn plan_remediation(context: RemediationContext<'_>) -> RemediationPlan {
             reference,
             reason_code,
             RemediationAuthority::Operator,
-            "Review publication failed; inspect provider access and the remote review before retrying",
+            "The review was written on this machine but could not be posted. Repair provider access (GitLab posts reviews with GITLAB_PAT or GITLAB_PAT2 from the profile's env file), then dispatch the review again: it is published, not skipped",
             inspect_actions(profile_name, work_id, reference),
         ),
         HumanRequiredReason::ConfigurationInfra => {

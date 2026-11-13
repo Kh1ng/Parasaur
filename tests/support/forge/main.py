@@ -113,7 +113,7 @@ with open(state_path + '.lock', 'a') as lock:
     with open(state_path) as source:
         state = json.load(source)
     # Inherits the clock seam from #1515 without depending on its Rust code.
-    state['now'] = os.environ.get('GAH_TEST_NOW', state['now'])
+    state['now'] = os.environ.get('PARASAUR_TEST_NOW', state['now'])
     state['calls'].append([provider] + argv)
     with open(log_path, 'a') as log:
         log.write(' '.join(argv) + '\n')

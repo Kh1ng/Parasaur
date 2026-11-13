@@ -4,6 +4,7 @@
 // initializes the library-owned CLI entry point. See ticket #406.
 
 fn main() -> anyhow::Result<()> {
+    git_agent_harness::legacy_settings::adopt();
     git_agent_harness::clock::init();
     git_agent_harness::cli::run()
 }

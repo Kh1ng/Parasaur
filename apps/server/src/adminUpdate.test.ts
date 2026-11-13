@@ -10,13 +10,13 @@ import { adminUpdateEnvironment, getPendingCommits, readAdminUpdateState, startA
 function withStatePath(fn: (statePath: string) => void): void {
   const dir = mkdtempSync(join(tmpdir(), 'gah-admin-update-'));
   const statePath = join(dir, 'admin-update-state.json');
-  const saved = process.env.GAH_ADMIN_UPDATE_STATE_PATH;
-  process.env.GAH_ADMIN_UPDATE_STATE_PATH = statePath;
+  const saved = process.env.PARASAUR_ADMIN_UPDATE_STATE_PATH;
+  process.env.PARASAUR_ADMIN_UPDATE_STATE_PATH = statePath;
   try {
     fn(statePath);
   } finally {
-    if (saved === undefined) delete process.env.GAH_ADMIN_UPDATE_STATE_PATH;
-    else process.env.GAH_ADMIN_UPDATE_STATE_PATH = saved;
+    if (saved === undefined) delete process.env.PARASAUR_ADMIN_UPDATE_STATE_PATH;
+    else process.env.PARASAUR_ADMIN_UPDATE_STATE_PATH = saved;
     rmSync(dir, { recursive: true, force: true });
   }
 }

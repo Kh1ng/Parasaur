@@ -122,11 +122,11 @@ test('a chat session runs its turn inside its worktree and archives safely', { t
 
   const savedEnv = { ...process.env };
   process.env.PATH = `${join(fixtures, 'hermes')}:${process.env.PATH}`;
-  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
-  process.env.GAH_FIXTURE_PROFILE_LIST = profileListPath;
-  process.env.GAH_CHAT_STATE_DIR = join(stateDir, 'chat');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
+  process.env.PARASAUR_BINARY = join(fixtures, 'gah', 'gah');
+  process.env.PARASAUR_FIXTURE_PROFILE_LIST = profileListPath;
+  process.env.PARASAUR_CHAT_STATE_DIR = join(stateDir, 'chat');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
   process.env.TDAI_GATEWAY_URL = `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`;
 
   const server = http.createServer();
@@ -254,11 +254,11 @@ test('a session serves turns on its pinned model and switches model/backend in p
 
   const savedEnv = { ...process.env };
   process.env.PATH = `${join(fixtures, 'hermes')}:${process.env.PATH}`;
-  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
-  process.env.GAH_FIXTURE_PROFILE_LIST = profileListPath;
-  process.env.GAH_CHAT_STATE_DIR = join(stateDir, 'chat');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
+  process.env.PARASAUR_BINARY = join(fixtures, 'gah', 'gah');
+  process.env.PARASAUR_FIXTURE_PROFILE_LIST = profileListPath;
+  process.env.PARASAUR_CHAT_STATE_DIR = join(stateDir, 'chat');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
   process.env.TDAI_GATEWAY_URL = `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`;
 
   const server = http.createServer();
@@ -352,11 +352,11 @@ test('a session pins its reasoning effort, serves turns on it, and switches it i
 
   const savedEnv = { ...process.env };
   process.env.PATH = `${join(fixtures, 'hermes')}:${process.env.PATH}`;
-  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
-  process.env.GAH_FIXTURE_PROFILE_LIST = profileListPath;
-  process.env.GAH_CHAT_STATE_DIR = join(stateDir, 'chat');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
+  process.env.PARASAUR_BINARY = join(fixtures, 'gah', 'gah');
+  process.env.PARASAUR_FIXTURE_PROFILE_LIST = profileListPath;
+  process.env.PARASAUR_CHAT_STATE_DIR = join(stateDir, 'chat');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
   process.env.TDAI_GATEWAY_URL = `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`;
 
   const server = http.createServer();
@@ -482,11 +482,11 @@ test('tool calls stream as structured events and permissions round-trip through 
 
   const savedEnv = { ...process.env };
   process.env.PATH = `${join(fixtures, 'hermes')}:${process.env.PATH}`;
-  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
-  process.env.GAH_FIXTURE_PROFILE_LIST = profileListPath;
-  process.env.GAH_CHAT_STATE_DIR = join(stateDir, 'chat');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
+  process.env.PARASAUR_BINARY = join(fixtures, 'gah', 'gah');
+  process.env.PARASAUR_FIXTURE_PROFILE_LIST = profileListPath;
+  process.env.PARASAUR_CHAT_STATE_DIR = join(stateDir, 'chat');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
   process.env.TDAI_GATEWAY_URL = `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`;
 
   const server = http.createServer();
@@ -553,7 +553,7 @@ test('tool calls stream as structured events and permissions round-trip through 
     // Issue #1382: with bypass on, an ordinary in-worktree action runs
     // without a prompt and is journaled; a push, an outside path, and an
     // unclassifiable request still ask.
-    writeFileSync(process.env.GAH_MANAGER_CHAT_SETTINGS_PATH!, JSON.stringify({ permissionMode: 'bypass' }));
+    writeFileSync(process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH!, JSON.stringify({ permissionMode: 'bypass' }));
     const prompts: Extract<ServerMessage, { type: 'manager.chat.permission' }>[] = [];
     client.on('message', (raw) => {
       const message = JSON.parse(raw.toString()) as ServerMessage;
@@ -690,11 +690,11 @@ test('a session preview auto-detects the dev-server port and proxies it', { time
 
   const savedEnv = { ...process.env };
   process.env.PATH = `${join(fixtures, 'hermes')}:${process.env.PATH}`;
-  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
-  process.env.GAH_FIXTURE_PROFILE_LIST = profileListPath;
-  process.env.GAH_CHAT_STATE_DIR = join(stateDir, 'chat');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
+  process.env.PARASAUR_BINARY = join(fixtures, 'gah', 'gah');
+  process.env.PARASAUR_FIXTURE_PROFILE_LIST = profileListPath;
+  process.env.PARASAUR_CHAT_STATE_DIR = join(stateDir, 'chat');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
   process.env.TDAI_GATEWAY_URL = `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`;
 
   const server = http.createServer();
@@ -716,8 +716,9 @@ test('a session preview auto-detects the dev-server port and proxies it', { time
   let createdSessionId: string | null = null;
   // The "dev server" the agent allegedly started: records the Host header.
   const seenHosts: string[] = [];
+  const readinessHosts: string[] = [];
   const devServer = http.createServer((req, res) => {
-    seenHosts.push(String(req.headers.host));
+    (req.method === 'HEAD' ? readinessHosts : seenHosts).push(String(req.headers.host));
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end('<h1>dev server</h1>');
   });
@@ -766,6 +767,8 @@ test('a session preview auto-detects the dev-server port and proxies it', { time
     assert.equal(served.status, 200);
     assert.match(served.body, /dev server/);
     assert.deepEqual(seenHosts, ['localhost:4599'], 'Host rewritten to localhost');
+    assert.ok(readinessHosts.length > 0, 'automatic detection checks HTTP readiness');
+    assert.ok(readinessHosts.every(host => host === 'localhost:4599'), 'readiness uses the same Host as the proxy');
 
     ws.close();
     await once(ws, 'close');

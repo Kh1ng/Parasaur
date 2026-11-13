@@ -25,10 +25,10 @@ async function close(server: http.Server) {
 
 test('node doctor authenticates each boundary, rejects undeclared profiles, and returns failed checks as data', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-node-doctor-'));
-  const previous = { central: process.env.COORDINATOR_TOKEN, worker: process.env.GAH_NODE_TOKEN, insecure: process.env.GAH_ALLOW_INSECURE_HTTP };
+  const previous = { central: process.env.COORDINATOR_TOKEN, worker: process.env.PARASAUR_NODE_TOKEN, insecure: process.env.PARASAUR_ALLOW_INSECURE_HTTP };
   process.env.COORDINATOR_TOKEN = 'central-test-token';
-  process.env.GAH_NODE_TOKEN = 'worker-secret-canary';
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
+  process.env.PARASAUR_NODE_TOKEN = 'worker-secret-canary';
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
   let mode = 'valid';
   let requests = 0;
   const worker = http.createServer((req, res) => {
@@ -43,7 +43,7 @@ test('node doctor authenticates each boundary, rejects undeclared profiles, and 
   const workerUrl = await listen(worker);
   const registry = new RegistryService(join(dir, 'registry.json'));
   registry.registerNode({ node_id: 'worker', display_name: 'Worker', advertised_url: workerUrl, version: '0.1.0',
-    schema_digest: COORDINATOR_SCHEMA_DIGEST, transport_mode: 'authenticated_remote', secret_ref: 'env:GAH_NODE_TOKEN', profiles: ['other'] });
+    schema_digest: COORDINATOR_SCHEMA_DIGEST, transport_mode: 'authenticated_remote', secret_ref: 'env:PARASAUR_NODE_TOKEN', profiles: ['other'] });
   const app = createServer({ registryService: registry, claimsService: new ClaimsService(join(dir, 'claims.json')) });
   const central = http.createServer((req, res) => {
     // Exercise the real non-loopback auth path without using the machine's network.
@@ -84,7 +84,7 @@ test('node doctor authenticates each boundary, rejects undeclared profiles, and 
     assert.match(await offline.text(), /"message":"NETWORK:/);
   } finally {
     await close(central); await close(worker);
-    for (const [name, value] of Object.entries({ COORDINATOR_TOKEN: previous.central, GAH_NODE_TOKEN: previous.worker, GAH_ALLOW_INSECURE_HTTP: previous.insecure })) {
+    for (const [name, value] of Object.entries({ COORDINATOR_TOKEN: previous.central, PARASAUR_NODE_TOKEN: previous.worker, PARASAUR_ALLOW_INSECURE_HTTP: previous.insecure })) {
       if (value === undefined) delete process.env[name]; else process.env[name] = value;
     }
     rmSync(dir, { recursive: true });

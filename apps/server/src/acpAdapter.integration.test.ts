@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { test } from 'node:test';
+import type { ChatTranscriptTurn } from '@git-agent-harness/contracts';
 
 import { createAcpBackend } from './managerChat/acpAdapter.js';
 import { defaultClaudeSpawn, resolveAdapter, invalidateAgentModels } from './managerChat/registry.js';
@@ -20,7 +21,12 @@ if (spawnCountPath) {
   fs.writeFileSync(spawnCountPath, String(spawnNumber));
 }
 let promptNumber = 0;
+if (mode === 'archive-tree') {
+  const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  fs.appendFileSync(spawnCountPath + '.pids', JSON.stringify([process.pid, child.pid]) + '\n');
+}
 let pendingPrompt;
+let usageTurns = 0;
 const lines = readline.createInterface({ input: process.stdin });
 
 function respond(message) {
@@ -29,6 +35,18 @@ function respond(message) {
 
 lines.on('line', (line) => {
   const request = JSON.parse(line);
+  if (request.method === 'session/prompt' && (mode === 'usage-breakdown' || mode === 'usage-gap')) {
+    usageTurns++;
+    if (mode === 'usage-gap' && usageTurns === 2) {
+      respond({ jsonrpc: '2.0', id: request.id, result: { stopReason: 'end_turn' } });
+      return;
+    }
+    respond({ jsonrpc: '2.0', id: request.id, result: { stopReason: 'end_turn', usage: {
+      inputTokens: usageTurns * 10, outputTokens: usageTurns * 5, totalTokens: usageTurns * 100,
+      cachedReadTokens: usageTurns * 80, cachedWriteTokens: 0, thoughtTokens: usageTurns * 3
+    } } });
+    return;
+  }
   if (request.method === 'initialize') {
     respond({ jsonrpc: '2.0', id: request.id, result: { protocolVersion: request.params.protocolVersion, _meta: { steering: { supported: true } } } });
     return;
@@ -39,6 +57,13 @@ lines.on('line', (line) => {
     respond({ jsonrpc: '2.0', id: request.id, result: { sessionId: 'fake-session', configOptions: [{
       id: 'model', name: 'Model', type: 'select', category: 'model', currentValue: runtime,
       options: [{ value: runtime, name: runtime }] }] } });
+    return;
+  }
+  if (request.method === 'session/new' && mode === 'workspace-env') {
+    const model = process.env.APP_LABEL + '|' + process.env.APP_OVERRIDE;
+    respond({ jsonrpc: '2.0', id: request.id, result: { sessionId: 'fake-session', configOptions: [{
+      id: 'model', name: 'Model', type: 'select', category: 'model', currentValue: model,
+      options: [{ value: model, name: model }] }] } });
     return;
   }
   if (request.method === 'session/new') {
@@ -146,6 +171,128 @@ function fakeAcpScript(): { dir: string; path: string } {
   writeFileSync(scriptPath, FAKE_ACP_SOURCE);
   return { dir, path: scriptPath };
 }
+
+test('ACP replies preserve cache and reasoning categories across real protocol turns', async () => {
+  const fake = fakeAcpScript();
+  const backend = createAcpBackend('Usage fixture', () => ({ command: process.execPath, args: [fake.path, 'usage-breakdown'] }));
+  try {
+    const history: ChatTranscriptTurn[] = [];
+    for (let turn = 0; turn < 2; turn++) {
+      const result = await backend.runTurn({ key: 'usage-fixture', profile: 'fixture' }, { ...emptyTurnInput, prompt: 'usage fixture', history: [...history] });
+      assert.deepEqual(result.usage, {
+        input_tokens: 10, output_tokens: 5, total_tokens: 100,
+        cache_read_tokens: 80, cache_write_tokens: 0, reasoning_tokens: 3,
+        estimated_cost_usd: null, duration_seconds: result.usage?.duration_seconds
+      });
+      history.push({ role: 'user', text: 'usage fixture', timestamp: 1 }, { role: 'assistant', text: result.reply, timestamp: 2 });
+    }
+  } finally { backend.dispose(); rmSync(fake.dir, { recursive: true, force: true }); }
+});
+
+test('a missing ACP usage report cannot charge several turns to the next reply', async () => {
+  const fake = fakeAcpScript();
+  const backend = createAcpBackend('Usage gap', () => ({ command: process.execPath, args: [fake.path, 'usage-gap'] }));
+  try {
+    const history: ChatTranscriptTurn[] = [];
+    for (const total of [100, null, null, 100]) {
+      const result = await backend.runTurn({ key: 'usage-gap', profile: 'fixture' }, { ...emptyTurnInput, history: [...history] });
+      assert.equal(result.usage?.total_tokens ?? null, total);
+      assert.equal(result.usage?.cache_read_tokens ?? null, total === null ? null : 80);
+      history.push({ role: 'user', text: emptyTurnInput.prompt, timestamp: 1 }, { role: 'assistant', text: result.reply, timestamp: 2 });
+    }
+  } finally { backend.dispose(); rmSync(fake.dir, { recursive: true, force: true }); }
+});
+
+test('ACP workspace startup uses the real profile and shares concurrent connection reads', async () => {
+  const fake = fakeAcpScript();
+  const count = join(fake.dir, 'count');
+  let reads = 0;
+  const backend = createAcpBackend('Workspace', () => ({ command: process.execPath, args: [fake.path, 'workspace-env', count], env: { APP_OVERRIDE: 'adapter' } }), {
+    environment: async ({ profile }) => { reads++; await Promise.resolve(); return { APP_LABEL: profile, APP_OVERRIDE: 'workspace' }; }
+  });
+  try {
+    const conversation = { key: 'opaque/not-a-profile', profile: 'real-project' };
+    const [first, second] = await Promise.all([backend.listModels(conversation), backend.listModels(conversation)]);
+    assert.equal(first.currentModelId, 'real-project|adapter');
+    assert.equal(second.currentModelId, first.currentModelId);
+    assert.equal(reads, 1);
+    assert.equal(readFileSync(count, 'utf8'), '1');
+  } finally { backend.dispose(); rmSync(fake.dir, { recursive: true, force: true }); }
+});
+
+test('a failed workspace read can recover on the next ACP request', async () => {
+  const fake = fakeAcpScript();
+  let reads = 0;
+  const backend = createAcpBackend('Workspace', () => ({ command: process.execPath, args: [fake.path, 'workspace-env'] }), {
+    environment: async () => {
+      if (++reads === 1) throw new Error('Workspace source unavailable');
+      return { APP_LABEL: 'recovered', APP_OVERRIDE: 'workspace' };
+    }
+  });
+  try {
+    const conversation = { key: 'recoverable-conversation', profile: 'project' };
+    await assert.rejects(backend.listModels(conversation), /Workspace source unavailable/);
+    assert.equal((await backend.listModels(conversation)).currentModelId, 'recovered|workspace');
+    assert.equal(reads, 2);
+  } finally { backend.dispose(); rmSync(fake.dir, { recursive: true, force: true }); }
+});
+
+test('cancel, release and disposal during workspace reads cannot launch a late ACP child', async () => {
+  for (const action of ['cancel', 'release', 'dispose']) {
+    let release!: (env: Record<string, string>) => void;
+    let spawned = false;
+    const backend = createAcpBackend('Workspace', () => { spawned = true; throw new Error('must not spawn'); }, {
+      environment: () => new Promise(resolve => { release = resolve; })
+    });
+    const pending = backend.listModels({ key: 'conversation', profile: 'project' });
+    if (action === 'cancel') await backend.cancelTurn('conversation');
+    else if (action === 'release') await backend.releaseConversation('conversation');
+    else backend.dispose();
+    release({ APP_LABEL: 'late' });
+    await assert.rejects(pending, /startup cancelled/);
+    assert.equal(spawned, false);
+    backend.dispose();
+  }
+});
+
+test('releasing an archived ACP conversation stops its process tree and preserves siblings', { timeout: 30_000 }, async () => {
+  const fake = fakeAcpScript();
+  const count = join(fake.dir, 'count');
+  const backend = createAcpBackend('Archive', () => ({ command: process.execPath, args: [fake.path, 'archive-tree', count] }));
+  const first = { key: 'first-session', profile: 'project' };
+  const second = { key: 'second-session', profile: 'project' };
+  const alive = (pid: number) => {
+    try { process.kill(pid, 0); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false; throw error; }
+    if (process.platform === 'linux') {
+      // kill(pid, 0) also succeeds for an exited zombie awaiting init's reap.
+      // Assert that no process can execute, independently of reaping latency.
+      try {
+        const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+        const state = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[0];
+        return state !== 'Z' && state !== 'X';
+      } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+    }
+    return true;
+  };
+  try {
+    await backend.listModels(first);
+    await backend.listModels(second);
+    const [firstPids, secondPids] = readFileSync(count + '.pids', 'utf8').trim().split('\n').map(line => JSON.parse(line) as number[]);
+    assert.ok([...firstPids, ...secondPids].every(alive));
+    await backend.releaseConversation(first.key);
+    assert.ok(firstPids.every(pid => !alive(pid)), 'bridge and descendant both exit before release returns');
+    assert.ok(secondPids.every(alive), 'sibling conversation remains available');
+    await backend.listModels(second);
+    assert.equal(readFileSync(count, 'utf8'), '2');
+    await backend.listModels(first);
+    assert.equal(readFileSync(count, 'utf8'), '3', 'restoring the conversation starts a new runtime');
+  } finally {
+    await Promise.all([backend.releaseConversation(first.key), backend.releaseConversation(second.key)]);
+    backend.dispose();
+    rmSync(fake.dir, { recursive: true, force: true });
+  }
+});
 
 const emptyTurnInput = {
   prompt: 'hello',
@@ -278,6 +425,7 @@ test('cancel evicts a child only when its prompt ignores cancellation', { timeou
       onChunk: (text) => { if (text === 'stuck-prompt-started') markPromptStarted(); }
     });
     await promptStarted;
+    await assert.rejects(backend.releaseConversation('profile'), /Stop this turn/, 'archive cleanup must not interrupt a live prompt');
     await backend.cancelTurn('profile');
     await assert.rejects(stuck);
 

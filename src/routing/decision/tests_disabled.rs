@@ -36,6 +36,7 @@ fn candidate_list_skips_disabled_instances_with_typed_reason() {
             last_failure_class: None,
             mode: "pm",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,

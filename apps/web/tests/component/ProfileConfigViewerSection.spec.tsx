@@ -3,8 +3,16 @@ import type { SettingsConfigProfileSummary } from '@git-agent-harness/contracts'
 import { ProfileConfigViewerSection } from '../../src/pages/ProfilePanel.js';
 import React from 'react';
 
+test('a project switch hides mismatched cached configuration before the fetch effect runs', async ({ mount }) => {
+  const previous = { profile: 'previous-project', backend_instances: [] } as unknown as SettingsConfigProfileSummary;
+  const component = await mount(<ProfileConfigViewerSection selectedName="new-project" profileConfig={{ data: previous, loading: false, error: null }} onRefresh={() => {}} />);
+  await expect(component).toContainText('Loading profile configuration…');
+  await expect(component.getByRole('button', { name: 'Add account' })).toHaveCount(0);
+  await expect(component).not.toContainText('previous-project');
+});
+
 test('environment sources render configured status without rendering their values', async ({ mount }) => {
-  const canary = 'TDAI_GATEWAY_API_KEY=GAH_TEST_CANARY_1014_DO_NOT_RENDER';
+  const canary = 'TDAI_GATEWAY_API_KEY=PARASAUR_TEST_CANARY_1014_DO_NOT_RENDER';
   const config: SettingsConfigProfileSummary & {
     notifications: SettingsConfigProfileSummary['notifications'] & {
       env_file: string;

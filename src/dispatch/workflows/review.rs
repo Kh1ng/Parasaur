@@ -12,9 +12,10 @@ use super::super::review::context::{
     lookup_review_state_by_branch, prepare_review_diff, resolve_review_target, ReviewTarget,
 };
 use super::super::review::policy::{
-    check_review_budget, derive_reviewer_tier, next_escalatory_reviewer, next_review_candidate,
-    parse_review_verdict_with_context, review_escalation_reason, review_output_invalid_error,
-    reviewer_dedup_class, ReviewBudgetExhausted, ReviewGateContext,
+    check_review_budget, derive_reviewer_tier, ensure_pinned_review_route,
+    next_escalatory_reviewer, next_review_candidate, parse_review_verdict_with_context,
+    review_escalation_reason, review_output_invalid_error, reviewer_dedup_class,
+    ReviewBudgetExhausted, ReviewGateContext,
 };
 use super::super::text::{utf8_safe_prefix, utf8_safe_suffix};
 use super::super::DispatchArgs;
@@ -243,6 +244,7 @@ pub(in crate::dispatch) fn review(
         ledger.review_source_sha.as_deref(),
         ledger.review_metadata_fingerprint.as_deref(),
     );
+    identity::assert_selected_generation(args.expected_review_generation.as_deref(), ledger)?;
     if super::super::review::head::skip_reviewed_head(cfg, profile, &target, ledger)? {
         return Ok(());
     }
@@ -425,10 +427,12 @@ pub(in crate::dispatch) fn review(
     // review fallback must not substitute a previously used reviewer when
     // that exact route needs approval or is unavailable.
     let exact_route_required = next_reviewer.is_some();
+    ensure_pinned_review_route(args, requested_backend, requested_model)?;
     let route_request = RouteRequest {
         last_failure_class: None,
         mode: "review",
         requested_backend,
+        requested_instance: args.backend_instance.as_deref(),
         requested_model,
         recommended_backend: None,
         recommended_model: None,
@@ -451,7 +455,7 @@ pub(in crate::dispatch) fn review(
         &route,
         ledger.review_generation.as_deref(),
     )? {
-        mark_review_budget_exhausted(ledger, &route, &block.reason);
+        mark_review_budget_exhausted(ledger, &route, &block.reason)?;
         notify_event(
             cfg,
             profile,
@@ -507,8 +511,6 @@ pub(in crate::dispatch) fn review(
         // never advances `attempt_number` and never consumes one of the
         // MAX_REVIEW_ATTEMPTS reroute-across-review_candidates slots.
         loop {
-            ledger.attempts_started = Some(ledger.attempts_started.unwrap_or(0) + 1);
-            apply_route_to_ledger(ledger, &route);
             let mut prompt = format!("{capability_prefix}{prompt_suffix}");
             let reviewer_tier = derive_reviewer_tier(cfg, profile, &route);
             crate::prompt_policy::append_untrusted_section(
@@ -563,7 +565,6 @@ pub(in crate::dispatch) fn review(
             fs::create_dir_all(&attempt_session)?;
             let attempt = (attempt_index - 1) as u32;
             let review_slot = pr_claim.admit(profile, &route.identity, args, attempt, ledger)?;
-            record_route_attempt(ledger, &route)?;
             let mut attempt_env_vars =
                 review_attempt_environment(profile, &route.identity, &env_vars)?;
             attempt_env_vars = review_external_env::filter_attempt_env_vars(
@@ -589,14 +590,19 @@ pub(in crate::dispatch) fn review(
                 &attempt_session,
                 &prompt,
             )?;
-            let attempt = runner::run_review_backend_for_identity(
-                profile,
-                &route.identity,
-                repo,
-                &prompt,
-                &attempt_session,
-                &attempt_env_vars,
-            );
+            let attempt = crate::dispatch::native_guard::review(&route.identity, || {
+                ledger.attempts_started = Some(ledger.attempts_started.unwrap_or(0) + 1);
+                apply_route_to_ledger(ledger, &route)?;
+                record_route_attempt(ledger, &route)?;
+                Ok(runner::run_review_backend_for_identity(
+                    profile,
+                    &route.identity,
+                    repo,
+                    &prompt,
+                    &attempt_session,
+                    &attempt_env_vars,
+                ))
+            })?;
             // The slot covers the backend invocation itself. Release it before
             // parsing/rerouting so another worker can use the reviewer as soon as
             // capacity is genuinely free.
@@ -962,7 +968,7 @@ pub(in crate::dispatch) fn review(
             // TICKET-125: attribute this verdict back to the branch's
             // implementation entry (the backend that wrote the code being
             // reviewed), not this review dispatch's own entry (the reviewer).
-            if let Err(err) = crate::ledger::backfill_review_verdict(
+            if let Err(err) = crate::ledger::attribute_review_verdict(
                 cfg,
                 &target.source_branch,
                 crate::ledger::ReviewVerdictBackfill {
@@ -1195,8 +1201,12 @@ const REVIEW_MR_TITLE_MAX_BYTES: usize = 1_024;
 const REVIEW_MR_BODY_MAX_BYTES: usize = 16_384;
 const REVIEW_PRIOR_STATE_MAX_BYTES: usize = 8_192;
 const REVIEW_PROJECT_BRIEF_MAX_BYTES: usize = 4_096;
-fn mark_review_budget_exhausted(ledger: &mut LedgerEntry, route: &RouteDecision, reason: &str) {
-    apply_route_to_ledger(ledger, route);
+fn mark_review_budget_exhausted(
+    ledger: &mut LedgerEntry,
+    route: &RouteDecision,
+    reason: &str,
+) -> Result<()> {
+    apply_route_to_ledger(ledger, route)?;
     ledger.set_failure(
         crate::ledger::FailureClass::HumanBlocked,
         crate::ledger::FailureStage::Review,
@@ -1209,6 +1219,7 @@ fn mark_review_budget_exhausted(ledger: &mut LedgerEntry, route: &RouteDecision,
             .to_string(),
     );
     ledger.error_summary = Some(reason.to_string());
+    Ok(())
 }
 
 fn mark_review_shutdown_cancelled(ledger: &mut LedgerEntry, signal: i32) {
@@ -1301,7 +1312,7 @@ fn record_review_output_invalid(
         }))?,
     )?;
 
-    if let Err(backfill_err) = crate::ledger::backfill_review_verdict(
+    if let Err(backfill_err) = crate::ledger::attribute_review_verdict(
         cfg,
         &target.source_branch,
         crate::ledger::ReviewVerdictBackfill {

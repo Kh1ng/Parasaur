@@ -22,7 +22,7 @@ function node(overrides: Partial<RegisteredNode> = {}): RegisteredNode {
     version: '0.1.2',
     schema_digest: 'digest',
     transport_mode: 'trusted_lan',
-    secret_ref: 'env:GAH_NODE_TOKEN',
+    secret_ref: 'env:PARASAUR_NODE_TOKEN',
     ...overrides
   };
 }
@@ -101,8 +101,8 @@ test('non-loopback plain HTTP is refused without the insecure opt-in', async () 
     localNodeId: 'central-1',
     fetch: fetchStub(() => ({ status: 200, body: {} }))
   });
-  const saved = process.env.GAH_ALLOW_INSECURE_HTTP;
-  delete process.env.GAH_ALLOW_INSECURE_HTTP;
+  const saved = process.env.PARASAUR_ALLOW_INSECURE_HTTP;
+  delete process.env.PARASAUR_ALLOW_INSECURE_HTTP;
   try {
     await assert.rejects(broker.start('worker-1'), (error: unknown) => {
       assert.ok(error instanceof WorkerUpdateError);
@@ -111,8 +111,8 @@ test('non-loopback plain HTTP is refused without the insecure opt-in', async () 
       return true;
     });
   } finally {
-    if (saved === undefined) delete process.env.GAH_ALLOW_INSECURE_HTTP;
-    else process.env.GAH_ALLOW_INSECURE_HTTP = saved;
+    if (saved === undefined) delete process.env.PARASAUR_ALLOW_INSECURE_HTTP;
+    else process.env.PARASAUR_ALLOW_INSECURE_HTTP = saved;
   }
 });
 

@@ -16,6 +16,77 @@ const nodes = [
 ];
 const backends = [{ id: 'claude', displayName: 'Claude', implemented: true }];
 
+test('switching execution nodes clears the account immediately and waits for that node account lookup and retry', async ({ mount, page }, testInfo) => {
+  let created: unknown;
+  let workerReads = 0;
+  let releaseWorker: (() => Promise<void>) | undefined;
+  const modelReads: URL[] = [];
+  await page.route('**/api/**', route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/nodes')) return route.fulfill({ json: { nodes } });
+    if (url.pathname.endsWith('/settings')) return route.fulfill({ json: { defaultBackend: 'claude', profileOverrides: {} } });
+    if (url.pathname.endsWith('/accounts')) {
+      const worker = url.searchParams.get('nodeId') === 'worker';
+      if (worker && ++workerReads === 1) { releaseWorker = () => route.fulfill({ status: 503 }); return; }
+      return route.fulfill({ json: { accounts: [{ instance: 'shared', backend: 'claude', label: worker ? 'Worker account' : 'Central account', enabled: true, executableReady: true, authReady: null }] } });
+    }
+    if (url.pathname.endsWith('/models')) { modelReads.push(url); return route.fulfill({ json: { models: [], currentModelId: null } }); }
+    if (url.pathname.endsWith('/sessions')) { created = route.request().postDataJSON(); return route.fulfill({ json: { id: 'created' } }); }
+    return route.fulfill({ json: {} });
+  });
+  const panel = await mount(<NewChatPanel currentProfile="gah" profiles={[local]} backends={backends} onClose={() => {}} onCreated={() => {}} />);
+  await panel.getByRole('textbox', { name: 'Chat name' }).fill('Node account check');
+  await openExtras(panel);
+  const account = panel.getByRole('combobox', { name: 'Account' });
+  await account.selectOption('shared');
+  await expect.poll(() => modelReads.some(url => url.searchParams.get('backendInstance') === 'shared')).toBe(true);
+  await panel.getByRole('combobox', { name: 'Run on node' }).selectOption('worker');
+  await expect.poll(() => !!releaseWorker).toBe(true);
+  await expect(account).toHaveValue('');
+  await expect(account).toBeDisabled();
+  await expect(panel.getByRole('button', { name: 'Start chat' })).toBeDisabled();
+  expect(modelReads.filter(url => url.searchParams.get('nodeId') === 'worker').every(url => !url.searchParams.has('backendInstance'))).toBe(true);
+  await releaseWorker!();
+  await expect(panel.getByRole('alert')).toContainText('Cannot load accounts on this node');
+  await page.screenshot({ path: testInfo.outputPath('node-accounts-failure-desktop.png') });
+  await panel.getByRole('button', { name: 'Retry accounts' }).click();
+  await expect(account).toBeEnabled();
+  await expect(account.locator('option[value="shared"]')).toHaveText('Worker account · shared');
+  await expect(account).toHaveValue('');
+  await account.selectOption('shared');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await account.scrollIntoViewIfNeeded();
+  expect((await account.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await page.screenshot({ path: testInfo.outputPath('node-accounts-ready-mobile.png') });
+  await panel.getByRole('button', { name: 'Start chat' }).click();
+  await expect.poll(() => created).toMatchObject({ nodeId: 'worker', backendInstance: 'shared' });
+});
+
+test('a cancelled account read from the previous node cannot replace worker choices', async ({ mount, page }) => {
+  let late: (() => Promise<void>) | undefined;
+  await page.route('**/api/**', route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/nodes')) return route.fulfill({ json: { nodes } });
+    if (url.pathname.endsWith('/settings')) return route.fulfill({ json: { defaultBackend: 'claude', profileOverrides: {} } });
+    if (url.pathname.endsWith('/accounts')) {
+      if (url.searchParams.get('nodeId') === 'central') {
+        late = () => route.fulfill({ json: { accounts: [{ instance: 'central-only', backend: 'claude', label: 'Central', enabled: true }] } }); return;
+      }
+      return route.fulfill({ json: { accounts: [{ instance: 'worker-only', backend: 'claude', label: 'Worker', enabled: true, executableReady: true, authReady: null }] } });
+    }
+    return route.fulfill({ json: { models: [] } });
+  });
+  const panel = await mount(<NewChatPanel currentProfile="gah" profiles={[local]} backends={backends} onClose={() => {}} onCreated={() => {}} />);
+  await openExtras(panel);
+  await expect.poll(() => !!late).toBe(true);
+  await panel.getByRole('combobox', { name: 'Run on node' }).selectOption('worker');
+  const account = panel.getByRole('combobox', { name: 'Account' });
+  await expect(account.locator('option[value="worker-only"]')).toHaveCount(1);
+  await late!().catch(() => {}); // The abort may already have closed the request.
+  await expect(account.locator('option[value="central-only"]')).toHaveCount(0);
+  await expect(account.locator('option[value="worker-only"]')).toHaveCount(1);
+});
+
 /** Project, node and provider sit behind "Extra settings"; a node problem opens it on its own. */
 async function openExtras(panel: Locator): Promise<void> {
   const details = panel.locator('details');
@@ -29,7 +100,7 @@ for (const source of ['issue', 'pr'] as const) {
       const path = new URL(route.request().url()).pathname;
       if (path.endsWith('/nodes')) return route.fulfill({ json: { nodes } });
       if (path.endsWith('/settings')) return route.fulfill({ json: { profileOverrides: {}, defaultBackend: 'claude' } });
-      if (path.endsWith('/backend-instances')) return route.fulfill({ json: { backend_instances: [{ backend_instance: 'claude-2', logical_backend: 'claude', enabled: true, executable_resolved: true, auth_ready: true, account_label: 'Second login' }] } });
+      if (path.endsWith('/accounts')) return route.fulfill({ json: { accounts: [{ instance: 'claude-2', backend: 'claude', enabled: true, executableReady: true, authReady: true, label: 'Second login' }] } });
       if (path.endsWith(`/${source}s`)) return route.fulfill({ json: { [`${source}s`]: [{ number: 7, title: 'Source task', labels: [], url: null, author: null, headRefName: null, isDraft: false, reviewState: null, updatedAt: null }] } });
       if (path.endsWith('/start')) {
         started = route.request().postDataJSON();
@@ -57,6 +128,7 @@ test('node readiness retries, unavailable workers stay disabled, and remote crea
   const modelNodes: string[] = [];
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/accounts')) return route.fulfill({ json: { accounts: [] } });
     if (url.pathname.endsWith('/nodes')) return route.fulfill(failNodes
       ? { status: 503, json: { error: 'Unavailable' } } : { json: { nodes } });
     if (url.pathname.endsWith('/settings')) return route.fulfill({ json: { profileOverrides: {}, defaultBackend: 'claude' } });
@@ -103,6 +175,7 @@ test('a late node response cannot replace the newly selected project readiness',
   const pending: (() => Promise<void>)[] = [];
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/accounts')) return route.fulfill({ json: { accounts: [] } });
     if (url.pathname.endsWith('/nodes')) {
       if (url.searchParams.get('profile') === 'gah') {
         pending.push(() => route.fulfill({ json: { nodes: [nodes[0]] } }));
@@ -128,6 +201,7 @@ test('a late node response cannot replace the newly selected project readiness',
 test('a project whose owner is unavailable defaults to an eligible node (#1275)', async ({ mount, page }) => {
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/accounts')) return route.fulfill({ json: { accounts: [] } });
     if (url.pathname.endsWith('/nodes')) return route.fulfill({ json: { nodes } });
     if (url.pathname.endsWith('/settings')) return route.fulfill({ json: { profileOverrides: {}, defaultBackend: 'claude' } });
     if (url.pathname.endsWith('/models')) return route.fulfill({ json: { models: [], currentModelId: null } });
@@ -146,6 +220,7 @@ test('a worker-only project starts a chat from an issue (#1276)', async ({ mount
   let started: unknown;
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/accounts')) return route.fulfill({ json: { accounts: [] } });
     if (url.pathname.endsWith('/nodes')) return route.fulfill({ json: { nodes } });
     if (url.pathname.endsWith('/settings')) return route.fulfill({ json: { profileOverrides: {}, defaultBackend: 'claude' } });
     if (url.pathname.endsWith('/models')) return route.fulfill({ json: { models: [], currentModelId: null } });
@@ -170,6 +245,7 @@ test('a worker-only project starts a chat from a pull request (#1276)', async ({
   let started: unknown;
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/accounts')) return route.fulfill({ json: { accounts: [] } });
     if (url.pathname.endsWith('/nodes')) return route.fulfill({ json: { nodes } });
     if (url.pathname.endsWith('/settings')) return route.fulfill({ json: { profileOverrides: {}, defaultBackend: 'claude' } });
     if (url.pathname.endsWith('/models')) return route.fulfill({ json: { models: [], currentModelId: null } });

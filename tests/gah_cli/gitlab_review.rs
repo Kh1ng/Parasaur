@@ -180,7 +180,7 @@ esac
     );
     let ledger_path = tmp.path().join("ledger.jsonl");
     bin()
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .env("GITLAB_FIX_FAILURE", failure.unwrap_or(""))
         .args([
             "dispatch",

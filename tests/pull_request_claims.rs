@@ -88,7 +88,7 @@ fn install_gh(harness: &mut ScenarioHarness, pulls: &[Pull]) -> std::path::PathB
                     .format(&time::format_description::well_known::Rfc3339)
                     .unwrap();
                 // Age the recorded comment before settle reads it. This also
-                // works when #1515 supplies GAH_TEST_NOW to the fake process.
+                // works when #1515 supplies PARASAUR_TEST_NOW to the fake process.
                 state["effects"].as_array_mut().unwrap().push(serde_json::json!({
                     "endpoint": format!("repos/owner/repo/issues/{}/comments", pull.number),
                     "method": "GET", "at": 2, "argv_contains": ["--paginate"],

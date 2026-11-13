@@ -208,6 +208,16 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
         };
     }
 
+    // A timed profile spend hold blocks new dispatches without killing work
+    // already running or creating a durable human gate on its work item.
+    if let Some(action) = snapshot
+        .spend_budget
+        .as_ref()
+        .and_then(|budget| budget.wait_action())
+    {
+        return action;
+    }
+
     let mut mrs: Vec<&crate::sync::SyncMrJson> = snapshot.merge_requests.iter().collect();
     mrs.sort_by(|a, b| a.branch.cmp(&b.branch));
 
@@ -337,8 +347,10 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
                     // deferral and the next loop tick re-observes CI.
                     wait_and_recheck_mrs.push(mr);
                 } else {
-                    // CI conclusively failed (or is otherwise not pending):
-                    // re-check later (no_op fallback).
+                    // Approved, but no CI result exists or will arrive (the
+                    // project runs no pipeline, or the provider reports no
+                    // checks). GAH merges only on green CI, so a person
+                    // decides.
                     human_blocked_mrs.push((mr, HumanRequiredReason::MergePolicy));
                 }
             }

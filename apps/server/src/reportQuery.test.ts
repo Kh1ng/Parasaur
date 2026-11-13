@@ -6,17 +6,17 @@ import { test } from 'node:test';
 import { withFixtureServer } from './fixtureGahHarness.js';
 
 // Keep the expected Clap vocabulary independent from the API's allowed values.
-const groupings = ['none', 'backend', 'model', 'skill', 'difficulty', 'backend-difficulty'];
+const groupings = ['none', 'backend', 'model', 'skill', 'difficulty', 'backend-difficulty', 'project', 'work-item'];
 const fixture = (name: string): unknown => JSON.parse(readFileSync(new URL(`../tests/fixtures/gah/responses/${name}.json`, import.meta.url), 'utf8'));
 
 test('report queries preserve CLI arguments and complete fixture JSON', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'gah-report-query-'));
   const log = join(directory, 'argv.jsonl');
-  const previousLog = process.env.GAH_FIXTURE_QUERY_LOG;
-  process.env.GAH_FIXTURE_QUERY_LOG = log;
+  const previousLog = process.env.PARASAUR_FIXTURE_QUERY_LOG;
+  process.env.PARASAUR_FIXTURE_QUERY_LOG = log;
   t.after(() => {
-    if (previousLog === undefined) delete process.env.GAH_FIXTURE_QUERY_LOG;
-    else process.env.GAH_FIXTURE_QUERY_LOG = previousLog;
+    if (previousLog === undefined) delete process.env.PARASAUR_FIXTURE_QUERY_LOG;
+    else process.env.PARASAUR_FIXTURE_QUERY_LOG = previousLog;
     rmSync(directory, { recursive: true, force: true });
   });
   const calls = (): string[][] => readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
@@ -53,7 +53,7 @@ test('report queries preserve CLI arguments and complete fixture JSON', async (t
           assert.equal(response.status, 400, query);
           assert.deepEqual(await response.json(), {
             error: 'Invalid groupBy',
-            message: 'groupBy must be one of: none, backend, model, skill, difficulty, backend-difficulty'
+            message: 'groupBy must be one of: none, backend, model, skill, difficulty, backend-difficulty, project, work-item'
           });
           assert.deepEqual(calls(), []);
         }

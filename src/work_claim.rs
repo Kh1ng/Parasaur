@@ -415,7 +415,7 @@ fn is_process_alive(pid: u32) -> bool {
 
 /// Path to the work claims file
 fn work_claims_path() -> PathBuf {
-    if let Some(path) = std::env::var("GAH_CLAIM_STATE_PATH")
+    if let Some(path) = std::env::var("PARASAUR_CLAIM_STATE_PATH")
         .ok()
         .filter(|path| !path.is_empty())
     {

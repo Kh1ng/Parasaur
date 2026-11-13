@@ -1317,7 +1317,7 @@ fn failed_restart_resume_does_not_unlock_send() {
 /// installed or authenticated.
 #[test]
 fn installed_codex_passes_handshake_smoke_when_requested() {
-    let Some(executable) = std::env::var_os("GAH_TEST_REAL_CODEX") else {
+    let Some(executable) = std::env::var_os("PARASAUR_TEST_REAL_CODEX") else {
         return;
     };
     let _exec_guard = crate::test_support::ExecGuard::new();
@@ -1415,7 +1415,7 @@ fn drain_until_terminal(
 /// the same "no active turn to steer" race `send`'s fallback handles.
 #[test]
 fn installed_codex_adapter_completes_a_real_turn_and_resumes_after_restart_when_requested() {
-    let Some(executable) = std::env::var_os("GAH_TEST_REAL_CODEX") else {
+    let Some(executable) = std::env::var_os("PARASAUR_TEST_REAL_CODEX") else {
         return;
     };
     let _exec_guard = crate::test_support::ExecGuard::new();

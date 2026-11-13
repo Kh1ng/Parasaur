@@ -2,7 +2,7 @@
 
 Issue #510 makes a concrete runner/account binding a first-class routing
 instance. The shared registry belongs in `~/.config/gah/canonical.toml`
-(`GAH_CANONICAL_CONFIG` overrides that path). A repository can add or replace
+(`PARASAUR_CANONICAL_CONFIG` overrides that path). A repository can add or replace
 entries with the same syntax under its defaults or profile routing section.
 
 Precedence is:

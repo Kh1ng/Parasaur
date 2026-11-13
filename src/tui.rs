@@ -104,7 +104,10 @@ fn run_confirmed_action(
     ratatui::restore();
     println!("\nRunning: {} -- {}\n", action.kind(), action.reason());
     let outcome = crate::ledger::read_entries(cfg).and_then(|ledger_entries| {
-        crate::controller::execute_action(cfg, &profile_name, &action, &ledger_entries, false, None)
+        let prior =
+            crate::controller::action_prior_context(cfg, &profile_name, &action, &ledger_entries)?;
+        drop(ledger_entries);
+        crate::controller::execute_action(cfg, &profile_name, &action, prior, false, None)
     });
     match &outcome {
         Ok(msg) => println!("\n{msg}"),

@@ -36,7 +36,7 @@ fn dispatch_experiment_missing_backend_records_backend_not_invoked() {
         ])
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success();
 

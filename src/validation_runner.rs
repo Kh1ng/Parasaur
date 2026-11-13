@@ -105,7 +105,7 @@ fn run_shell_command_with_shutdown(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .env_remove("GAH_TEST_NOW");
+        .env_remove("PARASAUR_TEST_NOW");
     for (key, value) in env_vars {
         command.env(key, value);
     }
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn validation_clock_override_requires_explicit_opt_in() {
-        const CHILD: &str = "GAH_VALIDATION_CLOCK_PROBE";
+        const CHILD: &str = "PARASAUR_VALIDATION_CLOCK_PROBE";
         if std::env::var_os(CHILD).is_none() {
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
@@ -205,7 +205,7 @@ mod tests {
                     "--nocapture",
                 ])
                 .env(CHILD, "1")
-                .env("GAH_TEST_NOW", "2026-01-01T00:00:00Z")
+                .env("PARASAUR_TEST_NOW", "2026-01-01T00:00:00Z")
                 .output()
                 .unwrap();
             assert!(
@@ -218,12 +218,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         for explicit in [false, true] {
             let env = if explicit {
-                vec![("GAH_TEST_NOW".into(), "2030-01-01T00:00:00Z".into())]
+                vec![("PARASAUR_TEST_NOW".into(), "2030-01-01T00:00:00Z".into())]
             } else {
                 vec![]
             };
             let output = run_shell_command_with_shutdown(
-                r#"printf '%s' "${GAH_TEST_NOW-unset}""#,
+                r#"printf '%s' "${PARASAUR_TEST_NOW-unset}""#,
                 tmp.path(),
                 &env,
                 Duration::from_secs(5),

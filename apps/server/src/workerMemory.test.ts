@@ -20,7 +20,7 @@ async function listen(server: Server): Promise<string> {
 
 test('memory management enforces owner access and configured project membership', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'gah-memory-management-'));
-  const saved = Object.fromEntries(['TDAI_GATEWAY_URL', 'TDAI_GATEWAY_API_KEY', 'GAH_GATEWAY_SETTINGS_PATH', 'GAH_BINARY', 'GAH_FIXTURE_FAIL', 'GAH_FIXTURE_PROFILE_LIST'].map(key => [key, process.env[key]]));
+  const saved = Object.fromEntries(['TDAI_GATEWAY_URL', 'TDAI_GATEWAY_API_KEY', 'PARASAUR_GATEWAY_SETTINGS_PATH', 'PARASAUR_BINARY', 'PARASAUR_FIXTURE_FAIL', 'PARASAUR_FIXTURE_PROFILE_LIST'].map(key => [key, process.env[key]]));
   const received: Array<{ path: string; body: unknown }> = [];
   const gateway = express();
   gateway.use(express.json());
@@ -44,10 +44,10 @@ test('memory management enforces owner access and configured project membership'
   });
   process.env.TDAI_GATEWAY_URL = await listen(gatewayServer);
   process.env.TDAI_GATEWAY_API_KEY = 'test-gateway-key';
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(directory, 'settings.json');
-  process.env.GAH_BINARY = fileURLToPath(new URL('../tests/fixtures/gah/gah', import.meta.url));
-  delete process.env.GAH_FIXTURE_FAIL;
-  delete process.env.GAH_FIXTURE_PROFILE_LIST;
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(directory, 'settings.json');
+  process.env.PARASAUR_BINARY = fileURLToPath(new URL('../tests/fixtures/gah/gah', import.meta.url));
+  delete process.env.PARASAUR_FIXTURE_FAIL;
+  delete process.env.PARASAUR_FIXTURE_PROFILE_LIST;
   const origin = await listen(server);
   const offer = access.create({ id: 'test-node', name: 'Fixture', origin });
   const paired = access.redeem(offer.code, 'test-node', origin, 'Phone');
@@ -71,11 +71,11 @@ test('memory management enforces owner access and configured project membership'
   });
   await t.test('profile lookup failure fails closed', async () => {
     const count = received.length;
-    process.env.GAH_FIXTURE_FAIL = 'profile-list';
+    process.env.PARASAUR_FIXTURE_FAIL = 'profile-list';
     try {
       assert.equal((await post('memories/delete', body)).status, 503);
       assert.equal(received.length, count);
-    } finally { delete process.env.GAH_FIXTURE_FAIL; }
+    } finally { delete process.env.PARASAUR_FIXTURE_FAIL; }
   });
   await t.test('configured owner management preserves the gateway contract', async () => {
     for (const operation of ['memories/delete', 'memories/migrate-english']) {

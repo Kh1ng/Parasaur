@@ -1,4 +1,8 @@
 import { notificationChannelFailure } from './notifyDelivery.js';
+import { recordedUsageReport } from './recordedUsage.js';
+import { parseDispatchExecutionOptions } from './dispatchExecutionOptions.js';
+import { requestFailure } from './requestFailure.js';
+import { chatAccounts } from './chatAccounts.js';
 import { gitLabEventsRouter, type GitLabRouteDeps } from './integrations/gitlab/route.js';
 import { gitLabQueueRouter } from './integrations/gitlab/queueRoute.js';
 import { gitLabRunsRouter } from './integrations/gitlab/runsRoute.js';
@@ -41,6 +45,7 @@ import {
   runProfileList,
   runProfileAdd,
   runProfileSet,
+  runProfileChecks,
   runProfileRemove,
   runConfigSet,
   runConfigShow,
@@ -63,6 +68,7 @@ import {
   runPlanningMap,
 } from './gahCli.js';
 import { COORDINATOR_VERSION, REPORT_GROUP_BY_VALUES } from '@git-agent-harness/contracts';
+import { NodeFactoryError } from './nodeFactory.js';
 import type {
   ReportGroupBy,
   ReportSeriesData,
@@ -91,7 +97,16 @@ import { pairingRouter } from './pairing.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { resolveChatProject } from './projectCatalog.js';
 import { RegistryService, NodeDoctorError } from './registryService.js';
-import { ClaimsService, ClaimConflictError } from './claimsService.js';
+import { ClaimsService } from './claimsService.js';
+import { claimsRouter } from './claimsRouter.js';
+import { nativeGrantRouter } from './nativeGrantRouter.js';
+import { NativeDispatchBroker } from './nativeDispatchBroker.js';
+import { NativeWorkerHttpTransport } from './nativeWorkerTransport.js';
+import { NativeDispatchProducer } from './nativeDispatchProducer.js';
+import { nativeDispatchAuthority, nativeContinuationAuthority } from './nativeDispatchAuthority.js';
+import { runReceiveNativeResult } from './gahCli.js';
+import { chooseDefaultProfile, defaultProfile } from './defaultProfile.js';
+import { nativeWorkerRouter, type NativeWorker } from './nativeWorker.js';
 import { backendForProfile, helperRouteFor, readSettings as readManagerChatSettings, setBackendForProfile, validHelperRoute, writeSettings as writeManagerChatSettings } from './managerChat/settingsStore.js';
 import { gatewayBaseUrl, gatewayApiKey, gatewayHealth, recall } from './managerChat/memoryGatewayClient.js';
 import { readGatewaySettings, writeGatewaySettings } from './gatewaySettingsStore.js';
@@ -173,10 +188,15 @@ type ConfigEffectiveDeps = {
 };
 
 type CreateServerOptions = Partial<ConfigEffectiveDeps> & {
+  usageReport?: Parameters<typeof recordedUsageReport>[1];
+  runProfileChecks?: typeof runProfileChecks;
   runProfileList?: () => Promise<ProfileSummary[]>;
   runProfileAdd?: (options: ProfileAddOptions) => Promise<void>;
   registryService?: RegistryService;
   claimsService?: ClaimsService;
+  nativeDispatchBroker?: NativeDispatchBroker;
+  nativeDispatchRoot?: string;
+  nativeWorker?: NativeWorker;
   coordinatorPort?: number;
   deviceAccess?: DeviceAccess;
   node?: NodeRoleStatus;
@@ -210,10 +230,13 @@ type CreateServerOptions = Partial<ConfigEffectiveDeps> & {
   gitLabEvents?: GitLabRouteDeps;
   /** Trusted server-side extension only; never selected by request headers. */
   gitLabIdentityProvider?: GitLabIdentityProvider;
+  /** Trusted node extensions share the API's authentication and owner boundary.
+   * Mounted before role filtering so a worker can expose its own output. */
+  ownerRoutes?: (mutation: ReturnType<typeof mutationSafety>) => express.Router;
 };
 
 const activityKinds = new Set<ActivityKind>([
-  'dispatch_completed', 'dispatch_failed', 'review_ready', 'chat_turn_completed',
+  'dispatch_completed', 'dispatch_failed', 'dispatch_deferred', 'review_ready', 'chat_turn_completed',
   'chat_turn_failed', 'chat_permission_requested', 'node_offline', 'node_back',
   'quota_near_limit', 'gateway_down', 'action_required'
 ]);
@@ -258,7 +281,7 @@ const DEFAULT_CONFIG_EFFECTIVE_DEPS: ConfigEffectiveDeps = {
 export function initializeSkillBank(node: NodeRoleStatus = { role: 'central', central_url: null }): void {
   if (node.role === 'worker') throw new Error('A worker must not initialize a local skill bank.');
   listSkills();
-  const docsPath = process.env.GAH_SKILL_DOCS_PATH
+  const docsPath = process.env.PARASAUR_SKILL_DOCS_PATH
     || fileURLToPath(new URL('../../../docs/gah-manager-skill.md', import.meta.url));
   try {
     seedSkillFromDocs(
@@ -282,7 +305,6 @@ export function initializeSkillBank(node: NodeRoleStatus = { role: 'central', ce
 
 /** Same hardcoded default as wsServer.ts's welcome message, until Settings
  * gains real profile switching (see apps/web Settings page). */
-const DEFAULT_PROFILE = 'gah';
 
 function isReportGroupBy(value: unknown): value is ReportGroupBy {
   return REPORT_GROUP_BY_VALUES.some(groupBy => groupBy === value);
@@ -441,7 +463,9 @@ export function createServer(
   // expose neither.
   if (node.role === 'central') app.use('/api/integrations/gitlab', gitLabRunsRouter());
   const mutation = mutationSafety(getCoordinatorIdentity(undefined, coordinatorPort).node_id);
+  if (configDeps.ownerRoutes) app.use('/api/owner', requireOwner, configDeps.ownerRoutes(mutation));
   app.use(workerRouteGuard(node));
+  if(node.role==='worker' && configDeps.nativeWorker) app.use('/api/native-worker',nativeWorkerRouter(configDeps.nativeWorker));
   if (node.role === 'central') app.use('/api/integrations/gitlab',
     gitLabQueueRouter(app.locals.gitLabEventsStore, app.locals.gitLabEventsQueue, mutation));
   const agentCliVersions = configDeps.agentCliVersions ?? new AgentCliVersions(getCoordinatorIdentity(undefined, coordinatorPort));
@@ -712,10 +736,10 @@ export function createServer(
   app.use('/api/settings/nodes', requireOwner, nodeSetupRouter());
   // Updating the running service also requires the existing operator opt-in.
   app.use('/api/admin', (req, res, next) => {
-    if (process.env.GAH_ENABLE_ADMIN_UPDATE !== '1') {
+    if (process.env.PARASAUR_ENABLE_ADMIN_UPDATE !== '1') {
       return res.status(404).json({
         error: 'Not Found',
-        message: 'Admin update is disabled; set GAH_ENABLE_ADMIN_UPDATE=1 on the server to enable it.'
+        message: 'Admin update is disabled; set PARASAUR_ENABLE_ADMIN_UPDATE=1 on the server to enable it.'
       });
     }
     next();
@@ -936,6 +960,16 @@ export function createServer(
     }
   });
 
+  app.get('/api/registry/nodes/:nodeId/factory', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      const profile = typeof req.query.profile === 'string' ? req.query.profile : '';
+      res.json(await registryService.checkNodeFactory(req.params.nodeId, profile));
+    } catch (error) {
+      res.status(error instanceof NodeFactoryError ? error.status : 502).json({ error: 'Worker factory check failed', message: error instanceof NodeFactoryError ? error.message : 'Cannot read worker factory state.' });
+    }
+  });
+
   app.get('/api/auth-health', (_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.json({ rows: configDeps.authHealthMonitor?.rows() ?? [] });
@@ -947,7 +981,7 @@ export function createServer(
   // code or submit a key.
   if (node.role === 'central' && configDeps.loginRepairBroker) {
     const broker = configDeps.loginRepairBroker;
-    app.use('/api/auth-health/repairs', rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: true, legacyHeaders: false }));
+    app.use(['/api/auth-health/repairs', '/api/backend-instances/authenticate'], rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: true, legacyHeaders: false }));
     const principal = (res: express.Response): RepairPrincipal | null => {
       const value = res.locals.authPrincipal;
       if (value?.kind === 'owner') return { kind: 'owner' };
@@ -966,6 +1000,15 @@ export function createServer(
           return res.status(status).json({ error: 'login_repair_failed', message: error instanceof LoginRepairError ? error.message : 'The login repair failed.' });
         }
       };
+    app.post('/api/backend-instances/authenticate', requireOwner, mutation('backend_instance.authenticate'), repairRoute(async (req, res, who) => {
+      const body = req.body;
+      const valid = (value: unknown): value is string => typeof value === 'string' && value.length > 0
+        && value.length <= 128 && value.trim() === value && !/[\x00-\x1f\x7f]/.test(value);
+      if (!body || Object.keys(body).some(key => !['profile', 'instance'].includes(key)) || !valid(body.profile) || !valid(body.instance)) {
+        return res.status(400).json({ error: 'invalid_instance', message: 'Choose a configured profile and account instance.' });
+      }
+      return res.status(201).json(await broker.startInstance(who, body.profile, body.instance));
+    }));
     app.post('/api/auth-health/repairs', mutation('auth.repair.start'), repairRoute(async (req, res, who) => {
       const { node_id: nodeId, backend, provider } = req.body ?? {};
       if (req.body?.backend_instance != null) {
@@ -1145,85 +1188,28 @@ export function createServer(
     }
   });
 
-  // Central claim arbitration (issue #882). All three verify the calling
-  // node is actually registered and has declared the profile it's trying
-  // to claim -- a node can't claim work under a profile it never told the
-  // registry it runs.
-  function authorizeClaimRequest(nodeId: unknown, profile: unknown, workId: unknown): { nodeId: string; profile: string; workId: string } {
-    if (typeof nodeId !== 'string' || !nodeId) throw new Error('Missing or invalid node_id');
-    if (typeof profile !== 'string' || !profile) throw new Error('Missing or invalid profile');
-    if (typeof workId !== 'string' || !workId) throw new Error('Missing or invalid work_id');
-    const node = registryService.getNode(nodeId);
-    if (!node) throw new Error(`Node '${nodeId}' is not registered`);
-    if (!node.profiles?.includes(profile)) {
-      throw new Error(`Node '${nodeId}' has not declared profile '${profile}' at registration`);
-    }
-    return { nodeId, profile, workId };
+  app.use('/api/claims', claimsRouter({
+    claims: centralClaims,
+    localNodeId: getCoordinatorIdentity(undefined, coordinatorPort).node_id,
+    profiles: listProfiles,
+    node: id => registryService.getNode(id)
+  }));
+  if (node.role === 'central' && (configDeps.nativeDispatchBroker || configDeps.nativeDispatchRoot)) {
+    const identity=getCoordinatorIdentity(undefined,coordinatorPort);
+    const root=configDeps.nativeDispatchRoot!;
+    const centralUrl=node.central_url??identity.advertised_url;
+    const transport=root?new NativeWorkerHttpTransport({contextRoot:root,worker:id=>registryService.getNode(id)}):undefined;
+    const held=(profile:string)=>broker.heldWork(profile);
+    const broker:NativeDispatchBroker=configDeps.nativeDispatchBroker??new NativeDispatchBroker({root,centralUrl,coordinatorNodeId:identity.node_id,
+      claims:centralClaims(),transport:transport!,
+      authorizeStart:nativeDispatchAuthority(root,centralUrl,undefined,(binding,signal)=>transport!.catalog(binding,signal),held),
+      authorizeContinuation:nativeContinuationAuthority(root,centralUrl,undefined,(binding,signal)=>transport!.catalog(binding,signal),held),
+      recordCanonicalResult:runReceiveNativeResult});
+    app.locals.nativeDispatchBroker=broker;
+    const producer=root && transport?new NativeDispatchProducer({root,centralUrl,coordinatorId:identity.node_id,broker,claims:centralClaims(),
+      workers:()=>registryService.getNodes(),profiles:listProfiles,transport}):undefined;
+    app.use('/api/native-dispatch', nativeGrantRouter({broker,producer,worker:id=>registryService.getNode(id)}));
   }
-
-  const claimsStoreUnavailable = (res: express.Response, error: unknown): void => {
-    console.error(`Claims store failed to load: ${error instanceof Error ? error.message : String(error)}`);
-    res.status(500).json({ error: 'Claims store unavailable', message: 'The claims store could not be loaded; check server logs.' });
-  };
-
-  app.post('/api/claims/acquire', (req, res) => {
-    let claims;
-    try {
-      claims = centralClaims();
-    } catch (error) {
-      claimsStoreUnavailable(res, error);
-      return;
-    }
-    try {
-      const { nodeId, profile, workId } = authorizeClaimRequest(req.body.node_id, req.body.profile, req.body.work_id);
-      const lease = claims.acquire(nodeId, profile, workId, req.body.lease_seconds);
-      res.status(200).json(lease);
-    } catch (error) {
-      if (error instanceof ClaimConflictError) {
-        res.status(409).json({ error: 'Conflict', message: error.message, held_by: error.heldBy });
-        return;
-      }
-      res.status(400).json({ error: 'Bad Request', message: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  app.post('/api/claims/renew', (req, res) => {
-    let claims;
-    try {
-      claims = centralClaims();
-    } catch (error) {
-      claimsStoreUnavailable(res, error);
-      return;
-    }
-    try {
-      const { nodeId, profile, workId } = authorizeClaimRequest(req.body.node_id, req.body.profile, req.body.work_id);
-      const lease = claims.renew(nodeId, profile, workId, req.body.lease_seconds);
-      res.status(200).json(lease);
-    } catch (error) {
-      if (error instanceof ClaimConflictError) {
-        res.status(409).json({ error: 'Conflict', message: error.message, held_by: error.heldBy });
-        return;
-      }
-      res.status(400).json({ error: 'Bad Request', message: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  app.post('/api/claims/release', (req, res) => {
-    let claims;
-    try {
-      claims = centralClaims();
-    } catch (error) {
-      claimsStoreUnavailable(res, error);
-      return;
-    }
-    try {
-      const { nodeId, profile, workId } = authorizeClaimRequest(req.body.node_id, req.body.profile, req.body.work_id);
-      claims.release(nodeId, profile, workId);
-      res.status(200).json({ success: true });
-    } catch (error) {
-      res.status(400).json({ error: 'Bad Request', message: error instanceof Error ? error.message : String(error) });
-    }
-  });
 
   // Pull-data REST endpoints (TICKET-productization): these are on-demand
   // fetches -- report parameters, one work item's timeline -- that don't
@@ -1235,7 +1221,7 @@ export function createServer(
   // observations), so it must be auth-gated even though loopback callers may
   // still access it without credentials via authMiddleware's local exemption.
   app.get('/api/status', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const light = req.query.light === '1';
     try {
       const status = await timed(res, 'gah', () => runStatus(profile, undefined, light));
@@ -1247,7 +1233,16 @@ export function createServer(
       const enriched = {
         ...status,
         running_workers: runningWorkers(status, nodes, identity.node_id),
-        node,
+        dispatch_backend_instances: true,
+        dispatch_execution_options: true,
+        // The Windows worker runs in WSL. Native Windows has no equivalent
+        // process-group completion observation for an already-exited parent.
+        dispatch_execution_results: process.platform !== 'win32',
+        node: {
+          ...node,
+          central_claim_observation: node.central_url && status.node?.central_url === node.central_url
+            ? status.node.central_claim_observation : undefined
+        },
         node_id: identity.node_id,
         display_name: identity.display_name,
         advertised_url: identity.advertised_url,
@@ -1277,7 +1272,7 @@ export function createServer(
   }
 
   app.get('/api/quota', async (req, res) => {
-    const selectedProfile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const selectedProfile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const since = typeof req.query.since === 'string' ? req.query.since : '7d';
     try {
       const profile = await resolveQuotaProfile(selectedProfile);
@@ -1294,7 +1289,7 @@ export function createServer(
 
   app.get('/api/registry/quota', async (req, res) => {
     if (node.role !== 'central') return res.status(403).json({ error: 'central_only' });
-    const selectedProfile = req.query.profile ?? DEFAULT_PROFILE;
+    const selectedProfile = req.query.profile ?? defaultProfile();
     const since = req.query.since ?? '7d';
     if (typeof selectedProfile !== 'string' || (!selectedProfile.startsWith('gah-node:') && !/^[a-zA-Z0-9_.-]{1,128}$/.test(selectedProfile))
       || typeof since !== 'string' || !/^[1-9][0-9]{0,3}[mhdw]$/.test(since)) {
@@ -1431,7 +1426,7 @@ export function createServer(
   // don't cover manager-chat turns, so subscription-burn visibility comes
   // from here.
   app.get('/api/usage/rollup', (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const rawDays = Number.parseInt(typeof req.query.days === 'string' ? req.query.days : '', 10);
     const days = Number.isFinite(rawDays) ? Math.min(Math.max(rawDays, 1), 90) : 7;
     try {
@@ -1444,8 +1439,19 @@ export function createServer(
     }
   });
 
+  app.get('/api/usage/report', async (req, res) => {
+    const profile = req.query.profile;
+    const days = req.query.days === undefined ? 7 : Number(req.query.days);
+    if ((profile !== undefined && (typeof profile !== 'string' || !profile.trim() || profile.length > 256))
+      || !Number.isInteger(days) || days < 1 || days > 90) {
+      res.status(400).json({ error: 'Usage requires a profile name and an integer day window from 1 to 90' });
+      return;
+    }
+    res.json(await recordedUsageReport({ profile: profile as string | undefined, days }, configDeps.usageReport));
+  });
+
   app.get('/api/doctor', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       res.json(await configEffectiveDeps.runDoctor(profile));
     } catch (error) {
@@ -1483,7 +1489,7 @@ export function createServer(
   });
   app.post('/api/model-prices/refresh', requireOwner, async (_req, res) => {
     try {
-      res.json(await refreshModelPrices({ extract: helperPriceExtractor(DEFAULT_PROFILE) }));
+      res.json(await refreshModelPrices({ extract: helperPriceExtractor(defaultProfile()) }));
     } catch (error) {
       res.status(502).json({ error: 'Failed to check model prices', message: error instanceof Error ? error.message : String(error) });
     }
@@ -1518,9 +1524,13 @@ export function createServer(
   });
 
   app.get('/api/work/:workId', async (req, res) => {
+    const profile = req.query.profile;
+    if (profile !== undefined && (typeof profile !== 'string' || !profile || profile.length > 128 || profile.trim() !== profile || /[\x00-\x1f\x7f]/.test(profile))) {
+      return res.status(400).json({ error: 'invalid_profile', message: 'Profile must be one non-empty project name.' });
+    }
     try {
       const entries = await runLedgerWork(req.params.workId);
-      res.json(entries);
+      res.json(typeof profile === 'string' ? entries.filter(entry => entry.profile === profile) : entries);
     } catch (error) {
       res.status(502).json({
         error: 'Failed to load work item history',
@@ -1530,7 +1540,7 @@ export function createServer(
   });
 
   app.get('/api/sync', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       res.json(await runSync({ profile }));
     } catch (error) {
@@ -1560,7 +1570,7 @@ export function createServer(
   });
 
   app.post('/api/ledger/clear-attempts', mutation('ledger.clear_attempts'), async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const workId = typeof req.body?.workId === 'string' ? req.body.workId : undefined;
     const dryRun = req.body?.dryRun === true;
     if (!workId) {
@@ -1613,7 +1623,7 @@ export function createServer(
   // surfaced as StatusSnapshot.review_held_work_ids, so this reads status
   // rather than a dedicated CLI subcommand.
   app.get('/api/hold', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       const status = await runStatus(profile, undefined, true);
       res.json({ profile, workIds: status.review_held_work_ids ?? [] });
@@ -1626,7 +1636,7 @@ export function createServer(
   });
 
   app.post('/api/hold/set', mutation('hold.set'), async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const workId = typeof req.body?.workId === 'string' ? req.body.workId : undefined;
     const reason = typeof req.body?.reason === 'string' ? req.body.reason : undefined;
     if (!workId) {
@@ -1645,7 +1655,7 @@ export function createServer(
   });
 
   app.post('/api/hold/clear', mutation('hold.clear'), async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const workId = typeof req.body?.workId === 'string' ? req.body.workId : undefined;
     if (!workId) {
       res.status(400).json({ error: 'workId is required' });
@@ -1680,6 +1690,11 @@ export function createServer(
       res.status(400).json({ error: 'gitlab must be a valid context: project, kind (issue|merge_request), iid, webUrl' });
       return;
     }
+    const executionOptions = parseDispatchExecutionOptions(body);
+    if (executionOptions === 'invalid') {
+      res.status(400).json({ error: 'Execution options require booleans and retries must be an unsigned 32-bit integer' });
+      return;
+    }
     const options: SessionOptions & { requestId?: string; nodeId?: string; coordinatorNodeId?: string } = {
       profile,
       providerKind: providerKind as SessionOptions['providerKind'],
@@ -1690,15 +1705,10 @@ export function createServer(
       target: typeof body.target === 'string' ? body.target : undefined,
       mr: typeof body.mr === 'string' ? body.mr : undefined,
       backend: typeof body.backend === 'string' ? body.backend : undefined,
+      backendInstance: body.backendInstance,
       model: typeof body.model === 'string' ? body.model : undefined,
       budget: typeof body.budget === 'number' ? body.budget : undefined,
-      dryRun: body.dryRun === true,
-      retries: typeof body.retries === 'number' ? body.retries : undefined,
-      allowDraftFail: body.allowDraftFail === true,
-      prod: body.prod === true,
-      allowUnknownRedBaseline: body.allowUnknownRedBaseline === true,
-      escalate: body.escalate === true,
-      manualWorker: body.manualWorker === true,
+      ...executionOptions,
       reasoningEffort: typeof body.reasoningEffort === 'string' ? body.reasoningEffort : undefined,
       gitlab: gitlab ?? undefined,
       requestId: typeof body.requestId === 'string' ? body.requestId : undefined,
@@ -1738,6 +1748,7 @@ export function createServer(
   app.get('/api/profiles', async (req, res) => {
     try {
       const profiles = await listProfiles();
+      chooseDefaultProfile(profiles);
       res.json(profiles);
     } catch (error) {
       res.status(502).json({
@@ -1910,7 +1921,25 @@ export function createServer(
   });
 
   // Profile CRUD operations for Issue #148
+  const validCommandLists = (body: unknown): boolean => {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+    return ['validation_commands', 'auto_fix_commands'].every(field => {
+      const commands = (body as Record<string, unknown>)[field];
+      return commands === undefined || (Array.isArray(commands) && commands.length <= 128
+        && commands.every(command => typeof command === 'string' && command.trim().length > 0
+          && command.length <= 16_384 && !command.includes('\0')));
+    });
+  };
+  app.get('/api/profiles/:name/checks', requireOwner, async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    if (!req.params.name.trim() || req.params.name.length > 128 || /[\x00-\x1f\x7f]/.test(req.params.name)) {
+      return res.status(400).json({ error: 'invalid_profile', message: 'Choose a configured profile.' });
+    }
+    try { return res.json(await (configDeps.runProfileChecks ?? runProfileChecks)(req.params.name)); }
+    catch { return res.status(502).json({ error: 'profile_checks_unavailable', message: 'Cannot load workspace checks. Check the profile and update Parasaur on this node.' }); }
+  });
   app.post('/api/profiles', requireOwner, async (req, res) => {
+    if (!validCommandLists(req.body)) return res.status(400).json({ error: 'invalid_commands', message: 'Commands must be lists of up to 128 nonempty strings, each at most 16384 characters without NUL.' });
     // Issue #635 AC3: a missing required field must fail closed with 4xx
     // before ever reaching the CLI, not surface as an opaque 502 once
     // `gah profile add` itself rejects it.
@@ -1956,6 +1985,7 @@ export function createServer(
   });
 
   app.patch('/api/profiles/:name', requireOwner, async (req, res) => {
+    if (!validCommandLists(req.body)) return res.status(400).json({ error: 'invalid_commands', message: 'Commands must be lists of up to 128 nonempty strings, each at most 16384 characters without NUL.' });
     try {
       const options: ProfileSetOptions = {
         name: req.params.name,
@@ -2044,7 +2074,7 @@ export function createServer(
   }));
 
   app.get('/api/config/effective', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       const config = await configEffectiveDeps.runConfigShowProfile(profile);
       res.json(toSettingsConfigProfileSummary(config));
@@ -2170,8 +2200,8 @@ export function createServer(
     const remoteGatewayUrl = `http://${tailscaleIPv4}:${gatewayPort(gatewayBaseUrl())}`;
     const command =
       'curl -fsSL https://raw.githubusercontent.com/Kh1ng/git-agent-harness/main/scripts/bootstrap.sh' +
-      ` | GAH_GATEWAY_MODE=remote GAH_GATEWAY_URL=${shellQuote(remoteGatewayUrl)}` +
-      ` GAH_GATEWAY_API_KEY=${shellQuote(apiKey)} bash`;
+      ` | PARASAUR_GATEWAY_MODE=remote PARASAUR_GATEWAY_URL=${shellQuote(remoteGatewayUrl)}` +
+      ` PARASAUR_GATEWAY_API_KEY=${shellQuote(apiKey)} bash`;
     res.json({ command });
   });
 
@@ -2198,7 +2228,7 @@ export function createServer(
   app.post('/api/context/recall', async (req, res) => {
     const { profile, query } = req.body as { profile?: string; query?: string };
     if (!query) return res.status(400).json({ error: 'query required' });
-    const p = typeof profile === 'string' && profile ? profile : DEFAULT_PROFILE;
+    const p = typeof profile === 'string' && profile ? profile : defaultProfile();
     // #878: recall is fail-open (never throws), so surface a degraded result
     // here explicitly -- this is a diagnostic endpoint, an empty 200 would
     // silently lie about why nothing came back.
@@ -2214,7 +2244,7 @@ export function createServer(
   // backend's own command registry (e.g. Hermes's ACP available-commands
   // push) -- not something GAH invents. Powers the "/" palette.
   app.get('/api/manager-chat/commands', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       const commands = await listManagerChatCommands(profile, typeof req.query.nodeId === 'string' ? req.query.nodeId : undefined);
       res.json({ commands });
@@ -2231,7 +2261,7 @@ export function createServer(
   // `backend` overrides the profile default (new-chat flow shows
   // per-backend lists).
   app.get('/api/manager-chat/models', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const backend = typeof req.query.backend === 'string' ? req.query.backend : undefined;
     try {
       const summary = backend
@@ -2247,7 +2277,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/model', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const modelId = typeof req.body?.modelId === 'string' ? req.body.modelId : undefined;
     if (!modelId) {
       res.status(400).json({ error: 'Missing required field: modelId' });
@@ -2267,7 +2297,7 @@ export function createServer(
   // Capability-aware reasoning effort: values come from the active ACP
   // backend's thought_level config option and are validated by that adapter.
   app.post('/api/manager-chat/reasoning-effort', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const effortId = typeof req.body?.effortId === 'string' ? req.body.effortId : undefined;
     if (!effortId) {
       res.status(400).json({ error: 'Missing required field: effortId' });
@@ -2291,12 +2321,24 @@ export function createServer(
     } catch { res.status(502).json({ error: 'Unable to read worker availability for this project.' }); }
   });
 
+  app.get('/api/manager-chat/accounts', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const { profile, backend, nodeId } = req.query;
+    if (typeof profile !== 'string' || !profile || profile.length > 256
+      || typeof backend !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(backend)
+      || !(nodeId === undefined || (typeof nodeId === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(nodeId)))) {
+      return void res.status(400).json({ error: 'Choose a project, runner and execution node.' });
+    }
+    try { res.json({ accounts: await chatAccounts(profile, backend, nodeId) }); }
+    catch { res.status(502).json({ error: 'chat_accounts_unavailable', message: 'Cannot read accounts on this execution node. Check its connection and Parasaur version, then retry.' }); }
+  });
+
   // WP2 chat sessions: a session is one conversation bound to one worktree.
   // List/create/archive are plain REST (the UI's session rail); turns
   // themselves keep flowing over the WS manager.chat.* messages, which now
   // carry an optional sessionId.
   app.get('/api/manager-chat/sessions', (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     res.json({ sessions: listChatSessions(profile) });
   });
 
@@ -2323,7 +2365,7 @@ export function createServer(
   });
 
   app.get('/api/manager-chat/storage', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       res.json(await reclaimChatSessions({ profile, dryRun: true }));
     } catch (error) {
@@ -2348,7 +2390,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/sessions', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const backend = typeof req.body?.backend === 'string' ? req.body.backend : undefined;
     const model = typeof req.body?.model === 'string' ? req.body.model : null;
     const title = typeof req.body?.title === 'string' ? req.body.title : undefined;
@@ -2364,7 +2406,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/sessions/update', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
     if (!sessionId) {
       res.status(400).json({ error: 'Missing required field: sessionId' });
@@ -2388,7 +2430,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/sessions/archive', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
     const sessionIds: string[] = Array.isArray(req.body?.sessionIds)
       ? req.body.sessionIds.filter((id: unknown): id is string => typeof id === 'string')
@@ -2411,7 +2453,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/sessions/restore', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
     // The session id flows into worktree directory names on restore; hold it
     // to the same shape the worker surface validates before any git access.
@@ -2430,7 +2472,7 @@ export function createServer(
   // and grab one into a chat -- branch for it, mark in progress, seed the
   // session with the issue body.
   app.get('/api/manager-chat/issues', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       res.json({ issues: await listManagerChatIssues(profile) });
     } catch (error) {
@@ -2442,7 +2484,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/issues/start', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const issueNumber = typeof req.body?.issueNumber === 'number' ? req.body.issueNumber : undefined;
     const backend = typeof req.body?.backend === 'string' ? req.body.backend : undefined;
     const model = typeof req.body?.model === 'string' ? req.body.model : null;
@@ -2466,7 +2508,7 @@ export function createServer(
   // seeded with one -- no worktree, no branch, nothing at the provider is
   // touched (browsing a PR must never mutate it).
   app.get('/api/manager-chat/prs', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       res.json({ prs: await listManagerChatPrs(profile) });
     } catch (error) {
@@ -2478,7 +2520,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/prs/start', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const prNumber = typeof req.body?.prNumber === 'number' ? req.body.prNumber : undefined;
     const backend = typeof req.body?.backend === 'string' ? req.body.backend : undefined;
     const model = typeof req.body?.model === 'string' ? req.body.model : null;
@@ -2502,7 +2544,7 @@ export function createServer(
   // dev server. GET the current state; POST sets (or clears with port:null)
   // — auto-detection from agent tool output pushes manager.chat.preview.
   app.get('/api/manager-chat/preview', (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : '';
     if (!sessionId) {
       res.status(400).json({ error: 'Missing required query param: sessionId' });
@@ -2512,7 +2554,7 @@ export function createServer(
   });
 
   app.post('/api/manager-chat/preview/set', async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
     const port = req.body?.port === null ? null : typeof req.body?.port === 'number' ? req.body.port : undefined;
     if (!sessionId) {
@@ -2544,12 +2586,12 @@ export function createServer(
   // (acquire_profile_lock in src/controller.rs) -- see gahCli.ts for why the
   // check isn't reimplemented here.
   app.get('/api/loop/status', (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     res.json(getLoopStatus(profile));
   });
 
   app.post('/api/loop/start', mutation('loop.start'), async (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     try {
       const result = await startLoop(profile);
       if (!result.started) {
@@ -2566,7 +2608,7 @@ export function createServer(
   });
 
   app.post('/api/loop/stop', mutation('loop.stop'), (req, res) => {
-    const profile = typeof req.body?.profile === 'string' ? req.body.profile : DEFAULT_PROFILE;
+    const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
     const result = stopLoop(profile);
     if (!result.stopped) {
       res.status(409).json(result);
@@ -2576,7 +2618,7 @@ export function createServer(
   });
 
   app.get('/api/events', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const since = typeof req.query.since === 'string' ? req.query.since : '7d';
     try {
       const events = await runEvents(profile, since);
@@ -2611,7 +2653,7 @@ export function createServer(
   });
 
   app.get('/api/loop/last-decision', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       res.json(deriveLastDecision(await runEvents(profile, '24h')));
     } catch (error) {
@@ -2623,7 +2665,7 @@ export function createServer(
   });
 
   app.get('/api/controller-activity', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const since = typeof req.query.since === 'string' ? req.query.since : '24h';
     try {
       const events = await runEvents(profile, since);
@@ -2666,7 +2708,7 @@ export function createServer(
   }
 
   app.get('/api/git/status', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
     const nodeId = typeof req.query.nodeId === 'string' ? req.query.nodeId : undefined;
     try {
@@ -2689,7 +2731,7 @@ export function createServer(
   });
 
   app.get('/api/git/review', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
     const nodeId = typeof req.query.nodeId === 'string' ? req.query.nodeId : undefined;
     const base = typeof req.query.base === 'string' ? req.query.base : undefined;
@@ -2742,7 +2784,7 @@ export function createServer(
   });
 
   app.post('/api/git/suggest', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
     const nodeId = typeof req.body?.nodeId === 'string' ? req.body.nodeId : undefined;
     const kind = req.body?.kind;
@@ -2807,7 +2849,7 @@ export function createServer(
   });
 
   app.get('/api/git/branches', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       const cwd = await resolveLocalPath(profile);
       if (!cwd) return res.status(404).json({ error: 'Profile not found' });
@@ -2819,7 +2861,7 @@ export function createServer(
   });
 
   app.get('/api/git/worktrees', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       const cwd = await resolveLocalPath(profile);
       if (!cwd) return res.status(404).json({ error: 'Profile not found' });
@@ -2830,7 +2872,7 @@ export function createServer(
   });
 
   app.get('/api/git/log', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const limit = typeof req.query.limit === 'string' ? Math.min(50, parseInt(req.query.limit, 10) || 20) : 20;
     try {
       const cwd = await resolveLocalPath(profile);
@@ -2843,7 +2885,7 @@ export function createServer(
   });
 
   app.get('/api/git/prs', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     try {
       res.json({ prs: await listManagerChatPrs(profile) });
     } catch (error) {
@@ -2852,7 +2894,7 @@ export function createServer(
   });
 
   app.post('/api/git/pr', async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const { title, body = '', base, draft = false } = req.body ?? {};
     if (typeof title !== 'string' || !title.trim()) return res.status(400).json({ error: 'title required' });
     if (typeof body !== 'string' || typeof draft !== 'boolean'
@@ -2883,7 +2925,7 @@ export function createServer(
   });
 
   app.post('/api/git/commit', mutation('git.commit'), async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
     const { message, files, nodeId } = req.body as { message?: string; files?: unknown; nodeId?: unknown };
     if (!message || !message.trim()) return res.status(400).json({ error: 'message required' });
@@ -2903,7 +2945,7 @@ export function createServer(
   });
 
   app.post('/api/git/publish', mutation('git.publish'), async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
     const { title, body = '', base, draft = false, nodeId } = req.body ?? {};
     if (typeof title !== 'string' || !title.trim() || typeof body !== 'string' || typeof base !== 'string' || !base.trim()
@@ -2927,7 +2969,7 @@ export function createServer(
   });
 
   app.post('/api/git/pull-request/update', mutation('git.update'), async (req, res) => {
-    const profile = typeof req.query.profile === 'string' ? req.query.profile : DEFAULT_PROFILE;
+    const profile = typeof req.query.profile === 'string' ? req.query.profile : defaultProfile();
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
     const { number, title, body = '', draft, nodeId } = req.body ?? {};
     if (!Number.isSafeInteger(number) || number <= 0 || typeof title !== 'string' || !title.trim()
@@ -2972,7 +3014,7 @@ export function createServer(
   });
 
   // Issue #1416: the release channel feed behind "Update available · vX →
-  // vY". Same operator gate as the update itself (GAH_ENABLE_ADMIN_UPDATE):
+  // vY". Same operator gate as the update itself (PARASAUR_ENABLE_ADMIN_UPDATE):
   // knowing an update exists is already operational information.
   app.get('/api/admin/release/status', async (_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -2987,9 +3029,9 @@ export function createServer(
   });
 
   // The server serves the built web app itself. The entry point (bin.ts)
-  // resolves the root: the service owner's GAH_WEB_ROOT, else the checkout's
+  // resolves the root: the service owner's PARASAUR_WEB_ROOT, else the checkout's
   // build; empty means another web server serves the dashboard.
-  const webRoot = process.env.GAH_WEB_ROOT;
+  const webRoot = process.env.PARASAUR_WEB_ROOT;
   if (webRoot) {
     const absoluteWebRoot = resolve(webRoot);
     // The document router owns framing, prefix bootstrap, and rate limiting.
@@ -3024,7 +3066,7 @@ export function createServer(
         return res.status(415).json({ error: 'Unsupported Media Type', message: 'Unsupported request encoding' });
     }
     // Unexpected exceptions can also embed CLI output or request credentials.
-    console.error('Server error: an unexpected request failure occurred');
+    console.error('Server error: an unexpected request failure occurred', requestFailure(err, req.path));
     res.status(500).json({
       error: 'Internal Server Error',
       message: 'An unexpected error occurred'

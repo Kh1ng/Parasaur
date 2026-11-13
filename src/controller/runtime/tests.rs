@@ -291,6 +291,7 @@ pub(super) fn empty_snapshot() -> StatusSnapshot {
         open_managed_mr_count: 0,
         inflight_implementation_count: 0,
         implementation_intake_paused: false,
+        spend_budget: None,
         backend_configured: std::collections::HashMap::new(),
         backend_instances: vec![],
         export_health: Default::default(),
@@ -357,6 +358,7 @@ fn blocked_pr_human_required_is_reported_once() {
         review_contract_version: None,
         remediation_plan: None,
         skipped: Vec::new(),
+        central_claim: None,
     });
     assert!(human_required_already_reported(&history, "real", &action));
     assert!(!human_required_already_reported(&history, "other", &action));
@@ -388,11 +390,9 @@ fn stop_event_for_capped_pr_persists_reason_code_and_dedupes_across_ticks() {
         reason_code: Some("fix_retry_cap_exceeded".into()),
     };
     for tick in 0..3 {
-        let history = crate::events::read_events(&cfg).unwrap();
         let newly_reported = super::record_stop_event(
             &cfg,
             "real",
-            &history,
             &action,
             crate::events::EventType::HumanRequired,
             "Human required: fix cap exceeded (branch-A) [code=fix_retry_cap_exceeded]",
@@ -417,7 +417,13 @@ fn blocked_pr_notification_is_reported_once() {
     let mut snapshot = empty_snapshot();
     snapshot.blocked_work_items.push(capped_pr_blocker());
     for _ in 0..3 {
-        super::report_blocked_work_items_once(&cfg, "real", &snapshot).unwrap();
+        super::report_blocked_work_items_once(
+            &cfg,
+            "real",
+            &snapshot,
+            &crate::events::read_events(&cfg).unwrap(),
+        )
+        .unwrap();
     }
     let events = crate::events::read_events(&cfg).unwrap();
     assert_eq!(events.len(), 1, "{events:?}");
@@ -574,12 +580,16 @@ fn blocker_and_terminal_reporting_share_identity_in_the_same_tick() {
         reason_code: Some("fix_retry_cap_exceeded".into()),
     };
     for _ in 0..3 {
-        let stale_history = crate::events::read_events(&cfg).unwrap();
-        super::report_blocked_work_items_once(&cfg, "real", &snapshot).unwrap();
+        super::report_blocked_work_items_once(
+            &cfg,
+            "real",
+            &snapshot,
+            &crate::events::read_events(&cfg).unwrap(),
+        )
+        .unwrap();
         assert!(!super::record_stop_event(
             &cfg,
             "real",
-            &stale_history,
             &action,
             crate::events::EventType::HumanRequired,
             "Human required: fix cap exceeded",
@@ -617,4 +627,31 @@ fn admission_excludes_skipped_claims_and_initial_capacity_deferrals() {
     ));
     assert!(super::action_admitted_work(&action,
         "Deferred dispatch_ticket fallback because node capacity is busy after 1 backend attempt(s); prior backend outcome preserved"));
+}
+
+#[test]
+fn blocked_review_keeps_other_work_eligible_without_reselecting_the_hold() {
+    let action = NextAction::ReviewMr {
+        branch: "gah/exhausted".into(),
+        work_id: Some("#1605".into()),
+        mr_url: None,
+        reason: "review required".into(),
+    };
+    let outcome = "Blocked review: review budget exhausted for #1605: 22/3 review cycles used";
+    assert!(!super::action_admitted_work(&action, outcome));
+    assert!(!super::has_follow_up_in_batch(&action, outcome));
+    assert!(!super::parallel_outcome_is_failure(outcome));
+    let mut remaining = 0;
+    let mut suppressed = false;
+    assert!(!super::update_parallel_refill_budget(
+        outcome,
+        8,
+        &mut remaining,
+        &mut suppressed
+    ));
+    assert_eq!(remaining, 8);
+    assert!(!suppressed);
+    assert!(super::parallel_outcome_is_failure(
+        "Error: backend transport failed"
+    ));
 }

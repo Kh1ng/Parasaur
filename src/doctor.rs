@@ -51,10 +51,10 @@ pub fn run(
     if json {
         CHECK_CAPTURE.with(|capture| *capture.borrow_mut() = Some(CheckCapture::default()));
     }
-    if std::env::var_os("GAH_TEST_NOW").is_some() {
+    if std::env::var_os("PARASAUR_TEST_NOW").is_some() {
         print_check(
             CheckStatus::Warn,
-            "GAH_TEST_NOW",
+            "PARASAUR_TEST_NOW",
             "test clock override is active; remove it from production and service environment files",
         );
     }
@@ -267,8 +267,13 @@ fn check_profile(defaults: &Defaults, profile: &Profile) -> bool {
     let mut failed = false;
     failed |= !check_repo(profile);
     failed |= !check_provider_cli(profile);
-    failed |= !check_provider_auth(profile);
+    let authenticated = check_provider_auth(profile);
+    failed |= !authenticated;
     failed |= !check_push_url(profile);
+    // Only worth asking the server once its API accepted this profile.
+    if authenticated {
+        failed |= !check_push_access(profile);
+    }
     failed |= !check_writable_path("artifact_root", Path::new(&profile.artifact_root));
     failed |= !check_manager_memory(defaults, profile);
     failed |= !check_candidate_model_consistency(defaults, profile);
@@ -677,6 +682,19 @@ fn check_push_url(profile: &Profile) -> bool {
             false
         }
     }
+}
+
+fn check_push_access(profile: &Profile) -> bool {
+    let refusal = crate::provider::push_refusal(profile);
+    match &refusal {
+        Some(why) => print_check(CheckStatus::Fail, "push access", why),
+        None => print_check(
+            CheckStatus::Pass,
+            "push access",
+            "the server accepts a push",
+        ),
+    }
+    refusal.is_none()
 }
 
 fn check_writable_path(label: &str, path: &Path) -> bool {

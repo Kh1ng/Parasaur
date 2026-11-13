@@ -1,6 +1,6 @@
 // Issue #635: HTTP endpoint contract tests against the real Express app and
 // the real gahCli.ts spawn/parse/error logic -- only the underlying `gah`
-// binary is replaced, via GAH_BINARY pointed at the fake fixture under
+// binary is replaced, via PARASAUR_BINARY pointed at the fake fixture under
 // tests/fixtures/gah. This is the part of server.ts's behavior that can't be
 // exercised through createServer()'s DI overrides (runStatus/runQuota/
 // runReport/runConfigShow/runProfileList/runProfileAdd are direct top-level

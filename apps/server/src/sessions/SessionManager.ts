@@ -9,17 +9,22 @@
 import { generateSessionId, GAHError } from '@git-agent-harness/shared';
 import { getProviderRegistry } from '../provider/ProviderRegistry.js';
 import { getServerPushBus } from '../serverPushBus.js';
+import { diagnosticTail } from '../diagnosticTail.js';
+import { dispatchRequestFingerprint, assertDispatchRequestIdentity } from '../dispatchRequestIdentity.js';
+import { isSessionTerminal } from '@git-agent-harness/contracts';
 import { runDispatchCancellable, type DispatchOptions, type DispatchResult, type CancellableDispatch, type CancellationResult } from '../gahCli.js';
 import type {
   Session,
+  DispatchExecutionOptions,
   SessionId,
   ProviderKind,
   ProviderInstanceId,
   SessionStatus,
-  GitLabDispatchContext
+  GitLabDispatchContext,
+  SessionExecutionResult
 } from '@git-agent-harness/contracts';
 
-export type SessionOptions = {
+export type SessionOptions = DispatchExecutionOptions & {
   // GAH profile id (config.toml's [profiles.<id>]) -- NOT a backend name.
   // Required: there's no sane default to guess from providerKind/repo.
   profile: string;
@@ -31,15 +36,9 @@ export type SessionOptions = {
   mr?: string;
   mode: string;
   backend?: string;
+  backendInstance?: string;
   model?: string;
   budget?: number;
-  dryRun?: boolean;
-  retries?: number;
-  allowDraftFail?: boolean;
-  prod?: boolean;
-  allowUnknownRedBaseline?: boolean;
-  escalate?: boolean;
-  manualWorker?: boolean;
   reasoningEffort?: string;
   requestId?: string;
   /** GitLab page context (#1595): recorded on the session so the runs feed
@@ -65,18 +64,19 @@ type SessionManagerDeps = {
   disableCleanupTimer?: boolean;
 };
 
+function executionResult(reason: SessionExecutionResult['reason'], result?: DispatchResult): SessionExecutionResult {
+  return { reason,
+    exitCode: result && Number.isInteger(result.exitCode) && result.exitCode >= 0 ? result.exitCode : null,
+    signal: result?.signal ?? null };
+}
+
 class SessionManagerImpl {
   private sessions: Map<SessionId, Session> = new Map();
   private requestToSessionId: Map<string, SessionId> = new Map();
+  private requestFingerprints = new Map<string, string>();
   private pendingSessions: Map<string, Promise<Session>> = new Map();
-  private outputBuffers: Map<SessionId, { stdout: string[]; stderr: string[] }> = new Map();
   private activeDispatches: Map<SessionId, CancellableDispatch> = new Map();
   private profileDispatchTails: Map<string, Promise<void>> = new Map();
-  // Sessions cancelled while still queued behind another same-profile
-  // dispatch. Scoped to a single sessionId only -- never the whole profile
-  // -- so stopping one session can never drop or misfire an unrelated
-  // queued session for the same profile.
-  private cancelledSessions: Set<SessionId> = new Set();
   private providerRegistry: ProviderRegistryLike;
   private pushBus: PushBusLike;
   private dispatchRunner: DispatchRunner;
@@ -94,8 +94,12 @@ class SessionManagerImpl {
     }
   }
   async startSession(options: SessionOptions): Promise<Session> {
+    options = { ...options, gitlab: options.gitlab && { ...options.gitlab } };
     const { requestId } = options;
+    const fingerprint = dispatchRequestFingerprint(options);
     if (requestId) {
+      const previous = this.requestFingerprints.get(requestId);
+      if (previous) assertDispatchRequestIdentity(previous, fingerprint);
       const pending = this.pendingSessions.get(requestId);
       if (pending) {
         return pending;
@@ -111,8 +115,11 @@ class SessionManagerImpl {
       }
     }
 
-    const startPromise = this.startSessionFresh(options);
+    // Publish only after this request owns its pending slot: subscribers can
+    // synchronously replay a start when they receive session.started.
+    const startPromise = Promise.resolve().then(() => this.startSessionFresh(options));
     if (requestId) {
+      this.requestFingerprints.set(requestId, fingerprint);
       this.pendingSessions.set(requestId, startPromise);
     }
     try {
@@ -124,6 +131,7 @@ class SessionManagerImpl {
     } finally {
       if (requestId) {
         this.pendingSessions.delete(requestId);
+        if (!this.requestToSessionId.has(requestId)) this.requestFingerprints.delete(requestId);
       }
     }
   }
@@ -142,6 +150,7 @@ class SessionManagerImpl {
     // Create initial session
     const session: Session = {
       id: sessionId,
+      requestId: options.requestId,
       providerKind: options.providerKind,
       instanceId: options.instanceId,
       status: 'starting',
@@ -152,13 +161,13 @@ class SessionManagerImpl {
       mr: options.mr,
       mode: options.mode,
       backend: options.backend,
+      backendInstance: options.backendInstance,
       model: options.model,
       budget: options.budget,
       gitlab: options.gitlab
     };
     
     this.sessions.set(sessionId, session);
-    this.outputBuffers.set(sessionId, { stdout: [], stderr: [] });
 
     // Notify about session start immediately
     this.pushBus.publish({
@@ -171,6 +180,7 @@ class SessionManagerImpl {
       profile: options.profile,
       mode: options.mode,
       backend: options.backend,
+      backendInstance: options.backendInstance,
       target: options.target,
       branch: options.branch,
       mr: options.mr,
@@ -199,9 +209,7 @@ class SessionManagerImpl {
       this.handleDispatchError(sessionId, error);
     });
     
-    // Return the session immediately - it's now running
-    session.status = 'running';
-    this.sessions.set(sessionId, session);
+    // The profile queue promotes to running only when this session owns its slot.
     
     return session;
   }
@@ -239,8 +247,8 @@ class SessionManagerImpl {
       // this check is scoped to exactly this sessionId, so stopping one
       // queued session can never skip an unrelated sibling on the same
       // profile.
-      if (this.cancelledSessions.has(sessionId)) {
-        this.cancelledSessions.delete(sessionId);
+      const session = this.sessions.get(sessionId);
+      if (!session || session.status === 'stopping' || session.status === 'stopped' || session.status === 'error') {
         return {
           promise: Promise.resolve({ exitCode: -1, stderr: 'Session was cancelled before starting' }),
           cancel: async () => ({ cancelled: true })
@@ -248,7 +256,6 @@ class SessionManagerImpl {
       }
 
       // Promote status now that this session owns the profile slot.
-      const session = this.sessions.get(sessionId);
       if (session?.status === 'starting') {
         session.status = 'running';
         this.sessions.set(sessionId, session);
@@ -285,11 +292,16 @@ class SessionManagerImpl {
 
       cancelPromise = (async (): Promise<CancellationResult> => {
         const result = actualDispatch ? await actualDispatch.cancel() : { cancelled: true };
-        release();
-        if (this.profileDispatchTails.get(options.profile) === tail) {
-          this.profileDispatchTails.delete(options.profile);
+        // A failed cancellation is an observation, not termination proof.
+        if (result.cancelled) {
+          release();
+          // A cancelled queued slot still follows its live predecessor. Do
+          // not erase that dependency and let a new sibling jump the queue.
+          void tail.then(() => {
+            if (this.profileDispatchTails.get(options.profile) === tail) this.profileDispatchTails.delete(options.profile);
+          });
         }
-        return result;
+        return { ...result, notStarted: actualDispatch === null };
       })();
 
       return cancelPromise;
@@ -307,35 +319,21 @@ class SessionManagerImpl {
     
     this.activeDispatches.delete(sessionId);
     
-    // Do not overwrite terminal state if session was already stopped/stopping
-    if (session.status === 'stopped' || session.status === 'stopping' || session.status === 'error') {
+    // A confirmed cancellation remains terminal even if its callback is late.
+    if (session.status === 'stopped' || session.status === 'error') {
       // Session was already cancelled or stopped, ignore late completion
       return;
     }
     
-    if (result.exitCode === 0) {
-      session.status = 'stopped';
-      session.endedAt = new Date().toISOString();
-      this.sessions.set(sessionId, session);
-      
-      this.pushBus.publish({
-        type: 'session.stopped',
-        session
-      });
-    } else {
-      session.status = 'error';
-      session.error = `Dispatch failed with exit code ${result.exitCode}`;
-      if (result.stderr) {
-        session.error = result.stderr;
-      }
-      session.endedAt = new Date().toISOString();
-      this.sessions.set(sessionId, session);
-      
-      this.pushBus.publish({
-        type: 'session.stopped',
-        session
-      });
-    }
+    const cancelled = session.status === 'stopping';
+    session.execution = executionResult(result.spawnFailed ? 'launch_failed' : cancelled ? 'cancelled' : 'exited', result);
+    session.status = cancelled || result.exitCode === 0 ? 'stopped' : 'error';
+    session.error = session.status === 'error'
+      ? diagnosticTail(result.stderr || `Dispatch failed with exit code ${result.exitCode}`)
+      : undefined;
+    session.endedAt = new Date().toISOString();
+    this.sessions.set(sessionId, session);
+    this.pushBus.publish({ type: 'session.stopped', session });
   }
   
   /**
@@ -347,14 +345,15 @@ class SessionManagerImpl {
     
     this.activeDispatches.delete(sessionId);
     
-    // Do not overwrite terminal state if session was already stopped/stopping
-    if (session.status === 'stopped' || session.status === 'stopping' || session.status === 'error') {
+    // A confirmed cancellation remains terminal even if its callback is late.
+    if (session.status === 'stopped' || session.status === 'error') {
       // Session was already cancelled or stopped, ignore late error
       return;
     }
     
     session.status = 'error';
-    session.error = error instanceof Error ? error.message : String(error);
+    session.execution = executionResult('launch_failed');
+    session.error = diagnosticTail(error instanceof Error ? error.message : String(error));
     session.endedAt = new Date().toISOString();
     this.sessions.set(sessionId, session);
     
@@ -371,16 +370,10 @@ class SessionManagerImpl {
       throw new GAHError(`Session ${sessionId} not found`, 'SESSION_NOT_FOUND');
     }
     
-    if (session.status === 'stopped' || session.status === 'stopping') {
+    if (isSessionTerminal(session) || session.status === 'stopping') {
       return session;
     }
     
-    // Mark only this session as cancelled -- if it is still queued behind
-    // another same-profile dispatch, startAfterPrevious will see this and
-    // skip starting it. This deliberately never touches any other session,
-    // queued or running, on the same profile.
-    this.cancelledSessions.add(sessionId);
-
     // Update session status to stopping
     session.status = 'stopping';
     this.sessions.set(sessionId, session);
@@ -391,57 +384,42 @@ class SessionManagerImpl {
       session
     });
 
-    // If there's an active dispatch, cancel it and wait for the process
-    // tree to actually terminate before reporting success. A late-arriving
-    // timeout or an unconfirmed kill must surface as an explicit error, not
-    // a silent "stopped".
     const activeDispatch = this.activeDispatches.get(sessionId);
     if (activeDispatch) {
-      this.activeDispatches.delete(sessionId);
-
       let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
-        const cancelTimeout = new Promise<{ timedOut: true }>((resolve) => {
-          timeout = setTimeout(() => resolve({ timedOut: true }), 30000); // 30 second timeout
-        });
-
         const outcome = await Promise.race([
-          activeDispatch.cancel().then((result) => ({ timedOut: false as const, result })),
-          cancelTimeout
+          activeDispatch.cancel().then(result => ({ timedOut: false as const, result })),
+          new Promise<{ timedOut: true }>(resolve => {
+            timeout = setTimeout(() => resolve({ timedOut: true }), 30_000);
+          })
         ]);
-
+        // Completion can win the race while cancellation is being observed.
+        if (session.status !== 'stopping') return session;
         if (outcome.timedOut) {
-          session.status = 'error';
-          session.error = 'Session cancellation timed out';
+          session.error = 'Cancellation timed out; execution is still unconfirmed';
         } else if (!outcome.result.cancelled) {
-          session.status = 'error';
-          session.error = outcome.result.error ?? 'Session cancellation failed';
+          session.error = diagnosticTail(outcome.result.error ?? 'Cancellation failed; execution is still unconfirmed');
         } else {
           session.status = 'stopped';
+          session.execution = executionResult(outcome.result.notStarted ? 'not_started' : 'cancelled', outcome.result.result);
+          session.error = undefined;
+          this.activeDispatches.delete(sessionId);
         }
       } catch (error) {
-        session.status = 'error';
-        session.error = `Error during cancellation: ${error instanceof Error ? error.message : String(error)}`;
+        if (session.status !== 'stopping') return session;
+        session.error = diagnosticTail(`Cancellation unconfirmed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         clearTimeout(timeout);
       }
     } else {
-      // No active dispatch, just mark as stopped
+      // A queued session that never obtained a process is safe to retire.
       session.status = 'stopped';
+      session.execution = executionResult('not_started');
     }
-
-    session.endedAt = new Date().toISOString();
+    if (session.status === 'stopped') session.endedAt = new Date().toISOString();
     this.sessions.set(sessionId, session);
-
-    // Clean up output buffers
-    this.outputBuffers.delete(sessionId);
-
-    // Notify about session stop - only after cancellation completes or times out
-    this.pushBus.publish({
-      type: 'session.stopped',
-      session
-    });
-    
+    this.pushBus.publish({ type: session.status === 'stopped' ? 'session.stopped' : 'session.status', session });
     return session;
   }
   
@@ -463,38 +441,25 @@ class SessionManagerImpl {
     // In a future implementation, this could be sent to a running dispatch process
     console.log(`Session ${sessionId} command: ${command}`);
     
-    // Add to output buffer
-    const buffers = this.outputBuffers.get(sessionId);
-    if (buffers) {
-      buffers.stdout.push(`> ${command}`);
-      
-      // Publish the command to the push bus
-      this.pushBus.publish({
-        type: 'session.stdout',
-        sessionId,
-        data: `> ${command}\n`,
-        timestamp: Date.now()
-      });
-    }
+    this.pushBus.publish({
+      type: 'session.stdout',
+      sessionId,
+      data: `> ${command}\n`,
+      timestamp: Date.now()
+    });
   }
   
   addSessionOutput(sessionId: SessionId, data: string, isStderr: boolean = false): void {
-    const buffers = this.outputBuffers.get(sessionId);
-    if (buffers) {
-      if (isStderr) {
-        buffers.stderr.push(data);
-      } else {
-        buffers.stdout.push(data);
-      }
-      
-      // Publish to push bus
-      this.pushBus.publish({
-        type: isStderr ? 'session.stderr' : 'session.stdout',
-        sessionId,
-        data,
-        timestamp: Date.now()
-      });
-    }
+    const session = this.sessions.get(sessionId);
+    if (!session || session.status === 'stopped' || session.status === 'error') return;
+    // The browser has bounded replay and the CLI owns durable logs. Do not keep
+    // a second, unread transcript in the server for the lifetime of every session.
+    this.pushBus.publish({
+      type: isStderr ? 'session.stderr' : 'session.stdout',
+      sessionId,
+      data,
+      timestamp: Date.now()
+    });
   }
   
   getSession(sessionId: SessionId): Session | undefined {
@@ -517,18 +482,7 @@ class SessionManagerImpl {
   
   getActiveSessions(): Session[] {
     return Array.from(this.sessions.values())
-      .filter(session => ['starting', 'running'].includes(session.status));
-  }
-  
-  getSessionOutput(sessionId: SessionId): { stdout: string; stderr: string } | undefined {
-    const buffers = this.outputBuffers.get(sessionId);
-    if (buffers) {
-      return {
-        stdout: buffers.stdout.join('\n'),
-        stderr: buffers.stderr.join('\n')
-      };
-    }
-    return undefined;
+      .filter(session => ['starting', 'running', 'stopping'].includes(session.status));
   }
   
   private cleanupFinishedSessions(): void {
@@ -555,10 +509,10 @@ class SessionManagerImpl {
         .map(([requestId]) => requestId);
       for (const requestId of requestIdsToRemove) {
         this.requestToSessionId.delete(requestId);
+        this.requestFingerprints.delete(requestId);
         this.pendingSessions.delete(requestId);
       }
       this.sessions.delete(sessionId);
-      this.outputBuffers.delete(sessionId);
     }
     
     if (finishedSessions.length > 0) {

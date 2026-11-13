@@ -84,6 +84,7 @@ pub(crate) struct IssueIntakeDiscovery {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IssueDisposition {
     OwnerDecision,
+    HumanRequired,
     Blocked,
     Planning,
 }
@@ -92,6 +93,7 @@ impl IssueDisposition {
     fn reason_code(self) -> &'static str {
         match self {
             Self::OwnerDecision => "owner_decision",
+            Self::HumanRequired => "human_required",
             Self::Blocked => "blocked",
             Self::Planning => "planning",
         }
@@ -100,6 +102,7 @@ impl IssueDisposition {
     fn reason(self) -> &'static str {
         match self {
             Self::OwnerDecision => "owner-decision label present",
+            Self::HumanRequired => "human-required label present",
             Self::Blocked => "blocked label present",
             Self::Planning => "planning label present",
         }
@@ -110,7 +113,11 @@ impl IssueDisposition {
 enum IntakeRejection {
     MissingAuthor,
     MalformedAuthorIdentity,
-    UntrustedAuthor,
+    /// `list` is the publishing key that would admit `login`.
+    UntrustedAuthor {
+        login: String,
+        list: &'static str,
+    },
     CanonicalLabelRequired,
     Managed(ManagedBy),
     Disposition(IssueDisposition),
@@ -121,7 +128,7 @@ impl IntakeRejection {
         match self {
             Self::MissingAuthor => "missing_author",
             Self::MalformedAuthorIdentity => "malformed_author_identity",
-            Self::UntrustedAuthor => "untrusted_author",
+            Self::UntrustedAuthor { .. } => "untrusted_author",
             Self::CanonicalLabelRequired => "canonical_autonomous_label_required",
             Self::Managed(_) => MANAGED_REASON_CODE,
             Self::Disposition(disposition) => disposition.reason_code(),
@@ -134,7 +141,10 @@ impl IntakeRejection {
             Self::MalformedAuthorIdentity => {
                 "provider returned a malformed author identity".to_string()
             }
-            Self::UntrustedAuthor => "author is not trusted by this profile".to_string(),
+            // No flag overrides this check, so name the setting that does.
+            Self::UntrustedAuthor { login, list } => format!(
+                "author {login} is not trusted by this profile; to accept their issues, add them to {list} in the profile's [publishing] config"
+            ),
             Self::CanonicalLabelRequired => {
                 format!("missing canonical autonomous label '{canonical_label}'")
             }
@@ -396,7 +406,7 @@ fn issue_author_is_trusted(profile: &Profile, author: &IssueAuthorIdentity) -> b
     }
 }
 
-fn issue_disposition_from_labels(profile: &Profile, labels: &[String]) -> Option<IssueDisposition> {
+fn manual_issue_disposition(labels: &[String]) -> Option<IssueDisposition> {
     let normalized = labels
         .iter()
         .map(|label| label.trim().to_ascii_lowercase())
@@ -411,16 +421,29 @@ fn issue_disposition_from_labels(profile: &Profile, labels: &[String]) -> Option
     }
     if normalized
         .iter()
+        .any(|label| label == "exec:human-required")
+    {
+        return Some(IssueDisposition::HumanRequired);
+    }
+    if normalized
+        .iter()
         .any(|label| matches!(label.as_str(), "blocked" | "gah:blocked"))
     {
         return Some(IssueDisposition::Blocked);
     }
-    if normalized.iter().any(|label| {
+    None
+}
+
+fn issue_disposition_from_labels(profile: &Profile, labels: &[String]) -> Option<IssueDisposition> {
+    if let Some(disposition) = manual_issue_disposition(labels) {
+        return Some(disposition);
+    }
+    if labels.iter().any(|label| {
         profile
             .publishing
             .pm_decomposition_labels()
             .iter()
-            .any(|configured| label.eq_ignore_ascii_case(configured.trim()))
+            .any(|configured| label.trim().eq_ignore_ascii_case(configured.trim()))
     }) {
         return Some(IssueDisposition::Planning);
     }
@@ -447,7 +470,14 @@ fn evaluate_issue_intake(
         return Err(IntakeRejection::MalformedAuthorIdentity);
     }
     if !issue_author_is_trusted(profile, author) {
-        return Err(IntakeRejection::UntrustedAuthor);
+        return Err(IntakeRejection::UntrustedAuthor {
+            login: author.login.clone(),
+            list: if author.kind == IssueAuthorKind::Bot {
+                "trusted_issue_bot_authors"
+            } else {
+                "trusted_issue_human_authors"
+            },
+        });
     }
     if let Some(managed) = holders.and_then(|holders| managed_rejection(labels, holders)) {
         return Err(IntakeRejection::Managed(managed));
@@ -1408,18 +1438,14 @@ fn append_unique_strings(target: &mut Vec<String>, source: Vec<String>) {
 /// a managed issue before this runs; the managed label is kept here so a
 /// caller outside discovery gets the same answer.
 pub(super) fn issue_is_auto_dispatch_blocked(labels: &[String]) -> bool {
-    labels.iter().any(|label| {
-        issue_label_is_managed(label)
-            || matches!(
-                label.trim().to_ascii_lowercase().as_str(),
-                "executive:owner-decision"
-                    | "exec:owner-decision"
-                    | "blocked"
-                    | "planning"
-                    | "plan"
-                    | "gah:blocked"
-            )
-    })
+    manual_issue_disposition(labels).is_some()
+        || labels.iter().any(|label| {
+            issue_label_is_managed(label)
+                || matches!(
+                    label.trim().to_ascii_lowercase().as_str(),
+                    "planning" | "plan"
+                )
+        })
 }
 
 pub(super) fn resolve_target_to_issue_or_string(

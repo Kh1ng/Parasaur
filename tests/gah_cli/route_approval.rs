@@ -28,7 +28,7 @@ fn records_exact_grant_and_revoke() {
                 "--config-path",
                 cfg.to_str().unwrap(),
             ])
-            .env("GAH_LEDGER_PATH", &ledger_path)
+            .env("PARASAUR_LEDGER_PATH", &ledger_path)
             .assert()
             .success()
             .stdout(predicate::str::contains(format!(
@@ -92,7 +92,7 @@ auth_source_label = "env-openai-key"
             "--config-path",
             cfg.to_str().unwrap(),
         ])
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success()
         .stdout(predicate::str::contains("[opencode-api]"));

@@ -21,10 +21,10 @@ The owner requested an installable iPhone app. The SwiftUI shell adds a persiste
 After pairing the app, run this read-only smoke test from the Mac:
 
 ```sh
-GAH_IOS_DEVICE=YOUR_IPHONE_UDID \
-GAH_IOS_TEAM=YOUR_DEVELOPMENT_TEAM \
-GAH_IOS_CENTRAL_URL=https://central.example.ts.net:8443 \
-GAH_IOS_EXPECTED_NODE=YOUR_WORKER_NAME \
+PARASAUR_IOS_DEVICE=YOUR_IPHONE_UDID \
+PARASAUR_IOS_TEAM=YOUR_DEVELOPMENT_TEAM \
+PARASAUR_IOS_CENTRAL_URL=https://central.example.ts.net:8443 \
+PARASAUR_IOS_EXPECTED_NODE=YOUR_WORKER_NAME \
 bash scripts/test-ios-central.sh
 ```
 
@@ -40,7 +40,7 @@ Record a pass or the exact failure for each step. Do not count an untested step 
 1. In the owner dashboard, open **Settings > Connection & pairing** and generate a new QR code. In Parasaur, open **Settings > Connection & pairing > Scan pairing QR code**. Confirm that no separate globe button appears above the dashboard. Scan the code, confirm the server identity, and name this device. If central cannot load, use **Connection settings** in the error message. If the app has no saved address, use **Set up connection**.
 2. Close and reopen Parasaur. Confirm it remains paired. Open Nodes and check your expected Windows worker.
 3. Open Chat. Select the Parasaur project and the existing Windows worker acceptance conversation. Confirm earlier messages load and the selected execution node is Windows.
-4. Open a new test chat on Windows using Claude. Send: `Read-only mobile check: print GAH_IPHONE_OK and the current working directory. Do not edit files or run builds.` Confirm the reply appears on both phone and desktop. Record the node, conversation ID, and result.
+4. Open a new test chat on Windows using Claude. Send: `Read-only mobile check: print PARASAUR_IPHONE_OK and the current working directory. Do not edit files or run builds.` Confirm the reply appears on both phone and desktop. Record the node, conversation ID, and result.
 5. Start another harmless read-only turn. Confirm streaming works and Stop remains reachable with the keyboard open. Stop once, and verify central reports the turn has stopped.
 6. Type an unsent draft. Rotate the phone both ways, lock and unlock it, and switch apps. Confirm the draft and selected chat remain.
 7. While a conversation is open, turn Wi-Fi off and use cellular with Tailscale enabled. Confirm the disconnected state is honest, the connection recovers, and history has no duplicated or missing completed replies. Repeat from cellular to Wi-Fi.

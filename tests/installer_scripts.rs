@@ -93,11 +93,11 @@ fn worker_installers_write_private_credentials_before_update() {
         std::fs::copy(repo().join("scripts").join(name), scripts.join(name)).unwrap();
     }
     let bin = temp.path().join("bin");
-    executable(&bin.join("uname"), "printf '%s\\n' \"$GAH_TEST_OS\"\n");
+    executable(&bin.join("uname"), "printf '%s\\n' \"$PARASAUR_TEST_OS\"\n");
     for name in ["sudo", "npm", "curl", "systemctl", "python3"] {
         executable(
             &bin.join(name),
-            "printf 'forbidden: %s\\n' \"$0\" | tee -a \"$GAH_TEST_LOG\" >&2\nexit 99\n",
+            "printf 'forbidden: %s\\n' \"$0\" | tee -a \"$PARASAUR_TEST_LOG\" >&2\nexit 99\n",
         );
     }
     // cargo runs gah: `installer` calls go to the real binary; config and
@@ -106,9 +106,9 @@ fn worker_installers_write_private_credentials_before_update() {
         &bin.join("cargo"),
         r#"while [ "$1" != "--" ]; do shift; done; shift
 case "$1" in
-  installer) exec "$GAH_TEST_BIN" "$@" ;;
+  installer) exec "$PARASAUR_TEST_BIN" "$@" ;;
 esac
-printf '%s\n' "$*" >> "$GAH_TEST_LOG"
+printf '%s\n' "$*" >> "$PARASAUR_TEST_LOG"
 case "$1" in
   config) [ "$*" = "config set --node-role worker --registry-central-url https://central.test" ] || exit 98 ;;
   update)
@@ -135,15 +135,15 @@ esac
             &[
                 ("HOME", home.to_str().unwrap()),
                 ("PATH", &path),
-                ("GAH_TEST_OS", os),
-                ("GAH_TEST_LOG", log.to_str().unwrap()),
-                ("GAH_TEST_BIN", GAH),
-                ("GAH_NODE_ROLE", "worker"),
+                ("PARASAUR_TEST_OS", os),
+                ("PARASAUR_TEST_LOG", log.to_str().unwrap()),
+                ("PARASAUR_TEST_BIN", GAH),
+                ("PARASAUR_NODE_ROLE", "worker"),
                 (
-                    "GAH_INSTALL_CONFIRMED",
+                    "PARASAUR_INSTALL_CONFIRMED",
                     if os == "Linux" { "1" } else { "" },
                 ),
-                ("GAH_CENTRAL_URL", "https://central.test"),
+                ("PARASAUR_CENTRAL_URL", "https://central.test"),
                 ("COORDINATOR_TOKEN", "installer-test-token"),
             ],
             true,
@@ -199,7 +199,7 @@ fn declining_installers_disclose_effects_before_confirmation_and_preserve_files(
                 for command in ["cargo", "sudo", "curl", "openssl", "systemctl", "tailscale"] {
                     executable(
                         &bin.join(command),
-                        "echo forbidden >> \"$GAH_TEST_LOG\"; exit 99\n",
+                        "echo forbidden >> \"$PARASAUR_TEST_LOG\"; exit 99\n",
                     );
                 }
                 let mut child = Command::new("bash")
@@ -207,17 +207,17 @@ fn declining_installers_disclose_effects_before_confirmation_and_preserve_files(
                     .env_clear()
                     .env("HOME", &home)
                     .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
-                    .env("GAH_TEST_LOG", &log)
-                    .env("GAH_NODE_ROLE", role)
-                    .env("GAH_INSTALL_AGENT", "codex")
+                    .env("PARASAUR_TEST_LOG", &log)
+                    .env("PARASAUR_NODE_ROLE", role)
+                    .env("PARASAUR_INSTALL_AGENT", "codex")
                     .env("COORDINATOR_TOKEN", "new-token")
-                    .env("GAH_CENTRAL_URL", "https://central.test")
+                    .env("PARASAUR_CENTRAL_URL", "https://central.test")
                     .env(
-                        "GAH_GATEWAY_MODE",
+                        "PARASAUR_GATEWAY_MODE",
                         if role == "central" { "colocated" } else { "" },
                     )
-                    .env("GAH_GATEWAY_MEMORYCORE_PATH", &memory)
-                    .env("GAH_GATEWAY_LLM_API_KEY", "new-key")
+                    .env("PARASAUR_GATEWAY_MEMORYCORE_PATH", &memory)
+                    .env("PARASAUR_GATEWAY_LLM_API_KEY", "new-key")
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
@@ -333,10 +333,10 @@ fn the_worker_role_keeps_settings_private_and_refuses_a_gateway() {
         let mut envs = vec![
             ("HOME", home.to_str().unwrap()),
             ("PATH", "/usr/bin:/bin"),
-            ("GAH_CENTRAL_URL", "https://central.test"),
+            ("PARASAUR_CENTRAL_URL", "https://central.test"),
         ];
         envs.extend(token.map(|token| ("COORDINATOR_TOKEN", token)));
-        envs.extend(gateway.map(|mode| ("GAH_GATEWAY_MODE", mode)));
+        envs.extend(gateway.map(|mode| ("PARASAUR_GATEWAY_MODE", mode)));
         bash(
             &[configure.to_str().unwrap(), "worker", cli.to_str().unwrap()],
             &envs,
@@ -411,11 +411,11 @@ fn the_wsl_installer_asks_for_sudo_only_for_missing_packages() {
     let log = temp.path().join("sudo.log");
     executable(
         &bin.join("dpkg-query"),
-        "for package; do :; done\n[ \"$package\" != \"$GAH_TEST_MISSING\" ] && printf installed\n",
+        "for package; do :; done\n[ \"$package\" != \"$PARASAUR_TEST_MISSING\" ] && printf installed\n",
     );
     executable(
         &bin.join("sudo"),
-        "printf '%s\\n' \"$*\" >> \"$GAH_TEST_LOG\"\n",
+        "printf '%s\\n' \"$*\" >> \"$PARASAUR_TEST_LOG\"\n",
     );
     let path = format!("{}:/usr/bin:/bin", bin.display());
     let run = |missing: &str| {
@@ -423,8 +423,8 @@ fn the_wsl_installer_asks_for_sudo_only_for_missing_packages() {
             &["-euc", packages],
             &[
                 ("PATH", &path),
-                ("GAH_TEST_LOG", log.to_str().unwrap()),
-                ("GAH_TEST_MISSING", missing),
+                ("PARASAUR_TEST_LOG", log.to_str().unwrap()),
+                ("PARASAUR_TEST_MISSING", missing),
             ],
             false,
         )
@@ -456,7 +456,7 @@ fn the_wsl_installer_reuses_a_linux_node_and_npm_and_downloads_otherwise() {
     // A real JS evaluator supplies Linux metadata on any host.
     executable(
         &native.join("node"),
-        "exec \"$GAH_TEST_REAL_NODE\" -e 'Object.defineProperty(process, \"platform\", {value: process.env.GAH_TEST_PLATFORM}); Object.defineProperty(process, \"execPath\", {value: process.env.GAH_TEST_EXEC_PATH}); Object.defineProperty(process.versions, \"node\", {value: process.env.GAH_TEST_NODE_VERSION}); console.log(eval(process.argv[1]))' \"$2\"\n",
+        "exec \"$PARASAUR_TEST_REAL_NODE\" -e 'Object.defineProperty(process, \"platform\", {value: process.env.PARASAUR_TEST_PLATFORM}); Object.defineProperty(process, \"execPath\", {value: process.env.PARASAUR_TEST_EXEC_PATH}); Object.defineProperty(process.versions, \"node\", {value: process.env.PARASAUR_TEST_NODE_VERSION}); console.log(eval(process.argv[1]))' \"$2\"\n",
     );
     std::os::unix::fs::symlink(native.join("node"), bin.join("node")).unwrap_or_else(|_| {
         std::fs::create_dir_all(&bin).unwrap();
@@ -469,7 +469,7 @@ fn the_wsl_installer_reuses_a_linux_node_and_npm_and_downloads_otherwise() {
     );
     executable(
         &bin.join("curl"),
-        "echo download >> \"$GAH_TEST_LOG\"; exit 71\n",
+        "echo download >> \"$PARASAUR_TEST_LOG\"; exit 71\n",
     );
     let path = format!("{}:/usr/bin:/bin", bin.display());
     let dir = temp.path().to_str().unwrap();
@@ -479,11 +479,11 @@ fn the_wsl_installer_reuses_a_linux_node_and_npm_and_downloads_otherwise() {
             &["-euc", &format!("{runtime}{extra}")],
             &[
                 ("PATH", &path),
-                ("GAH_TEST_LOG", log.to_str().unwrap()),
-                ("GAH_TEST_REAL_NODE", &real_node),
-                ("GAH_TEST_EXEC_PATH", exec_path.to_str().unwrap()),
-                ("GAH_TEST_PLATFORM", platform),
-                ("GAH_TEST_NODE_VERSION", version),
+                ("PARASAUR_TEST_LOG", log.to_str().unwrap()),
+                ("PARASAUR_TEST_REAL_NODE", &real_node),
+                ("PARASAUR_TEST_EXEC_PATH", exec_path.to_str().unwrap()),
+                ("PARASAUR_TEST_PLATFORM", platform),
+                ("PARASAUR_TEST_NODE_VERSION", version),
                 ("install_dir", dir),
                 ("release_dir", dir),
             ],
@@ -538,7 +538,10 @@ fn the_wsl_register_script_names_every_profile_unless_told_one() {
         .arg("--node")
         .arg(&node)
         .env("HOME", &home)
-        .env("GAH_CANONICAL_CONFIG", temp.path().join("canonical.toml"))
+        .env(
+            "PARASAUR_CANONICAL_CONFIG",
+            temp.path().join("canonical.toml"),
+        )
         .output()
         .unwrap();
     assert!(output.status.success(), "{}", text(&output));
@@ -621,17 +624,20 @@ fn macos_launch_agents_follow_role_transport_and_tunnel() {
     let base: Vec<(String, String)> = [
         ("HOME", home.to_str().unwrap()),
         ("PATH", "/usr/bin:/bin"),
-        ("GAH_LAUNCHD_DRY_RUN", "1"),
-        ("GAH_LAUNCH_AGENTS_DIR", agents.to_str().unwrap()),
-        ("GAH_LAUNCHD_UID", "501"),
-        ("GAH_NODE_PATH", "/opt/homebrew/bin/node"),
-        ("GAH_CLI_PATH", GAH),
-        ("GAH_NPX_PATH", "/opt/homebrew/bin/npx"),
-        ("GAH_GATEWAY_MEMORYCORE_PATH", memory.to_str().unwrap()),
-        ("GAH_DESKTOP_SERVER_PORT", "4774"),
-        ("GAH_NODE_ADVERTISED_URL", "https://mac.test.ts.net:4774"),
+        ("PARASAUR_LAUNCHD_DRY_RUN", "1"),
+        ("PARASAUR_LAUNCH_AGENTS_DIR", agents.to_str().unwrap()),
+        ("PARASAUR_LAUNCHD_UID", "501"),
+        ("PARASAUR_NODE_PATH", "/opt/homebrew/bin/node"),
+        ("PARASAUR_CLI_PATH", GAH),
+        ("PARASAUR_NPX_PATH", "/opt/homebrew/bin/npx"),
+        ("PARASAUR_GATEWAY_MEMORYCORE_PATH", memory.to_str().unwrap()),
+        ("PARASAUR_DESKTOP_SERVER_PORT", "4774"),
         (
-            "GAH_TAILSCALE_PATH",
+            "PARASAUR_NODE_ADVERTISED_URL",
+            "https://mac.test.ts.net:4774",
+        ),
+        (
+            "PARASAUR_TAILSCALE_PATH",
             "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
         ),
     ]
@@ -674,7 +680,7 @@ fn macos_launch_agents_follow_role_transport_and_tunnel() {
         &checkout.join("apps/server/dist/bin.js").to_string_lossy()
     );
     assert_eq!(
-        env_of(&central, "GAH_WEB_ROOT"),
+        env_of(&central, "PARASAUR_WEB_ROOT"),
         checkout.join("apps/web/dist").to_string_lossy()
     );
     assert_eq!(env_of(&central, "PORT"), "4774");
@@ -708,12 +714,15 @@ fn macos_launch_agents_follow_role_transport_and_tunnel() {
     for (key, value) in [
         ("HOST", "127.0.0.1"),
         ("PORT", "4774"),
-        ("GAH_BINARY", GAH),
-        ("GAH_REGISTRY_TRANSPORT_MODE", "authenticated_remote"),
-        ("GAH_NODE_ADVERTISED_URL", "https://mac.test.ts.net:4774"),
-        ("GAH_TAILSCALE_SERVE", "1"),
+        ("PARASAUR_BINARY", GAH),
+        ("PARASAUR_REGISTRY_TRANSPORT_MODE", "authenticated_remote"),
         (
-            "GAH_COORDINATOR_IDENTITY_PATH",
+            "PARASAUR_NODE_ADVERTISED_URL",
+            "https://mac.test.ts.net:4774",
+        ),
+        ("PARASAUR_TAILSCALE_SERVE", "1"),
+        (
+            "PARASAUR_COORDINATOR_IDENTITY_PATH",
             identity_path.to_str().unwrap(),
         ),
     ] {
@@ -749,7 +758,7 @@ fn macos_launch_agents_follow_role_transport_and_tunnel() {
     };
     for (key, value) in entries.iter_mut() {
         if let (true, Plist::Dict(env)) = (key == "EnvironmentVariables", value) {
-            env.retain(|(name, _)| name != "GAH_NODE_ADVERTISED_URL");
+            env.retain(|(name, _)| name != "PARASAUR_NODE_ADVERTISED_URL");
         }
     }
     std::fs::write(&worker_path, Plist::Dict(entries).to_xml()).unwrap();
@@ -758,13 +767,16 @@ fn macos_launch_agents_follow_role_transport_and_tunnel() {
         None,
         &without(
             &base,
-            &["GAH_DESKTOP_SERVER_PORT", "GAH_NODE_ADVERTISED_URL"],
+            &[
+                "PARASAUR_DESKTOP_SERVER_PORT",
+                "PARASAUR_NODE_ADVERTISED_URL",
+            ],
         ),
     ));
     let worker = agent(&worker_path);
     assert_eq!(env_of(&worker, "PORT"), "4774");
     assert_eq!(
-        env_of(&worker, "GAH_REGISTRY_TRANSPORT_MODE"),
+        env_of(&worker, "PARASAUR_REGISTRY_TRANSPORT_MODE"),
         "authenticated_remote"
     );
 
@@ -773,8 +785,8 @@ fn macos_launch_agents_follow_role_transport_and_tunnel() {
     std::fs::remove_file(&worker_path).unwrap();
     std::fs::remove_file(&identity_path).unwrap();
     let default_transport = with(
-        &without(&base, &["GAH_NODE_ADVERTISED_URL"]),
-        "GAH_TAILSCALE_PATH",
+        &without(&base, &["PARASAUR_NODE_ADVERTISED_URL"]),
+        "PARASAUR_TAILSCALE_PATH",
         tailscale.to_str().unwrap(),
     );
     ok(install("worker", Some(profile), &default_transport));
@@ -784,18 +796,18 @@ fn macos_launch_agents_follow_role_transport_and_tunnel() {
     assert_eq!(identity["advertised_url"], "http://100.64.0.42:4774");
     assert_eq!(env_of(&worker, "HOST"), "100.64.0.42");
     assert_eq!(
-        env_of(&worker, "GAH_REGISTRY_TRANSPORT_MODE"),
+        env_of(&worker, "PARASAUR_REGISTRY_TRANSPORT_MODE"),
         "trusted_lan"
     );
-    assert_eq!(env_of(&worker, "GAH_TAILSCALE_SERVE"), "0");
+    assert_eq!(env_of(&worker, "PARASAUR_TAILSCALE_SERVE"), "0");
 
     let tunnel_env = with(
         &with(
             &default_transport,
-            "GAH_NODE_SSH_TARGET",
+            "PARASAUR_NODE_SSH_TARGET",
             "khing@central.test",
         ),
-        "GAH_NODE_SSH_REMOTE_PORT",
+        "PARASAUR_NODE_SSH_REMOTE_PORT",
         "48774",
     );
     ok(install("worker", Some(profile), &tunnel_env));
@@ -805,8 +817,11 @@ fn macos_launch_agents_follow_role_transport_and_tunnel() {
         serde_json::from_str(&std::fs::read_to_string(&identity_path).unwrap()).unwrap();
     assert_eq!(identity["advertised_url"], "http://127.0.0.1:48774");
     assert_eq!(env_of(&worker, "HOST"), "127.0.0.1");
-    assert_eq!(env_of(&worker, "GAH_REGISTRY_TRANSPORT_MODE"), "loopback");
-    assert_eq!(env_of(&worker, "GAH_ALLOW_INSECURE_HTTP"), "0");
+    assert_eq!(
+        env_of(&worker, "PARASAUR_REGISTRY_TRANSPORT_MODE"),
+        "loopback"
+    );
+    assert_eq!(env_of(&worker, "PARASAUR_ALLOW_INSECURE_HTTP"), "0");
     let tunnel = arguments(&agent(&tunnel_path));
     assert_eq!(
         &tunnel[tunnel.len() - 3..],
@@ -816,15 +831,18 @@ fn macos_launch_agents_follow_role_transport_and_tunnel() {
     let preserved = without(
         &tunnel_env,
         &[
-            "GAH_DESKTOP_SERVER_PORT",
-            "GAH_NODE_SSH_TARGET",
-            "GAH_NODE_SSH_REMOTE_PORT",
+            "PARASAUR_DESKTOP_SERVER_PORT",
+            "PARASAUR_NODE_SSH_TARGET",
+            "PARASAUR_NODE_SSH_REMOTE_PORT",
         ],
     );
     ok(install("worker", Some(profile), &preserved));
     let worker = agent(&worker_path);
     assert_eq!(env_of(&worker, "PORT"), "4774");
-    assert_eq!(env_of(&worker, "GAH_REGISTRY_TRANSPORT_MODE"), "loopback");
+    assert_eq!(
+        env_of(&worker, "PARASAUR_REGISTRY_TRANSPORT_MODE"),
+        "loopback"
+    );
     assert!(
         tunnel_path.exists(),
         "an update keeps the managed SSH tunnel"
@@ -835,12 +853,12 @@ fn macos_launch_agents_follow_role_transport_and_tunnel() {
         Some(profile),
         &with(
             &preserved,
-            "GAH_NODE_ADVERTISED_URL",
+            "PARASAUR_NODE_ADVERTISED_URL",
             "https://mac.test.ts.net:4774",
         ),
     ));
     assert_eq!(
-        env_of(&agent(&worker_path), "GAH_REGISTRY_TRANSPORT_MODE"),
+        env_of(&agent(&worker_path), "PARASAUR_REGISTRY_TRANSPORT_MODE"),
         "authenticated_remote"
     );
     assert!(
@@ -851,7 +869,7 @@ fn macos_launch_agents_follow_role_transport_and_tunnel() {
     let invalid = install(
         "central",
         None,
-        &with(&base, "GAH_DESKTOP_SERVER_PORT", "80"),
+        &with(&base, "PARASAUR_DESKTOP_SERVER_PORT", "80"),
     );
     assert!(
         !invalid.status.success() && text(&invalid).contains("between 1024 and 65535"),
@@ -881,6 +899,9 @@ fn the_desktop_app_install_replaces_the_old_app_and_cleans_up() {
     let system_legacy = system_apps.join("GAH Worker.app");
     std::fs::create_dir_all(&system_legacy).unwrap();
     let home = temp.path().join("home");
+    let bin = temp.path().join("bin");
+    executable(&bin.join("codesign"), "exit 0\n");
+    let path = format!("{}:/usr/bin:/bin", bin.display());
     let output = bash(
         &[
             repo()
@@ -891,11 +912,11 @@ fn the_desktop_app_install_replaces_the_old_app_and_cleans_up() {
         ],
         &[
             ("HOME", home.to_str().unwrap()),
-            ("PATH", "/usr/bin:/bin"),
+            ("PATH", &path),
             ("CARGO_TARGET_DIR", "../cargo-target"),
-            ("GAH_DESKTOP_APP_DIR", apps.to_str().unwrap()),
-            ("GAH_DESKTOP_SKIP_BUILD", "1"),
-            ("GAH_LEGACY_APP_DIR", system_apps.to_str().unwrap()),
+            ("PARASAUR_DESKTOP_APP_DIR", apps.to_str().unwrap()),
+            ("PARASAUR_DESKTOP_SKIP_BUILD", "1"),
+            ("PARASAUR_LEGACY_APP_DIR", system_apps.to_str().unwrap()),
         ],
         true,
     );
@@ -930,10 +951,10 @@ fn colocated_installers_preserve_credentials_without_a_generation_key() {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path().join("home");
         let bin = temp.path().join("bin");
-        executable(&bin.join("gah"), "exec \"$GAH_TEST_BIN\" \"$@\"\n");
+        executable(&bin.join("gah"), "exec \"$PARASAUR_TEST_BIN\" \"$@\"\n");
         executable(
             &bin.join("cargo"),
-            "while [ \"$1\" != -- ]; do shift; done; shift\nexec \"$GAH_TEST_BIN\" \"$@\"\n",
+            "while [ \"$1\" != -- ]; do shift; done; shift\nexec \"$PARASAUR_TEST_BIN\" \"$@\"\n",
         );
         let file = home.join(".config/gah/tdai-gateway.env");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -942,7 +963,7 @@ fn colocated_installers_preserve_credentials_without_a_generation_key() {
         std::fs::write(&file, before).unwrap();
         let source = script(&format!("install-{platform}.sh"));
         // The provider step, tested below, reports endpoint changes.
-        let preamble = "gateway_env_file=\"$HOME/.config/gah/tdai-gateway.env\"\ngateway_provider_changes=\"${GAH_TEST_CHANGES:-}\"\n";
+        let preamble = "gateway_env_file=\"$HOME/.config/gah/tdai-gateway.env\"\ngateway_provider_changes=\"${PARASAUR_TEST_CHANGES:-}\"\n";
         let start = source.find("# gateway-env-setup:start\n").unwrap();
         let end = source[start..].find("# gateway-env-setup:end").unwrap() + start;
         let block = if platform == "linux" {
@@ -963,7 +984,7 @@ fn colocated_installers_preserve_credentials_without_a_generation_key() {
             let mut envs = vec![
                 ("HOME", home.to_str().unwrap()),
                 ("PATH", path.as_str()),
-                ("GAH_TEST_BIN", GAH),
+                ("PARASAUR_TEST_BIN", GAH),
             ];
             envs.extend(given);
             let output = bash(&["-euc", &block], &envs, true);
@@ -982,8 +1003,8 @@ fn colocated_installers_preserve_credentials_without_a_generation_key() {
         // Given keys replace only their own lines.
         std::fs::write(&file, before).unwrap();
         run(&[
-            ("GAH_GATEWAY_API_KEY", "new-access"),
-            ("GAH_GATEWAY_LLM_API_KEY", "new-generation"),
+            ("PARASAUR_GATEWAY_API_KEY", "new-access"),
+            ("PARASAUR_GATEWAY_LLM_API_KEY", "new-generation"),
         ]);
         assert_eq!(sourced(&file, "TDAI_GATEWAY_API_KEY"), "new-access");
         assert_eq!(sourced(&file, "TDAI_LLM_API_KEY"), "new-generation");
@@ -992,12 +1013,12 @@ fn colocated_installers_preserve_credentials_without_a_generation_key() {
         // A stored model key is cleared when its endpoint changed, so it is
         // never sent to a different backend. Gateway access is untouched.
         std::fs::write(&file, before).unwrap();
-        run(&[("GAH_TEST_CHANGES", "llm-endpoint-changed")]);
+        run(&[("PARASAUR_TEST_CHANGES", "llm-endpoint-changed")]);
         assert!(sourced(&file, "TDAI_LLM_API_KEY").is_empty());
         assert_eq!(sourced(&file, "TDAI_EMBEDDING_API_KEY"), "embedding-canary");
         std::fs::write(&file, before).unwrap();
         run(&[(
-            "GAH_TEST_CHANGES",
+            "PARASAUR_TEST_CHANGES",
             "llm-endpoint-changed\nembedding-endpoint-changed",
         )]);
         assert_eq!(sourced(&file, "TDAI_GATEWAY_API_KEY"), "access-canary");
@@ -1041,7 +1062,7 @@ fn colocated_installers_mutate_provider_yaml_safely() {
     );
     let memory_core_path = memory_core.to_string_lossy().into_owned();
     let bin = temp.path().join("bin");
-    executable(&bin.join("gah"), "exec \"$GAH_TEST_BIN\" \"$@\"\n");
+    executable(&bin.join("gah"), "exec \"$PARASAUR_TEST_BIN\" \"$@\"\n");
     let path_env = format!(
         "{}:/usr/bin:/bin:{}",
         bin.display(),
@@ -1067,9 +1088,12 @@ fn colocated_installers_mutate_provider_yaml_safely() {
             let mut envs = vec![
                 ("HOME", home.to_str().unwrap()),
                 ("PATH", path_env.as_str()),
-                ("GAH_TEST_BIN", GAH),
+                ("PARASAUR_TEST_BIN", GAH),
                 ("repo_root", repo_root.to_str().unwrap()),
-                ("GAH_GATEWAY_MEMORYCORE_PATH", memory_core_path.as_str()),
+                (
+                    "PARASAUR_GATEWAY_MEMORYCORE_PATH",
+                    memory_core_path.as_str(),
+                ),
                 ("gateway_local_config", config_path.to_str().unwrap()),
                 ("gateway_config", config_path.to_str().unwrap()),
             ];
@@ -1115,7 +1139,7 @@ console.log(JSON.stringify(yaml.parse(fs.readFileSync(process.argv[1], 'utf8')))
 
         // Ollama defaults use its OpenAI-compatible /v1 API and a
         // non-secret placeholder key, because Ollama ignores credentials.
-        let ollama = run(&[("GAH_GATEWAY_PROVIDER", "ollama")]).unwrap();
+        let ollama = run(&[("PARASAUR_GATEWAY_PROVIDER", "ollama")]).unwrap();
         complete(&ollama);
         assert_eq!(ollama["llm"]["baseUrl"], "http://127.0.0.1:11434/v1");
         assert_eq!(ollama["llm"]["model"], "llama3");
@@ -1133,12 +1157,12 @@ console.log(JSON.stringify(yaml.parse(fs.readFileSync(process.argv[1], 'utf8')))
         // Explicit values, a custom model with explicit dimensions, and a
         // given embedding key, which the gateway reads from its env file.
         let custom = run(&[
-            ("GAH_GATEWAY_PROVIDER", "ollama"),
-            ("GAH_GATEWAY_ENDPOINT", "http://test:11434/v1"),
-            ("GAH_GATEWAY_LLM_MODEL", "my-llama"),
-            ("GAH_GATEWAY_EMBEDDING_MODEL", "my-embed"),
-            ("GAH_GATEWAY_EMBEDDING_DIMENSIONS", "512"),
-            ("GAH_GATEWAY_EMBEDDING_API_KEY", "embedding-canary"),
+            ("PARASAUR_GATEWAY_PROVIDER", "ollama"),
+            ("PARASAUR_GATEWAY_ENDPOINT", "http://test:11434/v1"),
+            ("PARASAUR_GATEWAY_LLM_MODEL", "my-llama"),
+            ("PARASAUR_GATEWAY_EMBEDDING_MODEL", "my-embed"),
+            ("PARASAUR_GATEWAY_EMBEDDING_DIMENSIONS", "512"),
+            ("PARASAUR_GATEWAY_EMBEDDING_API_KEY", "embedding-canary"),
         ])
         .unwrap();
         complete(&custom);
@@ -1159,15 +1183,15 @@ console.log(JSON.stringify(yaml.parse(fs.readFileSync(process.argv[1], 'utf8')))
 
         // An unknown model without dimensions fails instead of guessing.
         let unknown = run(&[
-            ("GAH_GATEWAY_PROVIDER", "ollama"),
-            ("GAH_GATEWAY_EMBEDDING_MODEL", "my-embed"),
+            ("PARASAUR_GATEWAY_PROVIDER", "ollama"),
+            ("PARASAUR_GATEWAY_EMBEDDING_MODEL", "my-embed"),
         ])
         .unwrap_err();
         assert!(
-            unknown.contains("GAH_GATEWAY_EMBEDDING_DIMENSIONS"),
+            unknown.contains("PARASAUR_GATEWAY_EMBEDDING_DIMENSIONS"),
             "{platform}: {unknown}"
         );
-        let invalid = run(&[("GAH_GATEWAY_PROVIDER", "constructor")]).unwrap_err();
+        let invalid = run(&[("PARASAUR_GATEWAY_PROVIDER", "constructor")]).unwrap_err();
         assert!(
             invalid.contains("openai or ollama"),
             "{platform}: {invalid}"
@@ -1176,9 +1200,9 @@ console.log(JSON.stringify(yaml.parse(fs.readFileSync(process.argv[1], 'utf8')))
         // An authenticated provider with no embedding key, given or stored,
         // stops before the configuration is touched.
         let untouched = "{\"llm\":{}, \"memory\":{}}";
-        let keyless = run(&[("GAH_GATEWAY_PROVIDER", "openai")]).unwrap_err();
+        let keyless = run(&[("PARASAUR_GATEWAY_PROVIDER", "openai")]).unwrap_err();
         assert!(
-            keyless.contains("GAH_GATEWAY_EMBEDDING_API_KEY"),
+            keyless.contains("PARASAUR_GATEWAY_EMBEDDING_API_KEY"),
             "{platform}: {keyless}"
         );
         assert_eq!(std::fs::read_to_string(&config_path).unwrap(), untouched);
@@ -1186,8 +1210,8 @@ console.log(JSON.stringify(yaml.parse(fs.readFileSync(process.argv[1], 'utf8')))
         // OpenAI reads both keys from the gateway env file, never from
         // literals. Generation stays off until TDAI_LLM_API_KEY is set.
         let openai = run(&[
-            ("GAH_GATEWAY_PROVIDER", "openai"),
-            ("GAH_GATEWAY_EMBEDDING_API_KEY", "embedding-canary"),
+            ("PARASAUR_GATEWAY_PROVIDER", "openai"),
+            ("PARASAUR_GATEWAY_EMBEDDING_API_KEY", "embedding-canary"),
         ])
         .unwrap();
         complete(&openai);
@@ -1214,30 +1238,32 @@ console.log(JSON.stringify(yaml.parse(fs.readFileSync(process.argv[1], 'utf8')))
         // A stored embedding key is enough; nothing is reported as changed.
         std::fs::write(&env_file, "TDAI_EMBEDDING_API_KEY=\"embedding-canary\"\n").unwrap();
         let bm25 = r#"{"llm":{"baseUrl":"https://api.openai.com/v1","apiKey":"my-llm-key"},"memory":{"embedding":{"provider":"none"}}}"#;
-        let (preserved, changes) = run_with(bm25, &[("GAH_GATEWAY_PROVIDER", "openai")]).unwrap();
+        let (preserved, changes) =
+            run_with(bm25, &[("PARASAUR_GATEWAY_PROVIDER", "openai")]).unwrap();
         assert_eq!(preserved["llm"]["apiKey"], "my-llm-key");
         assert_eq!(preserved["memory"]["embedding"]["provider"], "openai");
         assert_eq!(changes, "", "{platform}");
 
         // Moving to Ollama reports the generation endpoint change, so the
         // installer clears the stored key, and drops the YAML literal.
-        let (to_ollama, changes) = run_with(bm25, &[("GAH_GATEWAY_PROVIDER", "ollama")]).unwrap();
+        let (to_ollama, changes) =
+            run_with(bm25, &[("PARASAUR_GATEWAY_PROVIDER", "ollama")]).unwrap();
         assert_eq!(to_ollama["llm"]["apiKey"], "ollama");
         assert_eq!(changes, "llm-endpoint-changed", "{platform}");
 
         // Moving from Ollama to an authenticated endpoint never keeps the
         // placeholder, and a key stored for the old endpoint does not count.
         let on_ollama = r#"{"llm":{"baseUrl":"http://127.0.0.1:11434/v1","apiKey":"ollama"},"memory":{"embedding":{"provider":"ollama","baseUrl":"http://127.0.0.1:11434/v1","apiKey":"ollama"}}}"#;
-        let moved = run_with(on_ollama, &[("GAH_GATEWAY_PROVIDER", "openai")]).unwrap_err();
+        let moved = run_with(on_ollama, &[("PARASAUR_GATEWAY_PROVIDER", "openai")]).unwrap_err();
         assert!(
-            moved.contains("GAH_GATEWAY_EMBEDDING_API_KEY"),
+            moved.contains("PARASAUR_GATEWAY_EMBEDDING_API_KEY"),
             "{platform}: {moved}"
         );
         let (to_openai, changes) = run_with(
             on_ollama,
             &[
-                ("GAH_GATEWAY_PROVIDER", "openai"),
-                ("GAH_GATEWAY_EMBEDDING_API_KEY", "embedding-canary"),
+                ("PARASAUR_GATEWAY_PROVIDER", "openai"),
+                ("PARASAUR_GATEWAY_EMBEDDING_API_KEY", "embedding-canary"),
             ],
         )
         .unwrap();
@@ -1254,8 +1280,11 @@ console.log(JSON.stringify(yaml.parse(fs.readFileSync(process.argv[1], 'utf8')))
 
         // Shell metacharacters in an endpoint reach the YAML verbatim.
         let injection = run(&[
-            ("GAH_GATEWAY_PROVIDER", "ollama"),
-            ("GAH_GATEWAY_ENDPOINT", "https://example.test/v1?a=1&b=2"),
+            ("PARASAUR_GATEWAY_PROVIDER", "ollama"),
+            (
+                "PARASAUR_GATEWAY_ENDPOINT",
+                "https://example.test/v1?a=1&b=2",
+            ),
         ])
         .unwrap();
         assert_eq!(
@@ -1283,6 +1312,100 @@ fn installer_scripts_never_pass_bearer_tokens_in_curl_arguments() {
         assert!(
             source.contains("-H @-"),
             "{script} must read its Authorization header from stdin"
+        );
+    }
+}
+
+#[test]
+fn desktop_app_install_seals_linker_signatures_and_rejects_damaged_signed_apps() {
+    for kind in ["linker", "valid", "damaged"] {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = temp.path().join("repo");
+        std::fs::create_dir_all(&checkout).unwrap();
+        let target = temp.path().join("target");
+        let built = target.join("release/bundle/macos/GAH.app");
+        std::fs::create_dir_all(&built).unwrap();
+        std::fs::write(built.join("version.txt"), "new").unwrap();
+        let apps = temp.path().join("Applications");
+        let installed = apps.join("GAH.app");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(installed.join("version.txt"), "old").unwrap();
+        let bin = temp.path().join("bin");
+        executable(&bin.join("uname"), "echo Darwin\n");
+        executable(
+            &bin.join("codesign"),
+            r#"
+printf '%s\n' "$*" >> "$SIGN_LOG"
+case "$1" in
+  --verify)
+    [ "$SIGN_KIND" = valid ] || [ -f "$4/.fixture-sealed" ]
+    ;;
+  -d)
+    if [ "$SIGN_KIND" = linker ]; then
+      echo 'flags=0x20002(adhoc,linker-signed)' >&2
+    else
+      echo 'Authority=Developer ID Application: Fixture' >&2
+    fi
+    ;;
+  --force)
+    [ "$SIGN_KIND" = linker ] || exit 9
+    touch "$5/.fixture-sealed"
+    ;;
+  *) exit 8 ;;
+esac
+"#,
+        );
+        let log = temp.path().join("sign.log");
+        let path = format!("{}:/usr/bin:/bin", bin.display());
+        let output = bash(
+            &[
+                repo()
+                    .join("scripts/install-macos-desktop.sh")
+                    .to_str()
+                    .unwrap(),
+                checkout.to_str().unwrap(),
+            ],
+            &[
+                ("PATH", &path),
+                ("SIGN_KIND", kind),
+                ("SIGN_LOG", log.to_str().unwrap()),
+                ("CARGO_TARGET_DIR", target.to_str().unwrap()),
+                ("PARASAUR_DESKTOP_APP_DIR", apps.to_str().unwrap()),
+                ("PARASAUR_DESKTOP_SKIP_BUILD", "1"),
+                ("PARASAUR_LEGACY_APP_DIR", temp.path().to_str().unwrap()),
+            ],
+            true,
+        );
+        assert_eq!(
+            output.status.success(),
+            kind != "damaged",
+            "{kind}: {}",
+            text(&output)
+        );
+        assert_eq!(
+            std::fs::read_to_string(installed.join("version.txt")).unwrap(),
+            if kind == "damaged" { "old" } else { "new" }
+        );
+        assert_eq!(
+            installed.join(".fixture-sealed").exists(),
+            kind == "linker",
+            "{kind}"
+        );
+        assert!(
+            !built.join(".fixture-sealed").exists(),
+            "source bundle stays unchanged"
+        );
+        let calls = std::fs::read_to_string(log).unwrap();
+        assert!(calls.contains("--verify --deep --strict"), "{kind}");
+        assert_eq!(
+            calls.contains("--force --sign - --timestamp=none"),
+            kind == "linker",
+            "{kind}"
+        );
+        assert_eq!(
+            std::fs::read_dir(&apps).unwrap().count(),
+            1,
+            "staging/backup cleanup: {kind}"
         );
     }
 }

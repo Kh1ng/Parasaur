@@ -44,7 +44,7 @@ export { chatSessionStoreOptions };
 export function stateBase(opts?: ChatSessionStoreOptions): string {
   const base =
     (opts ?? chatSessionStoreOptions).stateDir
-    ?? process.env.GAH_CHAT_STATE_DIR
+    ?? process.env.PARASAUR_CHAT_STATE_DIR
     ?? (process.env.XDG_STATE_HOME
       ? resolve(process.env.XDG_STATE_HOME, 'gah', 'chat')
       : (process.env.HOME

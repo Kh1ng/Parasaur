@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { summarizeChatUsage, type SessionUsageSummary } from '../lib/chatUsage.js';
 import ReactMarkdown from 'react-markdown';
 import { MoreHorizontal, Send, Square, MessageSquare, GitBranch, Plus, Archive, Wrench, ShieldAlert, MonitorPlay, X, ExternalLink, HardDrive, RefreshCw, Sparkles, GitPullRequest, AlertTriangle } from 'lucide-react';
 import { useWebSocket } from '../ws/WebSocketContext.js';
@@ -13,7 +14,7 @@ import { DEFAULT_CONVERSATION_ID, readNavigation, updateNavigation, type Page } 
 import { ProviderPicker, type ProviderSelection, type ProviderPickerProps } from '../components/ProviderPicker.js';
 import { ProjectRail } from '../components/ProjectRail.js';
 import { CommitPrDialog } from '../components/CommitPrDialog.js';
-import { ChatSessionDetailDrawer, type SessionUsageSummary } from '../components/ChatSessionDetailDrawer.js';
+import { ChatSessionDetailDrawer } from '../components/ChatSessionDetailDrawer.js';
 import { OpenLocalCheckout } from '../components/OpenLocalCheckout.js';
 import { gahApi } from '../api/client.js';
 import { useAutoRefresh } from '../hooks/useAutoRefresh.js';
@@ -561,7 +562,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork, gitlab
   useEffect(() => updateNavigation({ profile, chat: sessionId }), [profile, sessionId]);
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
   const [sessionsError, setSessionsError] = useState(false);
-  const [backendInstanceLabels, setBackendInstanceLabels] = useState<Record<string, string>>({});
+  const [accountLabels, setAccountLabels] = useState<{ scope: string; labels: Record<string, string> } | null>(null);
   /** A new chat created for another project lands in the same render batch
    * as the profile switch; the [profile] effect restores its session id. */
   const pendingSessionRef = useRef<string | null>(null);
@@ -585,15 +586,6 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork, gitlab
     () => sessions.find((s) => s.id === sessionId) ?? null,
     [sessions, sessionId]
   );
-  useEffect(() => {
-    let cancelled = false;
-    gahApi.getProfileConfig(profile)
-      .then(({ backend_instances: instances }) => {
-        if (!cancelled) setBackendInstanceLabels(Object.fromEntries(instances.map((instance) => [instance.backend_instance, instance.account_label ?? instance.backend_instance])));
-      })
-      .catch(() => { if (!cancelled) setBackendInstanceLabels({}); });
-    return () => { cancelled = true; };
-  }, [profile, reconnectSeq]);
   useEffect(() => { setNodeChoice(null); }, [profile, sessionId]);
   const skillBackend = activeSession?.backend ?? activeBackendId;
   const skillSessionId = sessionId && sessionId !== 'default' ? sessionId : undefined;
@@ -603,6 +595,22 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork, gitlab
     : activeSession?.nodeId ?? currentProfileInfo?.node_id ?? centralNodeId ?? '';
   const selectedNode = nodeSnapshot.nodes.find(node => node.nodeId === chosenNode);
   const nodeReady = !nodeSnapshot.loading && !nodeSnapshot.error && !!(selectedNode?.eligible ?? selectedNode?.chatCapable);
+  const accountLabelScope = JSON.stringify([profile, skillBackend, chosenNode]);
+  const backendInstanceLabels = accountLabels?.scope === accountLabelScope ? accountLabels.labels : {};
+  useEffect(() => {
+    if (!activeSession?.backendInstance || !skillBackend || !chosenNode || !nodeReady) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    setAccountLabels(null);
+    gahApi.getChatAccounts(profile, skillBackend, chosenNode, controller.signal)
+      .then(({ accounts }) => {
+        if (!cancelled) setAccountLabels({ scope: accountLabelScope, labels: Object.fromEntries(accounts.map(account => [account.instance, account.label])) });
+      })
+      .catch(() => { if (!cancelled) setAccountLabels(null); })
+      .finally(() => clearTimeout(timer));
+    return () => { cancelled = true; clearTimeout(timer); controller.abort(); };
+  }, [profile, skillBackend, chosenNode, nodeReady, accountLabelScope, activeSession?.backendInstance, reconnectSeq]);
   const remoteSession = !!activeSession && (!!currentProfileInfo?.remote || (!!activeSession.nodeId && activeSession.nodeId !== centralNodeId));
   const [skillBinding, setSkillBinding] = useState<SkillBindingSummary | null>(null);
   const [skillBindingChanging, setSkillBindingChanging] = useState(false);
@@ -1276,7 +1284,17 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork, gitlab
         currentReasoningEffortId: activeSession.reasoningEffort,
         modelsLoaded: sessionModelsLoaded,
         busy: turnBusy || !nodeReady || sessionSelectionChanging,
-        catalog: { profile, ...(chosenNode ? { nodeId: chosenNode } : {}) },
+        catalog: {
+          profile,
+          ...(chosenNode ? { nodeId: chosenNode } : {}),
+          ...(activeSession.backendInstance ? {
+            instance: {
+              backendId: activeSession.backend,
+              id: activeSession.backendInstance,
+              label: backendInstanceLabels[activeSession.backendInstance] ?? activeSession.backendInstance
+            }
+          } : {})
+        },
         onSelect: applySessionSelection
       };
     }
@@ -1529,22 +1547,9 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork, gitlab
   const liveChatSessions = sessions.filter((session) => session.outcome === 'live');
   const archivedChatSessions = sessions.filter((session) => session.outcome !== 'live');
   const closeTools = () => setToolsOpen(false);
-  const sessionUsage = useMemo<SessionUsageSummary>(() => {
-    const reported = turns.filter((turn) => turn.role === 'assistant' && turn.usage).map((turn) => turn.usage!);
-    const sum = (field: 'input_tokens' | 'output_tokens' | 'total_tokens') => {
-      const values = reported.map((item) => item[field]).filter((value): value is number => value != null);
-      return values.length ? values.reduce((total, value) => total + value, 0) : null;
-    };
-    const costs = reported.map((item) => item.estimated_cost_usd).filter((value): value is number => value != null);
-    return {
-      turns: reported.length,
-      inputTokens: sum('input_tokens'),
-      outputTokens: sum('output_tokens'),
-      totalTokens: sum('total_tokens'),
-      estimatedCostUsd: costs.length ? costs.reduce((total, value) => total + value, 0) : null,
-      costIncomplete: reported.some((item) => item.estimated_cost_usd == null)
-    };
-  }, [turns]);
+  const sessionUsage = useMemo<SessionUsageSummary>(() => summarizeChatUsage(
+    turns.filter((turn) => turn.role === 'assistant').map((turn) => turn.usage)
+  ), [turns]);
 
   return (
     <div className={`flex min-h-0 min-w-0 flex-1 flex-col gap-3 ${docked ? 'chat-docked' : ''}`}>
@@ -2046,7 +2051,7 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork, gitlab
         </div>
         </div>
 
-        <div className="relative mx-auto mt-2 w-full max-w-3xl rounded-xl border border-subtle bg-raised focus-within:border-accent/60">
+        <div className="chat-composer relative mx-auto mt-2 w-full max-w-3xl shrink-0 rounded-xl border border-subtle bg-raised focus-within:border-accent/60">
           {paletteOpen && (
             <div className="absolute bottom-full left-0 mb-1 w-full max-w-sm bg-card border border-subtle rounded-md shadow-lg overflow-hidden z-10">
               {paletteMatches.map((cmd, i) => (

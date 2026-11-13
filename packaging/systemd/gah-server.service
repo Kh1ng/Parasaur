@@ -21,7 +21,7 @@
 # this repo) rather than editing this unit -- `scripts/install.sh` creates it
 # on first install. Central reinstalls and `gah update --restart-server`
 # preserve it; a standalone reinstall sets HOST to loopback unless
-# GAH_SERVER_HOST explicitly requests another address.
+# PARASAUR_SERVER_HOST explicitly requests another address.
 # Example /etc/gah/server.env:
 #   HOST=127.0.0.1
 #
@@ -38,7 +38,7 @@ User=@USER@
 WorkingDirectory=@REPO@
 Environment=NODE_ENV=production
 Environment=PORT=3773
-Environment="GAH_CONFIG_PATH=@CONFIG@"
+Environment="PARASAUR_CONFIG_PATH=@CONFIG@"
 Environment="PATH=@PATH@"
 # Optional persistent override file; the leading "-" means systemd does not
 # fail the unit if it doesn't exist. Values here win over the Environment=

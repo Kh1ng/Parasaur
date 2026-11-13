@@ -3,15 +3,16 @@ import assert from 'node:assert/strict';
 import { createServer as createHttpServer, type Server } from 'node:http';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateNodeRole, workerMemoryEnvironment, workerRouteGuard } from './nodeRole.js';
 import { workerMemoryRouter } from './workerMemory.js';
 import { RegistryService } from './registryService.js';
 import { authMiddleware } from './authMiddleware.js';
+import { resetCachedCoordinatorIdentity } from './coordinatorIdentity.js';
 import { initializeSkillBank, createServer } from './server.js';
-import type { DoctorSnapshot, NodeRoleStatus } from '@git-agent-harness/contracts';
+import type { DoctorSnapshot, NodeRoleStatus, StatusSnapshot } from '@git-agent-harness/contracts';
 
 async function listen(server: Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -21,6 +22,39 @@ async function listen(server: Server): Promise<string> {
 }
 const close = (server: Server) => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 const worker = { role: 'worker', central_url: 'https://central.test' } as const;
+
+test('status preserves fresh CLI claim evidence without replacing the configured node identity', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'gah-claim-status-'));
+  const savedBinary = process.env.PARASAUR_BINARY;
+  const savedIdentity = process.env.PARASAUR_COORDINATOR_IDENTITY_PATH;
+  const fixture = join(directory, 'status.json');
+  const binary = join(directory, 'gah');
+  writeFileSync(binary, `#!/usr/bin/env node\nprocess.stdout.write(require('node:fs').readFileSync(${JSON.stringify(fixture)},'utf8'));\n`);
+  chmodSync(binary, 0o755);
+  process.env.PARASAUR_BINARY = binary;
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(directory, 'identity.json');
+  resetCachedCoordinatorIdentity();
+  const server = createHttpServer(createServer({ node: worker }));
+  const url = await listen(server);
+  try {
+    for (const [index, origin] of ['https://central.test', 'https://another.test'].entries()) {
+      const observation = { state: 'observed', outcome: 'refused', observed_at: '2026-11-03T12:00:00Z', work_id: '#1516' };
+      writeFileSync(fixture, JSON.stringify({ generated_at: '2026-11-03T12:00:00Z', active_claims: [], running_workers: [], node: { role: 'central', central_url: origin, central_claim_observation: observation } }));
+      const response = await fetch(`${url}/api/status?profile=claim-status-${index}`);
+      assert.equal(response.status, 200);
+      const status = await response.json() as StatusSnapshot;
+      assert.equal(status.node?.role, 'worker', 'the server owns role policy');
+      assert.equal(status.node?.central_url, worker.central_url);
+      assert.deepEqual(status.node?.central_claim_observation, index === 0 ? observation : undefined, 'a different central cannot supply this node’s claim history');
+    }
+  } finally {
+    await close(server);
+    if (savedBinary === undefined) delete process.env.PARASAUR_BINARY; else process.env.PARASAUR_BINARY = savedBinary;
+    if (savedIdentity === undefined) delete process.env.PARASAUR_COORDINATOR_IDENTITY_PATH; else process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = savedIdentity;
+    resetCachedCoordinatorIdentity();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test('worker role reports central identity and permits execution without hosting central stores', async () => {
   assert.throws(() => validateNodeRole({ role: 'worker', central_url: null }), /requires/);
@@ -52,9 +86,14 @@ test('worker role reports central identity and permits execution without hosting
     const probe = express();
     probe.use(workerRouteGuard(worker));
     probe.get('/api/status', (_req, res) => res.sendStatus(200));
+    probe.all('/api/loop/last-decision', (_req, res) => res.json(null));
     const statusServer = createHttpServer(probe);
     const statusUrl = await listen(statusServer);
-    try { assert.equal((await fetch(`${statusUrl}/api/status`)).status, 200); } finally { await close(statusServer); }
+    try {
+      assert.equal((await fetch(`${statusUrl}/api/status`)).status, 200);
+      assert.equal((await fetch(`${statusUrl}/api/loop/last-decision?profile=test`)).status, 200);
+      assert.equal((await fetch(`${statusUrl}/api/loop/last-decision`, { method: 'POST' })).status, 409);
+    } finally { await close(statusServer); }
   } finally {
     await close(server);
   }
@@ -89,7 +128,7 @@ test('standalone role boots the local control plane instead of failing closed', 
 });
 
 test('central memory relay preserves gateway contracts without forwarding worker credentials or arbitrary destinations', async () => {
-  const previous = { url: process.env.TDAI_GATEWAY_URL, key: process.env.TDAI_GATEWAY_API_KEY, settings: process.env.GAH_GATEWAY_SETTINGS_PATH, token: process.env.COORDINATOR_TOKEN };
+  const previous = { url: process.env.TDAI_GATEWAY_URL, key: process.env.TDAI_GATEWAY_API_KEY, settings: process.env.PARASAUR_GATEWAY_SETTINGS_PATH, token: process.env.COORDINATOR_TOKEN };
   const directory = mkdtempSync(join(tmpdir(), 'gah-relay-'));
   const received: { path?: string; authorization?: string; body?: unknown }[] = [];
   const gateway = express();
@@ -102,7 +141,7 @@ test('central memory relay preserves gateway contracts without forwarding worker
   process.env.TDAI_GATEWAY_URL = await listen(gatewayServer);
   process.env.TDAI_GATEWAY_API_KEY = 'central-gateway-key';
   process.env.COORDINATOR_TOKEN = 'worker-token';
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(directory, 'settings.json');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(directory, 'settings.json');
   const app = express();
   app.use(express.json());
   app.use('/api/worker-memory', rateLimit({ windowMs: 60_000, limit: 100 }), authMiddleware, workerMemoryRouter());
@@ -124,7 +163,7 @@ test('central memory relay preserves gateway contracts without forwarding worker
     assert.equal((await fetch(`${url}/api/worker-memory/arbitrary`, { method: 'POST' })).status, 404);
     assert.equal(received.length, 3);
     for (const settings of [{ enabled: false }, { disabledProfiles: ['worker-project'] }]) {
-      writeFileSync(process.env.GAH_GATEWAY_SETTINGS_PATH!, JSON.stringify(settings));
+      writeFileSync(process.env.PARASAUR_GATEWAY_SETTINGS_PATH!, JSON.stringify(settings));
       const skipped = await fetch(`${url}/api/worker-memory/capture`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile: 'worker-project', session_key: 'gah:worker:owner/repo:#1', user_content: 'task', assistant_content: 'result' }) });
       assert.equal(skipped.status, 200);
       assert.equal((await skipped.json() as { l0_recorded: number }).l0_recorded, 0);
@@ -134,7 +173,7 @@ test('central memory relay preserves gateway contracts without forwarding worker
     await close(server);
     await close(gatewayServer);
     rmSync(directory, { recursive: true });
-    for (const [key, value] of Object.entries({ TDAI_GATEWAY_URL: previous.url, TDAI_GATEWAY_API_KEY: previous.key, GAH_GATEWAY_SETTINGS_PATH: previous.settings, COORDINATOR_TOKEN: previous.token })) {
+    for (const [key, value] of Object.entries({ TDAI_GATEWAY_URL: previous.url, TDAI_GATEWAY_API_KEY: previous.key, PARASAUR_GATEWAY_SETTINGS_PATH: previous.settings, COORDINATOR_TOKEN: previous.token })) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
   }

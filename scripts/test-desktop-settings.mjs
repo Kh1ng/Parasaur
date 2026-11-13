@@ -1,6 +1,8 @@
 // Exercise the bundled Settings UI without touching an installed app or worker.
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { chromium } from '@playwright/test';
 import { createServer } from 'vite';
 
@@ -12,6 +14,41 @@ let browser;
 try {
   await server.listen();
   browser = await chromium.launch();
+  for (const stalled of ['setup_check', 'node_role_status', 'owner_credential_status', 'desktop_update_status']) {
+    const recovery = await browser.newPage();
+    await recovery.addInitScript(stalled => {
+      window.calls = [];
+      window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
+        window.calls.push([command, args]);
+        if (command === stalled) return new Promise(() => {});
+        if (command === 'desktop_settings') return { central_url: 'https://central.test', wsl_distribution: '', presence: { dock: false, tray: true, launch_window: true } };
+        if (command === 'node_role_status') return { role: 'central', running: false, supported: false };
+        if (command === 'setup_check') return { installed: false, report: null, terminal: true };
+        if (command === 'desktop_update_status') return { available: false, currentVersion: 'test', version: null, notes: null, error: null };
+        if (command === 'owner_credential_status') return false;
+        if (command === 'repository_tools' || command === 'credential_list' || command === 'credential_instances') return [];
+      } };
+    }, stalled);
+    await recovery.goto(new URL('?connection=timeout', server.resolvedUrls.local[0]).href);
+    await recovery.locator('#connection-timeout').waitFor();
+    await recovery.getByLabel('Central node address').waitFor();
+    await recovery.waitForFunction(() => !document.querySelector('#connection button').disabled, null, { timeout: 2000 });
+    assert.equal(await recovery.getByLabel('Central node address').inputValue(), 'https://central.test');
+    if (stalled === 'setup_check' && process.env.PARASAUR_NAVIGATION_SCREENSHOTS) {
+      mkdirSync(process.env.PARASAUR_NAVIGATION_SCREENSHOTS, { recursive: true });
+      for (const width of [1000, 390]) {
+        await recovery.setViewportSize({ width, height: 900 });
+        assert.equal(await recovery.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+        await recovery.screenshot({ path: join(process.env.PARASAUR_NAVIGATION_SCREENSHOTS, `${width}.png`) });
+      }
+    }
+    await recovery.getByRole('button', { name: 'Save and connect' }).click();
+    assert((await recovery.evaluate(() => window.calls)).some(([command]) => command === 'connect_dashboard'), `connection remains usable while ${stalled} is pending`);
+    if (stalled === 'setup_check' || stalled === 'node_role_status') {
+      assert.equal(await recovery.locator('#setup-refresh').isDisabled(), true, 'a connection action cannot unlock the pending setup check');
+    }
+    await recovery.close();
+  }
   const page = await browser.newPage();
   await page.addInitScript(() => {
     window.calls = [];
@@ -103,7 +140,7 @@ try {
   await page.getByRole('alert').filter({ hasText: 'Worker unavailable' }).waitFor();
   assert(await page.getByRole('button', { name: 'Start worker', exact: true }).isEnabled());
   assert.equal(browser.contexts()[0].pages().length, 1);
-  console.log('Desktop Settings: connection, back navigation, presence recovery, and worker failure checks passed.');
+  console.log('Desktop Settings: four stalled status reads, connection, back navigation, presence recovery, and worker failure checks passed.');
 } finally {
   await browser?.close();
   await server.close();

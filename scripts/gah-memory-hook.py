@@ -31,7 +31,11 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
-SETTINGS_FILE = Path(os.environ.get("GAH_MEMORY_HOOK_CONFIG", str(Path.home() / ".config/gah/memory-hooks.json")))
+# Settings were named GAH_* before the product became Parasaur; accept the old names.
+for _name in [name for name in os.environ if name.startswith("GAH_")]:
+    os.environ.setdefault("PARASAUR_" + _name[len("GAH_"):], os.environ[_name])
+
+SETTINGS_FILE = Path(os.environ.get("PARASAUR_MEMORY_HOOK_CONFIG", str(Path.home() / ".config/gah/memory-hooks.json")))
 TDAI_API_KEY_FILE = Path.home() / ".config" / "gah" / "tdai-gateway.env"
 
 

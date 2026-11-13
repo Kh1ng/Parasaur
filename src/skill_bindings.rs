@@ -191,13 +191,13 @@ fn resolve_bank(
 }
 
 fn local_bank_path() -> PathBuf {
-    std::env::var("GAH_SKILL_BANK_PATH")
+    std::env::var("PARASAUR_SKILL_BANK_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| crate::config::default_config_dir().join("skills.json"))
 }
 
 fn cache_path(profile: &str, backend: &str, instance: Option<&str>) -> PathBuf {
-    let root = std::env::var("GAH_SKILL_CACHE_DIR")
+    let root = std::env::var("PARASAUR_SKILL_CACHE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| crate::config::default_config_dir().join("skill-cache"));
     let digest = Sha256::digest(format!("{profile}\0{backend}\0{}", instance.unwrap_or("")));

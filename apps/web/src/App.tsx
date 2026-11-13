@@ -5,6 +5,7 @@ import { OverviewPage } from './pages/OverviewPage.js';
 import { ActivityBar, Navbar, PageTabs } from './components/Navbar.js';
 import { PwaStatusBars } from './components/PwaStatusBars.js';
 import { GahUpdateBanner } from './components/GahUpdateBanner.js';
+import { SampleDataBanner } from './components/SampleDataBanner.js';
 import { SessionDetailModal } from './components/SessionDetailModal.js';
 import type { Session } from '@git-agent-harness/contracts';
 import { isSideView, readNavigation, takeActivityDeepLink, updateNavigation, type MainPage, type Page, type SideView } from './lib/navigationState.js';
@@ -100,7 +101,9 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
     return () => window.clearInterval(timer);
   }, [activeProfile, fetchQuota, reconnectSeq]);
   const subscriptions = useMemo(() => subscriptionUsage(quota.data), [quota.data]);
-  const statusSnapshot = useGahStore((state) => state.status.data);
+  const statusResource = useGahStore((state) => state.status);
+  const statusSnapshot = statusResource.key === (activeProfile ?? '') ? statusResource.data : null;
+  const statusUnavailable = !statusSnapshot || Boolean(statusResource.error);
   const fetchStatus = useGahStore(state => state.fetchStatus);
   useEffect(() => {
     void fetchStatus(activeProfile, { force: true });
@@ -120,13 +123,13 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
     const timer = window.setInterval(load, agentsVisible ? DEVICE_AGENTS_REFRESH_MS : QUOTA_REFRESH_MS);
     return () => { current = false; window.clearInterval(timer); };
   }, [reconnectSeq, agentsVisible]);
-  const busySubscriptions = useMemo(() => busySubscriptionIds({ subscriptions, sessions, controllerRuns: controllerActivity, claims: statusSnapshot?.active_claims ?? [], recentLedger: statusSnapshot?.recent_ledger, factoryAgents: deviceAgents.data?.factory_agents }),
-    [subscriptions, sessions, controllerActivity, statusSnapshot, deviceAgents.data]);
+  const busySubscriptions = busySubscriptionIds({ subscriptions, sessions: isConnected ? sessions : [],
+    runningWorkers: statusUnavailable ? [] : statusSnapshot?.running_workers ?? [], nodeId: statusSnapshot?.node_id });
 
   // The navbar uses the same worker roster as the page counters.
   const loopRunning = useGahStore((state) => state.loopStatus.data?.running ?? null);
-  const working = useMemo(() => workingNow({ status: statusSnapshot, quota: quota.data, controllerRuns: controllerActivity, factoryAgents: deviceAgents.data?.factory_agents ?? [], loopRunning, now: Date.now() }),
-    [statusSnapshot, quota.data, controllerActivity, deviceAgents.data, loopRunning]);
+  const working = useMemo(() => workingNow({ status: statusSnapshot, statusUnavailable, quota: quota.data, controllerRuns: controllerActivity, factoryAgents: deviceAgents.data?.factory_agents ?? [], loopRunning, now: Date.now() }),
+    [statusSnapshot, statusUnavailable, quota.data, controllerActivity, deviceAgents.data, loopRunning]);
 
   /** Pages link to each other by name; a sidebar view opens in the sidebar.
    * Any page navigation leaves the GitLab context view first. */
@@ -216,11 +219,12 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
     <div className="app-shell flex h-dvh flex-col overflow-hidden bg-page">
       <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 bg-card text-primary p-3 rounded-md">Skip to content</a>
       <PwaStatusBars />
+      <SampleDataBanner />
       <GahUpdateBanner />
       <Navbar currentPage={currentPage} sideView={sideView} onPageChange={navigate} activityUnreadCount={activityUnreadCount}
         chatOpen={isChatPage || chatDocked} onChatToggle={toggleChat}
         onImportProject={() => { requestAction('import'); expandChat(true); }} onCreateProject={() => { requestAction('create'); setSideView('profile'); }}
-        actions={<><WorkingNowMenu jobs={working.jobs} agents={working.agents} onOpenBoard={() => navigate('kanban')} /><SubscriptionUsageMenu subscriptions={subscriptions} busy={busySubscriptions} onOpenQuota={() => navigate('quota')} /><NotificationsMenu liveActivity={liveActivity} muted={sideView === 'events'} unreadCount={activityUnreadCount} revision={activityRevision} autoPopup={notificationPopups} /></>} />
+        actions={<><WorkingNowMenu jobs={working.jobs} agents={working.agents} unavailable={statusUnavailable} onOpenBoard={() => navigate('kanban')} /><SubscriptionUsageMenu subscriptions={subscriptions} busy={busySubscriptions} unavailable={Boolean(quota.error)} onOpenQuota={() => navigate('quota')} /><NotificationsMenu liveActivity={liveActivity} muted={sideView === 'events'} unreadCount={activityUnreadCount} revision={activityRevision} autoPopup={notificationPopups} /></>} />
 
       {/* Left to right: icon strip, sidebar view, main panel, chat sidebar. */}
       <div className="flex min-h-0 flex-1">
@@ -236,7 +240,7 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
         )}
 
         <div className={`min-h-0 min-w-0 flex-1 flex-col ${sideView || chatDocked ? 'hidden xl:flex' : 'flex'} ${isChatPage ? '' : 'overflow-y-auto'}`}>
-          <main id="main-content" tabIndex={-1} className={`mx-auto w-full max-w-[1400px] px-4 py-4 sm:px-6 sm:py-6 ${isChatPage ? 'flex min-h-0 flex-1 flex-col' : ''}`}>
+          <main id="main-content" tabIndex={-1} className={`mx-auto w-full max-w-[1400px] px-4 py-4 sm:px-6 sm:py-6 ${isChatPage ? 'chat-main flex min-h-0 flex-1 flex-col' : ''}`}>
             {isChatPage && (
               <button type="button" onClick={() => expandChat(false)} className="mb-2 hidden items-center gap-1.5 self-end text-xs text-secondary hover:text-primary xl:inline-flex">
                 <PanelRight size={14} aria-hidden="true" />

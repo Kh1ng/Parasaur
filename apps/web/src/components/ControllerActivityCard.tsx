@@ -2,15 +2,18 @@ import { useGahStore } from '../store/gahStore.js';
 import { Activity, AlertCircle, CheckCircle2, ChevronRight, Clock3 } from 'lucide-react';
 import type { ControllerActivity } from '@git-agent-harness/contracts';
 import { formatAge, formatLocalTime } from '../lib/format.js';
+import { controllerActivityStatus, type ControllerActivityDisplayStatus } from '../lib/controllerActivity.js';
 import { StatusBadge } from './ui/StatusBadge.js';
 
-function tone(status: ControllerActivity['status']) {
+function tone(status: ControllerActivityDisplayStatus) {
   if (status === 'running') return 'good' as const;
+  if (status === 'deferred') return 'warning' as const;
   if (status === 'failed') return 'critical' as const;
   return 'unknown' as const;
 }
 
 function ActivityRow({ run }: { run: ControllerActivity }) {
+  const status = controllerActivityStatus(run);
   const timestamp = formatAge(run.finished_at ?? run.started_at);
   const title = run.action.replace(/^dispatch:\s*/i, '');
 
@@ -18,9 +21,9 @@ function ActivityRow({ run }: { run: ControllerActivity }) {
     <details className="group">
       <summary className="flex cursor-pointer list-none items-start justify-between gap-3 px-4 py-3 hover:bg-overlay/5 [&::-webkit-details-marker]:hidden">
         <div className="flex min-w-0 flex-1 items-start gap-2">
-          {run.status === 'running'
+          {status === 'running' || status === 'deferred'
             ? <Clock3 size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
-            : run.status === 'failed'
+            : status === 'failed'
               ? <AlertCircle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
               : <CheckCircle2 size={14} className="mt-0.5 shrink-0" aria-hidden="true" />}
           <div className="min-w-0 flex-1">
@@ -34,7 +37,7 @@ function ActivityRow({ run }: { run: ControllerActivity }) {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <StatusBadge tone={tone(run.status)} label={run.status} />
+          <StatusBadge tone={tone(status)} label={status} />
           <ChevronRight size={14} className="text-muted transition-transform group-open:rotate-90" aria-hidden="true" />
         </div>
       </summary>
@@ -68,8 +71,9 @@ export function ControllerActivityCard({ activity }: { activity: ControllerActiv
   const workers = useGahStore(state => state.status.data?.running_workers ?? []);
   const active = workers;
   const recent = activity.filter((run) => run.status !== 'running').slice(0, 5);
-  const failed = recent.filter((run) => run.status === 'failed').length;
-  const finished = recent.length - failed;
+  const failed = recent.filter((run) => controllerActivityStatus(run) === 'failed').length;
+  const deferred = recent.filter((run) => controllerActivityStatus(run) === 'deferred').length;
+  const finished = recent.length - failed - deferred;
 
   return (
     <section aria-labelledby="controller-activity-heading">
@@ -93,6 +97,8 @@ export function ControllerActivityCard({ activity }: { activity: ControllerActiv
               Recent history
             </span>
             <span className="text-xs tabular-nums text-muted">
+              {deferred > 0 && <span className="text-warning">{deferred} deferred</span>}
+              {deferred > 0 && (failed > 0 || finished > 0) && ' · '}
               {failed > 0 && <span className="text-critical">{failed} failed</span>}
               {failed > 0 && finished > 0 && ' · '}
               {finished > 0 && `${finished} finished`}

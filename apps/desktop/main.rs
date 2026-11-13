@@ -15,7 +15,10 @@ use tauri::{
 mod credentials;
 mod desktop_update;
 mod mistral_login;
+mod navigation_recovery;
 mod open_project;
+#[cfg(all(test, windows))]
+mod output_save_fixture;
 mod repository_tools;
 mod setup_check;
 
@@ -189,6 +192,24 @@ fn central_origin(value: &str) -> Result<String, String> {
     Ok(central_url(value)?.origin().ascii_serialization())
 }
 
+/// Recovery can open the bundled connection screen, never invoke its commands.
+fn can_recover_dashboard(from: &tauri::Url, central: &str) -> bool {
+    central_origin(central).is_ok_and(|origin| from.origin().ascii_serialization() == origin)
+}
+
+#[tauri::command]
+fn navigation_presented(
+    window: tauri::WebviewWindow,
+    recovery: tauri::State<'_, navigation_recovery::NavigationRecovery>,
+    attempt: String,
+) -> Result<bool, String> {
+    open_project::configured_central(&window)?;
+    let attempt =
+        navigation_recovery::parse_attempt(&attempt).ok_or("Invalid navigation attempt")?;
+    let from = window.url().map_err(|_| "Window location is unavailable")?;
+    Ok(recovery.presented(attempt, &from))
+}
+
 /// External links must be plain HTTP(S) URLs without embedded credentials.
 /// Everything the dashboard opens in the OS browser goes through this
 /// validation so a compromised page cannot aim file://, javascript:, or
@@ -292,8 +313,8 @@ fn forget_owner_credential(window: tauri::WebviewWindow, origin: String) -> Resu
     }
 }
 
-// Only the bundled Settings document may operate this computer. The dashboard
-// shares its window, but has no native command capability.
+// Local controls require the bundled Settings origin. Remote bridges have
+// narrower explicit capabilities and their own configured-central gate.
 // Linux loads the bundle as `tauri://localhost`: a non-special scheme keeps an
 // empty path, and rejecting it left the first window on about:blank (#1326).
 fn is_local_settings(url: &tauri::Url) -> bool {
@@ -499,7 +520,7 @@ fn macos_service(settings: &DesktopSettings, action: &str, role: &str) -> Result
             &settings.repository_path,
             &profile,
         ])
-        .env("GAH_DESKTOP_SERVER_PORT", settings.server_port.to_string())
+        .env("PARASAUR_DESKTOP_SERVER_PORT", settings.server_port.to_string())
         .status()
         .map_err(|error| format!("Cannot run the macOS service controller: {error}"))?;
     if status.success() {
@@ -611,7 +632,7 @@ async fn set_node_role(
             &role,
             "--yes",
         ])
-        .env("GAH_DESKTOP_SERVER_PORT", settings.server_port.to_string())
+        .env("PARASAUR_DESKTOP_SERVER_PORT", settings.server_port.to_string())
         .status();
     let update_error = match updated {
         Ok(status) if status.success() => None,
@@ -848,9 +869,15 @@ async fn set_worker_running(
 }
 
 fn show_settings(app: &tauri::AppHandle) {
+    if let Some(url) = settings_url(app, false) {
+        let _ = open_dashboard(app, url);
+    }
+}
+
+fn settings_url(app: &tauri::AppHandle, connection_timed_out: bool) -> Option<tauri::Url> {
     // Match WebviewUrl::App with the default (HTTP) protocol on Windows.
     // Do not cache window.url() during construction: WebView2 can still report about:blank.
-    let url = if tauri::is_dev() {
+    let mut url = if tauri::is_dev() {
         app.config().build.dev_url.clone()
     } else {
         Some(
@@ -863,9 +890,52 @@ fn show_settings(app: &tauri::AppHandle) {
             .unwrap(),
         )
     };
-    if let Some(url) = url {
-        let _ = open_dashboard(app, url);
+    if connection_timed_out {
+        if let Some(url) = url.as_mut() {
+            url.set_query(Some("connection=timeout"));
+        }
     }
+    url
+}
+
+fn start_navigation_recovery(app: tauri::AppHandle) {
+    use navigation_recovery::{Action, NavigationRecovery};
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let recovery = app.state::<NavigationRecovery>();
+            if recovery.stopped() {
+                break;
+            }
+            let Some(action) = recovery.due(std::time::Instant::now()) else {
+                continue;
+            };
+            let ui_app = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                let recovery = ui_app.state::<NavigationRecovery>();
+                match action {
+                    Action::Probe { attempt, target } => {
+                        if recovery.probe_sent(attempt, std::time::Instant::now()) {
+                            if let Some(window) = ui_app.get_webview_window("dashboard") {
+                                let _ = window.eval(navigation_recovery::presentation_probe(
+                                    &target, attempt,
+                                ));
+                            }
+                        }
+                    }
+                    Action::Recover { attempt } => {
+                        if let Some(target) = recovery.expire(attempt) {
+                            if can_recover_dashboard(&target, &read_settings().central_url) {
+                                if let Some(url) = settings_url(&ui_app, true) {
+                                    let _ = open_dashboard(&ui_app, url);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
 }
 
 fn show_app(app: &tauri::AppHandle) {
@@ -902,8 +972,24 @@ fn menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
     }
 }
 
+/// Settings were named `GAH_*` before the product became Parasaur. A launch
+/// agent or shortcut from an older install still sets the old names, so give
+/// each one its current name unless that is already set.
+fn adopt_legacy_settings() {
+    let vars: Vec<_> = std::env::vars_os().collect();
+    for (name, value) in &vars {
+        let Some(rest) = name.to_str().and_then(|name| name.strip_prefix("GAH_")) else { continue };
+        let current = format!("PARASAUR_{rest}");
+        if std::env::var_os(&current).is_none() {
+            std::env::set_var(current, value);
+        }
+    }
+}
+
 fn main() {
+    adopt_legacy_settings();
     tauri::Builder::default()
+        .manage(navigation_recovery::NavigationRecovery::default())
         .manage({
             #[cfg(not(target_os = "macos"))]
             { WorkerState(Mutex::new(None)) }
@@ -925,6 +1011,7 @@ fn main() {
             worker_status,
             set_worker_running,
             open_external_url,
+            navigation_presented,
             open_project::desktop_open_context,
             open_project::open_local_checkout,
             repository_tools::repository_tools,
@@ -955,7 +1042,8 @@ fn main() {
             .title("Parasaur")
             .inner_size(1400.0, 900.0)
             .min_inner_size(900.0, 600.0)
-            // An inert UI marker; remote pages still have no IPC permissions.
+            // UI markers grant no permissions; remote commands keep their
+            // explicit capabilities and configured-origin checks.
             .initialization_script(
                 if cfg!(target_os = "macos") {
                     "if (window === window.top) { window.__GAH_DESKTOP_SETTINGS__ = true; window.__GAH_DESKTOP_MISTRAL_LOGIN__ = true; window.__GAH_DESKTOP_NATIVE_NOTIFICATIONS__ = true; window.__GAH_DESKTOP_OPEN_PROJECT__ = true; window.__GAH_DESKTOP_EXTERNAL_LINKS__ = true; }"
@@ -973,6 +1061,7 @@ fn main() {
                 if payload.url().origin().ascii_serialization() != origin {
                     return;
                 }
+                let _ = window.eval(include_str!("dashboard_recovery.js"));
                 match read_owner_credential(&origin) {
                     Ok(token) => {
                         if let Some(script) = owner_session_script(&origin, payload.url(), token.as_deref()) {
@@ -983,6 +1072,21 @@ fn main() {
                 }
             })
             .on_navigation(move |url| {
+                if url.as_str() == "gah://connection-recovery"
+                    || url.as_str() == "gah://connection-recovery/"
+                {
+                    let allowed = navigation_app
+                        .get_webview_window("dashboard")
+                        .and_then(|window| window.url().ok())
+                        .is_some_and(|from| {
+                            can_recover_dashboard(&from, &read_settings().central_url)
+                        });
+                    if allowed {
+                        let app = navigation_app.clone();
+                        let _ = navigation_app.run_on_main_thread(move || show_settings(&app));
+                    }
+                    return false;
+                }
                 if url.as_str() == "gah://settings" || url.as_str() == "gah://settings/" {
                     let allowed = navigation_app
                         .get_webview_window("dashboard")
@@ -1007,11 +1111,21 @@ fn main() {
                     let _ = (allowed, title, body);
                     return false;
                 }
-                is_local_settings(url) || central_url(url.as_str()).is_ok()
+                let allowed = is_local_settings(url) || central_url(url.as_str()).is_ok();
+                if allowed {
+                    let recovery = navigation_app.state::<navigation_recovery::NavigationRecovery>();
+                    if !is_local_settings(url) && can_recover_dashboard(url, &read_settings().central_url) {
+                        recovery.begin(url.clone(), std::time::Instant::now());
+                    } else {
+                        recovery.cancel();
+                    }
+                }
+                allowed
             })
             .visible(settings.presence.launch_window)
             .center()
             .build()?;
+            start_navigation_recovery(app.handle().clone());
             let connection = MenuItem::with_id(app, "connection", "Settings", true, None::<&str>)?;
             let dashboard =
                 MenuItem::with_id(app, "dashboard", "Open Dashboard", true, None::<&str>)?;
@@ -1098,6 +1212,9 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error building Parasaur desktop")
         .run(|_app, _event| {
+            if let tauri::RunEvent::Exit = _event {
+                _app.state::<navigation_recovery::NavigationRecovery>().shutdown();
+            }
             #[cfg(all(not(windows), not(target_os = "macos")))]
             if let tauri::RunEvent::Exit = _event {
                 stop_owned_worker(_app);
@@ -1309,6 +1426,88 @@ mod tests {
                 "{value}"
             );
         }
+    }
+
+    #[test]
+    fn dashboard_recovery_opens_settings_only_from_the_configured_origin() {
+        let central = "https://gah.example:8443";
+        assert!(can_recover_dashboard(&central.parse().unwrap(), central));
+        assert!(can_recover_dashboard(
+            &"https://gah.example:8443/?page=work".parse().unwrap(),
+            central
+        ));
+        for from in [
+            "https://evil.example",
+            "https://gah.example",
+            "http://gah.example:8443",
+            "tauri://localhost/index.html",
+        ] {
+            assert!(
+                !can_recover_dashboard(&from.parse().unwrap(), central),
+                "{from}"
+            );
+        }
+        assert!(!can_recover_dashboard(&central.parse().unwrap(), "invalid"));
+    }
+
+    #[test]
+    fn remote_bridges_accept_configured_centrals_on_explicit_ports() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("tauri.conf.json")).unwrap();
+        for capability in config["app"]["security"]["capabilities"]
+            .as_array()
+            .unwrap()
+        {
+            let Some(urls) = capability["remote"]["urls"].as_array() else {
+                continue;
+            };
+            let patterns: Vec<tauri::utils::acl::RemoteUrlPattern> = urls
+                .iter()
+                .map(|url| url.as_str().unwrap().parse().unwrap())
+                .collect();
+            for url in [
+                "https://central.test/",
+                "https://central.test:8443/chat",
+                "http://127.0.0.1:3773/?page=chat",
+            ] {
+                assert!(
+                    patterns
+                        .iter()
+                        .any(|pattern| pattern.test(&url.parse().unwrap())),
+                    "{} rejects {url}",
+                    capability["identifier"]
+                );
+            }
+            assert!(!patterns
+                .iter()
+                .any(|pattern| pattern.test(&"file:///tmp/example".parse().unwrap())));
+        }
+    }
+
+    #[test]
+    fn navigation_presentation_has_only_its_scoped_remote_acknowledgement_permission() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("tauri.conf.json")).unwrap();
+        let caps = config["app"]["security"]["capabilities"]
+            .as_array()
+            .unwrap();
+        let grants: Vec<_> = caps
+            .iter()
+            .filter(|cap| {
+                cap["permissions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|permission| permission == "allow-navigation-presented")
+            })
+            .collect();
+        assert_eq!(grants.len(), 1);
+        assert_eq!(grants[0]["windows"], serde_json::json!(["dashboard"]));
+        assert_eq!(
+            grants[0]["permissions"],
+            serde_json::json!(["allow-navigation-presented"])
+        );
+        assert_eq!(grants[0]["local"], false);
     }
 
     #[test]

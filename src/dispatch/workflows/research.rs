@@ -51,6 +51,7 @@ pub(crate) fn research(
             last_failure_class: None,
             mode: kind.as_str(),
             requested_backend: config::canonical_backend_name(&args.backend),
+            requested_instance: args.backend_instance.as_deref(),
             requested_model: args.model.as_deref(),
             recommended_backend: None,
             recommended_model: None,
@@ -61,7 +62,7 @@ pub(crate) fn research(
         None,
         ledger,
     )?;
-    apply_route_to_ledger(ledger, &route);
+    apply_route_to_ledger(ledger, &route)?;
     preflight_identity(profile, &route.identity)?;
     let llm = resolve_llm(
         cfg,

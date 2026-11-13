@@ -6,48 +6,92 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
+/// Per stream, bound both buffered input and redacted output. A backend can
+/// produce an endless line; never split it and risk exposing a partial secret.
+pub(crate) const MAX_CAPTURE_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const INCOMPLETE_CAPTURE_EXTENSION: &str = "capture-incomplete";
+pub(crate) const LIMIT_NOTICE: &str =
+    "\nGAH: output capture exceeded the 16 MiB per-stream limit; remaining output omitted.\n";
+
 /// Append `reader` to `path` one redacted line at a time, sending a progress
 /// tick after each read. Dropping the receiver abandons the copy: the thread
 /// discards its partial line and closes `reader` at its next read.
+/// Returns true only when EOF was captured completely. After the size limit,
+/// continue draining without retaining bytes so the child cannot block on its pipe.
 pub(crate) fn copy_stream_to_file<R: Read + Send + 'static>(
     mut reader: R,
     path: PathBuf,
-    progress_tx: Option<mpsc::Sender<()>>,
-) -> thread::JoinHandle<()> {
+    progress_tx: Option<mpsc::SyncSender<()>>,
+) -> thread::JoinHandle<bool> {
     thread::spawn(move || {
         let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) else {
-            return;
+            return false;
         };
         let mut buf = [0_u8; 8192];
         let mut pending = Vec::new();
-        while let Ok(read) = reader.read(&mut buf) {
+        let mut input_bytes = 0usize;
+        let mut written = 0usize;
+        let mut complete = true;
+        loop {
+            let read = match reader.read(&mut buf) {
+                Ok(read) => read,
+                Err(_) => return false,
+            };
             if read == 0 {
                 break;
             }
-            pending.extend_from_slice(&buf[..read]);
-            while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
-                let line: Vec<_> = pending.drain(..=newline).collect();
-                let text = String::from_utf8_lossy(&line);
-                if file
-                    .write_all(crate::redact::redact(&text).as_bytes())
-                    .is_err()
-                {
-                    return;
+            if complete {
+                input_bytes += read;
+                if input_bytes > MAX_CAPTURE_BYTES {
+                    complete = false;
+                } else {
+                    // Scan only new bytes, not the entire unfinished line on
+                    // every read (which made long lines quadratic to process).
+                    for part in buf[..read].split_inclusive(|byte| *byte == b'\n') {
+                        pending.extend_from_slice(part);
+                        if part.ends_with(b"\n") {
+                            let text = crate::redact::redact(&String::from_utf8_lossy(&pending));
+                            if text.len() > MAX_CAPTURE_BYTES - written {
+                                complete = false;
+                                break;
+                            }
+                            if file.write_all(text.as_bytes()).is_err() {
+                                return false;
+                            }
+                            written += text.len();
+                            pending.clear();
+                        }
+                    }
+                }
+                if !complete {
+                    pending.clear();
+                    if file.write_all(LIMIT_NOTICE.as_bytes()).is_err() {
+                        return false;
+                    }
                 }
             }
             let _ = file.flush();
             // The caller dropped its receiver: it stopped collecting. Keep
             // nothing more and close the read end, so an escaped writer gets
             // EPIPE instead of growing `pending` nobody will read.
-            if progress_tx.as_ref().is_some_and(|tx| tx.send(()).is_err()) {
-                return;
+            if progress_tx.as_ref().is_some_and(|tx| {
+                matches!(tx.try_send(()), Err(mpsc::TrySendError::Disconnected(())))
+            }) {
+                return false;
             }
         }
-        if !pending.is_empty() {
-            let text = String::from_utf8_lossy(&pending);
-            let _ = file.write_all(crate::redact::redact(&text).as_bytes());
-            let _ = file.flush();
+        if complete && !pending.is_empty() {
+            let text = crate::redact::redact(&String::from_utf8_lossy(&pending));
+            if text.len() > MAX_CAPTURE_BYTES - written {
+                complete = false;
+                if file.write_all(LIMIT_NOTICE.as_bytes()).is_err() {
+                    return false;
+                }
+            } else if file.write_all(text.as_bytes()).is_err() {
+                return false;
+            }
         }
+        file.flush().is_ok() && complete
     })
 }
 
@@ -64,7 +108,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("out.log");
         let input = format!("héllo {SECRET}\ntail {SECRET}");
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(1);
 
         copy_stream_to_file(std::io::Cursor::new(input), path.clone(), Some(tx))
             .join()
@@ -77,10 +121,53 @@ mod tests {
     }
 
     #[test]
+    fn oversized_unfinished_line_is_drained_without_emitting_a_partial_secret() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("out.log");
+        let input = std::io::repeat(b'x')
+            .take((MAX_CAPTURE_BYTES - SECRET.len() / 2) as u64)
+            .chain(std::io::Cursor::new(format!("{SECRET}\nignored tail\n")));
+        let (tx, rx) = mpsc::sync_channel(1);
+        let copier = copy_stream_to_file(input, path.clone(), Some(tx));
+        assert!(wait_until(Instant::now() + Duration::from_secs(5), || {
+            copier.is_finished()
+        }));
+        assert!(!copier.join().unwrap());
+        let log = fs::read_to_string(path).unwrap();
+        assert!(log.contains("output capture exceeded"));
+        assert!(log.len() < 256);
+        assert!(!log.contains("sk-") && !log.contains("xxxx"));
+        assert_eq!(
+            rx.try_iter().count(),
+            1,
+            "progress is coalesced even when not consumed"
+        );
+    }
+
+    #[test]
+    fn an_undrained_progress_receiver_does_not_block_or_accumulate_ticks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("out.log");
+        let mut bytes = vec![b'x'; 2 * 1024 * 1024];
+        for line in bytes.chunks_mut(8192) {
+            *line.last_mut().unwrap() = b'\n';
+        }
+        let (tx, rx) = mpsc::sync_channel(1);
+        let copier =
+            copy_stream_to_file(std::io::Cursor::new(bytes.clone()), path.clone(), Some(tx));
+        assert!(wait_until(Instant::now() + Duration::from_secs(10), || {
+            copier.is_finished()
+        }));
+        assert!(copier.join().unwrap());
+        assert_eq!(fs::read(path).unwrap(), bytes);
+        assert_eq!(rx.try_iter().count(), 1);
+    }
+
+    #[test]
     fn dropped_receiver_stops_a_newline_free_endless_stream() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("out.log");
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(1);
         let copier = copy_stream_to_file(std::io::repeat(b'x'), path.clone(), Some(tx));
 
         drop(rx);

@@ -548,7 +548,7 @@ mod tests {
     fn real_curl_transport_is_hermetic_secret_safe_and_fail_open() {
         const TEST_NAME: &str =
             "memory_gateway::tests::real_curl_transport_is_hermetic_secret_safe_and_fail_open";
-        if std::env::var_os("GAH_MEMORY_CURL_TEST_CHILD").is_none() {
+        if std::env::var_os("PARASAUR_MEMORY_CURL_TEST_CHILD").is_none() {
             for env_key in [true, false] {
                 let home = tempfile::tempdir().unwrap();
                 crate::installer::files::env_set(
@@ -565,8 +565,8 @@ mod tests {
                 command
                     .args(["--exact", TEST_NAME, "--nocapture"])
                     .env("HOME", home.path())
-                    .env("GAH_MEMORY_CURL_TEST_CHILD", "1")
-                    .env("GAH_NODE_ROLE", "central")
+                    .env("PARASAUR_MEMORY_CURL_TEST_CHILD", "1")
+                    .env("PARASAUR_NODE_ROLE", "central")
                     .env("TDAI_GATEWAY_URL", "https://memory.test");
                 if env_key {
                     command.env("TDAI_GATEWAY_API_KEY", "super-secret-token");
@@ -729,11 +729,11 @@ esac
     #[test]
     fn worker_capture_uses_central_relay_and_coordinator_token() {
         // Exercise real environment precedence in a child so other tests keep their environment.
-        if std::env::var_os("GAH_MEMORY_ROLE_TEST_CHILD").is_none() {
+        if std::env::var_os("PARASAUR_MEMORY_ROLE_TEST_CHILD").is_none() {
             let result = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "memory_gateway::tests::worker_capture_uses_central_relay_and_coordinator_token", "--nocapture"])
-                .env("GAH_MEMORY_ROLE_TEST_CHILD", "1")
-                .env("GAH_NODE_ROLE", "worker")
+                .env("PARASAUR_MEMORY_ROLE_TEST_CHILD", "1")
+                .env("PARASAUR_NODE_ROLE", "worker")
                 .env("COORDINATOR_TOKEN", "worker-token")
                 .env("TDAI_GATEWAY_URL", "https://wrong-gateway.test")
                 .env("TDAI_GATEWAY_API_KEY", "wrong-gateway-key")

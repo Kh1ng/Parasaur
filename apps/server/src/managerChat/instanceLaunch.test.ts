@@ -18,7 +18,7 @@ test('named ACP launches retain owner HOME for secret lookup and use local insta
         CLAUDE_CONFIG_DIR: '/isolated/work/.claude', XDG_DATA_HOME: '/isolated/work/data',
         OPENCODE_CONFIG_CONTENT: '{"default_agent":"gah-implementer"}' }
     });
-    assert.deepEqual(result.args, ['config', 'exec-backend-instance', '--profile', 'profile', '--instance', `${runner}-work`,
+    assert.deepEqual(result.args, ['config', 'exec-backend-instance', '--profile', 'profile', '--instance', `${runner}-work`, '--chat-environment',
       ...(bridged ? ['--acp-bridge', '/bridges/acp.js', '--'] : ['--', 'acp'])]);
     assert.equal(result.env?.HOME, undefined);
     assert.equal(result.env?.CODEX_HOME, undefined);
@@ -38,7 +38,7 @@ test('named headless launches preserve stdin bridge and model metadata without c
       spawnEnv: async () => ({ HOME: '/isolated/work', LLM_BASE_URL: 'https://inference.example/v1' })
     });
     const args = spec.turnArgs({ model: 'openai/gpt' });
-    assert.deepEqual(args.slice(1), ['config', 'exec-backend-instance', '--profile', 'profile', '--instance', `${runner}-work`,
+    assert.deepEqual(args.slice(1), ['config', 'exec-backend-instance', '--profile', 'profile', '--instance', `${runner}-work`, '--chat-environment',
       '--model', 'openai/gpt', ...(runner === 'vibe' ? ['--adapter-program', '/tools/python', '--', '-c', 'fixed_stdin_bridge'] : ['--', '--print'])]);
     assert.equal(spec.encodeStdin('private transcript'), 'private transcript');
     assert.ok(!args.includes('private transcript'));

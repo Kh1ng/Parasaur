@@ -31,7 +31,7 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=%h
 Environment=HOME=%h
-Environment=GAH_CONFIG=%h/.config/gah/config.toml
+Environment=PARASAUR_CONFIG=%h/.config/gah/config.toml
 Environment="PATH=@PATH@"
 EnvironmentFile=-/etc/gah/server.env
 ExecStart="@GAH@" watchdog-check

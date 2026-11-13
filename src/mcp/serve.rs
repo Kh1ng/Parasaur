@@ -180,12 +180,12 @@ async fn require_bearer(
 /// Serves MCP over streamable HTTP at `http://host:port/mcp` until the
 /// process is stopped.
 ///
-/// The listener refuses to start without `GAH_SERVER_TOKEN`: the endpoint
+/// The listener refuses to start without `PARASAUR_SERVER_TOKEN`: the endpoint
 /// can mutate GAH, so it is never offered unauthenticated, even on loopback.
 /// `host` must be a literal IP address.
 pub async fn run_http(config: &McpConfig, host: &str, port: u16) -> Result<()> {
     let Some(token) = config.server_token.as_deref() else {
-        bail!("the MCP HTTP listener requires GAH_SERVER_TOKEN; clients must send it as a bearer token");
+        bail!("the MCP HTTP listener requires PARASAUR_SERVER_TOKEN; clients must send it as a bearer token");
     };
     let ip: IpAddr = host.parse().with_context(|| {
         format!("invalid bind host \"{host}\": expected a literal IPv4 or IPv6 address")

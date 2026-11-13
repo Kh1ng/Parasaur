@@ -48,7 +48,7 @@ GitLab auto-merge waits for a successful current-head pipeline. The next MR read
 The forge does not reproduce provider permissions, remote Git objects, network behavior, or full jq.
 
 The state clock starts at construction time and stays fixed unless the test changes `now`.
-Commands also honor `GAH_TEST_NOW`, the subprocess clock from #1515.
+Commands also honor `PARASAUR_TEST_NOW`, the subprocess clock from #1515.
 
 For a deterministic competing actor, `effects` applies JSON-path replacements before the specified matching API call.
 Optional `argv_contains` entries restrict the match to commands that contain those arguments.

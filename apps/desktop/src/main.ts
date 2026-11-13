@@ -49,6 +49,11 @@ const central = document.querySelector<HTMLInputElement>('#central-url')!;
 const distribution = document.querySelector<HTMLInputElement>('#wsl-distribution')!;
 const error = document.querySelector<HTMLElement>('#error')!;
 const status = document.querySelector<HTMLElement>('#status')!;
+const timeoutNotice = document.querySelector<HTMLElement>('#connection-timeout')!;
+if (new URLSearchParams(location.search).get('connection') === 'timeout') {
+  timeoutNotice.hidden = false;
+  timeoutNotice.focus();
+}
 const dock = document.querySelector<HTMLInputElement>('#show-dock')!;
 const launchWindow = document.querySelector<HTMLInputElement>('#launch-window')!;
 const tray = document.querySelector<HTMLInputElement>('#show-tray')!;
@@ -197,12 +202,27 @@ async function refreshSetup(): Promise<boolean> {
   return !pending;
 }
 
-async function perform(action: () => Promise<void>) {
-  error.textContent = '';
-  const buttons = [...document.querySelectorAll('button')].filter(button => !button.closest('#provider-connections, #mistral-section'));
-  buttons.forEach((button) => { button.disabled = true; });
-  try { await action(); } catch (err) { error.textContent = String(err); }
-  finally { buttons.forEach((button) => { button.disabled = false; }); }
+const busyButtons = new WeakMap<HTMLButtonElement, { count: number; previouslyDisabled: boolean }>();
+async function perform(action: () => Promise<void>, scope: 'all' | 'setup' = 'all') {
+  if (scope === 'all') error.textContent = '';
+  const selector = scope === 'setup' ? '#setup-section button, #role-section button' : 'button';
+  const buttons = [...document.querySelectorAll<HTMLButtonElement>(selector)].filter(button => !button.closest('#provider-connections, #mistral-section'));
+  buttons.forEach(button => {
+    const busy = busyButtons.get(button) ?? { count: 0, previouslyDisabled: button.disabled };
+    busy.count += 1;
+    busyButtons.set(button, busy);
+    button.disabled = true;
+  });
+  try { await action(); } catch (err) {
+    if (scope === 'setup') document.querySelector('#setup-state')!.textContent = 'This computer’s setup could not be checked. Select Check again to retry.';
+    else error.textContent = String(err);
+  } finally {
+    buttons.forEach(button => {
+      const busy = busyButtons.get(button)!;
+      busy.count -= 1;
+      if (!busy.count) { button.disabled = busy.previouslyDisabled; busyButtons.delete(button); }
+    });
+  }
 }
 
 async function refresh() {
@@ -228,11 +248,13 @@ async function connect() {
 }
 
 async function refreshOwnerCredential() {
-  if (!central.value.trim()) {
+  const origin = central.value.trim();
+  if (!origin) {
     ownerState.textContent = 'Save a central node address first.';
     return;
   }
-  const saved = await invoke<boolean>('owner_credential_status', { origin: central.value.trim() });
+  const saved = await invoke<boolean>('owner_credential_status', { origin });
+  if (central.value.trim() !== origin) return;
   ownerState.textContent = saved
     ? 'Owner access is saved in this computer\'s credential vault.'
     : 'No owner token is saved for this central origin.';
@@ -329,22 +351,30 @@ for (const role of ['central', 'worker'] as const) {
     void perform(async () => { showRole(await invoke<RoleStatus>('set_node_role', { role })); });
   });
 }
-void perform(async () => {
-  const settings = await invoke<Settings>('desktop_settings');
-  central.value = settings.central_url;
-  await refreshOwnerCredential();
-  document.querySelector<HTMLButtonElement>('#back')!.hidden = !settings.central_url;
-  distribution.value = settings.wsl_distribution;
-  document.querySelector<HTMLElement>('#dock-label')!.hidden = !isMac;
-  showPresence(settings.presence);
-  if (navigator.userAgent.includes('Windows')) {
-    distribution.hidden = false;
-    document.querySelector<HTMLElement>('#wsl-label')!.hidden = false;
-  }
-  const role = await invoke<RoleStatus>('node_role_status');
-  showRole(role);
-  nodeRole = role.role;
-  // On Windows, setup and gah live in the selected WSL distribution.
-  await refreshSetup();
-  await loadDesktopUpdate();
-});
+async function initialize() {
+  let loaded = false;
+  await perform(async () => {
+    const settings = await invoke<Settings>('desktop_settings');
+    central.value = settings.central_url;
+    document.querySelector<HTMLButtonElement>('#back')!.hidden = !settings.central_url;
+    distribution.value = settings.wsl_distribution;
+    document.querySelector<HTMLElement>('#dock-label')!.hidden = !isMac;
+    showPresence(settings.presence);
+    if (navigator.userAgent.includes('Windows')) {
+      distribution.hidden = false;
+      document.querySelector<HTMLElement>('#wsl-label')!.hidden = false;
+    }
+    loaded = true;
+  });
+  if (!loaded) return;
+  // Read-only checks must not disable the connection needed to escape an outage.
+  void refreshOwnerCredential().catch(() => { ownerState.textContent = 'Owner access could not be checked on this computer.'; });
+  void loadDesktopUpdate().catch(() => { document.querySelector('#desktop-update-status')!.textContent = 'The desktop update check is unavailable.'; });
+  await perform(async () => {
+    const role = await invoke<RoleStatus>('node_role_status');
+    showRole(role);
+    nodeRole = role.role;
+    await refreshSetup();
+  }, 'setup');
+}
+void initialize();

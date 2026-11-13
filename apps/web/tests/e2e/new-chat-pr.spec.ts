@@ -1,7 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { openProjects } from './helpers/navigation.js';
 
-const MOCK_BASE_URL = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+const MOCK_BASE_URL = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
 
 // Coverage for issue #1033: the New Chat modal's PR tab lists the project's
 // open PRs (author, draft/review state) and starts a read-only chat seeded

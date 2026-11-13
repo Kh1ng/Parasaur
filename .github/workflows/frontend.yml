@@ -14,6 +14,21 @@ permissions:
   contents: read
 
 jobs:
+  dev-launcher:
+    name: Development launcher (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --test scripts/dev-runner.test.mjs
+      - name: Check prebuilt worker prerequisites
+        run: node --test scripts/prebuilt-worker-prerequisites.test.mjs
+
   build:
     runs-on: ubuntu-latest
     # The CI node job builds web assets, tests the server and uploads gah-web-dist.
@@ -43,7 +58,7 @@ jobs:
         run: npm run typecheck:mock --workspace=apps/server
 
   # Hermetic Playwright e2e + component tests (issue #636). The webServer in
-  # playwright.config.ts starts a fixture-backed apps/server (GAH_BINARY ->
+  # playwright.config.ts starts a fixture-backed apps/server (PARASAUR_BINARY ->
   # tests/fixtures/gah) plus the vite dev server, so this runs on a runner
   # with no gah binary and no gah config. Uses the same Node 20 toolchain as
   # the build job; Playwright downloads its own chromium.
@@ -70,6 +85,9 @@ jobs:
 
       - name: Check bundled desktop Settings
         run: node scripts/test-desktop-settings.mjs
+
+      - name: Check native dashboard load recovery
+        run: node --test scripts/dashboard-recovery.test.mjs scripts/navigation-presentation.test.mjs
 
       - name: Run unit tests
         run: npm run test:unit --workspace=apps/web

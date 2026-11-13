@@ -126,7 +126,7 @@ fn authentication_error_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r"(?i)(invalid api key|api key (?:is )?(?:invalid|expired|revoked)|missing [A-Z0-9_-]*api key|authentication failed|not authenticated|not logged in|(?:access |refresh |oauth )?token (?:has |is )?expired|\b(?:http|status)(?: code)?[: ]+40[13]\b|\b40[13] (?:unauthorized|forbidden)\b)",
+            r"(?i)(invalid api key|api key (?:is )?(?:invalid|expired|revoked)|missing [A-Z0-9_-]*api key|authentication failed|failed to authenticate|not authenticated|not logged in|oauth session (?:has |is )?expired|(?:access |refresh |oauth )?token (?:has |is )?expired|\b(?:http|status)(?: code)?[: ]+40[13]\b|\b40[13] (?:unauthorized|forbidden)\b)",
         )
         .unwrap()
     })
@@ -625,6 +625,19 @@ mod tests {
         include_str!("../tests/fixtures/quota-logs/opencode_hy3_rate_limit.log");
     const VIBE_INVALID_API_KEY: &str =
         include_str!("../tests/fixtures/quota-logs/vibe_invalid_api_key.txt");
+    const CLAUDE_OAUTH_SESSION_EXPIRED: &str =
+        include_str!("../tests/fixtures/quota-logs/claude_oauth_session_expired.txt");
+
+    /// A stale Claude login must read as a login failure, so routing falls
+    /// back instead of retrying the same route.
+    #[test]
+    fn claude_expired_oauth_session_is_an_authentication_error() {
+        let now = utc(2026, Month::January, 1, 0, 0);
+        let parsed = parse("claude", CLAUDE_OAUTH_SESSION_EXPIRED, now).unwrap();
+        assert_eq!(parsed.kind, FailureKind::AuthenticationError);
+        assert!(!parsed.retryable);
+        assert_eq!(parsed.confidence, Confidence::High);
+    }
 
     // ── Codex: full date+time, no timezone (openai/codex #12299) ───────────
 

@@ -48,7 +48,7 @@ For an isolated installation check, use a temporary directory:
 gah setup memory-hooks --tool claude,codex --home-dir /tmp/gah-memory-check
 ```
 
-`--home-dir` selects the installation destination. Runtime gateway settings still belong to the account running the agent; this option does not switch accounts. `GAH_MEMORY_HOOK_CONFIG` can select an alternate gateway settings file.
+`--home-dir` selects the installation destination. Runtime gateway settings still belong to the account running the agent; this option does not switch accounts. `PARASAUR_MEMORY_HOOK_CONFIG` can select an alternate gateway settings file.
 
 The automated checks cover safe merges, repeat runs, malformed configuration, rollback, quoted paths, and missing or unavailable gateways. They use temporary files and mocked HTTP. They do not verify a new live session with every provider version; native hook contracts and transcript formats can change.
 

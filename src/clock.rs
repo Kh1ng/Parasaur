@@ -1,6 +1,6 @@
 //! Wall-clock source for expiry decisions and controller deadlines.
 //!
-//! `GAH_TEST_NOW` is process-local. Child processes receive it only when a
+//! `PARASAUR_TEST_NOW` is process-local. Child processes receive it only when a
 //! harness explicitly adds it to their command environment.
 //!
 //! Remaining host-clock reads outside this seam, excluding test fixtures:
@@ -84,10 +84,10 @@ thread_local! {
 
 /// Initialize the test clock before command dispatch starts.
 pub fn init() {
-    if let Ok(value) = std::env::var("GAH_TEST_NOW") {
-        eprintln!("WARNING: GAH_TEST_NOW is set in this gah process; it overrides wall-clock time and can freeze service cooldowns, claims, worker liveness, and controller deadlines. Remove it from production/service environment files.");
+    if let Ok(value) = std::env::var("PARASAUR_TEST_NOW") {
+        eprintln!("WARNING: PARASAUR_TEST_NOW is set in this gah process; it overrides wall-clock time and can freeze service cooldowns, claims, worker liveness, and controller deadlines. Remove it from production/service environment files.");
         if OffsetDateTime::parse(&value, &Rfc3339).is_err() {
-            eprintln!("WARNING: GAH_TEST_NOW is not valid RFC3339; ignoring the override.");
+            eprintln!("WARNING: PARASAUR_TEST_NOW is not valid RFC3339; ignoring the override.");
         }
     }
     let _ = env_now();
@@ -222,7 +222,7 @@ pub fn wait_for(duration: Duration, shutdown_requested: impl Fn() -> bool) -> bo
 
 fn env_now() -> Option<OffsetDateTime> {
     *ENV_NOW.get_or_init(|| {
-        std::env::var("GAH_TEST_NOW")
+        std::env::var("PARASAUR_TEST_NOW")
             .ok()
             .and_then(|value| OffsetDateTime::parse(&value, &Rfc3339).ok())
             .map(|value| value.to_offset(UtcOffset::UTC))

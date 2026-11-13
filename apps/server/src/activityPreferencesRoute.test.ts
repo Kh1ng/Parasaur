@@ -15,8 +15,8 @@ import { createServer } from './server.js';
 test('notification preferences require authentication, allow a paired phone, and save idempotently', async () => {
   const root = mkdtempSync(join(tmpdir(), 'gah-preference-route-'));
   const saved = { ...process.env };
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(root, 'identity.json');
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(root, 'identity.json');
   resetCachedCoordinatorIdentity();
   const access = new DeviceAccess(join(root, 'devices.json'));
   const feed = new ActivityFeed(join(root, 'activity.jsonl'));

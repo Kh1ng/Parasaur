@@ -10,8 +10,10 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 mod checks;
+mod spend;
 use checks::{build_freshness, build_quota_checks};
 pub use checks::{QuotaCheck, QuotaCheckStatus};
+pub use spend::QuotaAccountSpend;
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct UsageSummary {
@@ -65,6 +67,9 @@ pub struct QuotaSnapshot {
     pub profile: ProfileIdentity,
     pub since: String,
     pub usage: UsageSummary,
+    /// Recorded attempt costs by exact execution identity. Unattributed history
+    /// remains in a separate null-instance row, never assigned to an account.
+    pub account_spend: Vec<QuotaAccountSpend>,
     pub candidates: Vec<QuotaCandidateStatus>,
 }
 
@@ -361,6 +366,7 @@ pub fn build_snapshot(
         },
         since: since.to_string(),
         usage,
+        account_spend: spend::summarize(&entries),
         candidates,
     })
 }

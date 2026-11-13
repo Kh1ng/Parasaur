@@ -67,8 +67,8 @@ test('networkExposureWarning is silent on loopback', () => {
 test('networkExposureWarning explains remote authentication and explicit compatibility mode', () => {
   const defaultWarning = networkExposureWarning('0.0.0.0');
   assert.ok(defaultWarning);
-  assert.match(defaultWarning, /requires COORDINATOR_TOKEN\. TLS is required unless GAH_ALLOW_INSECURE_HTTP=1/);
-  assert.match(defaultWarning, /GAH_WS_AUTH_MODE=trusted_lan/);
+  assert.match(defaultWarning, /requires COORDINATOR_TOKEN\. TLS is required unless PARASAUR_ALLOW_INSECURE_HTTP=1/);
+  assert.match(defaultWarning, /PARASAUR_WS_AUTH_MODE=trusted_lan/);
   assert.match(defaultWarning, /0\.0\.0\.0/);
 
   const interfaceWarning = networkExposureWarning('10.0.0.5');

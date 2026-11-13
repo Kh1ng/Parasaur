@@ -15,6 +15,7 @@ fn request<'a>(mode: &'a str, backend: &'a str, model: Option<&'a str>) -> Route
         last_failure_class: None,
         mode,
         requested_backend: backend,
+        requested_instance: None,
         requested_model: model,
         recommended_backend: None,
         recommended_model: None,

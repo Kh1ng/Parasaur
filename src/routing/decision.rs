@@ -27,6 +27,8 @@ use time::OffsetDateTime;
 #[cfg(test)]
 mod allowed_models_tests;
 #[cfg(test)]
+mod instance_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_disabled;
@@ -56,7 +58,11 @@ pub fn decide_with_state(
         crate::clock::now_utc(),
         |backend| runner::backend_available_for_profile(profile, backend),
     )?;
-    Ok(with_resolved_executable(profile, decision))
+    Ok(if runtime.remote_instances.is_some() {
+        decision
+    } else {
+        with_resolved_executable(profile, decision)
+    })
 }
 
 /// Route an implementation request with deterministic task-class rules. A
@@ -82,7 +88,11 @@ pub fn decide_for_task_with_state(
         },
         |backend| runner::backend_available_for_profile(profile, backend),
     )?;
-    Ok(with_resolved_executable(profile, decision))
+    Ok(if runtime.remote_instances.is_some() {
+        decision
+    } else {
+        with_resolved_executable(profile, decision)
+    })
 }
 
 fn with_resolved_executable(profile: &Profile, mut decision: RouteDecision) -> RouteDecision {
@@ -340,6 +350,9 @@ where
     let requested_backend = req.requested_backend.to_string();
     let requested_model = req.requested_model.map(str::to_string);
     let effective_routing = profile.effective_routing(defaults);
+    if req.requested_instance.is_some() && req.requested_backend == "auto" {
+        anyhow::bail!("an exact backend instance requires an explicit backend");
+    }
 
     // A restriction that cannot be applied as written stops routing: letting
     // the job run unrestricted is the one outcome the operator ruled out.
@@ -353,6 +366,13 @@ where
         // backend args pin, so that is the model the list is asked about.
         let pinned_model = match req.requested_backend {
             _ if req.requested_model.is_some() || allowed_models.is_none() => None,
+            _ if req.requested_instance.is_some() => req
+                .requested_instance
+                .and_then(|id| effective_routing.backend_instances.get(id))
+                .and_then(|instance| {
+                    (instance.supported_models.len() == 1)
+                        .then(|| instance.supported_models[0].clone())
+                }),
             "codex" => runner::extract_model_from_backend_args("codex", &profile.codex_args),
             "opencode" => {
                 runner::extract_model_from_backend_args("opencode", &profile.opencode_args)
@@ -621,22 +641,27 @@ where
         }
     }
 
-    let primary =
-        configured_route_candidate(&effective_routing, req.mode, &backend, model.as_deref())
-            .unwrap_or(RouteCandidate {
-                identity: crate::execution_identity::ExecutionIdentity::legacy_candidate(
-                    backend.clone(),
-                    model.clone(),
-                    None::<String>,
-                ),
-                priority: 0,
-                included_in_quota: false,
-                marginal_cost_usd: None,
-                quota_usage_percent: None,
-                quota_days_remaining: None,
-                requires_approval: false,
-                original_order: 0,
-            });
+    let primary = configured_route_candidate(
+        &effective_routing,
+        req.mode,
+        &backend,
+        model.as_deref(),
+        None,
+    )
+    .unwrap_or(RouteCandidate {
+        identity: crate::execution_identity::ExecutionIdentity::legacy_candidate(
+            backend.clone(),
+            model.clone(),
+            None::<String>,
+        ),
+        priority: 0,
+        included_in_quota: false,
+        marginal_cost_usd: None,
+        quota_usage_percent: None,
+        quota_days_remaining: None,
+        requires_approval: false,
+        original_order: 0,
+    });
     let candidates = auto_candidates(&effective_routing, req.mode, &primary);
     let candidates_for_diagnostics = candidates.clone();
     let (selected, skipped) = pick_route_candidate(
@@ -707,33 +732,79 @@ where
         || !runtime.attempted.is_empty()
         || !runtime.dispatch_attempted.is_empty();
 
+    if let Some(id) = req.requested_instance {
+        let instance = effective_routing.backend_instances.get(id).ok_or_else(|| {
+            anyhow::anyhow!("backend instance '{id}' is not declared on this node")
+        })?;
+        if instance
+            .logical_backend
+            .as_deref()
+            .unwrap_or(&instance.runner_kind)
+            != requested_backend
+        {
+            anyhow::bail!("backend instance '{id}' does not run backend '{requested_backend}'");
+        }
+    }
+
     let effective_model = requested_model.clone().or_else(|| {
         let mut models = effective_routing
             .backend_instances
-            .values()
-            .filter(|instance| {
-                instance
-                    .logical_backend
-                    .as_deref()
-                    .unwrap_or(instance.runner_kind.as_str())
-                    == requested_backend
+            .iter()
+            .filter(|(id, instance)| {
+                req.requested_instance
+                    .is_none_or(|selected| selected == id.as_str())
+                    && instance
+                        .logical_backend
+                        .as_deref()
+                        .unwrap_or(instance.runner_kind.as_str())
+                        == requested_backend
             })
-            .flat_map(|instance| instance.supported_models.iter());
+            .flat_map(|(_, instance)| instance.supported_models.iter());
         let first = models.next()?.clone();
         models.all(|model| model == &first).then_some(first)
     });
+    if let Some(id) = req.requested_instance {
+        let instance = &effective_routing.backend_instances[id];
+        if effective_model.as_ref().is_some_and(|model| {
+            !instance.supported_models.is_empty() && !instance.supported_models.contains(model)
+        }) {
+            anyhow::bail!("backend instance '{id}' does not support the selected model");
+        }
+        let candidate = crate::config::CandidateConfig {
+            backend: requested_backend.clone(),
+            instance: Some(id.to_string()),
+            model: effective_model.clone(),
+            ..Default::default()
+        };
+        if !effective_routing.allows_candidate(req.mode, &candidate) {
+            anyhow::bail!(
+                "backend instance '{id}' and model are not in routing.allowed_models for {} jobs",
+                req.mode
+            );
+        }
+    }
     let primary = configured_route_candidate(
         effective_routing,
         req.mode,
         &requested_backend,
         effective_model.as_deref(),
+        req.requested_instance,
     )
     .unwrap_or(RouteCandidate {
-        identity: crate::execution_identity::ExecutionIdentity::legacy_candidate(
-            requested_backend.clone(),
-            effective_model,
-            None::<String>,
-        ),
+        identity: if req.requested_instance.is_some() {
+            effective_routing.execution_identity_for_candidate(&crate::config::CandidateConfig {
+                backend: requested_backend.clone(),
+                instance: req.requested_instance.map(str::to_string),
+                model: effective_model,
+                ..Default::default()
+            })
+        } else {
+            crate::execution_identity::ExecutionIdentity::legacy_candidate(
+                requested_backend.clone(),
+                effective_model,
+                None::<String>,
+            )
+        },
         priority: 0,
         included_in_quota: false,
         marginal_cost_usd: None,
@@ -905,7 +976,17 @@ where
         .executable
         .as_deref()
         .is_some_and(runner::is_executable_path);
-    let executable_available = if identity.explicit_instance {
+    let executable_available = if let Some(instances) = &runtime.remote_instances {
+        instances
+            .get(&identity.backend_instance)
+            .is_some_and(|instance| {
+                instance.backend == backend
+                    && (instance.models.is_empty()
+                        || model.is_some_and(|model| {
+                            instance.models.iter().any(|supported| supported == model)
+                        }))
+            })
+    } else if identity.explicit_instance {
         configured_executable_available
     } else {
         configured_executable_available || backend_available(backend)
@@ -924,7 +1005,32 @@ where
         return Ok(Some(skip));
     }
 
-    let decision = availability::availability_for_identity(state_path, identity, now)?;
+    let mut decision = availability::availability_for_identity(state_path, identity, now)?;
+    // A login block never expires, so nothing else notices the operator
+    // signing in again. The backend's own login check is the re-probe: it
+    // runs only while such a block stands, and only a positive answer lifts it.
+    if !decision.eligible && decision.reason == Some(availability::Reason::AuthenticationError) {
+        let mut blocked = identity.clone();
+        if blocked.executable.is_none() {
+            // A route's executable is resolved after it is chosen; candidates
+            // still being filtered have only the one on PATH to ask.
+            blocked.set_executable(crate::runner::resolve::resolve_executable_on_path(
+                &identity.runner_kind,
+            ));
+        }
+        if crate::auth_health::login_confirmed(&blocked) {
+            if decision.scope == Some(BlockScope::BackendWide) {
+                blocked.effective_model = None;
+            }
+            availability::record_available_for_identity(
+                state_path,
+                &blocked,
+                availability::Source::Reprobe,
+                now,
+            )?;
+            decision = availability::availability_for_identity(state_path, identity, now)?;
+        }
+    }
     if decision.eligible {
         let candidate_key = CandidateIdentity::from_execution_identity(identity);
         if exclude_attempted

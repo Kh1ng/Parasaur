@@ -95,12 +95,12 @@ CLI releases include separate `gah-mcp-server-linux-x86_64` and `gah-mcp-server-
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
-| `GAH_SERVER_URL` | Central server base URL. | `http://127.0.0.1:3773` |
-| `GAH_SERVER_TOKEN` | Coordinator token, sent as a bearer token. Do not send it over plain HTTP to a remote server. | none |
-| `GAH_PROFILE` | Profile for tools that accept one when a call names none. | `gah` |
+| `PARASAUR_SERVER_URL` | Central server base URL. | `http://127.0.0.1:3773` |
+| `PARASAUR_SERVER_TOKEN` | Coordinator token, sent as a bearer token. Do not send it over plain HTTP to a remote server. | none |
+| `PARASAUR_PROFILE` | Profile for tools that accept one when a call names none. | `gah` |
 
 - **stdio:** run `gah-mcp-server` with no arguments and point the MCP client at that command.
-- **Streamable HTTP:** run `gah-mcp-server --http`. The endpoint is `http://127.0.0.1:3774/mcp`. `--host` (or `GAH_MCP_HOST`) and `--port` (or `GAH_MCP_PORT`) change the bind address; the host must be a literal IP address. The listener requires `GAH_SERVER_TOKEN` to start, and every request must present that token as a bearer token. It serves plain HTTP, so a non-loopback bind belongs behind TLS or a private network.
+- **Streamable HTTP:** run `gah-mcp-server --http`. The endpoint is `http://127.0.0.1:3774/mcp`. `--host` (or `PARASAUR_MCP_HOST`) and `--port` (or `PARASAUR_MCP_PORT`) change the bind address; the host must be a literal IP address. The listener requires `PARASAUR_SERVER_TOKEN` to start, and every request must present that token as a bearer token. It serves plain HTTP, so a non-loopback bind belongs behind TLS or a private network.
 
 Mutating tools send a fresh `Idempotency-Key` per call and never retry. A non-2xx response is returned as a tool error carrying the server's message and HTTP status. `gah_dispatch` waits for the terminal event by default, for up to two hours; set `waitForCompletion=false` to return as soon as the session is created.
 
@@ -218,7 +218,7 @@ The same cookie authenticates HTTP and WebSocket connections at that server orig
 Cookie requests require exact browser origin checks; bearer clients retain their existing transport policy.
 
 The central stores only SHA-256 credential hashes and device metadata in `config/paired-devices.json`.
-Use `GAH_DEVICE_STORE_PATH` to choose another path. Atomic replacements use file mode `0600`.
+Use `PARASAUR_DEVICE_STORE_PATH` to choose another path. Atomic replacements use file mode `0600`.
 Use one central server process per device store. Protect its directory and backups as administrative state.
 Pending codes exist only in process memory. Restarting central invalidates those codes while retaining paired devices.
 
@@ -227,8 +227,8 @@ and rejects buffered WebSocket messages before dispatch. It does not cancel work
 A revoked or expired supplied cookie cannot fall back to local or trusted-LAN access.
 Direct loopback access without credentials remains an owner access path under the existing local trust policy.
 
-Use HTTPS through the existing local proxy or secure tunnel. Named server origins must appear in `GAH_WS_ALLOWED_ORIGINS`.
-With the explicit `GAH_ALLOW_INSECURE_HTTP=1` setting, pairing can use trusted LAN HTTP.
+Use HTTPS through the existing local proxy or secure tunnel. Named server origins must appear in `PARASAUR_WS_ALLOWED_ORIGINS`.
+With the explicit `PARASAUR_ALLOW_INSECURE_HTTP=1` setting, pairing can use trusted LAN HTTP.
 That mode issues a non-Secure cookie so browsers can actually use it, and confirmation displays the transport warning.
 HTTP exposes the cookie to the transport and other services on the same host; use HTTPS outside a trusted deployment.
 Proxy logs must omit pairing request bodies and credential headers, including `Cookie`, `Set-Cookie`, `Authorization`, and `Sec-WebSocket-Protocol`.

@@ -72,7 +72,7 @@ test('constant-time verifier fails closed and the hook secret never reaches agen
   assert.equal(verifyHookSecret('secret', 'secret'), true);
   for (const supplied of [undefined, '', 'short', 'secret-extra']) assert.equal(verifyHookSecret(supplied, 'secret'), false);
   assert.equal(verifyHookSecret('secret', ''), false);
-  assert.equal(agentChildEnv({}, { GAH_GITLAB_HOOK_SECRET: 'secret' }).GAH_GITLAB_HOOK_SECRET, undefined);
+  assert.equal(agentChildEnv({}, { PARASAUR_GITLAB_HOOK_SECRET: 'secret' }).PARASAUR_GITLAB_HOOK_SECRET, undefined);
 });
 
 test('GitLab 19 fixtures classify all triggers without using issue prose as policy', () => {
@@ -220,8 +220,8 @@ async function serve(app: express.Express) {
 }
 
 test('hook route authenticates independently, acknowledges before dispatch, and dedupes concurrent deliveries', async () => {
-  const saved = { GAH_GITLAB_HOOK_SECRET: process.env.GAH_GITLAB_HOOK_SECRET, GAH_GITLAB_PANEL_URL: process.env.GAH_GITLAB_PANEL_URL };
-  Object.assign(process.env, { GAH_GITLAB_HOOK_SECRET: 'hook-test', GAH_GITLAB_PANEL_URL: options.panelUrl });
+  const saved = { PARASAUR_GITLAB_HOOK_SECRET: process.env.PARASAUR_GITLAB_HOOK_SECRET, PARASAUR_GITLAB_PANEL_URL: process.env.PARASAUR_GITLAB_PANEL_URL };
+  Object.assign(process.env, { PARASAUR_GITLAB_HOOK_SECRET: 'hook-test', PARASAUR_GITLAB_PANEL_URL: options.panelUrl });
   let release: () => void = () => {};
   const pending = new Promise<void>(resolve => { release = resolve; });
   let calls = 0;
@@ -238,7 +238,7 @@ test('hook route authenticates independently, acknowledges before dispatch, and 
     assert.deepEqual(responses.map(r => r.status).sort(), [202, 204, 204, 204, 204]);
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(calls, 1, 'dispatch is still pending after all HTTP responses');
-    delete process.env.GAH_GITLAB_HOOK_SECRET;
+    delete process.env.PARASAUR_GITLAB_HOOK_SECRET;
     assert.equal((await send(fixture('note'), 'hook-test')).status, 401);
   } finally {
     release(); await server.close();
@@ -247,10 +247,10 @@ test('hook route authenticates independently, acknowledges before dispatch, and 
 });
 
 test('hook rate limiting permits 600 requests and rejects request 601 before authentication', async () => {
-  const saved = { GAH_GITLAB_HOOK_SECRET: process.env.GAH_GITLAB_HOOK_SECRET, GAH_GITLAB_PANEL_URL: process.env.GAH_GITLAB_PANEL_URL,
-    GAH_GITLAB_EVENTS_RATE_LIMIT: process.env.GAH_GITLAB_EVENTS_RATE_LIMIT };
-  Object.assign(process.env, { GAH_GITLAB_HOOK_SECRET: 'hook-test', GAH_GITLAB_PANEL_URL: options.panelUrl });
-  delete process.env.GAH_GITLAB_EVENTS_RATE_LIMIT;
+  const saved = { PARASAUR_GITLAB_HOOK_SECRET: process.env.PARASAUR_GITLAB_HOOK_SECRET, PARASAUR_GITLAB_PANEL_URL: process.env.PARASAUR_GITLAB_PANEL_URL,
+    PARASAUR_GITLAB_EVENTS_RATE_LIMIT: process.env.PARASAUR_GITLAB_EVENTS_RATE_LIMIT };
+  Object.assign(process.env, { PARASAUR_GITLAB_HOOK_SECRET: 'hook-test', PARASAUR_GITLAB_PANEL_URL: options.panelUrl });
+  delete process.env.PARASAUR_GITLAB_EVENTS_RATE_LIMIT;
   const app = express(); app.use(express.json());
   app.use('/api/integrations/gitlab', gitLabEventsRouter({ store: new GitLabEventStore(), dispatch: async () => {} }));
   const server = await serve(app);
@@ -276,9 +276,9 @@ test('hook rate limiting permits 600 requests and rejects request 601 before aut
 });
 
 test('hook rate limit is configurable per router', async () => {
-  const saved = { GAH_GITLAB_HOOK_SECRET: process.env.GAH_GITLAB_HOOK_SECRET,
-    GAH_GITLAB_EVENTS_RATE_LIMIT: process.env.GAH_GITLAB_EVENTS_RATE_LIMIT };
-  Object.assign(process.env, { GAH_GITLAB_HOOK_SECRET: 'hook-test', GAH_GITLAB_EVENTS_RATE_LIMIT: '2' });
+  const saved = { PARASAUR_GITLAB_HOOK_SECRET: process.env.PARASAUR_GITLAB_HOOK_SECRET,
+    PARASAUR_GITLAB_EVENTS_RATE_LIMIT: process.env.PARASAUR_GITLAB_EVENTS_RATE_LIMIT };
+  Object.assign(process.env, { PARASAUR_GITLAB_HOOK_SECRET: 'hook-test', PARASAUR_GITLAB_EVENTS_RATE_LIMIT: '2' });
   const app = express(); app.use(express.json());
   app.use('/api/integrations/gitlab', gitLabEventsRouter({ store: new GitLabEventStore(), dispatch: async () => {} }));
   const server = await serve(app);
@@ -297,8 +297,8 @@ test('hook rate limit is configurable per router', async () => {
 });
 
 test('an acknowledged event replays exactly once after restart before dispatch', async () => {
-  const saved = { GAH_GITLAB_HOOK_SECRET: process.env.GAH_GITLAB_HOOK_SECRET, GAH_GITLAB_PANEL_URL: process.env.GAH_GITLAB_PANEL_URL };
-  Object.assign(process.env, { GAH_GITLAB_HOOK_SECRET: 'hook-test', GAH_GITLAB_PANEL_URL: options.panelUrl });
+  const saved = { PARASAUR_GITLAB_HOOK_SECRET: process.env.PARASAUR_GITLAB_HOOK_SECRET, PARASAUR_GITLAB_PANEL_URL: process.env.PARASAUR_GITLAB_PANEL_URL };
+  Object.assign(process.env, { PARASAUR_GITLAB_HOOK_SECRET: 'hook-test', PARASAUR_GITLAB_PANEL_URL: options.panelUrl });
   const dir = mkdtempSync(join(tmpdir(), 'gitlab-restart-'));
   const path = join(dir, 'events.json');
   const h = harness();
@@ -340,8 +340,8 @@ test('an acknowledged event replays exactly once after restart before dispatch',
 });
 
 test('a full durable queue refuses new work with 503 but keeps fast authentication and ignore paths', async () => {
-  const saved = { GAH_GITLAB_HOOK_SECRET: process.env.GAH_GITLAB_HOOK_SECRET, GAH_GITLAB_PANEL_URL: process.env.GAH_GITLAB_PANEL_URL };
-  Object.assign(process.env, { GAH_GITLAB_HOOK_SECRET: 'hook-test', GAH_GITLAB_PANEL_URL: options.panelUrl });
+  const saved = { PARASAUR_GITLAB_HOOK_SECRET: process.env.PARASAUR_GITLAB_HOOK_SECRET, PARASAUR_GITLAB_PANEL_URL: process.env.PARASAUR_GITLAB_PANEL_URL };
+  Object.assign(process.env, { PARASAUR_GITLAB_HOOK_SECRET: 'hook-test', PARASAUR_GITLAB_PANEL_URL: options.panelUrl });
   const store = new GitLabEventStore(10, 100, Date.now, undefined, 1);
   const app = createServer({ gitLabEvents: { store, dispatch: async () => { assert.fail('worker stopped'); } } });
   app.locals.gitLabEventsQueue.stop();
@@ -431,8 +431,8 @@ test('bot actors require the bot allowlist and bot mention notes never dispatch'
 });
 
 test('unavailable receipts and panel configuration refuse work without dispatch', async () => {
-  const saved = { GAH_GITLAB_HOOK_SECRET: process.env.GAH_GITLAB_HOOK_SECRET, GAH_GITLAB_PANEL_URL: process.env.GAH_GITLAB_PANEL_URL };
-  Object.assign(process.env, { GAH_GITLAB_HOOK_SECRET: 'hook-test', GAH_GITLAB_PANEL_URL: options.panelUrl });
+  const saved = { PARASAUR_GITLAB_HOOK_SECRET: process.env.PARASAUR_GITLAB_HOOK_SECRET, PARASAUR_GITLAB_PANEL_URL: process.env.PARASAUR_GITLAB_PANEL_URL };
+  Object.assign(process.env, { PARASAUR_GITLAB_HOOK_SECRET: 'hook-test', PARASAUR_GITLAB_PANEL_URL: options.panelUrl });
   const dir = mkdtempSync(join(tmpdir(), 'gitlab-corrupt-receipts-'));
   const path = join(dir, 'events.json'); writeFileSync(path, '{');
   let calls = 0;
@@ -446,7 +446,7 @@ test('unavailable receipts and panel configuration refuse work without dispatch'
     const failed = await send(JSON.stringify(fixture('note')));
     assert.equal(failed.status, 503);
     assert.equal(record(await failed.json()).error, 'gitlab_event_store_unavailable');
-    process.env.GAH_GITLAB_PANEL_URL = 'https://user:password@panel.example.com/';
+    process.env.PARASAUR_GITLAB_PANEL_URL = 'https://user:password@panel.example.com/';
     assert.equal((await send(JSON.stringify(fixture('note')))).status, 503);
     assert.equal((await send('{')).status, 400);
     assert.equal((await send(JSON.stringify({ large: 'x'.repeat(102_400) }))).status, 413);
@@ -460,8 +460,8 @@ test('unavailable receipts and panel configuration refuse work without dispatch'
 
 test('queue recovery API requires owner API auth, retries once, and discards with receipt retained', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gitlab-recovery-api-'));
-  const saved = { COORDINATOR_TOKEN: process.env.COORDINATOR_TOKEN, GAH_MUTATION_STORE_PATH: process.env.GAH_MUTATION_STORE_PATH };
-  Object.assign(process.env, { COORDINATOR_TOKEN: 'owner-queue-test', GAH_MUTATION_STORE_PATH: join(dir, 'mutations') });
+  const saved = { COORDINATOR_TOKEN: process.env.COORDINATOR_TOKEN, PARASAUR_MUTATION_STORE_PATH: process.env.PARASAUR_MUTATION_STORE_PATH };
+  Object.assign(process.env, { COORDINATOR_TOKEN: 'owner-queue-test', PARASAUR_MUTATION_STORE_PATH: join(dir, 'mutations') });
   const path = join(dir, 'events.json');
   const store = new GitLabEventStore(10, 86_400_000, Date.now, path);
   for (const name of ['issue', 'note']) {
@@ -514,8 +514,8 @@ test('queue recovery API requires owner API auth, retries once, and discards wit
 
 test('dead-letter retry uses hook dispatch and a CLI read-only refusal makes zero provider writes', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gitlab-policy-retry-'));
-  const saved = { COORDINATOR_TOKEN: process.env.COORDINATOR_TOKEN, GAH_MUTATION_STORE_PATH: process.env.GAH_MUTATION_STORE_PATH };
-  Object.assign(process.env, { COORDINATOR_TOKEN: 'policy-retry-owner', GAH_MUTATION_STORE_PATH: join(dir, 'mutations') });
+  const saved = { COORDINATOR_TOKEN: process.env.COORDINATOR_TOKEN, PARASAUR_MUTATION_STORE_PATH: process.env.PARASAUR_MUTATION_STORE_PATH };
+  Object.assign(process.env, { COORDINATOR_TOKEN: 'policy-retry-owner', PARASAUR_MUTATION_STORE_PATH: join(dir, 'mutations') });
   const store = new GitLabEventStore();
   store.enqueue(delivery('issue'));
   for (let i = 0; i < 3; i++) { store.begin(event('issue').key); store.failed(event('issue').key); }

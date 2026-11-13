@@ -1404,7 +1404,7 @@ function GatewaySetupSection() {
         <p className="text-xs text-muted">
           Couldn't detect this host's Tailscale address (is <code className="font-mono">tailscale</code> installed and
           logged in?). Fill in the host yourself:{' '}
-          <code className="font-mono">GAH_GATEWAY_URL=http://&lt;this-host&gt;:{gatewayPort}</code>.
+          <code className="font-mono">PARASAUR_GATEWAY_URL=http://&lt;this-host&gt;:{gatewayPort}</code>.
         </p>
       ) : command ? (
         <div className="flex items-start gap-2">
@@ -1437,7 +1437,7 @@ function GatewaySetupSection() {
  * restart, see apps/server/src/adminUpdate.ts) until it reaches a terminal
  * status, tolerating the brief window where the server is down mid-restart,
  * then reloads the page once it's confirmed back up. Renders nothing when
- * the server has the feature disabled (GAH_ENABLE_ADMIN_UPDATE unset). */
+ * the server has the feature disabled (PARASAUR_ENABLE_ADMIN_UPDATE unset). */
 function DiagnosticsSection() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -20,9 +20,9 @@ use super::records::SCHEMA_VERSION;
 use crate::config::GahConfig;
 
 /// Destination for the telemetry repo that automatic post-attempt export
-/// writes into, same override convention as `GAH_LEDGER_PATH`/`GAH_EVENTS_PATH`.
+/// writes into, same override convention as `PARASAUR_LEDGER_PATH`/`PARASAUR_EVENTS_PATH`.
 pub fn export_repo_path(cfg: &GahConfig) -> PathBuf {
-    if let Ok(path) = std::env::var("GAH_TELEMETRY_EXPORT_PATH") {
+    if let Ok(path) = std::env::var("PARASAUR_TELEMETRY_EXPORT_PATH") {
         return PathBuf::from(path);
     }
     let artifact_root = cfg.defaults.artifact_root.trim();
@@ -313,8 +313,6 @@ pub(crate) fn export_snapshot(
     repo_path: &Path,
     quota: &[crate::quota_store::QuotaObservationRecord],
 ) -> Result<(usize, Option<String>)> {
-    let entries = crate::ledger::read_entries(cfg)?;
-    let watermark = entries.iter().map(|entry| entry.timestamp.clone()).max();
     let mut exporter = super::exporter::TelemetryExporter::new(super::exporter::TelemetryConfig {
         telemetry_repo_path: repo_path.to_path_buf(),
         format: super::exporter::ExportFormat::Jsonl,
@@ -322,7 +320,7 @@ pub(crate) fn export_snapshot(
         commit_batch_size: None,
     })?;
     exporter.load_exported_ids()?;
-    exporter.export_from_entries(&entries)?;
+    let watermark = exporter.export_from_ledger(cfg)?;
     exporter.export_store_quota_observations(quota)?;
     Ok((exporter.records_exported(), watermark))
 }

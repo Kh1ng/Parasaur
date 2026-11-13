@@ -4,6 +4,7 @@ import { authHealthApi, gahApi, pairingApi, type CoordinatorInfo } from '../api/
 import { PageHeader } from '../components/ui/PageHeader.js';
 import { LoginRepairPanel } from '../components/LoginRepairPanel.js';
 import { NodeReadinessCard } from '../components/NodeReadinessCard.js';
+import { NodeFactoryDetails } from '../components/NodeFactoryDetails.js';
 import { AddNodeSection } from './SettingsPage.js';
 import { useWebSocket } from '../ws/WebSocketContext.js';
 import { formatUpdatedAge } from '../lib/format.js';
@@ -361,6 +362,7 @@ export function NodesPage() {
         <Resources observation={health.snapshot ?? undefined} />
       </div>}
       <NodeReadiness key={`${selected.node_id}:${selected.advertised_url}:${selected.profiles?.join(',')}`} nodeId={selected.node_id} profiles={selected.profiles ?? []} />
+      <NodeFactoryDetails key={`factory:${selected.node_id}:${selected.advertised_url}:${selected.profiles?.join(',')}`} nodeId={selected.node_id} profiles={selected.profiles ?? []} />
       <h4 className="font-medium text-primary">Observed running workers</h4>
       <p className="text-sm text-secondary">{observationLabel(observation)} · observed {age(observation?.observed_at)}</p>
       <a href={`?page=work${observation?.profile ? `&profile=${encodeURIComponent(observation.profile)}` : ''}#running-workers`} className="text-accent">Open worker roster</a>
@@ -427,7 +429,7 @@ function RegisterWorker({ profile }: { profile: string }) {
   const [self, setSelf] = useState('http://127.0.0.1:3773');
   const [profiles, setProfiles] = useState(profile);
   const [transport, setTransport] = useState('trusted_lan');
-  const [secret, setSecret] = useState('env:GAH_NODE_TOKEN');
+  const [secret, setSecret] = useState('env:PARASAUR_NODE_TOKEN');
   const [command, setCommand] = useState('');
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
@@ -452,7 +454,7 @@ function RegisterWorker({ profile }: { profile: string }) {
     <label className="block text-sm text-secondary">Profiles (comma-separated)<input required className={fieldClass} value={profiles} onChange={(event) => setProfiles(event.target.value)} /></label>
     <label className="block text-sm text-secondary">Transport<select className={fieldClass} value={transport} onChange={(event) => setTransport(event.target.value)}><option value="trusted_lan">Trusted LAN / VPN</option><option value="authenticated_remote">Authenticated remote (HTTPS)</option><option value="loopback">Loopback on central</option></select></label>
     <label className="block text-sm text-secondary">Worker token reference on central<input required className={fieldClass} value={secret} onChange={(event) => setSecret(event.target.value)} /></label>
-    <p className="text-sm text-secondary">Central must resolve this reference to the worker’s access token. Trusted LAN HTTP requires GAH_ALLOW_INSECURE_HTTP=1 on central and worker.</p>
+    <p className="text-sm text-secondary">Central must resolve this reference to the worker’s access token. Trusted LAN HTTP requires PARASAUR_ALLOW_INSECURE_HTTP=1 on central and worker.</p>
     <button type="submit" className="btn-secondary">Generate register-node command</button>
     {command && <div className="space-y-2"><textarea aria-label="Register node command" readOnly className={`${fieldClass} font-mono text-sm`} rows={5} value={command} onFocus={(event) => event.target.select()} />
       <button type="button" className="btn-secondary" onClick={async () => { try { await navigator.clipboard.writeText(command); setCopied(true); } catch { setError('Clipboard unavailable. Select and copy the command manually.'); } }}>{copied ? 'Copied' : 'Copy register-node command'}</button></div>}

@@ -5,6 +5,8 @@ import { useUiStore } from '../store/uiStore.js';
 import type { ProfileSummary } from '@git-agent-harness/contracts';
 import type { ProfileAddData, ProfileUpdateData } from '../api/client.js';
 
+type ProfileFormData = Pick<ProfileAddData, 'display_name' | 'repo_id' | 'provider' | 'repo' | 'local_path' | 'artifact_root' | 'default_target_branch'>;
+
 export function ProfileEditor() {
   const {
     profiles,
@@ -27,7 +29,8 @@ export function ProfileEditor() {
   }, [pendingAction, requestAction]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   
-  const [formData, setFormData] = useState<Omit<ProfileAddData, 'name'> & { name?: string }>({
+  const [changedFields, setChangedFields] = useState<Set<keyof ProfileFormData>>(new Set());
+  const [formData, setFormData] = useState<ProfileFormData>({
     display_name: '',
     repo_id: '',
     provider: 'github',
@@ -58,24 +61,27 @@ export function ProfileEditor() {
       default_target_branch: 'main',
     });
     setEditingProfile(null);
+    setChangedFields(new Set());
   };
 
   const loadProfileForEdit = (profile: ProfileSummary) => {
     setFormData({
       display_name: profile.display_name,
-      repo_id: '',
+      repo_id: profile.repo_id,
       provider: profile.provider,
       repo: profile.repo,
       local_path: profile.local_path,
-      artifact_root: '',
-      default_target_branch: 'main',
+      artifact_root: profile.artifact_root ?? '',
+      default_target_branch: profile.default_target_branch ?? '',
     });
+    setChangedFields(new Set());
     setEditingProfile(profile.name);
     setShowAddForm(true);
   };
 
-  const handleChange = (field: keyof Omit<ProfileAddData, 'name'>, value: string) => {
+  const handleChange = (field: keyof ProfileFormData, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+    setChangedFields(previous => new Set(previous).add(field));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -83,30 +89,15 @@ export function ProfileEditor() {
     clearProfileErrors();
     
     try {
-      const data: ProfileAddData = {
-        name: editingProfile || formData.display_name.toLowerCase().replace(/\s+/g, '-'),
-        display_name: formData.display_name,
-        repo_id: formData.repo_id || formData.display_name.toLowerCase().replace(/\s+/g, '-'),
-        provider: formData.provider || 'github',
-        repo: formData.repo,
-        local_path: formData.local_path,
-        artifact_root: formData.artifact_root || formData.local_path,
-        default_target_branch: formData.default_target_branch || 'main',
-      };
-      
       if (editingProfile) {
-        const updateData: ProfileUpdateData = {
-          display_name: formData.display_name,
-          repo_id: formData.repo_id,
-          provider: formData.provider,
-          repo: formData.repo,
-          local_path: formData.local_path,
-          artifact_root: formData.artifact_root,
-          default_target_branch: formData.default_target_branch,
-        };
+        // The list omits branch/artifact settings. Only send explicit edits;
+        // a blank field must not replace configuration we never loaded.
+        const updateData: ProfileUpdateData = Object.fromEntries([...changedFields].map(field => [field, formData[field]]));
         await updateProfile(editingProfile, updateData);
+        if (useGahStore.getState().profileCrud.updateError) return;
       } else {
-        await addProfile(data);
+        await addProfile({ ...formData, name: formData.repo_id, default_target_branch: formData.default_target_branch || 'main' });
+        if (useGahStore.getState().profileCrud.addError) return;
       }
       
       await fetchProfiles();
@@ -121,6 +112,7 @@ export function ProfileEditor() {
     clearProfileErrors();
     try {
       await removeProfile(profileName, { force: true });
+      if (useGahStore.getState().profileCrud.removeError) return;
       await fetchProfiles();
       setShowDeleteConfirm(null);
     } catch (error) {
@@ -148,11 +140,15 @@ export function ProfileEditor() {
       </div>
 
       {errorMessage && (
-        <div className="p-3 bg-critical/10 border border-critical/30 text-critical text-sm rounded-md">
+        <div role="alert" className="p-3 bg-critical/10 border border-critical/30 text-critical text-sm rounded-md">
           <AlertCircle size={14} className="inline mr-1" aria-hidden="true" />
           {errorMessage}
         </div>
       )}
+      {profiles.error && <p role="alert" className="text-sm text-warning">
+        The profile list could not be refreshed: {profiles.error}{' '}
+        <button type="button" className="min-h-11 text-accent hover:underline" onClick={() => void fetchProfiles({ force: true })}>Retry list</button>
+      </p>}
       {showSuccess && (
         <div className="p-3 bg-good/10 border border-good/30 text-good text-sm rounded-md">
           <Check size={14} className="inline mr-1" aria-hidden="true" />
@@ -164,6 +160,7 @@ export function ProfileEditor() {
         <ProfileForm
           formData={formData}
           editingProfile={editingProfile}
+          changedFields={changedFields}
           isLoading={isLoading}
           onChange={handleChange}
           onSubmit={handleSubmit}
@@ -185,6 +182,7 @@ export function ProfileEditor() {
         <DeleteModal
           profileName={showDeleteConfirm}
           isLoading={isLoading}
+          error={profileCrud.removeError}
           onCancel={() => setShowDeleteConfirm(null)}
           onConfirm={() => handleDelete(showDeleteConfirm)}
         />
@@ -194,15 +192,16 @@ export function ProfileEditor() {
 }
 
 interface ProfileFormProps {
-  formData: Omit<ProfileAddData, 'name'> & { name?: string };
+  formData: ProfileFormData;
   editingProfile: string | null;
+  changedFields: ReadonlySet<keyof ProfileFormData>;
   isLoading: boolean;
-  onChange: (field: keyof Omit<ProfileAddData, 'name'>, value: string) => void;
+  onChange: (field: keyof ProfileFormData, value: string) => void;
   onSubmit: (e: React.FormEvent) => Promise<void>;
   onCancel: () => void;
 }
 
-function ProfileForm({ formData, editingProfile, isLoading, onChange, onSubmit, onCancel }: ProfileFormProps) {
+function ProfileForm({ formData, editingProfile, changedFields, isLoading, onChange, onSubmit, onCancel }: ProfileFormProps) {
   const formId = useId();
   return (
     <form onSubmit={onSubmit} className="p-4 space-y-4 border border-subtle rounded-lg bg-raised">
@@ -293,7 +292,7 @@ function ProfileForm({ formData, editingProfile, isLoading, onChange, onSubmit, 
 
         <div>
           <label htmlFor={`${formId}-artifact_root`} className="block text-xs font-medium text-secondary mb-1">
-            Artifact Root *
+            {editingProfile ? 'Artifact Root' : 'Artifact Root *'}
           </label>
           <input
             type="text"
@@ -301,8 +300,8 @@ function ProfileForm({ formData, editingProfile, isLoading, onChange, onSubmit, 
             value={formData.artifact_root}
             onChange={(e) => onChange('artifact_root', e.target.value)}
             className="w-full bg-raised border border-subtle rounded-md px-3 py-1.5 text-sm text-primary"
-            placeholder="/path/to/artifacts"
-            required
+            placeholder={editingProfile ? 'Leave unchanged' : '/path/to/artifacts'}
+            required={!editingProfile || changedFields.has('artifact_root')}
           />
         </div>
 
@@ -316,10 +315,13 @@ function ProfileForm({ formData, editingProfile, isLoading, onChange, onSubmit, 
             value={formData.default_target_branch}
             onChange={(e) => onChange('default_target_branch', e.target.value)}
             className="w-full bg-raised border border-subtle rounded-md px-3 py-1.5 text-sm text-primary"
-            placeholder="main"
+            placeholder={editingProfile ? 'Leave unchanged' : 'main'}
+            required={!!editingProfile && changedFields.has('default_target_branch')}
           />
         </div>
       </div>
+
+      {editingProfile && <p className="max-w-prose text-xs text-muted">Only edited fields are saved. On older nodes, the artifact root and default branch may be unavailable; leave these fields untouched to keep their saved values.</p>}
 
       <p className="text-xs text-muted inline-flex items-start gap-1.5">
         <Info size={13} className="shrink-0 mt-0.5" aria-hidden="true" />
@@ -406,11 +408,12 @@ function ProfileListComponent({ profileList, isLoading, onEdit, onDelete }: Prof
 interface DeleteModalProps {
   profileName: string;
   isLoading: boolean;
+  error?: string | null;
   onCancel: () => void;
   onConfirm: () => Promise<void>;
 }
 
-function DeleteModal({ profileName, isLoading, onCancel, onConfirm }: DeleteModalProps) {
+function DeleteModal({ profileName, isLoading, error, onCancel, onConfirm }: DeleteModalProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const cancelButton = useRef<HTMLButtonElement>(null);
   const titleId = useId();
@@ -431,6 +434,7 @@ function DeleteModal({ profileName, isLoading, onCancel, onConfirm }: DeleteModa
         Are you sure you want to delete the profile <strong>{profileName}</strong>?
         This action cannot be undone.
       </p>
+      {error && <p role="alert" className="mb-4 text-sm text-critical">{error}</p>}
       <div className="flex gap-2 justify-end">
         <button
           ref={cancelButton}

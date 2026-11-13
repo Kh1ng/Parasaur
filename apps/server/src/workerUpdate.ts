@@ -28,7 +28,7 @@ interface WorkerUpdateRecord extends WorkerUpdateStatus {
 /** Outside the Git checkout, same reasoning as adminUpdate.ts. */
 function statePath(): string {
   return (
-    process.env.GAH_WORKER_UPDATE_STATE_PATH ||
+    process.env.PARASAUR_WORKER_UPDATE_STATE_PATH ||
     resolve(process.env.XDG_STATE_HOME || resolve(homedir(), '.local', 'state'), 'gah', 'worker-update-state.json')
   );
 }

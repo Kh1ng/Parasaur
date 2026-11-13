@@ -10,9 +10,12 @@ import { PageHeader } from '../components/ui/PageHeader.js';
 import { ProviderStatusCard } from '../components/ProviderStatusCard.js';
 import { ProfileEditor } from '../components/ProfileEditor.js';
 import { WorkerScalingSection } from '../components/WorkerScalingSection.js';
-import { oldestFetchedAt } from '../lib/format.js';
+import { LoginRepairPanel } from '../components/LoginRepairPanel.js';
+import { EnvironmentSourcesSection } from '../components/EnvironmentSourcesSection.js';
+import { WorkspaceChecksSection } from '../components/WorkspaceChecksSection.js';
+import { oldestFetchedAt, formatCost } from '../lib/format.js';
 import { backendInstancesApi, promptPoliciesApi, routingCandidatesApi, GahApiError, type BackendRunnerKind } from '../api/client.js';
-import type { WakeAutonomyValue, SettingsConfigProfileSummary, RoutingCandidateSummary } from '@git-agent-harness/contracts';
+import type { BackendInstanceSummary, WakeAutonomyValue, SettingsConfigProfileSummary, RoutingCandidateSummary } from '@git-agent-harness/contracts';
 
 const PROFILE_REFRESH_MS = 60 * 1000;
 const WAKE_AUTONOMY_OPTIONS: { value: WakeAutonomyValue; label: string }[] = [
@@ -112,6 +115,10 @@ export function ProfilePanel() {
         profileError={profiles.error}
       />
       {selected && <WorkerScalingSection selectedName={selectedName} selected={selected} />}
+      {selectedName && <WorkspaceChecksSection key={selectedName} profile={selectedName} />}
+      {profileConfig.data?.profile === selectedName && <EnvironmentSourcesSection key={selectedName} profile={selectedName}
+        configured={{ env_file: profileConfig.data.notifications.env_file_configured, env_file_prod: profileConfig.data.notifications.env_file_prod_configured }}
+        onSaved={() => fetchProfileConfig(selectedName, { force: true })} />}
       <ProfileConfigViewerSection
         selectedName={selectedName}
         profileConfig={profileConfig}
@@ -341,7 +348,8 @@ export function ProfileConfigViewerSection({ selectedName, profileConfig, onRefr
     );
   }
 
-  if (profileConfig.loading && !profileConfig.data) {
+  const effective = profileConfig.data?.profile === selectedName ? profileConfig.data : null;
+  if (!effective && (profileConfig.loading || profileConfig.data)) {
     return (
       <section className="card-padded max-w-3xl">
         <h3 className="text-sm font-semibold text-primary mb-3">Effective profile configuration</h3>
@@ -350,7 +358,7 @@ export function ProfileConfigViewerSection({ selectedName, profileConfig, onRefr
     );
   }
 
-  if (profileConfig.error && !profileConfig.data) {
+  if (profileConfig.error && !effective) {
     return (
       <section className="card-padded max-w-3xl">
         <h3 className="text-sm font-semibold text-primary mb-3">Effective profile configuration</h3>
@@ -359,7 +367,6 @@ export function ProfileConfigViewerSection({ selectedName, profileConfig, onRefr
     );
   }
 
-  const effective = profileConfig.data;
   if (!effective) {
     return null;
   }
@@ -387,6 +394,11 @@ export function ProfileConfigViewerSection({ selectedName, profileConfig, onRefr
             <p>Max implementation failures per ticket: {effective.max_implementation_failures_per_ticket}</p>
             <p>Max review cycles per ticket: {effective.max_review_cycles_per_ticket}</p>
             <p>Max paid reviews per ticket: {effective.max_paid_reviews_per_ticket}</p>
+            {effective.spend_budget === undefined ? <p>Factory spend ceilings: not reported by this node</p> : effective.spend_budget ? <>
+              <p>Daily spend ceiling: {effective.spend_budget.daily_usd == null ? 'Unlimited' : formatCost(effective.spend_budget.daily_usd)}</p>
+              <p>Monthly spend ceiling: {effective.spend_budget.monthly_usd == null ? 'Unlimited' : formatCost(effective.spend_budget.monthly_usd)}</p>
+              <p>Based on {effective.spend_budget.cost_basis === 'actual' ? 'reported actual cost' : 'API-equivalent estimates'} in the factory ledger.</p>
+            </> : <p>No factory spend ceiling configured.</p>}
           </div>
         </div>
 
@@ -415,7 +427,7 @@ export function ProfileConfigViewerSection({ selectedName, profileConfig, onRefr
       </div>
 
       <div className="mt-3">
-        <BackendInstancesCard profileName={selectedName} effective={effective} />
+        <BackendInstancesCard key={selectedName} profileName={selectedName} effective={effective} />
       </div>
 
       <div className="mt-3">
@@ -651,7 +663,8 @@ export function BackendInstancesCard({ profileName, effective }: { profileName: 
   const [newRunner, setNewRunner] = useState<BackendRunnerKind>('codex');
   const [editing, setEditing] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState('');
-  const [loginCommand, setLoginCommand] = useState<string | null>(null);
+  const [loginHelp, setLoginHelp] = useState<string | null>(null);
+  const [loginInstance, setLoginInstance] = useState<string | null>(null);
 
   useEffect(() => {
     if (!declared) return;
@@ -661,7 +674,8 @@ export function BackendInstancesCard({ profileName, effective }: { profileName: 
     setError(null);
     setAdding(false);
     setEditing(null);
-    setLoginCommand(null);
+    setLoginHelp(null);
+    setLoginInstance(null);
     backendInstancesApi.list(profileName)
       .then((response) => { if (!cancelled) setInstances(response.backend_instances); })
       .catch(() => { if (!cancelled) setError('Auth status is unavailable. Use Test to retry.'); });
@@ -724,10 +738,13 @@ export function BackendInstancesCard({ profileName, effective }: { profileName: 
     }
   };
 
-  const reauthenticate = async (instance: string) => {
-    const command = `gah config authenticate-backend-instance --profile ${profileName} --instance ${instance}`;
-    setLoginCommand(command);
-    await navigator.clipboard?.writeText(command).catch(() => undefined);
+  const connectionHelp = (instance: BackendInstanceSummary) => {
+    setLoginInstance(null);
+    setLoginHelp(instance.credential_id
+      ? `This account uses saved credential ${instance.credential_id}. On the owning computer, open Settings → This computer → Provider connections to replace its key or reconnect it.`
+      : !instance.isolated_state_configured
+        ? 'Configure isolated account state on the owning node before signing in. This prevents one account from replacing another account’s login.'
+        : 'Use this provider’s sign-in controls on the owning computer. In-app browser sign-in currently supports isolated Codex and Claude accounts.');
   };
 
   return (
@@ -738,14 +755,19 @@ export function BackendInstancesCard({ profileName, effective }: { profileName: 
           {adding ? 'Cancel' : 'Add account'}
         </button>
       </div>
-      <p className="mb-3 max-w-2xl text-xs text-muted">Manage named runner instances on the connected node. Save and select API keys in the owning computer’s desktop Settings. Codex, Claude and Antigravity use their existing OAuth controls.</p>
+      <p className="mb-3 max-w-2xl text-xs text-muted">Manage named runner instances on the connected node. Sign in to isolated Codex and Claude accounts here. Save and select API keys in the owning computer’s desktop Settings.</p>
       {error && <p className="text-xs text-critical mb-2">{error}</p>}
-      {loginCommand && (
-        <div className="mb-3 rounded-md border border-subtle bg-raised p-2 text-xs text-secondary">
-          <p>Run this command in a terminal on this node. It starts the provider's browser or device login.</p>
-          <code className="mt-1 block break-all text-primary">{loginCommand}</code>
+      {loginHelp && <p role="status" className="mb-3 max-w-prose text-xs leading-relaxed text-secondary">{loginHelp}</p>}
+      {loginInstance && <div className="mb-3 space-y-2 border-b border-subtle pb-3">
+        <div className="flex items-center justify-between gap-3">
+          <h5 className="text-sm font-medium text-primary">Sign in to {instances.find(item => item.backend_instance === loginInstance)?.account_label ?? loginInstance}</h5>
+          <button type="button" className="btn-secondary text-xs" onClick={() => setLoginInstance(null)}>Close sign-in</button>
         </div>
-      )}
+        <p className="text-xs text-muted">Sign-in runs in this account’s isolated state on the connected node. Open the provider’s link on this device.</p>
+        <LoginRepairPanel key={`${profileName}:${loginInstance}`} instanceProfile={profileName}
+          login={{ node_id: '', node_name: 'the connected node', backend: instances.find(item => item.backend_instance === loginInstance)?.runner_kind ?? '', backend_instance: loginInstance, provider: null }}
+          onComplete={() => { void test(loginInstance); }} />
+      </div>}
       {adding && (
         <div className="mb-3 grid gap-2 rounded-md border border-subtle bg-raised p-3 sm:grid-cols-2">
           <label className="space-y-1 text-xs text-secondary">Runner
@@ -797,7 +819,9 @@ export function BackendInstancesCard({ profileName, effective }: { profileName: 
             <div className="flex flex-wrap gap-1.5">
               <button type="button" className="btn-secondary text-xs" disabled={pendingInstance !== null} onClick={() => { setEditing(instance.backend_instance); setEditLabel(instance.account_label ?? instance.backend_instance); }}>Rename</button>
               <button type="button" className="btn-secondary text-xs" disabled={pendingInstance !== null} onClick={() => test(instance.backend_instance)}>{pendingInstance === instance.backend_instance ? 'Testing…' : 'Test'}</button>
-              <button type="button" className="btn-secondary text-xs" disabled={pendingInstance !== null} onClick={() => reauthenticate(instance.backend_instance)}>Re-authenticate</button>
+              {['codex', 'claude'].includes(instance.runner_kind) && !instance.credential_id && instance.isolated_state_configured
+                ? <button type="button" className="btn-secondary text-xs" disabled={pendingInstance !== null} onClick={() => { setLoginHelp(null); setLoginInstance(instance.backend_instance); }}>Sign in</button>
+                : <button type="button" className="btn-secondary text-xs" disabled={pendingInstance !== null} onClick={() => connectionHelp(instance)}>Connection help</button>}
               <button type="button" disabled={pendingInstance !== null || loadedFor !== profileName} onClick={() => toggle(instance.backend_instance, !instance.enabled)} className={instance.enabled ? 'btn-secondary text-xs' : 'btn-primary text-xs'}>{instance.enabled ? 'Disable' : 'Enable'}</button>
             </div>
           </li>

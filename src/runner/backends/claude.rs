@@ -408,7 +408,7 @@ mod tests {
             &format!(
                 "#!/bin/sh\nsid=''\nwhile [ $# -gt 0 ]; do [ \"$1\" = '--session-id' ] && sid=\"$2\"; shift; done\n\
                  mkdir -p \"$HOME/.claude/projects/p\"\n\
-                 cat > \"$HOME/.claude/projects/p/$sid.jsonl\" <<'GAH_EOF'\n{call}\n{outcome}\nGAH_EOF\n\
+                 cat > \"$HOME/.claude/projects/p/$sid.jsonl\" <<'PARASAUR_EOF'\n{call}\n{outcome}\nPARASAUR_EOF\n\
                  {edit}echo 'The ticket says the runner denies Edit and requires approval.'\n"
             ),
         );

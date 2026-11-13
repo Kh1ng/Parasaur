@@ -7,11 +7,11 @@ fn config_orchestration_startup_validation_and_redacted_show() {
     let gah = || {
         let mut command = bin();
         command
-            .env("GAH_CONFIG", &path)
-            .env_remove("GAH_SUPABASE_URL")
-            .env_remove("GAH_SUPABASE_ANON_KEY")
+            .env("PARASAUR_CONFIG", &path)
+            .env_remove("PARASAUR_SUPABASE_URL")
+            .env_remove("PARASAUR_SUPABASE_ANON_KEY")
             .env(
-                "GAH_SUPABASE_SERVICE_ROLE_KEY",
+                "PARASAUR_SUPABASE_SERVICE_ROLE_KEY",
                 "obviously-fake-service-key",
             );
         command
@@ -34,18 +34,18 @@ fn config_orchestration_startup_validation_and_redacted_show() {
             .args(["status", "--role", "--json"])
             .assert()
             .failure()
-            .stderr(predicates::str::contains("GAH_SUPABASE_URL"));
+            .stderr(predicates::str::contains("PARASAUR_SUPABASE_URL"));
         gah()
-            .env("GAH_SUPABASE_URL", "https://supabase.example.invalid")
+            .env("PARASAUR_SUPABASE_URL", "https://supabase.example.invalid")
             .args(["status", "--role", "--json"])
             .assert()
             .failure()
-            .stderr(predicates::str::contains("GAH_SUPABASE_ANON_KEY"));
+            .stderr(predicates::str::contains("PARASAUR_SUPABASE_ANON_KEY"));
         for json in [false, true] {
             let mut command = gah();
             command
-                .env("GAH_SUPABASE_URL", "https://supabase.example.invalid")
-                .env("GAH_SUPABASE_ANON_KEY", "obviously-fake-anon-key")
+                .env("PARASAUR_SUPABASE_URL", "https://supabase.example.invalid")
+                .env("PARASAUR_SUPABASE_ANON_KEY", "obviously-fake-anon-key")
                 .args(["config", "show"]);
             if json {
                 command.args(["--json", "--full"]);
@@ -63,7 +63,7 @@ fn config_orchestration_startup_validation_and_redacted_show() {
                 "https://supabase.example.invalid",
                 "obviously-fake-anon-key",
                 "obviously-fake-service-key",
-                "GAH_SUPABASE_SERVICE_ROLE_KEY",
+                "PARASAUR_SUPABASE_SERVICE_ROLE_KEY",
             ] {
                 assert!(!stdout.contains(secret), "{stdout}");
                 assert!(!String::from_utf8_lossy(&output.stderr).contains(secret));
@@ -76,9 +76,9 @@ fn config_orchestration_startup_validation_and_redacted_show() {
             }
         }
         gah()
-            .env("GAH_SUPABASE_URL", "https://supabase.example.invalid")
-            .env("GAH_SUPABASE_ANON_KEY", "obviously-fake-anon-key")
-            .env_remove("GAH_SUPABASE_SERVICE_ROLE_KEY")
+            .env("PARASAUR_SUPABASE_URL", "https://supabase.example.invalid")
+            .env("PARASAUR_SUPABASE_ANON_KEY", "obviously-fake-anon-key")
+            .env_remove("PARASAUR_SUPABASE_SERVICE_ROLE_KEY")
             .args(["status", "--role", "--json"])
             .assert()
             .success();
@@ -214,7 +214,7 @@ fn node_role_and_central_url_survive_config_changes_and_need_no_profile() {
     let node: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(node["role"], "worker");
     let overridden = bin()
-        .env("GAH_NODE_ROLE", "central")
+        .env("PARASAUR_NODE_ROLE", "central")
         .args(["status", "--role", "--json", "--config-path", config])
         .output()
         .unwrap();
@@ -222,7 +222,7 @@ fn node_role_and_central_url_survive_config_changes_and_need_no_profile() {
     let overridden: serde_json::Value = serde_json::from_slice(&overridden.stdout).unwrap();
     assert_eq!(overridden["role"], "central");
     bin()
-        .env("GAH_NODE_ROLE", "typo")
+        .env("PARASAUR_NODE_ROLE", "typo")
         .args(["status", "--role", "--json", "--config-path", config])
         .assert()
         .failure();
@@ -488,6 +488,63 @@ fn add_backend_instance_creates_isolated_runtime_and_safe_projection() {
 }
 
 #[test]
+fn named_browser_logins_keep_codex_and_claude_accounts_isolated() {
+    let (tmp, config) = config_with_profile();
+    let fake_bin = tmp.path().join("bin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    let home = tmp.path().join("owner");
+    for (runner, state_var) in [("codex", "CODEX_HOME"), ("claude", "CLAUDE_CONFIG_DIR")] {
+        make_fake_bin_with_body(
+            &fake_bin,
+            runner,
+            &format!(
+                "#!/bin/sh\nstate=\"${state_var}\"\n[ -n \"$state\" ] || exit 1\nmkdir -p \"$state\"\nprintf '%s' \"$HOME\" > \"$state/login-proof\"\n"
+            ),
+        );
+        let ambient = home.join(format!(".{runner}"));
+        fs::create_dir_all(&ambient).unwrap();
+        fs::write(
+            ambient.join("login-proof"),
+            "owner login must stay unchanged",
+        )
+        .unwrap();
+        for account in ["personal", "work"] {
+            let instance = format!("{runner}-{account}");
+            for action in ["add-backend-instance", "authenticate-backend-instance"] {
+                let mut command = bin();
+                command
+                    .env("HOME", &home)
+                    .env("PATH", prepend_path(&fake_bin))
+                    .env(state_var, &ambient)
+                    .args([
+                        "config",
+                        action,
+                        "--config",
+                        config.to_str().unwrap(),
+                        "--profile",
+                        "test",
+                        "--instance",
+                        &instance,
+                    ]);
+                if action == "add-backend-instance" {
+                    command.args(["--runner-kind", runner, "--account-label", account]);
+                }
+                command.assert().success();
+            }
+            let isolated = home.join(".config/gah/backend-instances").join(&instance);
+            assert_eq!(
+                fs::read_to_string(isolated.join(format!(".{runner}/login-proof"))).unwrap(),
+                isolated.to_string_lossy()
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(ambient.join("login-proof")).unwrap(),
+            "owner login must stay unchanged"
+        );
+    }
+}
+
+#[test]
 fn notification_channel_settings_round_trip_and_validate() {
     let (tmp, config) = config_with_profile();
     let config_path = config.to_str().unwrap();
@@ -561,7 +618,7 @@ fn notification_module_switch_credential_and_notify_send() {
     let gah = || {
         let mut command = bin();
         command
-            .env("GAH_NOTIFY_CREDENTIALS_FILE", &credentials)
+            .env("PARASAUR_NOTIFY_CREDENTIALS_FILE", &credentials)
             .env_remove("TELEGRAM_BOT_TOKEN")
             .env_remove("DISCORD_WEBHOOK_URL");
         command
@@ -899,7 +956,7 @@ fn prompt_policy_cli_versions_audits_and_hides_content_from_show() {
     let content = "## Safety\nKeep the canary POLICY-CANARY-182 visible only in prompts.";
 
     bin()
-        .env("GAH_EVENTS_PATH", &events)
+        .env("PARASAUR_EVENTS_PATH", &events)
         .args([
             "config",
             "prompt-policy",

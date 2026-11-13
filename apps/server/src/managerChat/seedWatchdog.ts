@@ -19,12 +19,12 @@ const DEFAULT_DEADLINE_MS = 2 * 60_000;
 const DEFAULT_INTERVAL_MS = 30_000;
 
 function deadlineMs(): number {
-  const raw = Number.parseInt(process.env.GAH_SEED_WATCHDOG_DEADLINE_MS ?? '', 10);
+  const raw = Number.parseInt(process.env.PARASAUR_SEED_WATCHDOG_DEADLINE_MS ?? '', 10);
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_DEADLINE_MS;
 }
 
 function intervalMs(): number {
-  const raw = Number.parseInt(process.env.GAH_SEED_WATCHDOG_INTERVAL_MS ?? '', 10);
+  const raw = Number.parseInt(process.env.PARASAUR_SEED_WATCHDOG_INTERVAL_MS ?? '', 10);
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_INTERVAL_MS;
 }
 
@@ -44,7 +44,7 @@ function isUndispatchedSeed(events: ReturnType<typeof readLog>): boolean {
 
 export interface SeedWatchdogOptions {
   now?: () => number;
-  /** Overrides the default deadline (tests, or env GAH_SEED_WATCHDOG_DEADLINE_MS). */
+  /** Overrides the default deadline (tests, or env PARASAUR_SEED_WATCHDOG_DEADLINE_MS). */
   deadlineMs?: number;
 }
 

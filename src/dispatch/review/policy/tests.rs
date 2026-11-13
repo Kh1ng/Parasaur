@@ -7,14 +7,35 @@ use crate::ledger::LedgerEntry;
 mod acceptance;
 mod actionable;
 mod allowed_models;
+mod budget_preflight;
 mod budget_reservation;
 mod external_acceptance;
 mod format_retry;
 mod head;
 mod parsing;
+mod production_approval;
 mod reset;
+mod routine_overlap;
 
 const TEST_REVIEW_GENERATION: &str = "review-v1:reviewed-sha:sha256:test";
+
+#[test]
+fn native_and_local_reviews_cannot_substitute_a_pinned_account_or_model() {
+    let mut args: crate::dispatch::DispatchArgs = serde_json::from_value(serde_json::json!({
+        "profile":"test", "mode":"review", "backend":"codex", "target":"gah/review",
+        "backend_instance":"work", "model":"fixture-model", "current_branch":false,
+        "dry_run":false, "retries":2, "allow_draft_fail":false, "prod":false,
+        "issue_intake_override":false, "allow_unknown_red_baseline":false,
+        "escalate":false, "skip_validation_gate":false
+    }))
+    .unwrap();
+    assert!(ensure_pinned_review_route(&args, "codex", Some("fixture-model")).is_ok());
+    assert!(ensure_pinned_review_route(&args, "claude", Some("fixture-model")).is_err());
+    assert!(ensure_pinned_review_route(&args, "codex", Some("other-model")).is_err());
+    assert!(ensure_pinned_review_route(&args, "codex", None).is_err());
+    args.backend_instance = None;
+    assert!(ensure_pinned_review_route(&args, "claude", Some("other-model")).is_ok());
+}
 
 fn review_ledger_entry(
     profile_name: &str,
@@ -1268,107 +1289,6 @@ fn versioned_contract_change_with_compatibility_evidence_can_be_approved() {
     assert_eq!(verdict.verdict, "APPROVE");
     assert!(!verdict.human_required);
     assert!(verdict.safety_gate_reason.is_none());
-}
-
-#[test]
-fn production_approval_requires_exact_changed_file_and_control_plane_ci() {
-    let json = r#"{"verdict":"Approve","confidence":"high","human_required":false,"blocking_findings":[],"non_blocking_findings":[],"risk_notes":[],"evidence":["file:not-in-diff.rs","ci:passed"]}"#;
-    let usage = crate::ledger::LedgerUsage::default();
-    let route = route_decision("claude", Some("sonnet"), false);
-    let context = ReviewGateContext::from_diff_bundle(
-        &ReviewDiffBundle {
-            files: "src/dispatch.rs\n".to_string(),
-            diff: "+fn hardened_review() {}\n".to_string(),
-        },
-        Some("passed"),
-    );
-
-    let verdict =
-        parse_review_verdict_with_context(json, &route, &usage, ReviewerTier::Strong, &context)
-            .unwrap();
-
-    assert_eq!(verdict.verdict, "HUMAN_REVIEW");
-    assert!(verdict
-        .safety_gate_reason
-        .as_deref()
-        .unwrap_or_default()
-        .contains("not grounded"));
-}
-
-#[test]
-fn production_approval_does_not_require_ci_before_review() {
-    let json = r#"{"verdict":"APPROVE","confidence":"high","human_required":false,"blocking_findings":[],"non_blocking_findings":[],"risk_notes":[],"evidence":["file:src/internal.rs"]}"#;
-    let usage = crate::ledger::LedgerUsage::default();
-    let route = route_decision("claude", Some("sonnet"), false);
-    let context = ReviewGateContext::from_diff_bundle(
-        &ReviewDiffBundle {
-            files: "src/internal.rs\n".to_string(),
-            diff: "+fn internal_only() {}\n".to_string(),
-        },
-        Some("pending"),
-    );
-
-    let verdict =
-        parse_review_verdict_with_context(json, &route, &usage, ReviewerTier::Strong, &context)
-            .unwrap();
-
-    assert_eq!(verdict.verdict, "APPROVE");
-    assert!(!verdict.human_required);
-}
-
-#[test]
-fn production_approval_cannot_falsely_claim_ci_passed_before_ci_finishes() {
-    let json = r#"{"verdict":"APPROVE","confidence":"high","human_required":false,"blocking_findings":[],"non_blocking_findings":[],"risk_notes":[],"evidence":["file:src/internal.rs","ci:passed"]}"#;
-    let usage = crate::ledger::LedgerUsage::default();
-    let route = route_decision("claude", Some("sonnet"), false);
-    let context = ReviewGateContext::from_diff_bundle(
-        &ReviewDiffBundle {
-            files: "src/internal.rs\n".to_string(),
-            diff: "+fn internal_only() {}\n".to_string(),
-        },
-        Some("pending"),
-    );
-
-    let verdict =
-        parse_review_verdict_with_context(json, &route, &usage, ReviewerTier::Strong, &context)
-            .unwrap();
-
-    assert_eq!(verdict.verdict, "HUMAN_REVIEW");
-    assert!(verdict
-        .safety_gate_reason
-        .as_deref()
-        .unwrap_or_default()
-        .contains("claimed passed CI"));
-}
-
-#[test]
-fn production_approval_with_prose_is_held_to_prevent_hidden_findings() {
-    let review_text = "Found a worrying edge case.\n{\"verdict\":\"APPROVE\",\"confidence\":\"high\",\"human_required\":false,\"blocking_findings\":[],\"non_blocking_findings\":[],\"risk_notes\":[],\"evidence\":[\"file:src/dispatch.rs\",\"ci:passed\"]}";
-    let usage = crate::ledger::LedgerUsage::default();
-    let route = route_decision("claude", Some("sonnet"), false);
-    let context = ReviewGateContext::from_diff_bundle(
-        &ReviewDiffBundle {
-            files: "src/dispatch.rs\n".to_string(),
-            diff: "+fn hardened_review() {}\n".to_string(),
-        },
-        Some("passed"),
-    );
-
-    let verdict = parse_review_verdict_with_context(
-        review_text,
-        &route,
-        &usage,
-        ReviewerTier::Strong,
-        &context,
-    )
-    .unwrap();
-
-    assert_eq!(verdict.verdict, "HUMAN_REVIEW");
-    assert!(verdict
-        .safety_gate_reason
-        .as_deref()
-        .unwrap_or_default()
-        .contains("substantive prose"));
 }
 
 #[test]

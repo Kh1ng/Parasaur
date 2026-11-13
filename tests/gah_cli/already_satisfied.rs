@@ -31,7 +31,7 @@ fn dispatch_fix_no_change_is_agent_no_progress() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .failure()
         .stderr(predicate::str::contains("produced no worktree changes"));
@@ -63,7 +63,7 @@ fn dispatch_fix_grounded_already_satisfied_closes_issue_without_mr() {
         "codex",
         r#"#!/bin/sh
 printf '%s\n' '{"type":"turn.started"}'
-printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"GAH_DISPOSITION: already_satisfied\nfile:README.md\ntest:true"}}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"PARASAUR_DISPOSITION: already_satisfied\nfile:README.md\ntest:true"}}'
 printf '%s\n' '{"type":"turn.completed"}'
 exit 0
 "#,
@@ -104,7 +104,7 @@ exit 0
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success();
 

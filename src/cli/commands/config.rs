@@ -48,9 +48,12 @@ pub fn run(command: ConfigCommands) -> Result<()> {
             } else {
                 println!("orchestration_mode: {}", cfg.defaults.orchestration_mode);
                 let supabase = config_show::SupabaseSummary::from_environment();
-                println!("GAH_SUPABASE_URL: {}", supabase.url.unwrap_or("(unset)"));
                 println!(
-                    "GAH_SUPABASE_ANON_KEY: {}",
+                    "PARASAUR_SUPABASE_URL: {}",
+                    supabase.url.unwrap_or("(unset)")
+                );
+                println!(
+                    "PARASAUR_SUPABASE_ANON_KEY: {}",
                     supabase.anon_key.unwrap_or("(unset)")
                 );
                 println!(
@@ -328,11 +331,17 @@ pub fn run(command: ConfigCommands) -> Result<()> {
             profile,
             instance,
             credential_id,
+            account_label,
         } => {
             let credential_id = crate::execution_identity::validate_operator_label(
                 "credential identifier",
                 &credential_id,
             )?;
+            let account_label = account_label
+                .map(|label| {
+                    crate::execution_identity::validate_operator_label("account label", &label)
+                })
+                .transpose()?;
             let mut cfg = config::load(config_path.as_deref())?;
             let profile_config = cfg
                 .profiles
@@ -345,6 +354,9 @@ pub fn run(command: ConfigCommands) -> Result<()> {
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("backend instance is not declared"))?;
             entry.credential_id = Some(credential_id.clone());
+            if let Some(label) = account_label {
+                entry.account_label = Some(label);
+            }
             entry.auth_source_label = Some(credential_auth_source_label(
                 &entry.runner_kind,
                 &credential_id,
@@ -371,12 +383,24 @@ pub fn run(command: ConfigCommands) -> Result<()> {
             config::save(&cfg, config_path.as_deref())?;
             println!("Updated backend instance credential binding");
         }
+        ConfigCommands::ShowChatEnvironment {
+            config_path,
+            profile,
+        } => {
+            let cfg = config::load(config_path.as_deref())?;
+            let profile = config::get_profile(&cfg, &profile)?;
+            println!(
+                "{}",
+                serde_json::to_string(&crate::chat_environment::load(profile)?)?
+            );
+        }
         ConfigCommands::ExecBackendInstance {
             config_path,
             profile,
             instance,
             model,
             work_id,
+            chat_environment,
             acp_bridge,
             adapter_program,
             mut args,
@@ -423,7 +447,13 @@ pub fn run(command: ConfigCommands) -> Result<()> {
                 work_id.as_deref(),
                 &selected,
             )?;
-            let mut env = Vec::new();
+            let mut env = if chat_environment {
+                crate::chat_environment::load(selected_profile)?
+                    .into_iter()
+                    .collect()
+            } else {
+                Vec::new()
+            };
             identity.apply_instance_state_env(&mut env);
             // Preserve adapter settings; a bound source replaces the legacy key below.
             if identity.runner_kind == "openhands" {

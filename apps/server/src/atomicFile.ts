@@ -10,8 +10,10 @@ import { dirname } from 'node:path';
 /**
  * Write `data` to a new temporary file beside `path`, flush it, then rename it
  * over `path`. The file gets `mode` (private by default) whatever the umask is.
+ * With required directory sync, a post-rename error has an uncertain commit
+ * outcome: callers must not assume that the previous contents remain.
  */
-export function writeFileAtomic(path: string, data: string, mode = 0o600): void {
+export function writeFileAtomic(path: string, data: string, mode = 0o600, requireDirectorySync = false): void {
   const directory = dirname(path);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
@@ -29,20 +31,22 @@ export function writeFileAtomic(path: string, data: string, mode = 0o600): void 
     rmSync(temporary, { force: true });
     throw error;
   }
-  syncDirectory(directory);
+  syncDirectory(directory, requireDirectorySync);
 }
 
 /** Persist the rename itself. Some platforms cannot open a directory; the rename already happened. */
-function syncDirectory(directory: string): void {
+function syncDirectory(directory: string, required: boolean): void {
   let folder: number;
   try {
     folder = openSync(directory, 'r');
-  } catch {
+  } catch (error) {
+    if (required) throw error;
     return;
   }
   try {
     fsyncSync(folder);
-  } catch {
+  } catch (error) {
+    if (required) throw error;
     // Not supported for directories on this platform.
   } finally {
     closeSync(folder);

@@ -1,4 +1,4 @@
-import type { RunningWorker, ActiveClaim, AvailabilityScope, BackendInstanceSummary, RecentLedgerSummary, QuotaSnapshot } from './gah.js';
+import type { CentralClaimObservation, RunningWorker, ActiveClaim, AvailabilityScope, BackendInstanceSummary, RecentLedgerSummary, QuotaSnapshot } from './gah.js';
 import type { ClaimLease } from './claims.js';
 import coordinatorProtocol from './coordinator-protocol.json' with { type: 'json' };
 
@@ -47,6 +47,10 @@ export interface FleetQuotaSnapshot {
   nodes: NodeQuotaRelay[];
 }
 
+/** The kind of network path a central uses to reach a worker, derived from
+ * the worker's registered address. See apps/server/src/workerLink.ts. */
+export type WorkerLinkKind = 'loopback' | 'https' | 'tailnet' | 'lan';
+
 export interface RegisteredNode {
   node_id: string;
   display_name: string;
@@ -91,6 +95,8 @@ export interface NodeSummary {
   labels?: string[];
   profiles?: string[];
   transport_mode: 'loopback' | 'authenticated_remote' | 'trusted_lan';
+  /** How this central reaches the node; null when it refuses the address. */
+  link?: WorkerLinkKind | null;
   last_seen_at?: string | null;
   last_observed_state?: NodeObservationState | null;
   last_observed_at?: string | null;
@@ -137,6 +143,31 @@ export interface NodeObservationError {
   message: string;
 }
 
+/** Independent reads: an unavailable source never becomes an empty/idle result. */
+export type NodeFactoryRead<T> = { state: 'available'; value: T } | {
+  state: 'unavailable'; reason: 'authorization' | 'unsupported' | 'timeout' | 'transport' | 'invalid_response';
+};
+export interface NodeFactoryBlocker {
+  work_id: string | null;
+  reason_code: string | null;
+  message: string | null;
+  next_steps: string[];
+}
+export interface NodeFactorySnapshot {
+  node_id: string;
+  profile: string;
+  checked_at: string;
+  status: NodeFactoryRead<{
+    generated_at: string;
+    profile_blockers: NodeFactoryBlocker[];
+    profile_blocker_count: number;
+    work_blockers: NodeFactoryBlocker[];
+    work_blocker_count: number;
+  }>;
+  loop: NodeFactoryRead<{ running: boolean }>;
+  decision: NodeFactoryRead<import('./gah.js').LoopDecision | null>;
+}
+
 export interface NodeObservationSnapshot {
   node_id: string;
   display_name: string;
@@ -153,6 +184,11 @@ export interface NodeObservationSnapshot {
   profiles: string[];
   backend_configured: Record<string, boolean>;
   backend_instances: BackendInstanceSummary[];
+  /** Only new servers advertise exact-account forwarding; absent means unsupported. */
+  dispatch_backend_instances?: boolean;
+  /** Absent on workers that silently ignore dispatch execution controls. */
+  dispatch_execution_options?: boolean;
+  dispatch_execution_results?: boolean;
   availability: AvailabilityScope[];
   recent_ledger: RecentLedgerSummary | null;
   active_claims: ActiveClaim[];
@@ -163,6 +199,13 @@ export interface NodeObservationSnapshot {
   error?: NodeObservationError | null;
   /** The worker's latest login checks (#1271); absent from older workers. */
   auth_health?: NodeAuthHealth | null;
+  /** Per-profile admission history; source_state describes the latest poll, not the attempt. */
+  central_claim_observations?: {
+    profile: string;
+    central_url: string;
+    observation?: CentralClaimObservation;
+    source_state: NodeObservationState;
+  }[];
 }
 
 export type AuthState = 'ok' | 'expired' | 'missing' | 'unknown' | 'error';

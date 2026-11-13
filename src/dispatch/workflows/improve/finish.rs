@@ -182,7 +182,7 @@ pub(super) fn finish_improve_workflow(
 
     println!("Changes detected. Committing and pushing...");
     let push_url = profile.push_url()?;
-    let push_pat = profile.pat();
+    let push_pat = crate::provider::push_token(profile);
     if worktree::has_uncommitted_changes(wt)? {
         ledger.commit_attempted = true;
         worktree::stage_all(wt)?;
@@ -200,47 +200,49 @@ pub(super) fn finish_improve_workflow(
     // real changes are still uncommitted working-tree modifications) always
     // reported "0 file(s) changed, +0, -0" in the MR body.
     apply_diff_stats(ledger, wt, &profile.default_target_branch);
-    ledger.push_attempted = true;
-    classify_git_operation_result(
-        ledger,
-        crate::ledger::FailureStage::Push,
-        worktree::push_branch(
-            wt,
+    crate::dispatch::native_guard::publication(profile, || {
+        ledger.push_attempted = true;
+        classify_git_operation_result(
+            ledger,
+            crate::ledger::FailureStage::Push,
+            worktree::push_branch(
+                wt,
+                branch,
+                &profile.default_target_branch,
+                &push_url,
+                &push_pat,
+            ),
+        )?;
+        ledger.push_succeeded = true;
+
+        let mr_title = build_mr_title(mode, &profile.repo_id, validation_failed, ticket_meta);
+        let mr_ctx = MrRenderContext {
+            backend: route_effective_backend,
+            model: llm_model,
             branch,
-            &profile.default_target_branch,
-            &push_url,
-            &push_pat,
-        ),
-    )?;
-    ledger.push_succeeded = true;
+            target_branch: &profile.default_target_branch,
+            validation_commands: &profile.validation_commands,
+            ledger,
+            backend_summary,
+        };
+        let mr_body = build_fix_or_improve_mr_body(mode, ticket_meta, &mr_ctx, !validation_failed);
+        publish_or_update_mr(
+            cfg,
+            profile,
+            ledger,
+            branch,
+            &mr_title,
+            &mr_body,
+            existing_branch,
+            route_effective_backend,
+            route_effective_model,
+        )?;
 
-    let mr_title = build_mr_title(mode, &profile.repo_id, validation_failed, ticket_meta);
-    let mr_ctx = MrRenderContext {
-        backend: route_effective_backend,
-        model: llm_model,
-        branch,
-        target_branch: &profile.default_target_branch,
-        validation_commands: &profile.validation_commands,
-        ledger,
-        backend_summary,
-    };
-    let mr_body = build_fix_or_improve_mr_body(mode, ticket_meta, &mr_ctx, !validation_failed);
-    publish_or_update_mr(
-        cfg,
-        profile,
-        ledger,
-        branch,
-        &mr_title,
-        &mr_body,
-        existing_branch,
-        route_effective_backend,
-        route_effective_model,
-    )?;
-
-    if let Some(context) = gitlab_fix {
-        context.finish(profile, ledger, wt);
-    }
-    clear_wip_checkpoints(repo, wip_checkpoints);
-    worktree::cleanup(wt, repo);
-    Ok(())
+        if let Some(context) = gitlab_fix {
+            context.finish(profile, ledger, wt);
+        }
+        clear_wip_checkpoints(repo, wip_checkpoints);
+        worktree::cleanup(wt, repo);
+        Ok(())
+    })
 }

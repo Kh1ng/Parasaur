@@ -141,6 +141,58 @@ pub fn classify_status_output(success: bool, stdout: &[u8], stderr: &[u8]) -> Au
     }
 }
 
+/// Classifies `glab auth status`. glab lists gitlab.com even when it holds
+/// no token for it, reports that as a 401, and exits non-zero when any
+/// listed host fails. Read whole, a working self-hosted login therefore
+/// looks expired. Only hosts that hold a token decide, and each of them must
+/// be healthy. Output without host sections falls back to the whole text.
+pub fn classify_glab_status(success: bool, stdout: &[u8], stderr: &[u8]) -> AuthHealth {
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(stdout),
+        String::from_utf8_lossy(stderr)
+    );
+    // A host header is unindented and its checks are the marked, indented
+    // lines below it. The blank line before glab's closing error box ends
+    // the last host; an update notice has indented lines but no marks.
+    let mut sections: Vec<String> = Vec::new();
+    let mut in_section = false;
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            in_section = false;
+        } else if !line.starts_with(char::is_whitespace) {
+            sections.push(String::new());
+            in_section = true;
+        } else if let (true, Some(section)) = (in_section, sections.last_mut()) {
+            section.push_str(&line.to_lowercase());
+            section.push('\n');
+        }
+    }
+    let is_host = |section: &&String| {
+        section.lines().any(|line| {
+            ["✓ ", "x ", "! "]
+                .iter()
+                .any(|mark| line.trim_start().starts_with(mark))
+        })
+    };
+    let hosts: Vec<&String> = sections.iter().filter(is_host).collect();
+    if hosts.is_empty() {
+        return classify_status_output(success, stdout, stderr);
+    }
+    hosts
+        .iter()
+        .filter(|host| !host.contains("no token found"))
+        .map(|host| classify_status_output(true, host.as_bytes(), b""))
+        .reduce(|first, next| {
+            if first.state == AuthState::Ok {
+                next
+            } else {
+                first
+            }
+        })
+        .unwrap_or_else(|| AuthHealth::new(AuthState::Missing, Some("Not logged in.")))
+}
+
 /// Classifies `gh auth status` for one host. gh lists every saved account
 /// of every host, so only the host's active account decides (#1324): a
 /// dead token on an inactive account or another host must not hide a
@@ -405,7 +457,7 @@ fn repository_probe(cli: &str, provider: &str, executable: Option<&Path>) -> Aut
                         },
                     )
                 } else {
-                    classify_status_output(output.status.success(), &output.stdout, &output.stderr)
+                    classify_glab_status(output.status.success(), &output.stdout, &output.stderr)
                 }
             })
             .unwrap_or_else(timed_out),
@@ -860,6 +912,51 @@ mod tests {
             ),
             AuthState::Expired
         );
+    }
+
+    const GLAB_NO_TOKEN: &str = "gitlab.com\n  x gitlab.com: API call failed: GET https://gitlab.com/api/v4/user: 401 {message: 401 Unauthorized}\n  ✓ Git operations for gitlab.com configured to use ssh protocol.\n  ! No token found (checked config file, keyring, and environment variables).\n";
+    const GLAB_SELF_HOSTED: &str = "gitlab.example.test\n  ✓ Logged in to gitlab.example.test as bot (/home/u/.config/glab-cli/config.yml)\n  ✓ Token found in configuration file (plaintext): ******\n";
+    const GLAB_ERROR_BOX: &str = "          \n   ERROR  \n          \n  X could not authenticate to one or more of the configured GitLab instances.\n";
+
+    fn glab(success: bool, stdout: &str) -> AuthState {
+        classify_glab_status(success, stdout.as_bytes(), b"").state
+    }
+
+    /// glab 1.117 output captured from a self-hosted-only login: gitlab.com is
+    /// listed without a token, so the command fails and prints a 401.
+    #[test]
+    fn glab_self_hosted_login_survives_a_tokenless_gitlab_com() {
+        let output = format!("{GLAB_NO_TOKEN}{GLAB_SELF_HOSTED}{GLAB_ERROR_BOX}");
+        assert_eq!(glab(false, &output), AuthState::Ok);
+        assert_eq!(
+            text(false, &output),
+            AuthState::Expired,
+            "the whole text is what misread this login"
+        );
+    }
+
+    #[test]
+    fn glab_hosts_holding_a_token_must_all_be_healthy() {
+        let rejected = "gitlab.com\n  x gitlab.com: API call failed: GET https://gitlab.com/api/v4/user: 401 {message: 401 Unauthorized}\n  ✓ Token found in configuration file (plaintext): ******\n";
+        assert_eq!(glab(false, rejected), AuthState::Expired);
+        assert_eq!(
+            glab(
+                false,
+                &format!("{rejected}{GLAB_SELF_HOSTED}{GLAB_ERROR_BOX}")
+            ),
+            AuthState::Expired
+        );
+        assert_eq!(
+            glab(false, &format!("{GLAB_NO_TOKEN}{GLAB_ERROR_BOX}")),
+            AuthState::Missing
+        );
+        assert_eq!(glab(true, GLAB_SELF_HOSTED), AuthState::Ok);
+        let notice = "A new version of glab is available\n  v1.117.0 → v1.130.0\n";
+        assert_eq!(
+            glab(true, &format!("{GLAB_SELF_HOSTED}\n{notice}")),
+            AuthState::Ok
+        );
+        assert_eq!(glab(false, ""), AuthState::Error, "unrecognized output");
     }
 
     #[test]

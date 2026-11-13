@@ -31,15 +31,15 @@ pub struct McpConfig {
 }
 
 impl McpConfig {
-    /// Reads `GAH_SERVER_URL`, `GAH_SERVER_TOKEN`, and `GAH_PROFILE`.
+    /// Reads `PARASAUR_SERVER_URL`, `PARASAUR_SERVER_TOKEN`, and `PARASAUR_PROFILE`.
     pub fn from_env() -> Self {
         Self {
-            server_url: std::env::var("GAH_SERVER_URL")
+            server_url: std::env::var("PARASAUR_SERVER_URL")
                 .unwrap_or_else(|_| DEFAULT_SERVER_URL.to_string()),
-            server_token: std::env::var("GAH_SERVER_TOKEN")
+            server_token: std::env::var("PARASAUR_SERVER_TOKEN")
                 .ok()
                 .filter(|token| !token.is_empty()),
-            default_profile: std::env::var("GAH_PROFILE")
+            default_profile: std::env::var("PARASAUR_PROFILE")
                 .unwrap_or_else(|_| DEFAULT_PROFILE.to_string()),
         }
     }
@@ -71,7 +71,7 @@ mod http_only {
         Field::optional(
             "profile",
             Kind::String,
-            "GAH profile name; defaults to GAH_PROFILE / \"gah\"",
+            "GAH profile name; defaults to PARASAUR_PROFILE / \"gah\"",
         )
     }
 

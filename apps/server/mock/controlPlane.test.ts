@@ -6,8 +6,117 @@ import { fileURLToPath } from 'node:url';
 
 import ts from 'typescript';
 import { WebSocket } from 'ws';
-import type { ClientMessage, ProjectImportResult, ServerMessage, PairingAccessRequest, PairedDevice } from '@git-agent-harness/contracts';
+import type { ClientMessage, ProjectImportResult, ServerMessage, PairingAccessRequest, PairedDevice, RecordedUsageReport } from '@git-agent-harness/contracts';
 import { createMockControlPlane, MOCK_SCENARIOS } from './controlPlane.js';
+import type { ComputeOutputCatalog, ComputeOutputDownload, ComputeJournalReview, NodeFactorySnapshot } from '@git-agent-harness/contracts';
+
+test('sample recorded usage combines chat and factory readings with explicit coverage', async () => {
+  const running = await createMockControlPlane().listen(0);
+  try {
+    const response = await fetch(`${running.baseUrl}/api/usage/report?profile=sample&days=30`);
+    assert.equal(response.status, 200);
+    const report = await response.json() as RecordedUsageReport;
+    assert.equal(report.profile, 'sample');
+    assert.equal(report.rows.reduce((sum: number, row: { chat_turns: number }) => sum + row.chat_turns, 0), 4);
+    assert.equal(report.rows.reduce((sum: number, row: { dispatch_attempts: number }) => sum + row.dispatch_attempts, 0), 1);
+    assert.equal(report.totals.total_tokens.reported_total, 3400);
+    assert.equal(report.totals.actual_cost_usd.reported_total, 0.12);
+    assert.equal(report.totals.actual_cost_usd.unmeasured_observations, 4);
+    assert.equal(Date.parse(report.generated_at) - Date.parse(report.since), 30 * 86_400_000);
+    assert.equal((await fetch(`${running.baseUrl}/api/usage/report?days=0`)).status, 400);
+  } finally { await running.close(); }
+});
+
+test('sample worker factory observations are source-scoped and do not run the central controller', async () => {
+  const running = await createMockControlPlane().listen(0);
+  try {
+    const before = await (await fetch(`${running.baseUrl}/api/loop/status`)).json();
+    const result = await (await fetch(`${running.baseUrl}/api/registry/nodes/sample-worker/factory?profile=other-project`)).json() as NodeFactorySnapshot;
+    assert.equal(result.node_id, 'sample-worker'); assert.equal(result.profile, 'other-project');
+    assert.deepEqual(result.loop, { state: 'available', value: { running: false } });
+    assert.equal(result.status.state, 'available');
+    assert.ok(JSON.stringify(result).includes('Sample review gate'));
+    assert.deepEqual(await (await fetch(`${running.baseUrl}/api/loop/status`)).json(), before);
+  } finally { await running.close(); }
+});
+
+test('sample receipt cleanup is reviewed, replay-safe and independent of saved output', async () => {
+  const running = await createMockControlPlane().listen(0);
+  try {
+    const base = `${running.baseUrl}/api/owner/compute-journal`;
+    const review = await (await fetch(`${base}/review`)).json() as ComputeJournalReview;
+    assert.equal(review.candidates.length, 1);
+    const cleanup = (key: string, confirm: boolean) => fetch(`${base}/cleanup`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ revision: review.revision, confirm }) });
+    assert.equal((await cleanup('sample-receipt-rejected', false)).status, 400);
+    assert.equal((await cleanup('sample-receipt-reviewed', true)).status, 200);
+    assert.equal((await cleanup('sample-receipt-reviewed', true)).status, 409);
+    const catalog = await (await fetch(`${running.baseUrl}/api/owner/compute-output`)).json() as ComputeOutputCatalog;
+    assert.equal(catalog.journal?.entries, 3); assert.equal(catalog.entries.length, 1, 'receipt cleanup cannot discard saved output');
+    await post(running.baseUrl, '/api/mock/reset');
+    assert.equal((await cleanup('sample-receipt-stale-key', true)).status, 409);
+  } finally { await running.close(); }
+});
+
+test('sample output review removes only simulated bytes and reset invalidates a stale selection', async () => {
+  const running = await createMockControlPlane().listen(0);
+  try {
+    const base = `${running.baseUrl}/api/owner/compute-output`;
+    const catalog = await (await fetch(base)).json() as ComputeOutputCatalog, entry = catalog.entries[0]!;
+    assert.equal(entry.incomplete, true); assert.equal(catalog.admissionBlocked, false);
+    const query = `revision=${entry.revision}`;
+    const plan = await (await fetch(`${base}/${entry.id}/download?${query}`)).json() as ComputeOutputDownload;
+    const bytes = await (await fetch(`${base}/${entry.id}/block?${query}&index=0`)).text();
+    assert.match(bytes, /Simulated partial job output/); assert.equal(plan.bytes, Buffer.byteLength(bytes));
+    const body = { revision: entry.revision, sha256: plan.sha256, confirm: true };
+    const remove = (key: string, value = body) => fetch(`${base}/${entry.id}/discard`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify(value) });
+    assert.equal((await remove('sample-invalid-key', { ...body, confirm: false })).status, 400);
+    assert.equal((await remove('sample-reviewed-key')).status, 200);
+    assert.equal((await remove('sample-reviewed-key')).status, 409);
+    assert.deepEqual((await (await fetch(base)).json() as ComputeOutputCatalog).entries, []);
+    await post(running.baseUrl, '/api/mock/reset');
+    assert.equal((await remove('sample-new-action-key')).status, 409);
+    assert.equal((await (await fetch(base)).json() as ComputeOutputCatalog).entries.length, 1);
+  } finally { await running.close(); }
+});
+
+test('sample factory dispatch acknowledges and retains exact account identity across a retry', async () => {
+  const running = await createMockControlPlane().listen(0);
+  const ws = new WebSocket(running.wsUrl);
+  try {
+    const welcome = nextMessage(ws, 'server.welcome');
+    await new Promise<void>((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
+    await welcome;
+    const status = await (await fetch(`${running.baseUrl}/api/status`)).json() as { dispatch_backend_instances: boolean; backend_instances: { backend_instance: string }[] };
+    assert.equal(status.dispatch_backend_instances, true);
+    assert.ok(status.backend_instances.some(item => item.backend_instance === 'codex-work'));
+    const message: ClientMessage = { type: 'session.start', requestId: 'sample-exact', profile: 'fixture',
+      repo: 'Kh1ng/git-agent-harness', providerKind: 'codex', instanceId: 'codex-0', mode: 'improve',
+      backend: 'codex', backendInstance: 'codex-work', model: 'gpt-5.3-codex', nodeId: 'mock-central' };
+    let sessionId: string | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const reply = nextMessage(ws, 'session.started');
+      ws.send(JSON.stringify(message));
+      const result = await reply;
+      assert.equal(result.type, 'session.started');
+      if (result.type !== 'session.started') throw new Error('Expected session receipt');
+      assert.equal(result.requestId, message.requestId);
+      assert.equal(result.session.backendInstance, 'codex-work');
+      assert.equal(result.session.nodeId, 'mock-central');
+      if (sessionId) assert.equal(result.session.id, sessionId);
+      sessionId = result.session.id;
+    }
+    const failure = nextMessage(ws, 'error');
+    ws.send(JSON.stringify({ ...message, backendInstance: 'codex-personal' }));
+    const error = await failure;
+    assert.equal(error.type, 'error');
+    const stopped = nextMessage(ws, 'session.stopped');
+    ws.send(JSON.stringify({ type: 'session.stop', requestId: 'stop', sessionId }));
+    const result = await stopped;
+    assert.equal(result.type === 'session.stopped' && result.session.status, 'stopped');
+  } finally { ws.terminate(); await running.close(); }
+});
 
 async function post(baseUrl: string, path: string, body: unknown = {}): Promise<Response> {
   return fetch(`${baseUrl}${path}`, {
@@ -16,6 +125,51 @@ async function post(baseUrl: string, path: string, body: unknown = {}): Promise<
     body: JSON.stringify(body)
   });
 }
+
+test('sample workspace checks preserve whole command lists and stay out of public profile metadata', async () => {
+  const running = await createMockControlPlane().listen(0);
+  const commands = ['echo PRIVATE_CHECKS_CANARY', 'node -e "console.log([1,2])"'];
+  try {
+    assert.equal((await fetch(`${running.baseUrl}/api/profiles/fixture`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ validation_commands: commands }) })).status, 200);
+    const checks = await (await fetch(`${running.baseUrl}/api/profiles/fixture/checks`)).json() as { validation_commands: string[] };
+    assert.deepEqual(checks.validation_commands, commands);
+    assert.doesNotMatch(await (await fetch(`${running.baseUrl}/api/profiles`)).text(), /PRIVATE_CHECKS_CANARY/);
+    await post(running.baseUrl, '/api/mock/reset');
+    assert.deepEqual((await (await fetch(`${running.baseUrl}/api/profiles/fixture/checks`)).json() as { validation_commands: string[] }).validation_commands, []);
+  } finally { await running.close(); }
+});
+
+test('sample environment sources round-trip presence without storing source values and reset cleanly', async () => {
+  const running = await createMockControlPlane().listen(0);
+  const patch = (body: object) => fetch(`${running.baseUrl}/api/profiles/fixture`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const read = async () => (await fetch(`${running.baseUrl}/api/config/effective?profile=fixture`)).json() as Promise<{ notifications: { env_file_configured: boolean; env_file_prod_configured: boolean } }>;
+  try {
+    assert.equal((await patch({ env_file: 'PRIVATE_ENV_SOURCE_CANARY', env_file_prod: '/private/prod.env' })).status, 200);
+    const configured = await read();
+    assert.equal(configured.notifications.env_file_configured, true);
+    assert.equal(configured.notifications.env_file_prod_configured, true);
+    assert.doesNotMatch(JSON.stringify(configured), /PRIVATE_ENV_SOURCE_CANARY|\/private\/prod.env/);
+    await patch({ clear: ['env_file_prod'] });
+    assert.equal((await read()).notifications.env_file_configured, true);
+    assert.equal((await read()).notifications.env_file_prod_configured, false);
+    await post(running.baseUrl, '/api/mock/reset');
+    assert.equal((await read()).notifications.env_file_configured, false);
+  } finally { await running.close(); }
+});
+
+test('sample named account sign-in returns repair-shaped data and never asks for real credentials', async () => {
+  const running = await createMockControlPlane().listen(0, '127.0.0.1');
+  try {
+    const response = await post(running.baseUrl, '/api/backend-instances/authenticate', { profile: 'fixture', instance: 'codex-work' });
+    assert.equal(response.status, 201);
+    const payload = await response.json() as { key: string; repair: { status: string; instructions: string } };
+    assert.equal(payload.key.length, 64);
+    assert.equal(payload.repair.status, 'manual');
+    assert.match(payload.repair.instructions, /sample data/);
+    assert.match(payload.repair.instructions, /No provider sign-in was started/);
+  } finally { await running.close(); }
+});
 
 function nextMessage(ws: WebSocket, type: ServerMessage['type'], timeoutMs = 3_000): Promise<ServerMessage> {
   return new Promise((resolve, reject) => {
@@ -361,6 +515,9 @@ test('every used frontend API call has a registered mock route', async () => {
   const running = await createMockControlPlane().listen(0);
   try {
     for (const { method, path } of frontendApiRoutes()) {
+      // Each route needs the seeded fixture: an earlier DELETE otherwise
+      // makes a later resource read look like an unregistered endpoint.
+      await post(running.baseUrl, '/api/mock/reset');
       const requestPath = path.replaceAll(':param', 'fixture');
       const response = await fetch(`${running.baseUrl}${requestPath}`, {
         method,

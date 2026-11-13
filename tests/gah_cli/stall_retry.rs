@@ -31,7 +31,7 @@ fn stalled_before_changes_quarantines_the_exact_backend_route() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_AVAILABILITY_PATH", &availability_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &availability_path)
         .assert()
         .failure()
         .stderr(predicate::str::contains("made no repository progress"));
@@ -85,7 +85,7 @@ fn stalled_validation_continues_checkpointed_progress_and_records_exact_outcome(
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success();
 
@@ -159,7 +159,7 @@ fn shutdown_during_validation_preserves_wip_without_starting_a_retry() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

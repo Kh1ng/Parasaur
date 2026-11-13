@@ -2,7 +2,7 @@
  * Compile-time drift checks for checked CLI fixtures.
  *
  * Regenerate after an intentional Rust JSON contract change with:
- * `GAH_UPDATE_CONTRACT_FIXTURES=1 cargo test --test contracts_drift`
+ * `PARASAUR_UPDATE_CONTRACT_FIXTURES=1 cargo test --test contracts_drift`
  */
 import quotaListFixture from './fixtures/quota-list.json';
 import reportFixture from './fixtures/report.json';

@@ -14,6 +14,7 @@ pub mod dispatch;
 pub mod doctor;
 pub mod external_approval;
 pub mod init;
+pub mod isolation_host;
 pub mod ledger;
 pub mod manager_log;
 pub mod network;
@@ -38,3 +39,4 @@ pub mod watchdog;
 pub mod route;
 
 pub mod memory;
+pub mod native_handoff;

@@ -27,13 +27,13 @@ test('without a provider, all 24 header/credential combinations match main on HT
     JSON.parse(readFileSync(new URL('../../../tests/fixtures/gitlab-identity/main-no-provider.json', import.meta.url), 'utf8'));
   assert.equal(baseline.length, 24);
   const directory = mkdtempSync(join(tmpdir(), 'gah-gitlab-no-provider-'));
-  const keys = ['COORDINATOR_TOKEN', 'GAH_ALLOW_INSECURE_HTTP', 'GAH_COORDINATOR_IDENTITY_PATH', 'GAH_WS_AUTH_MODE', 'GAH_MUTATION_STORE_PATH'] as const;
+  const keys = ['COORDINATOR_TOKEN', 'PARASAUR_ALLOW_INSECURE_HTTP', 'PARASAUR_COORDINATOR_IDENTITY_PATH', 'PARASAUR_WS_AUTH_MODE', 'PARASAUR_MUTATION_STORE_PATH'] as const;
   const saved = keys.map(key => process.env[key]);
   process.env.COORDINATOR_TOKEN = 'scratch-owner';
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(directory, 'identity.json');
-  process.env.GAH_WS_AUTH_MODE = 'strict';
-  process.env.GAH_MUTATION_STORE_PATH = join(directory, 'mutations');
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(directory, 'identity.json');
+  process.env.PARASAUR_WS_AUTH_MODE = 'strict';
+  process.env.PARASAUR_MUTATION_STORE_PATH = join(directory, 'mutations');
   t.after(() => {
     keys.forEach((key, i) => saved[i] === undefined ? delete process.env[key] : process.env[key] = saved[i]);
     rmSync(directory, { recursive: true, force: true });
@@ -85,13 +85,13 @@ test('without a provider, all 24 header/credential combinations match main on HT
 
 test('registered hook maps HTTP and WebSocket requests to bounded controller sessions and fails closed', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'gah-gitlab-identity-'));
-  const keys = ['COORDINATOR_TOKEN', 'GAH_ALLOW_INSECURE_HTTP', 'GAH_COORDINATOR_IDENTITY_PATH', 'GAH_WS_AUTH_MODE', 'GAH_MUTATION_STORE_PATH'] as const;
+  const keys = ['COORDINATOR_TOKEN', 'PARASAUR_ALLOW_INSECURE_HTTP', 'PARASAUR_COORDINATOR_IDENTITY_PATH', 'PARASAUR_WS_AUTH_MODE', 'PARASAUR_MUTATION_STORE_PATH'] as const;
   const saved = keys.map(key => process.env[key]);
   process.env.COORDINATOR_TOKEN = 'owner-secret';
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(directory, 'identity.json');
-  process.env.GAH_WS_AUTH_MODE = 'trusted_lan';
-  process.env.GAH_MUTATION_STORE_PATH = join(directory, 'mutations');
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(directory, 'identity.json');
+  process.env.PARASAUR_WS_AUTH_MODE = 'trusted_lan';
+  process.env.PARASAUR_MUTATION_STORE_PATH = join(directory, 'mutations');
   const access = new DeviceAccess(join(directory, 'devices.json'));
   const offer = access.create({ id: 'central', name: 'Central', origin: 'https://panel.test' });
   const { device, token } = access.redeem(offer.code, 'central', 'https://panel.test', 'GitLab user 42');
@@ -103,11 +103,11 @@ test('registered hook maps HTTP and WebSocket requests to bounded controller ses
     if (throwing) throw new Error('secret-provider-error');
     return request.assertion === 'verified.by.enterprise' ? principal : null;
   } };
-  const savedWebRoot = process.env.GAH_WEB_ROOT;
-  process.env.GAH_WEB_ROOT = directory;
+  const savedWebRoot = process.env.PARASAUR_WEB_ROOT;
+  process.env.PARASAUR_WEB_ROOT = directory;
   writeFileSync(join(directory, 'index.html'), '<html><head></head><body>panel</body></html>');
   t.after(() => {
-    if (savedWebRoot === undefined) delete process.env.GAH_WEB_ROOT; else process.env.GAH_WEB_ROOT = savedWebRoot;
+    if (savedWebRoot === undefined) delete process.env.PARASAUR_WEB_ROOT; else process.env.PARASAUR_WEB_ROOT = savedWebRoot;
   });
   const app = createServer({ deviceAccess: access, gitLabIdentityProvider: provider, detectTailscaleIPv4: async () => null });
   const server = http.createServer(app);

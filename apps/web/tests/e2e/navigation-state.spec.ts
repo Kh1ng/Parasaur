@@ -24,7 +24,7 @@ test('navigation links accept known pages and bounded conversation identifiers',
 });
 
 test('a mobile conversation link restores its project and chat after reload and page navigation', async ({ page, request }) => {
-  const mock = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+  const mock = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
   expect((await request.post(`${mock}/api/mock/scenario`, { data: { name: 'normal' } })).ok()).toBe(true);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/?page=chat&profile=fixture&chat=mock-session-1#keep-marker');
@@ -56,7 +56,7 @@ test('a mobile conversation link restores its project and chat after reload and 
 });
 
 test('a queued GitLab run link opens its dispatch session', async ({ page, request }) => {
-  const mock = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+  const mock = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
   expect((await request.post(`${mock}/api/mock/scenario`, { data: { name: 'normal' } })).ok()).toBe(true);
   const queued = await request.post(`${mock}/api/dispatch`, { data: { profile: 'fixture', mode: 'improve', target: '#42' } });
   expect(queued.ok()).toBe(true);

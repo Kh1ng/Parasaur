@@ -4,8 +4,8 @@ struct BankEnv(Option<std::ffi::OsString>);
 impl Drop for BankEnv {
     fn drop(&mut self) {
         match self.0.take() {
-            Some(value) => std::env::set_var("GAH_SKILL_BANK_PATH", value),
-            None => std::env::remove_var("GAH_SKILL_BANK_PATH"),
+            Some(value) => std::env::set_var("PARASAUR_SKILL_BANK_PATH", value),
+            None => std::env::remove_var("PARASAUR_SKILL_BANK_PATH"),
         }
     }
 }
@@ -15,8 +15,8 @@ fn pinned_skill_dispatch_records_and_delivers_the_exact_version() {
     let _exec = crate::test_support::ExecGuard::new();
     let tmp = tempfile::tempdir().unwrap();
     let bank = tmp.path().join("skills.json");
-    let _bank_env = BankEnv(std::env::var_os("GAH_SKILL_BANK_PATH"));
-    std::env::set_var("GAH_SKILL_BANK_PATH", &bank);
+    let _bank_env = BankEnv(std::env::var_os("PARASAUR_SKILL_BANK_PATH"));
+    std::env::set_var("PARASAUR_SKILL_BANK_PATH", &bank);
     let bank_content = |pin| {
         serde_json::json!({
             "skills": [

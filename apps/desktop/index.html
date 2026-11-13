@@ -21,7 +21,7 @@
       button:disabled { opacity: .6; cursor: wait; } :focus-visible { outline: 2px solid #8ab4ff; outline-offset: 3px; }
       section { border-top: 1px solid #303849; margin-top: 2rem; padding-top: .75rem; }
       table { width: 100%; border-collapse: collapse; font-size: .875rem; font-variant-numeric: tabular-nums; } th, td { text-align: left; padding: .25rem .5rem; border-bottom: 1px solid #232936; }
-      #error { color: #ffb4b4; } #status:empty, #error:empty { display: none; } [hidden] { display: none !important; }
+      #error, #connection-timeout { color: #ffb4b4; } #status:empty, #error:empty { display: none; } [hidden] { display: none !important; }
       .actions { display: flex; gap: .75rem; flex-wrap: wrap; }
       #repository-tools .actions { align-items: flex-end; }
       #repository-tool-guide { color: #8ab4ff; display: inline-flex; align-items: center; min-height: 2.75rem; }
@@ -38,6 +38,32 @@
       <button id="back" type="button">← Back to Settings</button>
       <h1>Settings · This computer</h1>
       <p>Change this computer’s connection, app presence, and worker. Pair devices and manage central from the dashboard’s Settings page.</p>
+      <section aria-labelledby="connection-heading">
+        <h2 id="connection-heading">Connection</h2>
+        <p id="connection-timeout" role="alert" tabindex="-1" hidden>The dashboard did not open in time. Check the saved address and your connection, then try again.</p>
+        <form id="connection">
+          <label for="central-url">Central node address</label>
+          <input id="central-url" type="url" required placeholder="https://central.example.ts.net" spellcheck="false" />
+          <label for="wsl-distribution" id="wsl-label" hidden>WSL distribution (blank uses your default)</label>
+          <input id="wsl-distribution" hidden placeholder="Ubuntu" spellcheck="false" />
+          <button type="submit">Save and connect</button>
+        </form>
+        <p id="status" role="status"></p>
+      </section>
+      <p id="error" role="alert"></p>
+      <section aria-labelledby="owner-heading">
+        <h2 id="owner-heading">Owner access</h2>
+        <p>Save the central token in this computer's credential vault. Parasaur sends it only to the exact central origin above. This is token access, not an account sign-in.</p>
+        <p id="owner-state" role="status">Checking saved owner access...</p>
+        <form id="owner-credential">
+          <label for="owner-token">Central owner token</label>
+          <input id="owner-token" type="password" autocomplete="off" spellcheck="false" />
+          <div class="actions">
+            <button type="submit">Save owner access</button>
+            <button id="forget-owner" type="button">Forget owner access</button>
+          </div>
+        </form>
+      </section>
       <section id="repository-tools">
         <h2>Repository tools</h2>
         <p>The full local workflow needs a repository CLI package and a login. Standalone mode does not require Tailscale or another Parasaur node.</p>
@@ -110,29 +136,6 @@
         <h2 id="desktop-update-heading">Desktop update</h2>
         <p id="desktop-update-status" role="status">Checking for a desktop update…</p>
         <button id="desktop-update-apply" type="button" hidden>Restart to update</button>
-      </section>
-      <h2>Connection</h2>
-      <form id="connection">
-        <label for="central-url">Central node address</label>
-        <input id="central-url" type="url" required placeholder="https://central.example.ts.net" spellcheck="false" />
-        <label for="wsl-distribution" id="wsl-label" hidden>WSL distribution (blank uses your default)</label>
-        <input id="wsl-distribution" hidden placeholder="Ubuntu" spellcheck="false" />
-        <button type="submit">Save and connect</button>
-      </form>
-      <p id="status" role="status"></p>
-      <p id="error" role="alert"></p>
-      <section aria-labelledby="owner-heading">
-        <h2 id="owner-heading">Owner access</h2>
-        <p>Save the central token in this computer's credential vault. Parasaur sends it only to the exact central origin above. This is token access, not an account sign-in.</p>
-        <p id="owner-state" role="status">Checking saved owner access...</p>
-        <form id="owner-credential">
-          <label for="owner-token">Central owner token</label>
-          <input id="owner-token" type="password" autocomplete="off" spellcheck="false" />
-          <div class="actions">
-            <button type="submit">Save owner access</button>
-            <button id="forget-owner" type="button">Forget owner access</button>
-          </div>
-        </form>
       </section>
       <section aria-labelledby="presence-heading">
         <h2 id="presence-heading">App presence</h2>

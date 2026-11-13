@@ -232,14 +232,14 @@ test('crashes consume the durable budget; unknown exhausted work is dead-lettere
 });
 
 test('pending default/env capacity, dead-letter bound, and lease retry delay are independent', () => {
-  const saved = process.env.GAH_GITLAB_EVENTS_QUEUE_CAPACITY;
+  const saved = process.env.PARASAUR_GITLAB_EVENTS_QUEUE_CAPACITY;
   try {
-    delete process.env.GAH_GITLAB_EVENTS_QUEUE_CAPACITY;
+    delete process.env.PARASAUR_GITLAB_EVENTS_QUEUE_CAPACITY;
     assert.equal(new GitLabEventStore().summary().capacity, 256);
-    process.env.GAH_GITLAB_EVENTS_QUEUE_CAPACITY = '2';
+    process.env.PARASAUR_GITLAB_EVENTS_QUEUE_CAPACITY = '2';
     assert.equal(new GitLabEventStore().summary().capacity, 2);
     for (const invalid of ['0', '-1', '1.5', 'bad']) {
-      process.env.GAH_GITLAB_EVENTS_QUEUE_CAPACITY = invalid;
+      process.env.PARASAUR_GITLAB_EVENTS_QUEUE_CAPACITY = invalid;
       assert.equal(new GitLabEventStore().summary().capacity, 256);
     }
     let now = 0;
@@ -264,8 +264,8 @@ test('pending default/env capacity, dead-letter bound, and lease retry delay are
     assert.equal(store.recover(first.key, 'retry'), 'not_found');
     assert.equal(store.summary().pending.length, 1);
   } finally {
-    if (saved === undefined) delete process.env.GAH_GITLAB_EVENTS_QUEUE_CAPACITY;
-    else process.env.GAH_GITLAB_EVENTS_QUEUE_CAPACITY = saved;
+    if (saved === undefined) delete process.env.PARASAUR_GITLAB_EVENTS_QUEUE_CAPACITY;
+    else process.env.PARASAUR_GITLAB_EVENTS_QUEUE_CAPACITY = saved;
   }
 });
 

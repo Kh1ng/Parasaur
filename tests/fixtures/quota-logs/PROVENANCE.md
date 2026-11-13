@@ -23,6 +23,7 @@ Captured into this repo: 2026-07-04.
 | `agy_auth_not_logged_in.txt` | Local capture, `/tmp/agy-debug.log`, 2026-07-04 | AGY/Antigravity has no public issue tracker to cite; captured directly from a real local `agy` process log during an unauthenticated run on this host. |
 | `opencode_hy3_rate_limit.log` | Local capture, `~/.local/share/opencode/log/opencode.log`, 2026-07-12 | OpenCode's Hy3-free provider error is written to OpenCode's internal log rather than GAH's captured stdout/stderr. |
 | `vibe_invalid_api_key.txt` | Local capture, `artifacts/gah/sessions/61dad4cf-8e9a-4eb1-a64e-1640890e13d2/review-stderr.log`, 2026-07-15 | Vibe 2.19.1 rejected the configured Mistral credential before model invocation. |
+| `claude_oauth_session_expired.txt` | Local capture, WSL worker `artifacts/parasaur-dogfood/sessions/b3ccbff9-81db-4cf9-ad04-bf17789339a8/review-stdout.log`, 2026-11-12 | Claude Code 2.1.314 with a stale OAuth login, printed on stdout with exit status 1. It was not classified, so a review retried the same route three times instead of falling back. |
 
 AGY quota-exhaustion text (`RESOURCE_EXHAUSTED`, `Individual quota reached`, `code 429`)
 matched by `agy_quota_re` in `src/quota_parser.rs` predates this provenance file and has no
