@@ -990,9 +990,15 @@ fn push_command(
 /// Whether a push from `repo` to `push_url` would authenticate. A dry run
 /// presents the credential to the server and changes nothing there.
 pub fn probe_push_access(repo: &Path, push_url: &str, token: &str) -> Result<()> {
+    // Hermetic tests have no server to ask. Debug builds only, like the
+    // node-pressure fixture; a release build always asks.
+    #[cfg(debug_assertions)]
+    if std::env::var_os("PARASAUR_TEST_PUSH_ACCEPTED").is_some() {
+        return Ok(());
+    }
     let askpass = write_askpass()?;
     let mut cmd = push_command(Path::new("git"), repo, push_url, token, &askpass);
-    cmd.args(["--dry-run", "HEAD:refs/heads/gah-doctor-probe"]);
+    cmd.args(["--dry-run", "HEAD:refs/heads/parasaur-doctor-probe"]);
     let child = spawn_git(&mut cmd, "git push --dry-run")?;
     let out = wait_with_timeout(child, "git push --dry-run")?;
     if !out.status.success() {

@@ -1192,7 +1192,7 @@ fn review_gitlab_without_bot_pat_keeps_local_verdict_and_does_not_publish() {
             .success()
             .stderr(
                 predicate::str::contains(
-                    "warning: GitLab review publication incomplete; human review required\n",
+                    "warning: GitLab review publication incomplete; human review required. No bot token is set",
                 )
                 .count(1),
             );

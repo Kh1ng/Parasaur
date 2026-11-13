@@ -189,6 +189,9 @@ pub fn isolate_gah_command<C: TestCommandEnvironment>(command: C) -> IsolatedCom
         let node_pressure = root.join("node-pressure.json");
         write_idle_node_pressure(&node_pressure);
         command.env_path("PARASAUR_TEST_NODE_PRESSURE_FILE", &node_pressure);
+        // Doctor would otherwise ask the profile's real server whether a push
+        // is accepted. Only the variable's presence matters.
+        command.env_path("PARASAUR_TEST_PUSH_ACCEPTED", &root.join("push-accepted"));
         command.env_unset("PARASAUR_TEST_NOW");
         for key in BACKTRACE_ENV_VARS {
             command.env_unset(key);
