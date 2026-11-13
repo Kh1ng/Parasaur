@@ -55,14 +55,14 @@ function executableOnDisk(path: string): boolean {
   }
 }
 
-// Issue #635: GAH_BINARY, when set, is the first candidate tried -- lets
+// Issue #635: PARASAUR_BINARY, when set, is the first candidate tried -- lets
 // tests/deployments deterministically pin a specific binary (a fixture, or
 // a specific installed build) instead of relying on the build-path/PATH
 // search below. An unset, missing, or non-executable override is not an
 // error -- it just isn't used, and resolution falls through to the normal
 // candidates exactly as if it had never been set.
 export function findGahBinary(isExecutable: ExecutableProbe = executableOnDisk): string {
-  const override = process.env.GAH_BINARY;
+  const override = process.env.PARASAUR_BINARY;
   const possiblePaths = [
     ...(override ? [override] : []),
     resolve(__dirname, '../../../target/release/gah'),
@@ -100,8 +100,8 @@ function getConfigPath(config?: string): string | undefined {
   const possiblePaths = [
     resolve(__dirname, '../../../gah-config.toml'),
     resolve(__dirname, '../../../config/gah-config.toml'),
-    process.env.GAH_CONFIG_PATH,
-    process.env.GAH_CANONICAL_CONFIG
+    process.env.PARASAUR_CONFIG_PATH,
+    process.env.PARASAUR_CANONICAL_CONFIG
   ];
 
   for (const path of possiblePaths) {
@@ -126,7 +126,7 @@ export function getSpawnOptions(config?: string, detached?: boolean): SpawnOptio
   
   // Set config path if provided
   if (config) {
-    env.GAH_CONFIG_PATH = config;
+    env.PARASAUR_CONFIG_PATH = config;
   }
   
   const options: SpawnOptions = {
@@ -189,7 +189,7 @@ export async function runQuota(
  * never accept worker-supplied binding files or expose this as a generic RPC.
  * The CLI verifies/imports the receipt and fsyncs canonical history before ack. */
 export function runReceiveNativeResult(options: { bindingFile: string; receiptFile: string; config?: string }): Promise<import('@git-agent-harness/contracts').NativeResultAcknowledgement> {
-  const config = getConfigPath(options.config ?? process.env.GAH_CONFIG_PATH ?? process.env.GAH_CANONICAL_CONFIG);
+  const config = getConfigPath(options.config ?? process.env.PARASAUR_CONFIG_PATH ?? process.env.PARASAUR_CANONICAL_CONFIG);
   const args = ['ledger', 'receive-dispatch', '--acknowledgement', '--binding-file', options.bindingFile, '--receipt-file', options.receiptFile,
     ...(config ? ['--config-path', config] : [])];
   return runJsonCommand(args, config, false, undefined, 64 * 1024);
@@ -197,11 +197,11 @@ export function runReceiveNativeResult(options: { bindingFile: string; receiptFi
 
 export interface NativeJobRequest {args:Record<string,unknown>}
 export function runPlanNativeJob(request:NativeJobRequest,catalog:import('@git-agent-harness/contracts').NativeWorkerCatalog,config?:string):Promise<NativeJobRequest> {
-  const path=getConfigPath(config??process.env.GAH_CONFIG_PATH??process.env.GAH_CONFIG);
+  const path=getConfigPath(config??process.env.PARASAUR_CONFIG_PATH??process.env.PARASAUR_CONFIG);
   return runJsonCommand(['native-handoff','plan',...(path?['--config-path',path]:[])],path,false,JSON.stringify({request,catalog}),8*1024*1024);
 }
 export function runPrepareNativeJob(options:{requestFile:string;output:string;nodeId:string;centralUrl:string;config?:string}):Promise<import('./nativeDispatchBroker.js').NativeDispatchBinding> {
-  const path=getConfigPath(options.config??process.env.GAH_CONFIG_PATH??process.env.GAH_CONFIG);
+  const path=getConfigPath(options.config??process.env.PARASAUR_CONFIG_PATH??process.env.PARASAUR_CONFIG);
   return runJsonCommand(['native-handoff','prepare','--request-file',options.requestFile,'--output',options.output,
     '--node-id',options.nodeId,'--central-url',options.centralUrl,...(path?['--config-path',path]:[])],path);
 }
@@ -211,7 +211,7 @@ export function runPrepareNativeJob(options:{requestFile:string;output:string;no
 export async function runCheckNativePolicy(options: {
   contextDirectory: string; contextSha256: string; nodeId: string; centralUrl: string; config?: string; signal?: AbortSignal; checkWork?: boolean; checkRoute?: boolean; workerCatalogFile?:string;
 }): Promise<import('./nativeDispatchBroker.js').NativeDispatchBinding> {
-  const config = getConfigPath(options.config ?? process.env.GAH_CONFIG_PATH ?? process.env.GAH_CANONICAL_CONFIG);
+  const config = getConfigPath(options.config ?? process.env.PARASAUR_CONFIG_PATH ?? process.env.PARASAUR_CANONICAL_CONFIG);
   const args = ['native-handoff', 'check-current-policy', '--context-dir', options.contextDirectory,
     '--expected-context', options.contextSha256, '--node-id', options.nodeId, '--central-url', options.centralUrl,
     ...(config ? ['--config-path', config] : []), ...(options.checkWork ? ['--check-work'] : []), ...(options.checkRoute ? ['--check-route'] : []),
@@ -1422,7 +1422,7 @@ export function classifyAuthFailure(backend: string, text: string): Promise<bool
 }
 
 export async function runNodeRole(): Promise<import('@git-agent-harness/contracts').NodeRoleStatus> {
-  const config = getConfigPath(process.env.GAH_CONFIG ?? process.env.GAH_CONFIG_PATH);
+  const config = getConfigPath(process.env.PARASAUR_CONFIG ?? process.env.PARASAUR_CONFIG_PATH);
   return runJsonCommand(['status', '--role', '--json', ...(config ? ['--config-path', config] : [])], config);
 }
 
@@ -1935,7 +1935,7 @@ export interface StartLoopResult {
 }
 
 export async function startLoop(profile: string): Promise<StartLoopResult> {
-  const config = getConfigPath(process.env.GAH_CONFIG ?? process.env.GAH_CONFIG_PATH);
+  const config = getConfigPath(process.env.PARASAUR_CONFIG ?? process.env.PARASAUR_CONFIG_PATH);
   const args = ['config', 'show', '--json', '--full'];
   if (config) args.push('--config', config);
   let module: ConfigShowFull | undefined;
@@ -2056,14 +2056,14 @@ export async function runPmPlanCommand(options: PmPlanCommand): Promise<import('
 
 /** Fixed work-item paid-route operations. Rust owns the approval projection. */
 export async function runPaidRouteApprovals(profile: string): Promise<import('@git-agent-harness/contracts').PaidRouteApproval[]> {
-  const config = getConfigPath(process.env.GAH_CONFIG_PATH ?? process.env.GAH_CONFIG);
+  const config = getConfigPath(process.env.PARASAUR_CONFIG_PATH ?? process.env.PARASAUR_CONFIG);
   const args = ['route-approval', 'list', `--profile=${profile}`];
   if (config) args.push(`--config-path=${config}`);
   return runJsonCommand(args, config);
 }
 
 export async function changePaidRouteApproval(action: 'grant' | 'revoke', scope: import('@git-agent-harness/contracts').PaidRouteScope): Promise<void> {
-  const config = getConfigPath(process.env.GAH_CONFIG_PATH ?? process.env.GAH_CONFIG);
+  const config = getConfigPath(process.env.PARASAUR_CONFIG_PATH ?? process.env.PARASAUR_CONFIG);
   const args = ['route-approval', action, `--profile=${scope.profile}`, `--backend=${scope.backend}`];
   if (config) args.push(`--config-path=${config}`);
   if (scope.backend_instance !== null) args.push(`--instance=${scope.backend_instance}`);
@@ -2089,10 +2089,10 @@ export interface SubscriptionRoute {
 }
 export interface QuotaFailure { kind: 'hard' | 'transient' | 'other'; resetAt: number | null; retryAfterMs: number | null }
 export function runSubscriptionRoutes(profile: string, model?: string | null): Promise<SubscriptionRoute[]> {
-  const config = getConfigPath(process.env.GAH_CONFIG_PATH ?? process.env.GAH_CONFIG);
+  const config = getConfigPath(process.env.PARASAUR_CONFIG_PATH ?? process.env.PARASAUR_CONFIG);
   return runJsonCommand(['route', '--profile', profile, ...(model ? ['--model', model] : []), ...(config ? ['--config-path', config] : [])], config);
 }
 export function runQuotaFailure(profile: string, backend: string, instance: string | null | undefined, model: string | null | undefined, message: string): Promise<QuotaFailure> {
-  const config = getConfigPath(process.env.GAH_CONFIG_PATH ?? process.env.GAH_CONFIG);
+  const config = getConfigPath(process.env.PARASAUR_CONFIG_PATH ?? process.env.PARASAUR_CONFIG);
   return runJsonCommand(['route', '--profile', profile, ...(config ? ['--config-path', config] : []), '--failure-backend', backend, ...(instance ? ['--backend-instance', instance] : []), ...(model ? ['--model', model] : [])], config, false, message.slice(0, 64 * 1024));
 }

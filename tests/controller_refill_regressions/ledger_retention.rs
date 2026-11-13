@@ -2,17 +2,17 @@ use super::*;
 use std::io::Write;
 
 #[test]
-#[ignore = "controlled memory probe; requires GAH_TEST_LEDGER_MEMORY_RESULT"]
+#[ignore = "controlled memory probe; requires PARASAUR_TEST_LEDGER_MEMORY_RESULT"]
 fn active_workers_do_not_need_full_ledger_snapshots() {
     let _lock = serial();
-    let result =
-        std::env::var("GAH_TEST_LEDGER_MEMORY_RESULT").expect("measurement output path required");
-    let workers: usize = std::env::var("GAH_TEST_LEDGER_MEMORY_WORKERS")
+    let result = std::env::var("PARASAUR_TEST_LEDGER_MEMORY_RESULT")
+        .expect("measurement output path required");
+    let workers: usize = std::env::var("PARASAUR_TEST_LEDGER_MEMORY_WORKERS")
         .unwrap_or_else(|_| "4".into())
         .parse()
         .unwrap();
     assert!([1, 4].contains(&workers));
-    let passes: usize = std::env::var("GAH_TEST_LEDGER_MEMORY_PASSES")
+    let passes: usize = std::env::var("PARASAUR_TEST_LEDGER_MEMORY_PASSES")
         .unwrap_or_else(|_| "1".into())
         .parse()
         .unwrap();
@@ -68,7 +68,10 @@ fn active_workers_do_not_need_full_ledger_snapshots() {
     } else {
         // One wave per pass lets each sample observe the same live daemon
         // after the preceding pass released its history and worker state.
-        command.env("GAH_TEST_PARALLEL_PASS_ACTION_LIMIT", workers.to_string());
+        command.env(
+            "PARASAUR_TEST_PARALLEL_PASS_ACTION_LIMIT",
+            workers.to_string(),
+        );
         let mut value: toml::Value = toml::from_str(&fs::read_to_string(&cfg).unwrap()).unwrap();
         value["profiles"]["real"].as_table_mut().unwrap().insert(
             "pacing".into(),
@@ -83,8 +86,8 @@ fn active_workers_do_not_need_full_ledger_snapshots() {
         )
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger)
-        .env("GAH_EVENTS_PATH", tmp.path().join("events.jsonl"));
+        .env("PARASAUR_LEDGER_PATH", &ledger)
+        .env("PARASAUR_EVENTS_PATH", tmp.path().join("events.jsonl"));
     let stderr_path = std::path::Path::new(&result).with_extension("stderr.log");
     if passes == 1 {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());

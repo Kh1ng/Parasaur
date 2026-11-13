@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const MOCK_BASE_URL = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+const MOCK_BASE_URL = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
 
 test('edits a published pull request through the mock control plane', async ({ page, request }) => {
   await request.post(`${MOCK_BASE_URL}/api/mock/scenario`, { data: { name: 'normal' } });

@@ -917,7 +917,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_review_backend_never_signals_a_lost_reviewer() {
-        const ISOLATED: &str = "GAH_TEST_REVIEW_SIGCHLD_IGNORED";
+        const ISOLATED: &str = "PARASAUR_TEST_REVIEW_SIGCHLD_IGNORED";
         if std::env::var_os(ISOLATED).is_none() {
             let name = concat!(
                 module_path!(),

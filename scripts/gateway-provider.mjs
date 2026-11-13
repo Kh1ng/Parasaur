@@ -32,7 +32,7 @@ const providers = {
 };
 const defaults = Object.hasOwn(providers, provider) ? providers[provider] : undefined;
 if (!defaults) {
-  console.error(`ERROR: GAH_GATEWAY_PROVIDER must be openai or ollama, not '${provider}'.`);
+  console.error(`ERROR: PARASAUR_GATEWAY_PROVIDER must be openai or ollama, not '${provider}'.`);
   process.exit(1);
 }
 const knownDimensions = new Map([
@@ -43,7 +43,7 @@ const baseUrl = endpoint || defaults.baseUrl;
 const model = embedModel || defaults.embedModel;
 const dimensions = dimensionsArg ? Number(dimensionsArg) : knownDimensions.get(model);
 if (!Number.isInteger(dimensions) || dimensions <= 0) {
-  console.error(`ERROR: set GAH_GATEWAY_EMBEDDING_DIMENSIONS to the vector size of embedding model '${model}'.`);
+  console.error(`ERROR: set PARASAUR_GATEWAY_EMBEDDING_DIMENSIONS to the vector size of embedding model '${model}'.`);
   process.exit(1);
 }
 
@@ -72,7 +72,7 @@ const embeddingKey = apiKey(['memory', 'embedding', 'apiKey'], 'TDAI_EMBEDDING_A
 const embeddingKeyFromEnv = embeddingKey === '${TDAI_EMBEDDING_API_KEY}';
 // Stop before writing anything: a stored key for another endpoint is cleared.
 if (embeddingKeyFromEnv && !embeddingKeyGiven && (!embeddingKeyStored || embeddingMoved)) {
-  console.error(`ERROR: GAH_GATEWAY_PROVIDER=${provider} at ${baseUrl} needs an embedding credential. Set GAH_GATEWAY_EMBEDDING_API_KEY, or use GAH_GATEWAY_PROVIDER=ollama for a local endpoint that needs no key.`);
+  console.error(`ERROR: PARASAUR_GATEWAY_PROVIDER=${provider} at ${baseUrl} needs an embedding credential. Set PARASAUR_GATEWAY_EMBEDDING_API_KEY, or use PARASAUR_GATEWAY_PROVIDER=ollama for a local endpoint that needs no key.`);
   process.exit(1);
 }
 

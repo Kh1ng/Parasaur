@@ -171,7 +171,7 @@ fn publish_with(
         "POST",
         json!({"body": publication_body(&summary)}),
     )?;
-    let remove = super::GAH_REVIEW_STATE_LABELS
+    let remove = super::PARASAUR_REVIEW_STATE_LABELS
         .iter()
         .filter(|label| !labels.contains(label))
         .copied()

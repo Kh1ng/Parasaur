@@ -270,8 +270,8 @@ class PreviewProxy {
     advertiseHost?: string;
     bindHost?: string;
   } = {
-    basePort: Number.parseInt(process.env.GAH_PREVIEW_BASE_PORT ?? '', 10) || DEFAULT_BASE_PORT,
-    maxPort: Number.parseInt(process.env.GAH_PREVIEW_MAX_PORT ?? '', 10) || DEFAULT_MAX_PORT,
+    basePort: Number.parseInt(process.env.PARASAUR_PREVIEW_BASE_PORT ?? '', 10) || DEFAULT_BASE_PORT,
+    maxPort: Number.parseInt(process.env.PARASAUR_PREVIEW_MAX_PORT ?? '', 10) || DEFAULT_MAX_PORT,
     protectedPorts: [Number.parseInt(process.env.PORT ?? '', 10) || 3773]
   };
 

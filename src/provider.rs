@@ -18,7 +18,7 @@ pub use publication::{
 };
 pub(crate) use relations::{link_provider_child, link_provider_dependency};
 
-const GAH_REVIEW_STATE_LABELS: [&str; 5] = [
+const PARASAUR_REVIEW_STATE_LABELS: [&str; 5] = [
     "gah-needs-fix",
     "gah-ready-for-human",
     "gah-human-review",
@@ -573,7 +573,7 @@ pub fn find_review_target_by_mr(profile: &Profile, mr: &str) -> Result<ReviewTar
 fn gitlab_set_review_state_labels(profile: &Profile, iid: &str, labels: &[&str]) -> Result<()> {
     let project_id = gitlab_project_id(profile)?;
     let endpoint = format!("projects/{project_id}/merge_requests/{iid}");
-    let remove_labels = GAH_REVIEW_STATE_LABELS
+    let remove_labels = PARASAUR_REVIEW_STATE_LABELS
         .iter()
         .copied()
         .filter(|candidate| !labels.contains(candidate))
@@ -621,7 +621,7 @@ fn github_set_review_state_labels(
         .filter(|label| !label.is_empty())
         .collect::<std::collections::HashSet<_>>();
 
-    for stale in GAH_REVIEW_STATE_LABELS
+    for stale in PARASAUR_REVIEW_STATE_LABELS
         .iter()
         .copied()
         .filter(|label| current.contains(label) && !labels.contains(label))

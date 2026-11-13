@@ -20,21 +20,21 @@ import { FIXTURE_GAH_BINARY } from './fixtureGahHarness.js';
  * the served documents' bootstrap uses. */
 test('the device-approval cookie path follows the validated public prefix', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gah-pairing-prefix-'));
-  const keys = ['COORDINATOR_TOKEN', 'GAH_ALLOW_INSECURE_HTTP', 'GAH_COORDINATOR_IDENTITY_PATH', 'GAH_WS_AUTH_MODE', 'GAH_SKILL_BANK_PATH',
-    'GAH_GATEWAY_SETTINGS_PATH', 'GAH_MANAGER_CHAT_SETTINGS_PATH', 'GAH_BINARY', 'GAH_FIXTURE_PROFILE_LIST'] as const;
+  const keys = ['COORDINATOR_TOKEN', 'PARASAUR_ALLOW_INSECURE_HTTP', 'PARASAUR_COORDINATOR_IDENTITY_PATH', 'PARASAUR_WS_AUTH_MODE', 'PARASAUR_SKILL_BANK_PATH',
+    'PARASAUR_GATEWAY_SETTINGS_PATH', 'PARASAUR_MANAGER_CHAT_SETTINGS_PATH', 'PARASAUR_BINARY', 'PARASAUR_FIXTURE_PROFILE_LIST'] as const;
   const saved = keys.map(key => process.env[key]);
   process.env.COORDINATOR_TOKEN = 'owner-fixture-secret';
-  delete process.env.GAH_ALLOW_INSECURE_HTTP;
-  delete process.env.GAH_WS_AUTH_MODE;
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(directory, 'identity.json');
-  process.env.GAH_SKILL_BANK_PATH = join(directory, 'skills.json');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(directory, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(directory, 'chat.json');
-  process.env.GAH_BINARY = FIXTURE_GAH_BINARY;
-  process.env.GAH_FIXTURE_PROFILE_LIST = join(directory, 'profiles.json');
-  writeFileSync(process.env.GAH_FIXTURE_PROFILE_LIST, '[]');
-  writeFileSync(process.env.GAH_GATEWAY_SETTINGS_PATH, JSON.stringify({ url: 'https://gateway.example.test', apiKey: 'key', enabled: true }));
-  writeFileSync(process.env.GAH_MANAGER_CHAT_SETTINGS_PATH, JSON.stringify({ defaultBackend: 'claude', profileOverrides: {} }));
+  delete process.env.PARASAUR_ALLOW_INSECURE_HTTP;
+  delete process.env.PARASAUR_WS_AUTH_MODE;
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(directory, 'identity.json');
+  process.env.PARASAUR_SKILL_BANK_PATH = join(directory, 'skills.json');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(directory, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(directory, 'chat.json');
+  process.env.PARASAUR_BINARY = FIXTURE_GAH_BINARY;
+  process.env.PARASAUR_FIXTURE_PROFILE_LIST = join(directory, 'profiles.json');
+  writeFileSync(process.env.PARASAUR_FIXTURE_PROFILE_LIST, '[]');
+  writeFileSync(process.env.PARASAUR_GATEWAY_SETTINGS_PATH, JSON.stringify({ url: 'https://gateway.example.test', apiKey: 'key', enabled: true }));
+  writeFileSync(process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH, JSON.stringify({ defaultBackend: 'claude', profileOverrides: {} }));
   resetCachedCoordinatorIdentity();
   const access = new DeviceAccess(join(directory, 'devices.json'));
   const createRequest = access.createAccessRequest.bind(access);

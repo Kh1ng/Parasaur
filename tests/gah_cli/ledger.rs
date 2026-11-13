@@ -81,7 +81,7 @@ fn ledger_receive_dispatch_replays_once_and_refuses_a_changed_worker_result() {
                 "--config-path",
                 cfg_path.to_str().unwrap(),
             ])
-            .env("GAH_LEDGER_PATH", &ledger_path)
+            .env("PARASAUR_LEDGER_PATH", &ledger_path)
             .assert()
             .success()
             .stdout(format!("\"{expected}\"\n"));
@@ -105,7 +105,7 @@ fn ledger_receive_dispatch_replays_once_and_refuses_a_changed_worker_result() {
             "--config-path",
             cfg_path.to_str().unwrap(),
         ])
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success();
     let ack: Value = serde_json::from_slice(&acknowledged.get_output().stdout).unwrap();
@@ -132,7 +132,7 @@ fn ledger_receive_dispatch_replays_once_and_refuses_a_changed_worker_result() {
             "--config-path",
             cfg_path.to_str().unwrap(),
         ])
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .failure()
         .stderr(predicate::str::contains(
@@ -154,7 +154,7 @@ fn ledger_receive_dispatch_replays_once_and_refuses_a_changed_worker_result() {
             "--config-path",
             cfg_path.to_str().unwrap(),
         ])
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .failure();
     let error = String::from_utf8_lossy(&rejected.get_output().stderr);
@@ -183,7 +183,7 @@ fn ledger_summary_json_outputs_machine_readable_counts() {
             "--config-path",
             cfg.to_str().unwrap(),
         ])
-        .env("GAH_LEDGER_PATH", ledger_path.to_str().unwrap())
+        .env("PARASAUR_LEDGER_PATH", ledger_path.to_str().unwrap())
         .assert()
         .success();
     let parsed: Value =
@@ -210,7 +210,7 @@ fn ledger_work_no_matching_entry_reports_empty_result() {
             "--config-path",
             cfg.to_str().unwrap(),
         ])
-        .env("GAH_LEDGER_PATH", ledger_path.to_str().unwrap())
+        .env("PARASAUR_LEDGER_PATH", ledger_path.to_str().unwrap())
         .assert()
         .success()
         .stdout(predicate::str::contains(
@@ -239,7 +239,7 @@ fn ledger_clear_attempts_dry_run_stays_pretended_stateful() {
             "--config-path",
             cfg.to_str().unwrap(),
         ])
-        .env("GAH_LEDGER_PATH", ledger_path.to_str().unwrap())
+        .env("PARASAUR_LEDGER_PATH", ledger_path.to_str().unwrap())
         .assert()
         .success()
         .stdout(predicate::str::contains(

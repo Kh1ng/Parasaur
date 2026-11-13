@@ -31,12 +31,12 @@ or the explicit HTTP opt-in below. Direct same-origin loopback access is unchang
   loopback browsers keep token-free central access. Worker WebSocket upgrades require a token
   even over loopback. HTTP retains the direct-local exemption for both roles.
 - Remote transport requires TLS, or the existing explicit
-  `GAH_ALLOW_INSECURE_HTTP=1` opt-in. That option does not disable authentication.
+  `PARASAUR_ALLOW_INSECURE_HTTP=1` opt-in. That option does not disable authentication.
 - A local TLS proxy may supply `X-Forwarded-Proto: https`. Remote peers cannot
   assert TLS through that header. Forwarded requests never inherit local access.
 - Browsers using literal IP addresses or localhost must match the target origin.
   For named hosts or a deliberate cross-origin frontend, set comma-separated
-  exact origins in `GAH_WS_ALLOWED_ORIGINS`, for example
+  exact origins in `PARASAUR_WS_ALLOWED_ORIGINS`, for example
   `https://gah.example.test,http://localhost:3000`. Include the server's named
   origin as well as any separate frontend origin. Do not configure wildcard or
   untrusted origins. Native bearer clients without Origin need no browser-origin
@@ -45,7 +45,7 @@ or the explicit HTTP opt-in below. Direct same-origin loopback access is unchang
 
 ## Explicit compatibility mode
 
-`GAH_WS_AUTH_MODE=trusted_lan` enables unauthenticated central browser access for
+`PARASAUR_WS_AUTH_MODE=trusted_lan` enables unauthenticated central browser access for
 live status, local manager chat, and provider operations. The dashboard displays
 an undismissed warning while this mode is enabled. The transport and browser
 origin checks still apply. Invalid supplied credentials are rejected instead of

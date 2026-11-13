@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test('Profile edits and clears complete command lists through the sample API', async ({ page, request }) => {
-  const mock = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+  const mock = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
   await request.post(`${mock}/api/mock/reset`);
   await request.patch(`${mock}/api/profiles/fixture`, { data: { validation_commands: ['npm test'], auto_fix_commands: ['npm run format'] } });
   await page.goto('/?page=profile');

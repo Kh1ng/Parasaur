@@ -62,7 +62,7 @@ fn native_work_check_reobserves_controller_eligibility_without_backend_or_provid
             "--config-path",
             config.to_str().unwrap(),
         ])
-        .env("GAH_LEDGER_PATH", &ledger)
+        .env("PARASAUR_LEDGER_PATH", &ledger)
         .assert()
         .success();
     let bound: Value = serde_json::from_slice(&prepared.get_output().stdout).unwrap();
@@ -86,7 +86,7 @@ fn native_work_check_reobserves_controller_eligibility_without_backend_or_provid
             ])
             .env("PATH", prepend_path(&fake_bin))
             .env("GITHUB_TOKEN", "fixture-token")
-            .env("GAH_LEDGER_PATH", &ledger);
+            .env("PARASAUR_LEDGER_PATH", &ledger);
         command
     };
     let calls_before = forge.calls().len();
@@ -209,7 +209,7 @@ fn native_context_cli_moves_history_and_verifies_the_expected_node_without_start
             "--config-path",
             config_path.to_str().unwrap(),
         ])
-        .env("GAH_LEDGER_PATH", &history)
+        .env("PARASAUR_LEDGER_PATH", &history)
         .assert()
         .success();
     let binding: Value = serde_json::from_slice(&prepared.get_output().stdout).unwrap();
@@ -230,7 +230,7 @@ fn native_context_cli_moves_history_and_verifies_the_expected_node_without_start
                 "--config-path",
                 config_path.to_str().unwrap(),
             ])
-            .env("GAH_LEDGER_PATH", &history);
+            .env("PARASAUR_LEDGER_PATH", &history);
         command
     };
     let current = check_current().assert().success();
@@ -282,8 +282,8 @@ fn native_context_cli_moves_history_and_verifies_the_expected_node_without_start
             "--config-path",
             worker_config.to_str().unwrap(),
         ])
-        .env("GAH_COORDINATOR_IDENTITY_PATH", &identity)
-        .env("GAH_LEDGER_PATH", &empty_worker_history)
+        .env("PARASAUR_COORDINATOR_IDENTITY_PATH", &identity)
+        .env("PARASAUR_LEDGER_PATH", &empty_worker_history)
         .assert()
         .success();
     let checked: Value = serde_json::from_slice(&checked.get_output().stdout).unwrap();
@@ -318,7 +318,7 @@ fn native_context_cli_moves_history_and_verifies_the_expected_node_without_start
                 "--config-path",
                 worker_config.to_str().unwrap(),
             ])
-            .env("GAH_COORDINATOR_IDENTITY_PATH", &identity)
+            .env("PARASAUR_COORDINATOR_IDENTITY_PATH", &identity)
             .env_remove("INVOCATION_ID")
             .assert()
             .failure()
@@ -339,7 +339,7 @@ fn native_context_cli_moves_history_and_verifies_the_expected_node_without_start
             "--config-path",
             worker_config.to_str().unwrap(),
         ])
-        .env("GAH_COORDINATOR_IDENTITY_PATH", &identity)
+        .env("PARASAUR_COORDINATOR_IDENTITY_PATH", &identity)
         .assert()
         .failure();
     let error = String::from_utf8_lossy(&rejected.get_output().stderr);

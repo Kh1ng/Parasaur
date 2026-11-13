@@ -54,7 +54,10 @@ pub struct NodeRoleStatus {
 
 impl NodeRoleStatus {
     pub fn resolve(defaults: &crate::config::Defaults) -> Result<Self> {
-        Self::with_override(defaults, std::env::var("GAH_NODE_ROLE").ok().as_deref())
+        Self::with_override(
+            defaults,
+            std::env::var("PARASAUR_NODE_ROLE").ok().as_deref(),
+        )
     }
 
     pub fn with_override(

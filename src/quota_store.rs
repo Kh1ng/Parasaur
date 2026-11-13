@@ -113,19 +113,19 @@ impl From<QuotaObservationRecordRaw> for QuotaObservationRecord {
 
 /// Global, not per-profile (like `availability.rs`): Codex/Claude/AGY
 /// subscription limits are shared across every repo GAH touches.
-/// `GAH_QUOTA_STORE_PATH` is an explicit override, matching the existing
-/// `GAH_AVAILABILITY_PATH`/`GAH_LEDGER_PATH` convention -- lets
+/// `PARASAUR_QUOTA_STORE_PATH` is an explicit override, matching the existing
+/// `PARASAUR_AVAILABILITY_PATH`/`PARASAUR_LEDGER_PATH` convention -- lets
 /// `refresh_stale_quota_observations`'s callers (routing, in particular)
 /// call this internally without every caller threading a path parameter
 /// down through several layers just for test isolation.
 pub fn store_path() -> PathBuf {
-    if let Ok(path) = std::env::var("GAH_QUOTA_STORE_PATH") {
+    if let Ok(path) = std::env::var("PARASAUR_QUOTA_STORE_PATH") {
         return PathBuf::from(path);
     }
     // Unit tests must never read the operator's real store: the factory's
     // validation gate runs `cargo test` with the service's XDG_STATE_HOME,
     // and real quota observations there change routing decisions. Tests
-    // that need observations set GAH_QUOTA_STORE_PATH (QuotaStoreEnvGuard).
+    // that need observations set PARASAUR_QUOTA_STORE_PATH (QuotaStoreEnvGuard).
     if cfg!(test) {
         return std::env::temp_dir()
             .join(format!("gah-unit-test-quota-store-{}", std::process::id()))

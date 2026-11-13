@@ -169,8 +169,8 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                 identity = root / 'identity.json'
                 identity.write_text('{"node_id":"native-execution-fixture"}')
                 identity.chmod(0o600)
-                environment = {k: v for k, v in os.environ.items() if not k.startswith('GAH_')}
-                environment['GAH_COORDINATOR_IDENTITY_PATH'] = str(identity)
+                environment = {k: v for k, v in os.environ.items() if not k.startswith(('PARASAUR_', 'GAH_'))}
+                environment['PARASAUR_COORDINATOR_IDENTITY_PATH'] = str(identity)
                 environment['PATH'] = str(bins) + ':/usr/bin:/bin'
                 home = root / 'home'
                 home.mkdir()
@@ -206,7 +206,7 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                            '--expected-context', binding['context_sha256'], '--work-dir', str(work),
                            '--config-path', str(worker)]
                 flags = []
-                for key in ('GAH_COORDINATOR_IDENTITY_PATH', 'PATH', 'HOME'):
+                for key in ('PARASAUR_COORDINATOR_IDENTITY_PATH', 'PATH', 'HOME'):
                     flags += ['--setenv=' + key + '=' + environment[key]]
                 stop_count = root / 'stop-count'
                 stop_flags = []

@@ -462,7 +462,7 @@ pub(crate) fn sample() -> std::io::Result<NodePressure> {
     // file to make pressure-sensitive process tests deterministic. Release
     // binaries do not compile this branch and always read the live kernel.
     #[cfg(debug_assertions)]
-    if let Some(path) = std::env::var_os("GAH_TEST_NODE_PRESSURE_FILE") {
+    if let Some(path) = std::env::var_os("PARASAUR_TEST_NODE_PRESSURE_FILE") {
         eprintln!(
             "gah loop: using explicit debug-only node pressure fixture {}",
             Path::new(&path).display()

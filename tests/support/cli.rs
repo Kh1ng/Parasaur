@@ -167,26 +167,29 @@ pub const BACKTRACE_ENV_VARS: [&str; 2] = ["RUST_BACKTRACE", "RUST_LIB_BACKTRACE
 /// operator's persistent state directory; never let fake profiles and work
 /// claims leak into (or inherit from) that state. Node admission reads an
 /// idle pressure fixture instead of the live host; a test that sets
-/// `GAH_TEST_NODE_PRESSURE_FILE` on the returned command overrides it.
+/// `PARASAUR_TEST_NODE_PRESSURE_FILE` on the returned command overrides it.
 pub fn isolate_gah_command<C: TestCommandEnvironment>(command: C) -> IsolatedCommand<C> {
     isolate_command(command, |command, root| {
         let tmp = root.join("tmp");
         fs::create_dir_all(&tmp).unwrap();
         fs::create_dir_all(root.join("home")).unwrap();
         command.env_path("HOME", &root.join("home"));
-        command.env_path("GAH_CANONICAL_CONFIG", &root.join("canonical.toml"));
+        command.env_path("PARASAUR_CANONICAL_CONFIG", &root.join("canonical.toml"));
         command.env_path("XDG_STATE_HOME", &root.join("xdg-state"));
         command.env_path("XDG_RUNTIME_DIR", &root.join("xdg-runtime"));
-        command.env_path("GAH_AVAILABILITY_PATH", &root.join("availability.json"));
         command.env_path(
-            "GAH_VALIDATION_CHECK_PATH",
+            "PARASAUR_AVAILABILITY_PATH",
+            &root.join("availability.json"),
+        );
+        command.env_path(
+            "PARASAUR_VALIDATION_CHECK_PATH",
             &root.join("validation-check.json"),
         );
         command.env_path("TMPDIR", &tmp);
         let node_pressure = root.join("node-pressure.json");
         write_idle_node_pressure(&node_pressure);
-        command.env_path("GAH_TEST_NODE_PRESSURE_FILE", &node_pressure);
-        command.env_unset("GAH_TEST_NOW");
+        command.env_path("PARASAUR_TEST_NODE_PRESSURE_FILE", &node_pressure);
+        command.env_unset("PARASAUR_TEST_NOW");
         for key in BACKTRACE_ENV_VARS {
             command.env_unset(key);
         }
@@ -210,15 +213,15 @@ pub fn load_config(path: Option<&str>) -> anyhow::Result<git_agent_harness::conf
     static CANONICAL_ENV_LOCK: Mutex<()> = Mutex::new(());
     let _lock = CANONICAL_ENV_LOCK.lock().unwrap();
     let isolated = test_tempdir();
-    let original = std::env::var_os("GAH_CANONICAL_CONFIG");
+    let original = std::env::var_os("PARASAUR_CANONICAL_CONFIG");
     std::env::set_var(
-        "GAH_CANONICAL_CONFIG",
+        "PARASAUR_CANONICAL_CONFIG",
         isolated.path().join("canonical.toml"),
     );
     let result = git_agent_harness::config::load(path);
     match original {
-        Some(value) => std::env::set_var("GAH_CANONICAL_CONFIG", value),
-        None => std::env::remove_var("GAH_CANONICAL_CONFIG"),
+        Some(value) => std::env::set_var("PARASAUR_CANONICAL_CONFIG", value),
+        None => std::env::remove_var("PARASAUR_CANONICAL_CONFIG"),
     }
     result
 }

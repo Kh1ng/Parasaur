@@ -14,9 +14,9 @@ function runCommand(command: string, input = ''): string {
   writeFileSync(join(checkout, 'curl'), `#!/bin/sh
 cat <<'INNEREOF'
 #!/bin/sh
-printf 'path=%s\\n' "$GAH_GATEWAY_MEMORYCORE_PATH"
-printf 'llm=%s\\n' "\${GAH_GATEWAY_LLM_API_KEY-<unset>}"
-printf 'embedding=%s\\n' "\${GAH_GATEWAY_EMBEDDING_API_KEY-<unset>}"
+printf 'path=%s\\n' "$PARASAUR_GATEWAY_MEMORYCORE_PATH"
+printf 'llm=%s\\n' "\${PARASAUR_GATEWAY_LLM_API_KEY-<unset>}"
+printf 'embedding=%s\\n' "\${PARASAUR_GATEWAY_EMBEDDING_API_KEY-<unset>}"
 INNEREOF
 `);
   chmodSync(join(checkout, 'curl'), 0o755);
@@ -114,7 +114,7 @@ test('ColocatedProviderSection generates a setup command based on user inputs', 
 
   // Copy exactly the displayed command.
   const shown = (await commandPre.textContent()) ?? '';
-  expect(shown).toContain('GAH_GATEWAY_PROVIDER=');
+  expect(shown).toContain('PARASAUR_GATEWAY_PROVIDER=');
   await copyButton.click();
   await expect.poll(() => clipboardText).toBe(shown);
 });

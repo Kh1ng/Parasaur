@@ -36,7 +36,7 @@ fn oversized_review_never_publishes_or_records_approval_from_its_prefix() {
             cfg.to_str().unwrap(),
         ])
         .env("PATH", prepend_path(&fake_bin))
-        .env("GAH_LEDGER_PATH", &ledger)
+        .env("PARASAUR_LEDGER_PATH", &ledger)
         .assert()
         .failure();
     let text = fs::read_to_string(ledger).unwrap();
@@ -141,7 +141,7 @@ fn run_format_retry(sequence: Vec<Scenario>) -> (TempDir, FakeBackend, Value) {
             "PATH",
             backend.path_with(&std::env::var("PATH").unwrap_or_default()),
         )
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success();
 

@@ -29,11 +29,11 @@ const result = spawnSync(${JSON.stringify(join(fixtures, 'gah/gah'))}, args, { s
 process.exit(result.status ?? 1);
 `, { mode: 0o755 });
   Object.assign(process.env, {
-    GAH_BINARY: binary, GAH_FIXTURE_PROFILE_LIST: join(root, 'profiles.json'),
-    GAH_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json'), GAH_PROJECT_CATALOG_PATH: join(root, 'projects.json'),
-    GAH_CHAT_STATE_DIR: join(root, 'chat'), GAH_GATEWAY_SETTINGS_PATH: join(root, 'gateway.json'),
-    GAH_MANAGER_CHAT_SETTINGS_PATH: join(root, 'manager.json'),
-    GAH_FAKE_GH_FIXTURE: join(fixtures, 'gh/data'), GAH_FAKE_GH_STATE: join(root, 'gh-state'),
+    PARASAUR_BINARY: binary, PARASAUR_FIXTURE_PROFILE_LIST: join(root, 'profiles.json'),
+    PARASAUR_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json'), PARASAUR_PROJECT_CATALOG_PATH: join(root, 'projects.json'),
+    PARASAUR_CHAT_STATE_DIR: join(root, 'chat'), PARASAUR_GATEWAY_SETTINGS_PATH: join(root, 'gateway.json'),
+    PARASAUR_MANAGER_CHAT_SETTINGS_PATH: join(root, 'manager.json'),
+    PARASAUR_FAKE_GH_FIXTURE: join(fixtures, 'gh/data'), PARASAUR_FAKE_GH_STATE: join(root, 'gh-state'),
     PATH: `${join(fixtures, 'gh')}:${process.env.PATH}`
   });
   resetCachedCoordinatorIdentity();
@@ -51,7 +51,7 @@ process.exit(result.status ?? 1);
   execFileSync('git', ['commit', '--quiet', '-m', 'initial'], { cwd: checkout });
   const fixture: ProfileSummary = JSON.parse(readFileSync(join(fixtures, 'gah/responses/profile-list.json'), 'utf8'))[0];
   const profile = { ...fixture, name: 'gah', local_path: checkout, worktree_base: join(root, 'worktrees') };
-  writeFileSync(process.env.GAH_FIXTURE_PROFILE_LIST!, JSON.stringify([profile]));
+  writeFileSync(process.env.PARASAUR_FIXTURE_PROFILE_LIST!, JSON.stringify([profile]));
   const registry = new RegistryService(join(root, 'registry.json'));
   registry.registerNode({ node_id: 'offline', display_name: 'Offline owner', advertised_url: 'http://127.0.0.1:1', version: central.version, schema_digest: central.schema_digest, transport_mode: 'loopback', secret_ref: 'env:COORDINATOR_TOKEN', profiles: ['gah'], last_observed_state: 'unreachable' });
   const project = addRemoteProject('offline', profile);

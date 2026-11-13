@@ -10,11 +10,11 @@ import { WorkerUpdateService } from './workerUpdate.js';
 function withStatePath(fn: (statePath: string) => void | Promise<void>): Promise<void> | void {
   const dir = mkdtempSync(join(tmpdir(), 'gah-worker-update-'));
   const statePath = join(dir, 'worker-update-state.json');
-  const saved = process.env.GAH_WORKER_UPDATE_STATE_PATH;
-  process.env.GAH_WORKER_UPDATE_STATE_PATH = statePath;
+  const saved = process.env.PARASAUR_WORKER_UPDATE_STATE_PATH;
+  process.env.PARASAUR_WORKER_UPDATE_STATE_PATH = statePath;
   const restore = () => {
-    if (saved === undefined) delete process.env.GAH_WORKER_UPDATE_STATE_PATH;
-    else process.env.GAH_WORKER_UPDATE_STATE_PATH = saved;
+    if (saved === undefined) delete process.env.PARASAUR_WORKER_UPDATE_STATE_PATH;
+    else process.env.PARASAUR_WORKER_UPDATE_STATE_PATH = saved;
     rmSync(dir, { recursive: true, force: true });
   };
   try {

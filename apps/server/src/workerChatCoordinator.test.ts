@@ -35,21 +35,21 @@ test('central keeps history and skills while authenticated turns move between wo
     rmSync(root, { recursive: true, force: true });
   });
   Object.assign(process.env, {
-    GAH_BINARY: new URL('../tests/fixtures/gah/gah', import.meta.url).pathname,
-    GAH_FIXTURE_PROFILE_LIST: join(root, 'profiles.json'),
-    GAH_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json'),
-    GAH_PROJECT_CATALOG_PATH: join(root, 'projects.json'),
-    GAH_CHAT_STATE_DIR: join(root, 'central-chat'),
-    GAH_GATEWAY_SETTINGS_PATH: join(root, 'gateway.json'),
-    GAH_MANAGER_CHAT_SETTINGS_PATH: join(root, 'manager.json'),
-    GAH_SKILL_BANK_PATH: join(root, 'skills.json'),
-    GAH_FAKE_GH_FIXTURE: new URL('../tests/fixtures/gh/data', import.meta.url).pathname,
-    GAH_FAKE_GH_STATE: join(root, 'gh-state'),
+    PARASAUR_BINARY: new URL('../tests/fixtures/gah/gah', import.meta.url).pathname,
+    PARASAUR_FIXTURE_PROFILE_LIST: join(root, 'profiles.json'),
+    PARASAUR_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json'),
+    PARASAUR_PROJECT_CATALOG_PATH: join(root, 'projects.json'),
+    PARASAUR_CHAT_STATE_DIR: join(root, 'central-chat'),
+    PARASAUR_GATEWAY_SETTINGS_PATH: join(root, 'gateway.json'),
+    PARASAUR_MANAGER_CHAT_SETTINGS_PATH: join(root, 'manager.json'),
+    PARASAUR_SKILL_BANK_PATH: join(root, 'skills.json'),
+    PARASAUR_FAKE_GH_FIXTURE: new URL('../tests/fixtures/gh/data', import.meta.url).pathname,
+    PARASAUR_FAKE_GH_STATE: join(root, 'gh-state'),
     PATH: `${new URL('../tests/fixtures/gh', import.meta.url).pathname}:${process.env.PATH}`,
     COORDINATOR_TOKEN: 'isolated-worker-test',
-    GAH_ALLOW_INSECURE_HTTP: '1'
+    PARASAUR_ALLOW_INSECURE_HTTP: '1'
   });
-  writeFileSync(process.env.GAH_FIXTURE_PROFILE_LIST!, '[]');
+  writeFileSync(process.env.PARASAUR_FIXTURE_PROFILE_LIST!, '[]');
   let recalls = 0;
   const gateway = createServer((req, res) => {
     req.resume();

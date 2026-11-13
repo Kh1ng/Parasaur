@@ -10,7 +10,7 @@ test('execution controls preserve false and zero while rejecting ambiguous previ
   }
   for (const retries of [0, 2, 0xffff_ffff]) assert.deepEqual(parseDispatchExecutionOptions({ retries }), { retries });
   for (const retries of [-1, 0.5, NaN, Infinity, '2', null, 0x1_0000_0000]) assert.equal(parseDispatchExecutionOptions({ retries }), 'invalid');
-  assert.deepEqual(parseDispatchExecutionOptions({ env: { GAH_BINARY: 'unsafe' }, configPath: '/untrusted' }), {});
+  assert.deepEqual(parseDispatchExecutionOptions({ env: { PARASAUR_BINARY: 'unsafe' }, configPath: '/untrusted' }), {});
   assert.equal(requiresDispatchExecutionOptions({}), false);
   assert.equal(requiresDispatchExecutionOptions({ dryRun: false, manualWorker: true }), false);
   assert.equal(requiresDispatchExecutionOptions({ retries: 0 }), true);

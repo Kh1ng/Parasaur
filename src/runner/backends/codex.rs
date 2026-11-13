@@ -737,7 +737,7 @@ mod tests {
             &f.bin_dir,
             "codex",
             &format!(
-                "#!/bin/sh\n{edit}cat <<'GAH_EOF'\n{}\nGAH_EOF\n",
+                "#!/bin/sh\n{edit}cat <<'PARASAUR_EOF'\n{}\nPARASAUR_EOF\n",
                 events.join("\n")
             ),
         );

@@ -11,7 +11,7 @@
  *   3. Which credential proves the central to that worker.
  *
  * Callers name a worker and a path. They never read `advertised_url`,
- * `transport_mode`, `secret_ref` or GAH_ALLOW_INSECURE_HTTP to build a request.
+ * `transport_mode`, `secret_ref` or PARASAUR_ALLOW_INSECURE_HTTP to build a request.
  *
  * Kinds, and when this central accepts them:
  *
@@ -23,7 +23,7 @@
  *   lan       Plain HTTP to any other address, on a network the operator
  *             trusts. Only when PARASAUR_WORKER_LINKS lists `lan`.
  *
- * GAH_ALLOW_INSECURE_HTTP=1 predates this module and still enables both
+ * PARASAUR_ALLOW_INSECURE_HTTP=1 predates this module and still enables both
  * plain-HTTP kinds, so an existing deployment keeps working unchanged.
  *
  * Planned: a hosted central reaches a worker through a Cloudflare Tunnel. That
@@ -110,7 +110,7 @@ export function linkTo(node: LinkRegistration): WorkerLink {
  * must refuse before producing a worker the central could not reach. */
 export function linkEnabled(kind: WorkerLinkKind): boolean {
   if (kind === 'loopback' || kind === 'https') return true;
-  return process.env.GAH_ALLOW_INSECURE_HTTP === '1'
+  return process.env.PARASAUR_ALLOW_INSECURE_HTTP === '1'
     || (process.env.PARASAUR_WORKER_LINKS ?? '').split(/[\s,]+/).includes(kind);
 }
 
@@ -137,7 +137,7 @@ function isTailnetHost(host: string): boolean {
 const DEFAULT_NODE_SECRETS_ROOT = '/etc/gah/node-secrets';
 
 function nodeSecretsRoot(): string {
-  return resolve(process.env.GAH_NODE_SECRETS_ROOT || DEFAULT_NODE_SECRETS_ROOT);
+  return resolve(process.env.PARASAUR_NODE_SECRETS_ROOT || DEFAULT_NODE_SECRETS_ROOT);
 }
 
 /** Reads the credential a registration names, as `env:NAME` or `file:/path`. */

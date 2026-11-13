@@ -62,11 +62,11 @@ fn path_has_executable(paths: &std::ffi::OsStr, program: &str) -> bool {
 mod tests {
     #[test]
     fn detects_homebrew_repository_tools_outside_launchd_path() {
-        if std::env::var_os("GAH_TEST_LAUNCHD_PATH").is_none() {
+        if std::env::var_os("PARASAUR_TEST_LAUNCHD_PATH").is_none() {
             let result = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "repository_tools::tests::detects_homebrew_repository_tools_outside_launchd_path"])
                 .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
-                .env("GAH_TEST_LAUNCHD_PATH", "1")
+                .env("PARASAUR_TEST_LAUNCHD_PATH", "1")
                 .status().unwrap();
             assert!(result.success());
             return;

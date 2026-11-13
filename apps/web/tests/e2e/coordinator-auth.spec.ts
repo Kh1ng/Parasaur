@@ -44,7 +44,7 @@ test('connection settings restore dashboard access after the first valid token',
 });
 
 test('the first token restores mounted Chat projects, provider choices, git, and open storage', async ({ page, request }) => {
-  const mock = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+  const mock = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
   await request.post(`${mock}/api/mock/scenario`, { data: { name: 'normal' } });
   let protectReads = false;
   const rejected = new Set<string>();

@@ -145,7 +145,11 @@ pub fn run(command: Command) -> Result<()> {
         Command::PlistGet { file, key } => {
             let xml = std::fs::read_to_string(&file)
                 .with_context(|| format!("reading {}", file.display()))?;
-            match plist::environment_value(&xml, &key) {
+            let saved = plist::environment_value(&xml, &key).or_else(|| {
+                let legacy = crate::legacy_settings::legacy_name(&key)?;
+                plist::environment_value(&xml, &legacy)
+            });
+            match saved {
                 Some(value) => {
                     println!("{value}");
                     Ok(())

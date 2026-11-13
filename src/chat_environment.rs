@@ -11,6 +11,7 @@ const MAX_BYTES: u64 = 128 * 1024;
 fn application_key(name: &str) -> bool {
     let name = name.to_ascii_uppercase();
     ![
+        "PARASAUR_",
         "GAH_",
         "COORDINATOR_",
         "TDAI_",
@@ -145,7 +146,7 @@ mod tests {
         std::fs::write(temp.path().join("dev.env"), concat!(
             "# same parser as dispatch\nAPP_URL=\"http://localhost:3000/a=b\"\nAPP_LABEL='work space'\n",
             "PATH=/workspace/bin\nOPENAI_API_KEY=wrong-account\nHOME=/wrong/account\nhOmE=/wrong/windows-account\n",
-            "GAH_CONFIG_PATH=/wrong/config\nCOORDINATOR_TOKEN=control-secret\nTELEGRAM_BOT_TOKEN=bot-secret\n",
+            "PARASAUR_CONFIG_PATH=/wrong/config\nCOORDINATOR_TOKEN=control-secret\nTELEGRAM_BOT_TOKEN=bot-secret\n",
             "CLAUDE_CODE_OAUTH_TOKEN=wrong-subscription\nNODE_OPTIONS=--require=other.js\n",
             "XDG_CONFIG_HOME=/wrong/home\nAPP_LABEL=last value\n"
         )).unwrap();

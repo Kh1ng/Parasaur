@@ -526,7 +526,7 @@ fn install_server_unit_template_into(
 }
 
 /// Where to copy the built dashboard for a separate web server (issue #896),
-/// from `GAH_WEB_DEPLOY_ROOT`. The copy needs `sudo`.
+/// from `PARASAUR_WEB_DEPLOY_ROOT`. The copy needs `sudo`.
 ///
 /// - unset -> `/var/www/gah` when that directory already exists (a host set
 ///   up before #1327, serving it with Caddy or similar); otherwise no copy,
@@ -546,7 +546,7 @@ fn resolve_web_deploy_root(configured: Option<OsString>) -> Result<Option<PathBu
         || root == Path::new("/")
         || root.components().any(|part| part == Component::ParentDir)
     {
-        bail!("GAH_WEB_DEPLOY_ROOT must be an absolute path other than /");
+        bail!("PARASAUR_WEB_DEPLOY_ROOT must be an absolute path other than /");
     }
     Ok(Some(root))
 }
@@ -583,7 +583,7 @@ fn deploy_web_ui(repo: &Path) -> Result<Option<PathBuf>> {
     if !dist.join("index.html").is_file() {
         bail!("web build did not produce apps/web/dist/index.html");
     }
-    let Some(root_path) = resolve_web_deploy_root(env::var_os("GAH_WEB_DEPLOY_ROOT"))? else {
+    let Some(root_path) = resolve_web_deploy_root(env::var_os("PARASAUR_WEB_DEPLOY_ROOT"))? else {
         return Ok(None);
     };
     deploy_web_dist(repo, &dist, root_path)
@@ -598,7 +598,7 @@ fn deploy_web_dist(repo: &Path, dist: &Path, root_path: PathBuf) -> Result<Optio
     }
     let root = root_path
         .to_str()
-        .context("GAH_WEB_DEPLOY_ROOT is not UTF-8")?;
+        .context("PARASAUR_WEB_DEPLOY_ROOT is not UTF-8")?;
     run_command(
         repo,
         "sudo",

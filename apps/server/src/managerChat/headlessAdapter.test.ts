@@ -680,12 +680,12 @@ printf 'read_file죰{"file_path": "target.md"}'
 
 test('bound OpenHands profile supplies model metadata without requiring or returning its legacy key', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-bound-openhands-profile-'));
-  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY,
+  const saved = { HOME: process.env.HOME, PARASAUR_BINARY: process.env.PARASAUR_BINARY,
     LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL };
   const cli = join(dir, 'gah');
   try {
     process.env.HOME = dir;
-    process.env.GAH_BINARY = cli;
+    process.env.PARASAUR_BINARY = cli;
     delete process.env.LLM_MODEL;
     delete process.env.LLM_BASE_URL;
     writeFileSync(cli, '#!/bin/sh\n'+ "echo '{\"profiles\":{\"bound\":{\"oh_profile\":\"work\"}}}'\n", { mode: 0o755 });
@@ -740,11 +740,11 @@ function recordingFetch(responses: Array<{ status: number; body: unknown }>): {
 
 test('OpenHands lists the provider\'s models with the configured one marked, read from the profile provider (#1512)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-'));
-  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY,
+  const saved = { HOME: process.env.HOME, PARASAUR_BINARY: process.env.PARASAUR_BINARY,
     LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
   try {
     process.env.HOME = dir;
-    process.env.GAH_BINARY = fakeOpenhandsGah(dir);
+    process.env.PARASAUR_BINARY = fakeOpenhandsGah(dir);
     delete process.env.LLM_MODEL;
     delete process.env.LLM_BASE_URL;
     delete process.env.LLM_API_KEY;
@@ -779,11 +779,11 @@ test('OpenHands lists the provider\'s models with the configured one marked, rea
 
 test('the OpenHands listing is optional: a provider failure or a missing key falls back to the configured model (#1512)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-fallback-'));
-  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY,
+  const saved = { HOME: process.env.HOME, PARASAUR_BINARY: process.env.PARASAUR_BINARY,
     LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
   try {
     process.env.HOME = dir;
-    process.env.GAH_BINARY = fakeOpenhandsGah(dir);
+    process.env.PARASAUR_BINARY = fakeOpenhandsGah(dir);
     delete process.env.LLM_MODEL;
     delete process.env.LLM_BASE_URL;
     delete process.env.LLM_API_KEY;
@@ -821,11 +821,11 @@ test('the OpenHands listing is optional: a provider failure or a missing key fal
 
 test('a GAH profile with no bound OpenHands profile lists no models (#1512)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-unbound-'));
-  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY };
+  const saved = { HOME: process.env.HOME, PARASAUR_BINARY: process.env.PARASAUR_BINARY };
   const cli = join(dir, 'gah');
   try {
     process.env.HOME = dir;
-    process.env.GAH_BINARY = cli;
+    process.env.PARASAUR_BINARY = cli;
     writeFileSync(cli, '#!/bin/sh\ncat >/dev/null\necho \'{"profiles":{"work":{}}}\'\n', { mode: 0o755 });
     const summary = await createHeadlessBackend(openhandsBackendSpec()).listModels({ key: 'work', profile: 'work' });
     assert.deepEqual(summary.models, []);
@@ -840,11 +840,11 @@ test('a GAH profile with no bound OpenHands profile lists no models (#1512)', as
 
 test('a credential-bound OpenHands instance lists only its configured model, never the profile key (#1512)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-instance-'));
-  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY,
+  const saved = { HOME: process.env.HOME, PARASAUR_BINARY: process.env.PARASAUR_BINARY,
     LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
   try {
     process.env.HOME = dir;
-    process.env.GAH_BINARY = fakeOpenhandsGah(dir);
+    process.env.PARASAUR_BINARY = fakeOpenhandsGah(dir);
     delete process.env.LLM_MODEL;
     delete process.env.LLM_BASE_URL;
     delete process.env.LLM_API_KEY;
@@ -864,11 +864,11 @@ test('a credential-bound OpenHands instance lists only its configured model, nev
 
 test('choosing an OpenHands model is honored on the next turn as LLM_MODEL (#1512)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-setmodel-'));
-  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY, PATH: process.env.PATH,
+  const saved = { HOME: process.env.HOME, PARASAUR_BINARY: process.env.PARASAUR_BINARY, PATH: process.env.PATH,
     LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
   try {
     process.env.HOME = dir;
-    process.env.GAH_BINARY = fakeOpenhandsGah(dir);
+    process.env.PARASAUR_BINARY = fakeOpenhandsGah(dir);
     delete process.env.LLM_MODEL;
     delete process.env.LLM_BASE_URL;
     delete process.env.LLM_API_KEY;
@@ -909,11 +909,11 @@ echo '{"source":"agent","kind":"MessageEvent","llm_message":{"content":[{"type":
 
 test('the OpenHands listing reads base URL and key as one profile-only pair; ambient LLM_* never substitutes (#1512)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-profile-pair-'));
-  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY,
+  const saved = { HOME: process.env.HOME, PARASAUR_BINARY: process.env.PARASAUR_BINARY,
     LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
   try {
     process.env.HOME = dir;
-    process.env.GAH_BINARY = fakeOpenhandsGah(dir);
+    process.env.PARASAUR_BINARY = fakeOpenhandsGah(dir);
     delete process.env.LLM_MODEL;
     delete process.env.LLM_BASE_URL;
     delete process.env.LLM_API_KEY;
@@ -963,14 +963,14 @@ test('the OpenHands listing reads base URL and key as one profile-only pair; amb
 
 test('every OpenHands listing failure logs one sanitized diagnostic, once per failing transition (#1512)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-diagnostics-'));
-  const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY,
+  const saved = { HOME: process.env.HOME, PARASAUR_BINARY: process.env.PARASAUR_BINARY,
     LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
   const originalWarn = console.warn;
   const warnings: string[] = [];
   console.warn = (message: string) => { warnings.push(message); };
   try {
     process.env.HOME = dir;
-    process.env.GAH_BINARY = fakeOpenhandsGah(dir);
+    process.env.PARASAUR_BINARY = fakeOpenhandsGah(dir);
     delete process.env.LLM_MODEL;
     delete process.env.LLM_BASE_URL;
     delete process.env.LLM_API_KEY;
@@ -1035,7 +1035,7 @@ for (const conversation of [
 ]) {
   test(`OpenHands uses explicit profile for ${conversation.key} (#1512)`, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gah-openhands-models-chat-key-'));
-    const saved = { HOME: process.env.HOME, GAH_BINARY: process.env.GAH_BINARY,
+    const saved = { HOME: process.env.HOME, PARASAUR_BINARY: process.env.PARASAUR_BINARY,
       LLM_MODEL: process.env.LLM_MODEL, LLM_BASE_URL: process.env.LLM_BASE_URL, LLM_API_KEY: process.env.LLM_API_KEY };
     try {
       process.env.HOME = dir;
@@ -1044,7 +1044,7 @@ for (const conversation of [
       const cli = join(dir, 'gah');
       const config = JSON.stringify({ profiles: { [conversation.profile]: { oh_profile: 'work' } } });
       writeFileSync(cli, `#!/bin/sh\nprintf '%s\\n' "$@" > "${argv}"\ncat >/dev/null\necho '${config}'\n`, { mode: 0o755 });
-      process.env.GAH_BINARY = cli;
+      process.env.PARASAUR_BINARY = cli;
       delete process.env.LLM_MODEL;
       delete process.env.LLM_BASE_URL;
       delete process.env.LLM_API_KEY;
@@ -1130,10 +1130,10 @@ esac
 
 test('Vibe lists its configured models with the active one marked, read from its own config through the gah CLI (#1510)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-models-'));
-  const saved = { GAH_BINARY: process.env.GAH_BINARY };
+  const saved = { PARASAUR_BINARY: process.env.PARASAUR_BINARY };
   try {
     const { argv } = fakeVibeGah(dir);
-    process.env.GAH_BINARY = join(dir, 'gah');
+    process.env.PARASAUR_BINARY = join(dir, 'gah');
     const backend = createHeadlessBackend(vibeBackendSpec());
 
     const summary = await backend.listModels({ key: 'vibe-profile', profile: 'vibe-profile' });
@@ -1162,10 +1162,10 @@ for (const conversation of [
 ]) {
   test(`Vibe uses explicit profile for ${conversation.key} (#1510/#1512)`, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-models-chat-key-'));
-    const saved = { GAH_BINARY: process.env.GAH_BINARY };
+    const saved = { PARASAUR_BINARY: process.env.PARASAUR_BINARY };
     try {
       const { argv } = fakeVibeGah(dir);
-      process.env.GAH_BINARY = join(dir, 'gah');
+      process.env.PARASAUR_BINARY = join(dir, 'gah');
       const interpreter = join(dir, 'fake-python3');
       writeFileSync(interpreter, '#!/bin/sh\ncat >/dev/null\necho vibe-reply\n', { mode: 0o755 });
       const backend = createHeadlessBackend(vibeBackendSpec({ resolveInterpreter: () => interpreter }));
@@ -1197,10 +1197,10 @@ for (const conversation of [
 
 test('choosing a Vibe model persists active_model through the gah CLI and the mark survives a fresh adapter (#1510)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-setmodel-'));
-  const saved = { GAH_BINARY: process.env.GAH_BINARY };
+  const saved = { PARASAUR_BINARY: process.env.PARASAUR_BINARY };
   try {
     const { state, argv } = fakeVibeGah(dir);
-    process.env.GAH_BINARY = join(dir, 'gah');
+    process.env.PARASAUR_BINARY = join(dir, 'gah');
     const backend = createHeadlessBackend(vibeBackendSpec());
 
     await backend.setModel({ key: 'vibe-profile', profile: 'vibe-profile' }, 'glm-5.3');
@@ -1227,10 +1227,10 @@ test('choosing a Vibe model persists active_model through the gah CLI and the ma
 
 test('a named Vibe instance scopes its model reads and writes to the instance (#1510)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-instance-'));
-  const saved = { GAH_BINARY: process.env.GAH_BINARY };
+  const saved = { PARASAUR_BINARY: process.env.PARASAUR_BINARY };
   try {
     const { state, argv } = fakeVibeGah(dir);
-    process.env.GAH_BINARY = join(dir, 'gah');
+    process.env.PARASAUR_BINARY = join(dir, 'gah');
     const backend = createHeadlessBackend(vibeBackendSpec({ instance: 'mistral-tak-vibe' }));
 
     const summary = await backend.listModels({ key: 'vibe-profile', profile: 'vibe-profile' });
@@ -1252,10 +1252,10 @@ test('a named Vibe instance scopes its model reads and writes to the instance (#
 
 test('a pinned Vibe turn persists the pinned model before spawning, so the CLI picks it up from its config (#1510)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-headless-vibe-pinned-'));
-  const saved = { GAH_BINARY: process.env.GAH_BINARY };
+  const saved = { PARASAUR_BINARY: process.env.PARASAUR_BINARY };
   try {
     const { state } = fakeVibeGah(dir);
-    process.env.GAH_BINARY = join(dir, 'gah');
+    process.env.PARASAUR_BINARY = join(dir, 'gah');
     const interpreter = join(dir, 'fake-python3');
     writeFileSync(interpreter, '#!/bin/sh\ncat >/dev/null\necho vibe-reply\n', { mode: 0o755 });
 

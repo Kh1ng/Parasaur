@@ -143,7 +143,8 @@ struct HermesTransport {
 impl HermesTransport {
     fn spawn(executable: &Path) -> Result<Self> {
         let mut cmd = Command::new(executable);
-        if let Some(profile) = std::env::var_os("GAH_HERMES_PROFILE").filter(|p| !p.is_empty()) {
+        if let Some(profile) = std::env::var_os("PARASAUR_HERMES_PROFILE").filter(|p| !p.is_empty())
+        {
             cmd.arg("-p").arg(profile);
         }
         cmd.arg("acp");
@@ -1155,7 +1156,7 @@ exec python3 -u "$tmp" "$@"
 
     #[test]
     fn installed_hermes_passes_shared_contract_when_requested() {
-        let Some(executable) = std::env::var_os("GAH_TEST_REAL_HERMES") else {
+        let Some(executable) = std::env::var_os("PARASAUR_TEST_REAL_HERMES") else {
             return;
         };
         let _exec_guard = crate::test_support::ExecGuard::new();

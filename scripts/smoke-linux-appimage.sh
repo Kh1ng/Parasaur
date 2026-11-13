@@ -11,7 +11,7 @@
 #
 # Usage: scripts/smoke-linux-appimage.sh path/to/GAH.AppImage [screenshot.png]
 # The screenshot and the app's output (screenshot path with .log) stay behind.
-# GAH_SMOKE_SEED=dir copies dir into the profile first (for negative checks).
+# PARASAUR_SMOKE_SEED=dir copies dir into the profile first (for negative checks).
 set -euo pipefail
 
 [ -f "${1:-}" ] || { echo "usage: $0 GAH.AppImage [screenshot.png]" >&2; exit 2; }
@@ -23,7 +23,7 @@ fi
 mkdir -p "$(dirname "$shot")"
 log="${shot%.png}.log"
 profile=$(mktemp -d)
-[ -z "${GAH_SMOKE_SEED:-}" ] || cp -R "$GAH_SMOKE_SEED"/. "$profile"/
+[ -z "${PARASAUR_SMOKE_SEED:-}" ] || cp -R "$PARASAUR_SMOKE_SEED"/. "$profile"/
 
 # No config, server, CLI login or checkout: a fresh install must still show
 # actionable onboarding. Extract-and-run avoids a FUSE requirement; TMPDIR

@@ -58,31 +58,31 @@ export function unixSetupCommand(os: string, role: string, centralUrl: string, g
   if (!['linux', 'macos'].includes(os)) throw new Error('Choose Linux, macOS, or Windows.');
   if (!['central', 'standalone', 'worker'].includes(role)) throw new Error('Choose central, standalone, or worker.');
   if (os === 'macos' && (role === 'central' || role === 'standalone')) throw new Error('macOS central installation is not available yet. Choose a macOS worker or a Linux central node.');
-  const settings = [`GAH_NODE_ROLE=${shellQuote(role)}`];
+  const settings = [`PARASAUR_NODE_ROLE=${shellQuote(role)}`];
   const prompts: string[] = [];
   if (role === 'worker') {
     if (gatewayUrl) throw new Error('Workers use the central memory relay. Configure the gateway on the central node.');
-    settings.push(`GAH_CENTRAL_URL=${shellQuote(remoteOrigin(centralUrl))}`);
+    settings.push(`PARASAUR_CENTRAL_URL=${shellQuote(remoteOrigin(centralUrl))}`);
     prompts.push(credentialPrompt('COORDINATOR_TOKEN', 'Central access token: ', true));
   } else if (gatewayUrl) {
-    settings.push('GAH_GATEWAY_MODE=remote', `GAH_GATEWAY_URL=${shellQuote(remoteOrigin(gatewayUrl))}`);
-    prompts.push(credentialPrompt('GAH_GATEWAY_API_KEY', 'Gateway API key: ', true));
+    settings.push('PARASAUR_GATEWAY_MODE=remote', `PARASAUR_GATEWAY_URL=${shellQuote(remoteOrigin(gatewayUrl))}`);
+    prompts.push(credentialPrompt('PARASAUR_GATEWAY_API_KEY', 'Gateway API key: ', true));
   } else if (provider) {
     if (provider !== 'openai' && provider !== 'ollama') throw new Error('Choose OpenAI or Ollama for the colocated memory gateway.');
     settings.push(
-      'GAH_GATEWAY_MODE=colocated',
-      `GAH_GATEWAY_MEMORYCORE_PATH=${destinationPath(memoryCorePath?.trim() || DEFAULT_MEMORYCORE_PATH)}`,
-      `GAH_GATEWAY_PROVIDER=${shellQuote(provider)}`,
+      'PARASAUR_GATEWAY_MODE=colocated',
+      `PARASAUR_GATEWAY_MEMORYCORE_PATH=${destinationPath(memoryCorePath?.trim() || DEFAULT_MEMORYCORE_PATH)}`,
+      `PARASAUR_GATEWAY_PROVIDER=${shellQuote(provider)}`,
     );
-    if (providerEndpoint) settings.push(`GAH_GATEWAY_ENDPOINT=${shellQuote(providerEndpoint)}`);
-    if (llmModel) settings.push(`GAH_GATEWAY_LLM_MODEL=${shellQuote(llmModel)}`);
-    if (embeddingModel) settings.push(`GAH_GATEWAY_EMBEDDING_MODEL=${shellQuote(embeddingModel)}`);
-    if (embeddingDimensions) settings.push(`GAH_GATEWAY_EMBEDDING_DIMENSIONS=${shellQuote(embeddingDimensions)}`);
+    if (providerEndpoint) settings.push(`PARASAUR_GATEWAY_ENDPOINT=${shellQuote(providerEndpoint)}`);
+    if (llmModel) settings.push(`PARASAUR_GATEWAY_LLM_MODEL=${shellQuote(llmModel)}`);
+    if (embeddingModel) settings.push(`PARASAUR_GATEWAY_EMBEDDING_MODEL=${shellQuote(embeddingModel)}`);
+    if (embeddingDimensions) settings.push(`PARASAUR_GATEWAY_EMBEDDING_DIMENSIONS=${shellQuote(embeddingDimensions)}`);
     if (provider === 'openai') {
       // Generation is optional; the authenticated embedding backend needs its key.
       prompts.push(
-        credentialPrompt('GAH_GATEWAY_LLM_API_KEY', 'LLM API key (hidden, empty to skip): ', false),
-        credentialPrompt('GAH_GATEWAY_EMBEDDING_API_KEY', 'Embedding API key (hidden): ', true),
+        credentialPrompt('PARASAUR_GATEWAY_LLM_API_KEY', 'LLM API key (hidden, empty to skip): ', false),
+        credentialPrompt('PARASAUR_GATEWAY_EMBEDDING_API_KEY', 'Embedding API key (hidden): ', true),
       );
     }
   }

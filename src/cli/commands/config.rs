@@ -48,9 +48,12 @@ pub fn run(command: ConfigCommands) -> Result<()> {
             } else {
                 println!("orchestration_mode: {}", cfg.defaults.orchestration_mode);
                 let supabase = config_show::SupabaseSummary::from_environment();
-                println!("GAH_SUPABASE_URL: {}", supabase.url.unwrap_or("(unset)"));
                 println!(
-                    "GAH_SUPABASE_ANON_KEY: {}",
+                    "PARASAUR_SUPABASE_URL: {}",
+                    supabase.url.unwrap_or("(unset)")
+                );
+                println!(
+                    "PARASAUR_SUPABASE_ANON_KEY: {}",
                     supabase.anon_key.unwrap_or("(unset)")
                 );
                 println!(

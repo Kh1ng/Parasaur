@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use support::fake_ledger::{ledger_entry_full, TestLedger};
 use support::scenario::ScenarioHarness;
 
-const UPDATE_FIXTURES_ENV: &str = "GAH_UPDATE_CONTRACT_FIXTURES";
+const UPDATE_FIXTURES_ENV: &str = "PARASAUR_UPDATE_CONTRACT_FIXTURES";
 
 #[test]
 fn status_json_matches_checked_fixture_recursively() {
@@ -159,5 +159,5 @@ fn fixture_path(name: &str) -> PathBuf {
 }
 
 fn regeneration_command() -> &'static str {
-    "GAH_UPDATE_CONTRACT_FIXTURES=1 cargo test --test contracts_drift"
+    "PARASAUR_UPDATE_CONTRACT_FIXTURES=1 cargo test --test contracts_drift"
 }

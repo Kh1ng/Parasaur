@@ -36,15 +36,15 @@ fn busy_queue_releases_pass_state_and_remaining_work_runs_in_the_next_pass() {
                 ])
                 // Production admits 128 actions (or one larger wave). The
                 // debug-only limit exercises turnover with six fixture jobs.
-                .env("GAH_TEST_PARALLEL_PASS_ACTION_LIMIT", "4")
+                .env("PARASAUR_TEST_PARALLEL_PASS_ACTION_LIMIT", "4")
                 .env(
                     "PATH",
                     format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap()),
                 )
                 .env("HOME", &home)
                 .env("GITHUB_TOKEN", "token")
-                .env("GAH_LEDGER_PATH", &ledger)
-                .env("GAH_EVENTS_PATH", tmp.path().join("events.jsonl"))
+                .env("PARASAUR_LEDGER_PATH", &ledger)
+                .env("PARASAUR_EVENTS_PATH", tmp.path().join("events.jsonl"))
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()

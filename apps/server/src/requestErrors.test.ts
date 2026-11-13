@@ -41,11 +41,11 @@ test('JSON parser errors retain client status without logging or returning reque
 test('unexpected failures remain 500 without exposing error contents in responses or logs', async (t) => {
   const logged: unknown[][] = [];
   t.mock.method(console, 'error', (...args: unknown[]) => logged.push(args));
-  const saved = process.env.GAH_ENABLE_ADMIN_UPDATE;
-  process.env.GAH_ENABLE_ADMIN_UPDATE = '1';
+  const saved = process.env.PARASAUR_ENABLE_ADMIN_UPDATE;
+  process.env.PARASAUR_ENABLE_ADMIN_UPDATE = '1';
   t.after(() => {
-    if (saved === undefined) delete process.env.GAH_ENABLE_ADMIN_UPDATE;
-    else process.env.GAH_ENABLE_ADMIN_UPDATE = saved;
+    if (saved === undefined) delete process.env.PARASAUR_ENABLE_ADMIN_UPDATE;
+    else process.env.PARASAUR_ENABLE_ADMIN_UPDATE = saved;
   });
   const app = createServer({ getPendingCommits: () => {
     throw Object.assign(new Error('test-internal-secret'), { code: 'EACCES', syscall: 'open', path: '/test-private-path' });
@@ -80,11 +80,11 @@ test('an asset can pass HEAD and fail during GET; logs identify the read failure
   const root = fs.mkdtempSync(join(tmpdir(), 'parasaur-asset-error-'));
   fs.mkdirSync(join(root, 'assets'));
   fs.writeFileSync(join(root, 'assets/private-name.js'), 'window.test = true;');
-  const previous = process.env.GAH_WEB_ROOT;
-  process.env.GAH_WEB_ROOT = root;
+  const previous = process.env.PARASAUR_WEB_ROOT;
+  process.env.PARASAUR_WEB_ROOT = root;
   t.after(() => {
-    if (previous === undefined) delete process.env.GAH_WEB_ROOT;
-    else process.env.GAH_WEB_ROOT = previous;
+    if (previous === undefined) delete process.env.PARASAUR_WEB_ROOT;
+    else process.env.PARASAUR_WEB_ROOT = previous;
     fs.rmSync(root, { recursive: true, force: true });
   });
   const logged: unknown[][] = [];

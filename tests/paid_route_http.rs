@@ -90,12 +90,15 @@ auth_source_label = "unused"
             "apps/server/src/paidRouteApprovals.test.ts",
         ])
         .current_dir(root)
-        .env("GAH_REAL_PAID_ROUTE_TEST", "1")
-        .env("GAH_BINARY", env!("CARGO_BIN_EXE_gah"))
+        .env("PARASAUR_REAL_PAID_ROUTE_TEST", "1")
+        .env("PARASAUR_BINARY", env!("CARGO_BIN_EXE_gah"))
         .env("HOME", tmp.path().join("home"))
-        .env("GAH_CANONICAL_CONFIG", tmp.path().join("canonical.toml"))
-        .env("GAH_CONFIG_PATH", &cfg_path)
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env(
+            "PARASAUR_CANONICAL_CONFIG",
+            tmp.path().join("canonical.toml"),
+        )
+        .env("PARASAUR_CONFIG_PATH", &cfg_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .env("XDG_STATE_HOME", tmp.path().join("state"))
         .env("XDG_CONFIG_HOME", tmp.path().join("xdg-config"))
         .output()

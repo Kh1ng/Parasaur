@@ -805,7 +805,7 @@ mod tests {
         use ReconciliationEntry;
         // test_config() gives a fresh tempdir-backed artifact_root per test,
         // so reconciliation_path() resolves there without touching any
-        // process-global env var (avoids the GAH_LEDGER_PATH-style test
+        // process-global env var (avoids the PARASAUR_LEDGER_PATH-style test
         // race this project's own docs call out as known technical debt).
         let (_tmp, cfg) = test_config();
         let path = cfg.defaults.reconciliation_path();

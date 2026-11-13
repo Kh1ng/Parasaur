@@ -412,7 +412,7 @@ impl<'a> Setup<'a> {
                 bail!("Nothing answered at {url}. Is this machine on the same network or tailnet?")
             }
         }
-        env.0.push(("GAH_CENTRAL_URL", url));
+        env.0.push(("PARASAUR_CENTRAL_URL", url));
         env.0.push(("COORDINATOR_TOKEN", token));
         Ok(())
     }
@@ -450,8 +450,10 @@ impl<'a> Setup<'a> {
                     )?,
                 };
                 let url = url.trim().trim_end_matches('/').to_string();
-                let key =
-                    self.secret_from("GAH_GATEWAY_API_KEY", "Memory gateway API key (hidden)")?;
+                let key = self.secret_from(
+                    "PARASAUR_GATEWAY_API_KEY",
+                    "Memory gateway API key (hidden)",
+                )?;
                 let body =
                     r#"{"query":"gah setup reachability check","session_key":"gah:setup-check"}"#;
                 match self
@@ -466,9 +468,9 @@ impl<'a> Setup<'a> {
                     None => bail!("Nothing answered at {url}/recall."),
                 }
                 env.0.extend([
-                    ("GAH_GATEWAY_MODE", "remote".to_string()),
-                    ("GAH_GATEWAY_URL", url),
-                    ("GAH_GATEWAY_API_KEY", key),
+                    ("PARASAUR_GATEWAY_MODE", "remote".to_string()),
+                    ("PARASAUR_GATEWAY_URL", url),
+                    ("PARASAUR_GATEWAY_API_KEY", key),
                 ]);
             }
             MemoryMode::Colocated => {
@@ -512,17 +514,20 @@ impl<'a> Setup<'a> {
                 // Model credentials belong to the selected gateway backend. A
                 // configured local gateway may not need any generation API key.
                 env.0.extend([
-                    ("GAH_GATEWAY_MODE", "colocated".to_string()),
-                    ("GAH_GATEWAY_MEMORYCORE_PATH", path.display().to_string()),
+                    ("PARASAUR_GATEWAY_MODE", "colocated".to_string()),
+                    (
+                        "PARASAUR_GATEWAY_MEMORYCORE_PATH",
+                        path.display().to_string(),
+                    ),
                 ]);
                 // No provider is a complete answer: the gateway then keeps its
                 // existing configuration, or starts from the template with
                 // keyword recall and no model calls.
                 let existing_config = self.host.exists(&path.join("tdai-gateway.local.yaml"));
-                let provider = match self.host.env("GAH_GATEWAY_PROVIDER") {
+                let provider = match self.host.env("PARASAUR_GATEWAY_PROVIDER") {
                     Some(val) if val == "ollama" || val == "openai" => Some(val),
                     Some(val) => {
-                        bail!("GAH_GATEWAY_PROVIDER must be ollama or openai, not '{val}'.")
+                        bail!("PARASAUR_GATEWAY_PROVIDER must be ollama or openai, not '{val}'.")
                     }
                     None if self.options.yes => None,
                     None => {
@@ -548,7 +553,7 @@ impl<'a> Setup<'a> {
                 };
 
                 if let Some(provider) = provider {
-                    env.0.push(("GAH_GATEWAY_PROVIDER", provider.clone()));
+                    env.0.push(("PARASAUR_GATEWAY_PROVIDER", provider.clone()));
 
                     let (default_endpoint, default_llm, default_embed) = match provider.as_str() {
                         "ollama" => ("http://127.0.0.1:11434/v1", "llama3", "nomic-embed-text"),
@@ -559,7 +564,7 @@ impl<'a> Setup<'a> {
                         ),
                     };
 
-                    let endpoint = match self.host.env("GAH_GATEWAY_ENDPOINT") {
+                    let endpoint = match self.host.env("PARASAUR_GATEWAY_ENDPOINT") {
                         Some(val) => val,
                         None if self.options.yes => default_endpoint.to_string(),
                         None => {
@@ -574,9 +579,9 @@ impl<'a> Setup<'a> {
                             }
                         }
                     };
-                    env.0.push(("GAH_GATEWAY_ENDPOINT", endpoint));
+                    env.0.push(("PARASAUR_GATEWAY_ENDPOINT", endpoint));
 
-                    let llm_model = match self.host.env("GAH_GATEWAY_LLM_MODEL") {
+                    let llm_model = match self.host.env("PARASAUR_GATEWAY_LLM_MODEL") {
                         Some(val) => val,
                         None if self.options.yes => default_llm.to_string(),
                         None => {
@@ -590,9 +595,9 @@ impl<'a> Setup<'a> {
                             }
                         }
                     };
-                    env.0.push(("GAH_GATEWAY_LLM_MODEL", llm_model));
+                    env.0.push(("PARASAUR_GATEWAY_LLM_MODEL", llm_model));
 
-                    let embed_model = match self.host.env("GAH_GATEWAY_EMBEDDING_MODEL") {
+                    let embed_model = match self.host.env("PARASAUR_GATEWAY_EMBEDDING_MODEL") {
                         Some(val) => val,
                         None if self.options.yes => default_embed.to_string(),
                         None => {
@@ -607,9 +612,10 @@ impl<'a> Setup<'a> {
                             }
                         }
                     };
-                    env.0.push(("GAH_GATEWAY_EMBEDDING_MODEL", embed_model));
+                    env.0
+                        .push(("PARASAUR_GATEWAY_EMBEDDING_MODEL", embed_model));
 
-                    let embed_dims = match self.host.env("GAH_GATEWAY_EMBEDDING_DIMENSIONS") {
+                    let embed_dims = match self.host.env("PARASAUR_GATEWAY_EMBEDDING_DIMENSIONS") {
                         Some(val) => Some(val),
                         None if self.options.yes => None,
                         None => {
@@ -625,11 +631,11 @@ impl<'a> Setup<'a> {
                         }
                     };
                     if let Some(dims) = embed_dims {
-                        env.0.push(("GAH_GATEWAY_EMBEDDING_DIMENSIONS", dims));
+                        env.0.push(("PARASAUR_GATEWAY_EMBEDDING_DIMENSIONS", dims));
                     }
 
                     if provider == "openai" {
-                        let llm_key = match self.host.env("GAH_GATEWAY_LLM_API_KEY") {
+                        let llm_key = match self.host.env("PARASAUR_GATEWAY_LLM_API_KEY") {
                             Some(val) => Some(val),
                             None => {
                                 if self.options.yes {
@@ -647,11 +653,11 @@ impl<'a> Setup<'a> {
                             }
                         };
                         if let Some(val) = llm_key {
-                            env.0.push(("GAH_GATEWAY_LLM_API_KEY", val));
+                            env.0.push(("PARASAUR_GATEWAY_LLM_API_KEY", val));
                         }
                         // The installer requires this key unless one is already
                         // stored for the same endpoint, so an empty answer is allowed.
-                        let embed_key = match self.host.env("GAH_GATEWAY_EMBEDDING_API_KEY") {
+                        let embed_key = match self.host.env("PARASAUR_GATEWAY_EMBEDDING_API_KEY") {
                             Some(val) => Some(val),
                             None if self.options.yes => None,
                             None => {
@@ -662,14 +668,14 @@ impl<'a> Setup<'a> {
                             }
                         };
                         if let Some(val) = embed_key {
-                            env.0.push(("GAH_GATEWAY_EMBEDDING_API_KEY", val));
+                            env.0.push(("PARASAUR_GATEWAY_EMBEDDING_API_KEY", val));
                         }
                     } else {
-                        if let Some(key) = self.host.env("GAH_GATEWAY_LLM_API_KEY") {
-                            env.0.push(("GAH_GATEWAY_LLM_API_KEY", key));
+                        if let Some(key) = self.host.env("PARASAUR_GATEWAY_LLM_API_KEY") {
+                            env.0.push(("PARASAUR_GATEWAY_LLM_API_KEY", key));
                         }
-                        if let Some(key) = self.host.env("GAH_GATEWAY_EMBEDDING_API_KEY") {
-                            env.0.push(("GAH_GATEWAY_EMBEDDING_API_KEY", key));
+                        if let Some(key) = self.host.env("PARASAUR_GATEWAY_EMBEDDING_API_KEY") {
+                            env.0.push(("PARASAUR_GATEWAY_EMBEDDING_API_KEY", key));
                         }
                     }
                 }
@@ -817,9 +823,9 @@ impl<'a> Setup<'a> {
                 if matches!(selection.role, Role::Central | Role::Standalone) {
                     self.prompter.say("  - Use sudo to create /etc/gah/server.env if absent; enable and start gah-server.service");
                     if selection.role == Role::Standalone {
-                        self.prompter.say("  - Set HOST to GAH_SERVER_HOST (default 127.0.0.1) in /etc/gah/server.env and restart gah-server.service");
+                        self.prompter.say("  - Set HOST to PARASAUR_SERVER_HOST (default 127.0.0.1) in /etc/gah/server.env and restart gah-server.service");
                     } else {
-                        self.prompter.say("  - For a new server.env, set HOST to GAH_SERVER_HOST or the Tailscale IP (fallback 127.0.0.1); preserve existing central HOST settings");
+                        self.prompter.say("  - For a new server.env, set HOST to PARASAUR_SERVER_HOST or the Tailscale IP (fallback 127.0.0.1); preserve existing central HOST settings");
                     }
                 }
                 if selection.role != Role::Standalone {
@@ -846,7 +852,7 @@ impl<'a> Setup<'a> {
                     let path = env
                         .0
                         .iter()
-                        .find(|(key, _)| *key == "GAH_GATEWAY_MEMORYCORE_PATH")
+                        .find(|(key, _)| *key == "PARASAUR_GATEWAY_MEMORYCORE_PATH")
                         .map(|(_, value)| value.as_str())
                         .unwrap_or("<MemoryCore checkout>");
                     self.prompter.say(&format!("  - Seed {path}/tdai-gateway.local.yaml from the standalone template if absent; preserve an existing config"));
@@ -873,17 +879,20 @@ impl<'a> Setup<'a> {
         }
         let mut variables = env.0;
         if let Some(enabled) = self.options.factory_enabled {
-            variables.push(("GAH_FACTORY_ENABLED", enabled.to_string()));
+            variables.push(("PARASAUR_FACTORY_ENABLED", enabled.to_string()));
         }
         // Do not let inherited installer options expand this setup selection.
-        if !variables.iter().any(|(key, _)| *key == "GAH_GATEWAY_MODE") {
-            variables.push(("GAH_GATEWAY_MODE", String::new()));
+        if !variables
+            .iter()
+            .any(|(key, _)| *key == "PARASAUR_GATEWAY_MODE")
+        {
+            variables.push(("PARASAUR_GATEWAY_MODE", String::new()));
         }
-        variables.push(("GAH_IMPORT_REPO", String::new()));
-        variables.push(("GAH_INSTALL_AGENT", selection.agent.command().into()));
-        variables.push(("GAH_INSTALL_CONFIRMED", "1".into()));
+        variables.push(("PARASAUR_IMPORT_REPO", String::new()));
+        variables.push(("PARASAUR_INSTALL_AGENT", selection.agent.command().into()));
+        variables.push(("PARASAUR_INSTALL_CONFIRMED", "1".into()));
         variables.push((
-            "GAH_NODE_ROLE",
+            "PARASAUR_NODE_ROLE",
             match selection.role {
                 Role::Worker => "worker",
                 Role::Standalone => "standalone",

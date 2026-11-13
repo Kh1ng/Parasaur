@@ -111,12 +111,12 @@ test('all-project scope includes archived logs and keeps empty sources distinct 
 
 test('HTTP combined report preserves full source coverage and rejects invalid windows', async t => {
   const stateDir = fixture(t);
-  const previousIdentity = process.env.GAH_COORDINATOR_IDENTITY_PATH;
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(stateDir, 'identity.json');
+  const previousIdentity = process.env.PARASAUR_COORDINATOR_IDENTITY_PATH;
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(stateDir, 'identity.json');
   resetCachedCoordinatorIdentity();
   t.after(() => {
-    if (previousIdentity === undefined) delete process.env.GAH_COORDINATOR_IDENTITY_PATH;
-    else process.env.GAH_COORDINATOR_IDENTITY_PATH = previousIdentity;
+    if (previousIdentity === undefined) delete process.env.PARASAUR_COORDINATOR_IDENTITY_PATH;
+    else process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = previousIdentity;
     resetCachedCoordinatorIdentity();
   });
   const { createServer } = await import('./server.js');

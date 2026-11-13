@@ -358,13 +358,13 @@ impl FakeBackend {
         }
         if !s.stdout.is_empty() {
             body.push_str(&format!(
-                "    cat <<'GAH_FAKE_STDOUT_EOF'\n{}\nGAH_FAKE_STDOUT_EOF\n",
+                "    cat <<'PARASAUR_FAKE_STDOUT_EOF'\n{}\nPARASAUR_FAKE_STDOUT_EOF\n",
                 s.stdout
             ));
         }
         if !s.stderr.is_empty() {
             body.push_str(&format!(
-                "    cat >&2 <<'GAH_FAKE_STDERR_EOF'\n{}\nGAH_FAKE_STDERR_EOF\n",
+                "    cat >&2 <<'PARASAUR_FAKE_STDERR_EOF'\n{}\nPARASAUR_FAKE_STDERR_EOF\n",
                 s.stderr
             ));
         }

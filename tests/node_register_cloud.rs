@@ -74,15 +74,15 @@ fn node_register_cloud_cli_preserves_local_success() {
                 "http://127.0.0.1:3773",
             ])
             .env(
-                "GAH_COORDINATOR_IDENTITY_PATH",
+                "PARASAUR_COORDINATOR_IDENTITY_PATH",
                 dir.path().join("identity.json"),
             )
-            .env("GAH_SUPABASE_URL", cloud_url)
-            .env("GAH_SUPABASE_ANON_KEY", "fake-anon")
-            .env("GAH_SUPABASE_ACCESS_TOKEN", "fake-user-jwt")
-            .env("GAH_SUPABASE_DEVICE_TOKEN", "fake-device-token")
+            .env("PARASAUR_SUPABASE_URL", cloud_url)
+            .env("PARASAUR_SUPABASE_ANON_KEY", "fake-anon")
+            .env("PARASAUR_SUPABASE_ACCESS_TOKEN", "fake-user-jwt")
+            .env("PARASAUR_SUPABASE_DEVICE_TOKEN", "fake-device-token")
             .env(
-                "GAH_SUPABASE_WORKSPACE_ID",
+                "PARASAUR_SUPABASE_WORKSPACE_ID",
                 "11111111-1111-4111-8111-111111111111",
             )
             .output()

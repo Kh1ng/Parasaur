@@ -10,10 +10,10 @@ use std::{
 use tauri::Manager;
 
 #[test]
-#[ignore = "opens two synthetic native WebView2 windows; GAH_WINDOWS_BROWSER_TESTS=1"]
+#[ignore = "opens two synthetic native WebView2 windows; PARASAUR_WINDOWS_BROWSER_TESTS=1"]
 fn named_windows_keep_http_only_sessions_in_separate_stores() {
     assert_eq!(
-        std::env::var("GAH_WINDOWS_BROWSER_TESTS").as_deref(),
+        std::env::var("PARASAUR_WINDOWS_BROWSER_TESTS").as_deref(),
         Ok("1")
     );
     let root = std::env::temp_dir().join(format!(

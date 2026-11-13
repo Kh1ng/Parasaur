@@ -8,9 +8,9 @@ import { workspaceEnvironment } from './workspaceEnvironment.js';
 test('workspace CLI reads use the real profile, stay private, and are not cached across spawns', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-workspace-env-'));
   const binary = join(dir, 'gah');
-  const previous = process.env.GAH_BINARY;
+  const previous = process.env.PARASAUR_BINARY;
   const fixture = (text: string) => writeFileSync(binary, '#!/usr/bin/env node\n' + text, { mode: 0o755 });
-  process.env.GAH_BINARY = binary;
+  process.env.PARASAUR_BINARY = binary;
   try {
     fixture('process.stdout.write(JSON.stringify({ APP_PROFILE: process.argv.at(-1), APP_VALUE: "first" }));');
     const conversation = { key: 'opaque/not-the-profile', profile: 'actual-project' };
@@ -33,7 +33,7 @@ test('workspace CLI reads use the real profile, stay private, and are not cached
     controller.abort();
     await assert.rejects(cancelled, /Cannot load the workspace environment/);
   } finally {
-    if (previous === undefined) delete process.env.GAH_BINARY; else process.env.GAH_BINARY = previous;
+    if (previous === undefined) delete process.env.PARASAUR_BINARY; else process.env.PARASAUR_BINARY = previous;
     rmSync(dir, { recursive: true, force: true });
   }
 });

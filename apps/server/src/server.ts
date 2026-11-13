@@ -281,7 +281,7 @@ const DEFAULT_CONFIG_EFFECTIVE_DEPS: ConfigEffectiveDeps = {
 export function initializeSkillBank(node: NodeRoleStatus = { role: 'central', central_url: null }): void {
   if (node.role === 'worker') throw new Error('A worker must not initialize a local skill bank.');
   listSkills();
-  const docsPath = process.env.GAH_SKILL_DOCS_PATH
+  const docsPath = process.env.PARASAUR_SKILL_DOCS_PATH
     || fileURLToPath(new URL('../../../docs/gah-manager-skill.md', import.meta.url));
   try {
     seedSkillFromDocs(
@@ -736,10 +736,10 @@ export function createServer(
   app.use('/api/settings/nodes', requireOwner, nodeSetupRouter());
   // Updating the running service also requires the existing operator opt-in.
   app.use('/api/admin', (req, res, next) => {
-    if (process.env.GAH_ENABLE_ADMIN_UPDATE !== '1') {
+    if (process.env.PARASAUR_ENABLE_ADMIN_UPDATE !== '1') {
       return res.status(404).json({
         error: 'Not Found',
-        message: 'Admin update is disabled; set GAH_ENABLE_ADMIN_UPDATE=1 on the server to enable it.'
+        message: 'Admin update is disabled; set PARASAUR_ENABLE_ADMIN_UPDATE=1 on the server to enable it.'
       });
     }
     next();
@@ -2200,8 +2200,8 @@ export function createServer(
     const remoteGatewayUrl = `http://${tailscaleIPv4}:${gatewayPort(gatewayBaseUrl())}`;
     const command =
       'curl -fsSL https://raw.githubusercontent.com/Kh1ng/git-agent-harness/main/scripts/bootstrap.sh' +
-      ` | GAH_GATEWAY_MODE=remote GAH_GATEWAY_URL=${shellQuote(remoteGatewayUrl)}` +
-      ` GAH_GATEWAY_API_KEY=${shellQuote(apiKey)} bash`;
+      ` | PARASAUR_GATEWAY_MODE=remote PARASAUR_GATEWAY_URL=${shellQuote(remoteGatewayUrl)}` +
+      ` PARASAUR_GATEWAY_API_KEY=${shellQuote(apiKey)} bash`;
     res.json({ command });
   });
 
@@ -3014,7 +3014,7 @@ export function createServer(
   });
 
   // Issue #1416: the release channel feed behind "Update available · vX →
-  // vY". Same operator gate as the update itself (GAH_ENABLE_ADMIN_UPDATE):
+  // vY". Same operator gate as the update itself (PARASAUR_ENABLE_ADMIN_UPDATE):
   // knowing an update exists is already operational information.
   app.get('/api/admin/release/status', async (_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -3029,9 +3029,9 @@ export function createServer(
   });
 
   // The server serves the built web app itself. The entry point (bin.ts)
-  // resolves the root: the service owner's GAH_WEB_ROOT, else the checkout's
+  // resolves the root: the service owner's PARASAUR_WEB_ROOT, else the checkout's
   // build; empty means another web server serves the dashboard.
-  const webRoot = process.env.GAH_WEB_ROOT;
+  const webRoot = process.env.PARASAUR_WEB_ROOT;
   if (webRoot) {
     const absoluteWebRoot = resolve(webRoot);
     // The document router owns framing, prefix bootstrap, and rate limiting.

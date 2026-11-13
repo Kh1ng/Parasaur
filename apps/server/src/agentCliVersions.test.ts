@@ -78,19 +78,19 @@ test('agents ledger preserves failure after a vanished process and rejects malfo
 
 test('agents CLI JSON crosses the process boundary into the node inventory', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-agent-process-'));
-  const previous = process.env.GAH_BINARY;
+  const previous = process.env.PARASAUR_BINARY;
   try {
     const path = join(dir, 'gah');
     const backends = ['claude', 'codex', 'opencode', 'vibe', 'agy', 'openhands', 'hermes'];
     const rows = backends.map(backend => ({ ...row, backend }));
     writeFileSync(path, `#!/bin/sh\n[ "$1 $2 $3" = 'agents versions --json' ] || exit 2\nprintf '%s' '${JSON.stringify(rows)}'\n`, { mode: 0o700 });
-    process.env.GAH_BINARY = path;
+    process.env.PARASAUR_BINARY = path;
     const service = new AgentCliVersions(node, { readUpdates: () => [] });
     const snapshot = await service.snapshot();
     assert.deepEqual(snapshot.versions, rows);
     assert.equal(snapshot.node_id, node.node_id);
   } finally {
-    if (previous === undefined) delete process.env.GAH_BINARY; else process.env.GAH_BINARY = previous;
+    if (previous === undefined) delete process.env.PARASAUR_BINARY; else process.env.PARASAUR_BINARY = previous;
     rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -38,8 +38,8 @@ jobs:
 
       - name: Check release version
         env:
-          GAH_RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
-        run: node scripts/check-release-version.mjs "$GAH_RELEASE_TAG"
+          PARASAUR_RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
+        run: node scripts/check-release-version.mjs "$PARASAUR_RELEASE_TAG"
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable

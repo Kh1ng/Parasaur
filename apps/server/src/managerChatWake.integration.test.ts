@@ -21,11 +21,11 @@ test('two quick manager wakes share one durable backend session', { timeout: 15_
   const profile = `wake-${Date.now()}`;
   const savedEnv = { ...process.env };
   process.env.PATH = `${join(fixtures, 'hermes')}:${process.env.PATH}`;
-  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
-  process.env.GAH_CHAT_STATE_DIR = stateDir;
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(root, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(root, 'manager-chat.json');
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(root, 'coordinator-identity.json');
+  process.env.PARASAUR_BINARY = join(fixtures, 'gah', 'gah');
+  process.env.PARASAUR_CHAT_STATE_DIR = stateDir;
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(root, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(root, 'manager-chat.json');
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(root, 'coordinator-identity.json');
   delete process.env.TDAI_GATEWAY_URL;
   delete process.env.TDAI_GATEWAY_API_KEY;
   resetCachedCoordinatorIdentity();

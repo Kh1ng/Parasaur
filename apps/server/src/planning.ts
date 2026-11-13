@@ -29,7 +29,7 @@ export interface PlanningDeps {
 }
 
 function defaultSettingsPath(): string {
-  return process.env.GAH_PLANNING_SETTINGS_PATH
+  return process.env.PARASAUR_PLANNING_SETTINGS_PATH
     || resolve(process.env.XDG_CONFIG_HOME || resolve(homedir(), '.config'), 'gah/planning.json');
 }
 

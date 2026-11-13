@@ -57,7 +57,7 @@ function canonical(value: unknown): string {
  * Duplicate requests return 409: callers must inspect current state, never
  * silently retry with a new key. No response bodies or credentials are stored.
  */
-export function mutationSafety(nodeId: string, directory = process.env.GAH_MUTATION_STORE_PATH ?? resolve('config/mutations')): (operation: Operation) => RequestHandler {
+export function mutationSafety(nodeId: string, directory = process.env.PARASAUR_MUTATION_STORE_PATH ?? resolve('config/mutations')): (operation: Operation) => RequestHandler {
   function syncDirectory(): void {
     const folder = openSync(directory, 'r');
     try { fsyncSync(folder); } finally { closeSync(folder); }

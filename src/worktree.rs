@@ -787,10 +787,10 @@ pub fn diff_stats(worktree: &Path, target_branch: &str) -> Result<DiffStats> {
 }
 
 /// Environment variable that carries the PAT to the askpass script.
-const ASKPASS_SECRET_ENV: &str = "GAH_ASKPASS_SECRET";
+const ASKPASS_SECRET_ENV: &str = "PARASAUR_ASKPASS_SECRET";
 
 /// Write a private GIT_ASKPASS script for one git invocation. The script
-/// holds no secret: it prints `$GAH_ASKPASS_SECRET`, which the caller sets on
+/// holds no secret: it prints `$PARASAUR_ASKPASS_SECRET`, which the caller sets on
 /// the git command. The file has a unique name (concurrent controller
 /// workers share a pid), is created 0700 with O_EXCL, and is deleted when the
 /// returned handle drops.

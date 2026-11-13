@@ -17,9 +17,9 @@ test('device expiry terminates its live socket without disconnecting an owner so
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const directory = mkdtempSync(join(tmpdir(), 'gah-ws-expiry-'));
   const savedToken = process.env.COORDINATOR_TOKEN;
-  const savedHttp = process.env.GAH_ALLOW_INSECURE_HTTP;
+  const savedHttp = process.env.PARASAUR_ALLOW_INSECURE_HTTP;
   process.env.COORDINATOR_TOKEN = 'owner-token';
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
   let now = Date.now();
   const access = new DeviceAccess(join(directory, 'devices.json'), () => now);
   const server = http.createServer();
@@ -71,20 +71,20 @@ test('device expiry terminates its live socket without disconnecting an owner so
     t.mock.timers.reset();
     if (savedToken === undefined) delete process.env.COORDINATOR_TOKEN;
     else process.env.COORDINATOR_TOKEN = savedToken;
-    if (savedHttp === undefined) delete process.env.GAH_ALLOW_INSECURE_HTTP;
-    else process.env.GAH_ALLOW_INSECURE_HTTP = savedHttp;
+    if (savedHttp === undefined) delete process.env.PARASAUR_ALLOW_INSECURE_HTTP;
+    else process.env.PARASAUR_ALLOW_INSECURE_HTTP = savedHttp;
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
 test('real upgrade authenticates before welcome or mutation handlers can run', async () => {
-  const keys = ['COORDINATOR_TOKEN', 'GAH_ALLOW_INSECURE_HTTP', 'GAH_WS_AUTH_MODE', 'GAH_NODE_ROLE', 'GAH_WS_ALLOWED_ORIGINS'] as const;
+  const keys = ['COORDINATOR_TOKEN', 'PARASAUR_ALLOW_INSECURE_HTTP', 'PARASAUR_WS_AUTH_MODE', 'PARASAUR_NODE_ROLE', 'PARASAUR_WS_ALLOWED_ORIGINS'] as const;
   const saved = keys.map(key => process.env[key]);
   process.env.COORDINATOR_TOKEN = 'test-secret';
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
-  delete process.env.GAH_WS_AUTH_MODE;
-  delete process.env.GAH_NODE_ROLE;
-  delete process.env.GAH_WS_ALLOWED_ORIGINS;
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
+  delete process.env.PARASAUR_WS_AUTH_MODE;
+  delete process.env.PARASAUR_NODE_ROLE;
+  delete process.env.PARASAUR_WS_ALLOWED_ORIGINS;
   const server = http.createServer();
   const wss = createAuthorizedWebSocketServer(server);
   let connections = 0;
@@ -127,28 +127,28 @@ test('real upgrade authenticates before welcome or mutation handlers can run', a
     assert.equal(await connect({ ...remote, origin: 'https://evil.example', authorization: 'Bearer test-secret' }), 403);
     assert.equal(await connect({ host: `evil.example:${port}`, origin: `http://evil.example:${port}` }), 403);
     assert.equal(await connect({ ...remote, origin: 'null' }), 403);
-    delete process.env.GAH_ALLOW_INSECURE_HTTP;
+    delete process.env.PARASAUR_ALLOW_INSECURE_HTTP;
     assert.equal(await connect({ ...remote, authorization: 'Bearer test-secret' }), 403);
     // Only the immediate local proxy can attest TLS; it does not grant local auth.
     assert.equal(await connect({ ...remote, origin: `https://192.168.1.25:${port}`, 'x-forwarded-proto': 'https' }), 401);
     await allowed({ ...remote, origin: `https://192.168.1.25:${port}`, 'x-forwarded-proto': 'https', authorization: 'Bearer test-secret' });
     const named = { host: 'gah.example.test', origin: 'https://gah.example.test', 'x-forwarded-proto': 'https', authorization: 'Bearer test-secret' };
     assert.equal(await connect(named), 403);
-    process.env.GAH_WS_ALLOWED_ORIGINS = 'https://gah.example.test,http://localhost:3000';
+    process.env.PARASAUR_WS_ALLOWED_ORIGINS = 'https://gah.example.test,http://localhost:3000';
     await allowed(named);
     await allowed({ ...named, origin: 'http://localhost:3000' });
-    process.env.GAH_ALLOW_INSECURE_HTTP = '1';
-    process.env.GAH_WS_AUTH_MODE = 'trusted_lan';
+    process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
+    process.env.PARASAUR_WS_AUTH_MODE = 'trusted_lan';
     assert.equal(await connect({ ...remote, authorization: 'Bearer wrong' }), 401);
     assert.equal(await connect(remote, ['gah.v1', 'gah-auth.invalid']), 401);
     assert.equal(await connect(remote, ['gah.v1', 'gah-auth.%%%']), 401);
     assert.equal(await connect(remote, ['gah.v1', 'gah-auth.Zm9v', 'gah-auth.YmFy']), 401);
     await allowed(remote);
     assert.equal(await connect({ host: remote.host }), 401);
-    process.env.GAH_NODE_ROLE = 'worker';
+    process.env.PARASAUR_NODE_ROLE = 'worker';
     assert.equal(await connect(remote), 401);
     assert.equal(await connect({ host: `localhost:${port}` }), 401);
-    delete process.env.GAH_ALLOW_INSECURE_HTTP;
+    delete process.env.PARASAUR_ALLOW_INSECURE_HTTP;
     await allowed({ authorization: 'Bearer test-secret' });
   } finally {
     for (const ws of wss.clients) ws.terminate();
@@ -160,9 +160,9 @@ test('real upgrade authenticates before welcome or mutation handlers can run', a
 
 
 test('a remote peer cannot claim TLS through forwarded headers', () => {
-  const savedHttp = process.env.GAH_ALLOW_INSECURE_HTTP;
+  const savedHttp = process.env.PARASAUR_ALLOW_INSECURE_HTTP;
   const savedToken = process.env.COORDINATOR_TOKEN;
-  delete process.env.GAH_ALLOW_INSECURE_HTTP;
+  delete process.env.PARASAUR_ALLOW_INSECURE_HTTP;
   process.env.COORDINATOR_TOKEN = 'tls-test';
   const server = http.createServer();
   const wss = createAuthorizedWebSocketServer(server, 'worker');
@@ -180,7 +180,7 @@ test('a remote peer cannot claim TLS through forwarded headers', () => {
       (allowed: boolean, code?: number) => { assert.equal(allowed, false); assert.equal(code, 401); }]);
   } finally {
     wss.close();
-    if (savedHttp === undefined) delete process.env.GAH_ALLOW_INSECURE_HTTP; else process.env.GAH_ALLOW_INSECURE_HTTP = savedHttp;
+    if (savedHttp === undefined) delete process.env.PARASAUR_ALLOW_INSECURE_HTTP; else process.env.PARASAUR_ALLOW_INSECURE_HTTP = savedHttp;
     if (savedToken === undefined) delete process.env.COORDINATOR_TOKEN; else process.env.COORDINATOR_TOKEN = savedToken;
   }
 });

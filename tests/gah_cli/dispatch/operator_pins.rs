@@ -51,7 +51,7 @@ fn exact_account_pin_preserves_executable_state_and_ledger_across_retry() {
         .env("PATH", prepend_path(&bins))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger)
+        .env("PARASAUR_LEDGER_PATH", &ledger)
         .assert()
         .success();
     assert!(
@@ -143,7 +143,7 @@ fn explicit_backend_unavailable_never_launches_fallback() {
                 cfg.to_str().unwrap(),
             ])
             .env("PATH", prepend_path(&fake_bin))
-            .env("GAH_AVAILABILITY_PATH", &state)
+            .env("PARASAUR_AVAILABILITY_PATH", &state)
             .assert()
             .failure()
             .stderr(predicate::str::contains(
@@ -223,7 +223,7 @@ fn explicit_backend_pin_survives_validation_retry() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success();
 

@@ -28,7 +28,7 @@ export interface MemorySample {
 
 /** Outside the Git checkout, same reasoning as adminUpdate.ts. */
 export function diagnosticsDir(): string {
-  return process.env.GAH_DIAGNOSTICS_DIR ||
+  return process.env.PARASAUR_DIAGNOSTICS_DIR ||
     resolve(process.env.XDG_STATE_HOME || resolve(homedir(), '.local', 'state'), 'gah', 'diagnostics');
 }
 

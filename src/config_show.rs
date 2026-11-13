@@ -290,8 +290,8 @@ impl SupabaseSummary {
                 .map(|_| "[REDACTED]")
         };
         Self {
-            url: redacted("GAH_SUPABASE_URL"),
-            anon_key: redacted("GAH_SUPABASE_ANON_KEY"),
+            url: redacted("PARASAUR_SUPABASE_URL"),
+            anon_key: redacted("PARASAUR_SUPABASE_ANON_KEY"),
         }
     }
 }
@@ -570,8 +570,8 @@ mod tests {
     #[test]
     fn config_show_supabase_redacts_values_before_serialization() {
         let summary = SupabaseSummary::from_env(|name| match name {
-            "GAH_SUPABASE_URL" => Some("https://supabase.example.invalid".into()),
-            "GAH_SUPABASE_ANON_KEY" => Some("fake".into()),
+            "PARASAUR_SUPABASE_URL" => Some("https://supabase.example.invalid".into()),
+            "PARASAUR_SUPABASE_ANON_KEY" => Some("fake".into()),
             _ => panic!("CLI must not read the service-role key"),
         });
         assert_eq!(summary.url, Some("[REDACTED]"));

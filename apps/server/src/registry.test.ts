@@ -314,9 +314,9 @@ test('RegistryService validates non-loopback endpoints and TLS modes', () => {
     assert.equal(resRemoteTls.warnings.length, 0);
 
     // Non-loopback URL + trusted_lan -> Fail closed by default (issue #944)
-    const prevAllow = process.env.GAH_ALLOW_INSECURE_HTTP;
+    const prevAllow = process.env.PARASAUR_ALLOW_INSECURE_HTTP;
     const prevLinks = process.env.PARASAUR_WORKER_LINKS;
-    delete process.env.GAH_ALLOW_INSECURE_HTTP;
+    delete process.env.PARASAUR_ALLOW_INSECURE_HTTP;
     delete process.env.PARASAUR_WORKER_LINKS;
     try {
       assert.throws(() => {
@@ -353,14 +353,14 @@ test('RegistryService validates non-loopback endpoints and TLS modes', () => {
         process.env.PARASAUR_WORKER_LINKS = prevLinks;
       }
       if (prevAllow === undefined) {
-        delete process.env.GAH_ALLOW_INSECURE_HTTP;
+        delete process.env.PARASAUR_ALLOW_INSECURE_HTTP;
       } else {
-        process.env.GAH_ALLOW_INSECURE_HTTP = prevAllow;
+        process.env.PARASAUR_ALLOW_INSECURE_HTTP = prevAllow;
       }
     }
 
     // Non-loopback URL + trusted_lan + explicit opt-in -> Success (with warning)
-    process.env.GAH_ALLOW_INSECURE_HTTP = '1';
+    process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
     try {
       const resLan = registry.registerNode({
         ...baseNode,
@@ -370,7 +370,7 @@ test('RegistryService validates non-loopback endpoints and TLS modes', () => {
       });
       assert.equal(resLan.warnings.length, 1);
     } finally {
-      delete process.env.GAH_ALLOW_INSECURE_HTTP;
+      delete process.env.PARASAUR_ALLOW_INSECURE_HTTP;
     }
 
   } finally {
@@ -506,8 +506,8 @@ test('resolveSecret rejects file: references outside the configured secrets root
   const { mkdirSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const testRoot = resolve(tmpdir(), `gah-node-secrets-test-${crypto.randomBytes(6).toString('hex')}`);
-  const previousRoot = process.env.GAH_NODE_SECRETS_ROOT;
-  process.env.GAH_NODE_SECRETS_ROOT = testRoot;
+  const previousRoot = process.env.PARASAUR_NODE_SECRETS_ROOT;
+  process.env.PARASAUR_NODE_SECRETS_ROOT = testRoot;
 
   try {
     mkdirSync(testRoot, { recursive: true });
@@ -522,9 +522,9 @@ test('resolveSecret rejects file: references outside the configured secrets root
     assert.equal(resolveSecret(`file:${allowedPath}`), 'super-secret-value');
   } finally {
     if (previousRoot === undefined) {
-      delete process.env.GAH_NODE_SECRETS_ROOT;
+      delete process.env.PARASAUR_NODE_SECRETS_ROOT;
     } else {
-      process.env.GAH_NODE_SECRETS_ROOT = previousRoot;
+      process.env.PARASAUR_NODE_SECRETS_ROOT = previousRoot;
     }
     rmSync(testRoot, { recursive: true, force: true });
   }
@@ -991,7 +991,7 @@ test('a registered node cannot be overwritten by an unauthenticated re-registrat
   try {
     // trusted_lan non-loopback needs the opt-in even at the service layer, so
     // enable it before seeding as if the node had self-registered earlier.
-    process.env.GAH_ALLOW_INSECURE_HTTP = '1';
+    process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
     registry.registerNode(nodeObj);
     assert.equal(registry.getNode('owned-node')?.advertised_url, 'http://100.118.97.79:3773');
 
@@ -1008,7 +1008,7 @@ test('a registered node cannot be overwritten by an unauthenticated re-registrat
     assert.equal(node?.advertised_url, 'http://100.118.97.79:3773', 'advertised_url must not be repointed');
     assert.equal(node?.secret_ref, 'env:COORDINATOR_TOKEN', 'secret_ref must not be swapped');
   } finally {
-    delete process.env.GAH_ALLOW_INSECURE_HTTP;
+    delete process.env.PARASAUR_ALLOW_INSECURE_HTTP;
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (existsSync(tempPath)) unlinkSync(tempPath);
   }
@@ -1059,7 +1059,7 @@ test('authMiddleware rejects non-loopback requests with spoofed X-Forwarded-Prot
   assert.equal(jsonCalledWith?.error, 'Forbidden');
   assert.equal(
     jsonCalledWith?.message,
-    'Remote or cross-origin access requires TLS unless GAH_ALLOW_INSECURE_HTTP=1'
+    'Remote or cross-origin access requires TLS unless PARASAUR_ALLOW_INSECURE_HTTP=1'
   );
   
   delete process.env.COORDINATOR_TOKEN;
@@ -1109,9 +1109,9 @@ test('authMiddleware accepts non-loopback requests when req.secure is true and t
 });
 
 test('authMiddleware accepts opted-in non-loopback HTTP with a valid token', () => {
-  const previousAllow = process.env.GAH_ALLOW_INSECURE_HTTP;
+  const previousAllow = process.env.PARASAUR_ALLOW_INSECURE_HTTP;
   const previousToken = process.env.COORDINATOR_TOKEN;
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
   process.env.COORDINATOR_TOKEN = 'expected-token';
   const req = {
     socket: { remoteAddress: '100.64.0.2' },
@@ -1131,8 +1131,8 @@ test('authMiddleware accepts opted-in non-loopback HTTP with a valid token', () 
     assert.equal(called, true);
     assert.equal(status, undefined);
   } finally {
-    if (previousAllow === undefined) delete process.env.GAH_ALLOW_INSECURE_HTTP;
-    else process.env.GAH_ALLOW_INSECURE_HTTP = previousAllow;
+    if (previousAllow === undefined) delete process.env.PARASAUR_ALLOW_INSECURE_HTTP;
+    else process.env.PARASAUR_ALLOW_INSECURE_HTTP = previousAllow;
     if (previousToken === undefined) delete process.env.COORDINATOR_TOKEN;
     else process.env.COORDINATOR_TOKEN = previousToken;
   }

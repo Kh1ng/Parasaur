@@ -28,9 +28,9 @@ test('HTTP dispatch rejects malformed execution controls before starting work', 
 });
 
 test('all API routes require remote authentication while health and trusted local access remain usable', async () => {
-  const saved = { COORDINATOR_TOKEN: process.env.COORDINATOR_TOKEN, GAH_ALLOW_INSECURE_HTTP: process.env.GAH_ALLOW_INSECURE_HTTP };
+  const saved = { COORDINATOR_TOKEN: process.env.COORDINATOR_TOKEN, PARASAUR_ALLOW_INSECURE_HTTP: process.env.PARASAUR_ALLOW_INSECURE_HTTP };
   process.env.COORDINATOR_TOKEN = 'test-api-token';
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
   const remote = { 'X-Forwarded-For': '198.51.100.1' };
   try {
     await withFixtureServer(async base => {
@@ -50,7 +50,7 @@ test('all API routes require remote authentication while health and trusted loca
       assert.equal((await fetch(`${base}/api/not-yet-implemented`, { headers: authenticated })).status, 404);
       assert.equal((await fetch(`${base}/api/profiles`)).status, 200);
       assert.equal((await fetch(`${base}/health`, { headers: remote })).status, 200);
-      delete process.env.GAH_ALLOW_INSECURE_HTTP;
+      delete process.env.PARASAUR_ALLOW_INSECURE_HTTP;
       assert.equal((await fetch(`${base}/api/profiles`, { headers: authenticated })).status, 403);
       assert.equal((await fetch(`${base}/api/profiles`, { headers: { ...authenticated, 'X-Forwarded-Proto': 'https' } })).status, 200);
     });
@@ -166,8 +166,8 @@ async function withTestServer(
 ) {
   resetCachedCoordinatorIdentity();
   const tmpIdentityDir = mkdtempSync(join(tmpdir(), 'gah-test-identity-'));
-  const savedIdentityPath = process.env.GAH_COORDINATOR_IDENTITY_PATH;
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(tmpIdentityDir, 'coordinator-identity.json');
+  const savedIdentityPath = process.env.PARASAUR_COORDINATOR_IDENTITY_PATH;
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(tmpIdentityDir, 'coordinator-identity.json');
   resetCachedCoordinatorIdentity();
   const app = createServer({
     runConfigShowProfile: runProfile,
@@ -192,9 +192,9 @@ async function withTestServer(
       });
     });
     if (savedIdentityPath !== undefined) {
-      process.env.GAH_COORDINATOR_IDENTITY_PATH = savedIdentityPath;
+      process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = savedIdentityPath;
     } else {
-      delete process.env.GAH_COORDINATOR_IDENTITY_PATH;
+      delete process.env.PARASAUR_COORDINATOR_IDENTITY_PATH;
     }
     resetCachedCoordinatorIdentity();
   }
@@ -238,7 +238,7 @@ test('POST /api/config rejects non-integer node capacity values with 400', async
 });
 
 test('GET /api/config/effective omits environment values while preserving configured status', async () => {
-  const canary = 'TDAI_GATEWAY_API_KEY=GAH_TEST_CANARY_1014_DO_NOT_SERIALIZE';
+  const canary = 'TDAI_GATEWAY_API_KEY=PARASAUR_TEST_CANARY_1014_DO_NOT_SERIALIZE';
 
   await withTestServer(async (profile) => {
     const payload = profilePayload(profile);
@@ -349,10 +349,10 @@ test('GET /api/info advertises the configured coordinator port', async () => {
 
 test('an explicit web root serves the shared control surface and keeps unknown API routes as JSON 404s', async () => {
   const root = mkdtempSync(join(tmpdir(), 'gah-web-root-'));
-  const saved = process.env.GAH_WEB_ROOT;
+  const saved = process.env.PARASAUR_WEB_ROOT;
   writeFileSync(join(root, 'index.html'), '<!doctype html><title>GAH desktop central</title>', 'utf8');
   writeFileSync(join(root, 'app.js'), 'window.GAH = true;', 'utf8');
-  process.env.GAH_WEB_ROOT = root;
+  process.env.PARASAUR_WEB_ROOT = root;
   try {
     await withTestServer(async profile => profilePayload(profile), async base => {
       assert.match(await (await fetch(base)).text(), /GAH desktop central/);
@@ -363,14 +363,14 @@ test('an explicit web root serves the shared control surface and keeps unknown A
       assert.equal((await missing.json() as { error: string }).error, 'Not Found');
     });
   } finally {
-    if (saved === undefined) delete process.env.GAH_WEB_ROOT; else process.env.GAH_WEB_ROOT = saved;
+    if (saved === undefined) delete process.env.PARASAUR_WEB_ROOT; else process.env.PARASAUR_WEB_ROOT = saved;
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 test('project routes expose only curated profiles', async () => {
-  const savedCatalogPath = process.env.GAH_PROJECT_CATALOG_PATH;
-  process.env.GAH_PROJECT_CATALOG_PATH = join(mkdtempSync(join(tmpdir(), 'gah-project-routes-')), 'projects.json');
+  const savedCatalogPath = process.env.PARASAUR_PROJECT_CATALOG_PATH;
+  process.env.PARASAUR_PROJECT_CATALOG_PATH = join(mkdtempSync(join(tmpdir(), 'gah-project-routes-')), 'projects.json');
   const profiles: ProfileSummary[] = [{
     name: 'repo',
     display_name: 'Repo',
@@ -416,16 +416,16 @@ test('project routes expose only curated profiles', async () => {
       async () => profiles
     );
   } finally {
-    if (savedCatalogPath === undefined) delete process.env.GAH_PROJECT_CATALOG_PATH;
-    else process.env.GAH_PROJECT_CATALOG_PATH = savedCatalogPath;
+    if (savedCatalogPath === undefined) delete process.env.PARASAUR_PROJECT_CATALOG_PATH;
+    else process.env.PARASAUR_PROJECT_CATALOG_PATH = savedCatalogPath;
   }
 });
 
 
 test('skill bank API stores versions, resolves newest, and refuses deletion of a bound skill', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-skills-api-'));
-  const savedBank = process.env.GAH_SKILL_BANK_PATH;
-  process.env.GAH_SKILL_BANK_PATH = join(dir, 'skills.json');
+  const savedBank = process.env.PARASAUR_SKILL_BANK_PATH;
+  process.env.PARASAUR_SKILL_BANK_PATH = join(dir, 'skills.json');
   try {
     initializeSkillBank();
     await withTestServer(async () => profilePayload('alpha'), async (baseUrl) => {
@@ -525,8 +525,8 @@ test('skill bank API stores versions, resolves newest, and refuses deletion of a
       assert.match(refusedBody.message, /still bound to hermes:gah/);
     });
   } finally {
-    if (savedBank === undefined) delete process.env.GAH_SKILL_BANK_PATH;
-    else process.env.GAH_SKILL_BANK_PATH = savedBank;
+    if (savedBank === undefined) delete process.env.PARASAUR_SKILL_BANK_PATH;
+    else process.env.PARASAUR_SKILL_BANK_PATH = savedBank;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -534,10 +534,10 @@ test('skill bank API stores versions, resolves newest, and refuses deletion of a
 test('skill bank initialization fails on a malformed bank but allows missing bank and seed files', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-skills-startup-'));
   const bankPath = join(dir, 'skills.json');
-  const savedBank = process.env.GAH_SKILL_BANK_PATH;
-  const savedDocs = process.env.GAH_SKILL_DOCS_PATH;
-  process.env.GAH_SKILL_BANK_PATH = bankPath;
-  process.env.GAH_SKILL_DOCS_PATH = join(dir, 'missing-gah-manager-skill.md');
+  const savedBank = process.env.PARASAUR_SKILL_BANK_PATH;
+  const savedDocs = process.env.PARASAUR_SKILL_DOCS_PATH;
+  process.env.PARASAUR_SKILL_BANK_PATH = bankPath;
+  process.env.PARASAUR_SKILL_DOCS_PATH = join(dir, 'missing-gah-manager-skill.md');
   writeFileSync(bankPath, JSON.stringify({ skills: [{ id: 'alpha' }], bindings: {} }), 'utf8');
 
   try {
@@ -548,25 +548,25 @@ test('skill bank initialization fails on a malformed bank but allows missing ban
         && error.message.includes('skills[0].version')
     );
 
-    process.env.GAH_SKILL_BANK_PATH = join(dir, 'missing-skills.json');
+    process.env.PARASAUR_SKILL_BANK_PATH = join(dir, 'missing-skills.json');
     assert.doesNotThrow(() => initializeSkillBank());
   } finally {
-    if (savedBank === undefined) delete process.env.GAH_SKILL_BANK_PATH;
-    else process.env.GAH_SKILL_BANK_PATH = savedBank;
-    if (savedDocs === undefined) delete process.env.GAH_SKILL_DOCS_PATH;
-    else process.env.GAH_SKILL_DOCS_PATH = savedDocs;
+    if (savedBank === undefined) delete process.env.PARASAUR_SKILL_BANK_PATH;
+    else process.env.PARASAUR_SKILL_BANK_PATH = savedBank;
+    if (savedDocs === undefined) delete process.env.PARASAUR_SKILL_DOCS_PATH;
+    else process.env.PARASAUR_SKILL_DOCS_PATH = savedDocs;
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
 test('skill bank initialization logs an unreadable seed document without aborting startup', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-skills-seed-'));
-  const savedBank = process.env.GAH_SKILL_BANK_PATH;
-  const savedDocs = process.env.GAH_SKILL_DOCS_PATH;
+  const savedBank = process.env.PARASAUR_SKILL_BANK_PATH;
+  const savedDocs = process.env.PARASAUR_SKILL_DOCS_PATH;
   const savedConsoleError = console.error;
   const errors: unknown[][] = [];
-  process.env.GAH_SKILL_BANK_PATH = join(dir, 'missing-skills.json');
-  process.env.GAH_SKILL_DOCS_PATH = dir;
+  process.env.PARASAUR_SKILL_BANK_PATH = join(dir, 'missing-skills.json');
+  process.env.PARASAUR_SKILL_DOCS_PATH = dir;
   console.error = (...args: unknown[]) => errors.push(args);
 
   try {
@@ -575,10 +575,10 @@ test('skill bank initialization logs an unreadable seed document without abortin
     assert.match(String(errors[0]?.[1]), /EISDIR|directory/i);
   } finally {
     console.error = savedConsoleError;
-    if (savedBank === undefined) delete process.env.GAH_SKILL_BANK_PATH;
-    else process.env.GAH_SKILL_BANK_PATH = savedBank;
-    if (savedDocs === undefined) delete process.env.GAH_SKILL_DOCS_PATH;
-    else process.env.GAH_SKILL_DOCS_PATH = savedDocs;
+    if (savedBank === undefined) delete process.env.PARASAUR_SKILL_BANK_PATH;
+    else process.env.PARASAUR_SKILL_BANK_PATH = savedBank;
+    if (savedDocs === undefined) delete process.env.PARASAUR_SKILL_DOCS_PATH;
+    else process.env.PARASAUR_SKILL_DOCS_PATH = savedDocs;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -586,11 +586,11 @@ test('skill bank initialization logs an unreadable seed document without abortin
 test('server startup from apps/server seeds the repo manager skill content intact', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-skills-default-seed-'));
   const bankPath = join(dir, 'skills.json');
-  const savedBank = process.env.GAH_SKILL_BANK_PATH;
-  const savedDocs = process.env.GAH_SKILL_DOCS_PATH;
+  const savedBank = process.env.PARASAUR_SKILL_BANK_PATH;
+  const savedDocs = process.env.PARASAUR_SKILL_DOCS_PATH;
   const savedCwd = process.cwd();
-  process.env.GAH_SKILL_BANK_PATH = bankPath;
-  delete process.env.GAH_SKILL_DOCS_PATH;
+  process.env.PARASAUR_SKILL_BANK_PATH = bankPath;
+  delete process.env.PARASAUR_SKILL_DOCS_PATH;
 
   try {
     process.chdir(fileURLToPath(new URL('..', import.meta.url)));
@@ -603,10 +603,10 @@ test('server startup from apps/server seeds the repo manager skill content intac
     assert.equal(bank.skills.find((skill) => skill.id === 'gah-manager')?.content, expected);
   } finally {
     process.chdir(savedCwd);
-    if (savedBank === undefined) delete process.env.GAH_SKILL_BANK_PATH;
-    else process.env.GAH_SKILL_BANK_PATH = savedBank;
-    if (savedDocs === undefined) delete process.env.GAH_SKILL_DOCS_PATH;
-    else process.env.GAH_SKILL_DOCS_PATH = savedDocs;
+    if (savedBank === undefined) delete process.env.PARASAUR_SKILL_BANK_PATH;
+    else process.env.PARASAUR_SKILL_BANK_PATH = savedBank;
+    if (savedDocs === undefined) delete process.env.PARASAUR_SKILL_DOCS_PATH;
+    else process.env.PARASAUR_SKILL_DOCS_PATH = savedDocs;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -614,8 +614,8 @@ test('server startup from apps/server seeds the repo manager skill content intac
 test('skill bank and git-commit mutation routes reject unauthenticated non-loopback requests like /api/projects', async () => {
   const { isLocalAddress } = await import('./authMiddleware.js');
   const dir = mkdtempSync(join(tmpdir(), 'gah-skills-api-'));
-  const savedBank = process.env.GAH_SKILL_BANK_PATH;
-  process.env.GAH_SKILL_BANK_PATH = join(dir, 'skills.json');
+  const savedBank = process.env.PARASAUR_SKILL_BANK_PATH;
+  process.env.PARASAUR_SKILL_BANK_PATH = join(dir, 'skills.json');
   const os = await import('node:os');
   const app = createServer({});
   const server = http.createServer(app);
@@ -638,26 +638,26 @@ test('skill bank and git-commit mutation routes reject unauthenticated non-loopb
       assert.equal(res.status, 403, `${path} must be gated by authMiddleware`);
     }
   } finally {
-    if (savedBank === undefined) delete process.env.GAH_SKILL_BANK_PATH;
-    else process.env.GAH_SKILL_BANK_PATH = savedBank;
+    if (savedBank === undefined) delete process.env.PARASAUR_SKILL_BANK_PATH;
+    else process.env.PARASAUR_SKILL_BANK_PATH = savedBank;
     rmSync(dir, { recursive: true, force: true });
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
 
 async function withAdminUpdateEnv(value: string | undefined, fn: () => Promise<void>): Promise<void> {
-  const saved = process.env.GAH_ENABLE_ADMIN_UPDATE;
-  if (value === undefined) delete process.env.GAH_ENABLE_ADMIN_UPDATE;
-  else process.env.GAH_ENABLE_ADMIN_UPDATE = value;
+  const saved = process.env.PARASAUR_ENABLE_ADMIN_UPDATE;
+  if (value === undefined) delete process.env.PARASAUR_ENABLE_ADMIN_UPDATE;
+  else process.env.PARASAUR_ENABLE_ADMIN_UPDATE = value;
   try {
     await fn();
   } finally {
-    if (saved === undefined) delete process.env.GAH_ENABLE_ADMIN_UPDATE;
-    else process.env.GAH_ENABLE_ADMIN_UPDATE = saved;
+    if (saved === undefined) delete process.env.PARASAUR_ENABLE_ADMIN_UPDATE;
+    else process.env.PARASAUR_ENABLE_ADMIN_UPDATE = saved;
   }
 }
 
-test('/api/admin/update is 404 (not just unimplemented) without GAH_ENABLE_ADMIN_UPDATE=1', async () => {
+test('/api/admin/update is 404 (not just unimplemented) without PARASAUR_ENABLE_ADMIN_UPDATE=1', async () => {
   await withAdminUpdateEnv(undefined, async () => {
     await withTestServer(
       async (profile) => profilePayload(profile),
@@ -804,12 +804,12 @@ test('git routes reject stale sessions and expose worktree-less sessions as read
   }]));
 
   const savedEnv = { ...process.env };
-  process.env.GAH_BINARY = join(gitFixtures, 'gah', 'gah');
-  process.env.GAH_FIXTURE_PROFILE_LIST = profileListPath;
-  process.env.GAH_CHAT_STATE_DIR = join(root, 'chat');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(root, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(root, 'manager-chat.json');
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(root, 'coordinator-identity.json');
+  process.env.PARASAUR_BINARY = join(gitFixtures, 'gah', 'gah');
+  process.env.PARASAUR_FIXTURE_PROFILE_LIST = profileListPath;
+  process.env.PARASAUR_CHAT_STATE_DIR = join(root, 'chat');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(root, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(root, 'manager-chat.json');
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(root, 'coordinator-identity.json');
   resetCachedCoordinatorIdentity();
 
   const profileInfo = {
@@ -819,7 +819,7 @@ test('git routes reject stale sessions and expose worktree-less sessions as read
   };
 
   const app = createServer({});
-  const identity = JSON.parse(readFileSync(process.env.GAH_COORDINATOR_IDENTITY_PATH, 'utf8')) as { node_id: string; display_name: string };
+  const identity = JSON.parse(readFileSync(process.env.PARASAUR_COORDINATOR_IDENTITY_PATH, 'utf8')) as { node_id: string; display_name: string };
   const server = http.createServer(app);
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
   const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

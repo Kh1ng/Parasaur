@@ -12,7 +12,7 @@ test('a project switch hides mismatched cached configuration before the fetch ef
 });
 
 test('environment sources render configured status without rendering their values', async ({ mount }) => {
-  const canary = 'TDAI_GATEWAY_API_KEY=GAH_TEST_CANARY_1014_DO_NOT_RENDER';
+  const canary = 'TDAI_GATEWAY_API_KEY=PARASAUR_TEST_CANARY_1014_DO_NOT_RENDER';
   const config: SettingsConfigProfileSummary & {
     notifications: SettingsConfigProfileSummary['notifications'] & {
       env_file: string;

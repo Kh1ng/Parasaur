@@ -21,7 +21,7 @@
 use crate::config::Profile;
 use std::path::{Component, Path};
 
-pub const ALREADY_SATISFIED_MARKER: &str = "GAH_DISPOSITION: already_satisfied";
+pub const ALREADY_SATISFIED_MARKER: &str = "PARASAUR_DISPOSITION: already_satisfied";
 
 /// Grounded evidence that an issue's requirements are already satisfied in the
 /// target branch. Every entry must point at a concrete artifact so a reviewer
@@ -383,7 +383,8 @@ mod tests {
 
     #[test]
     fn classify_prefers_already_satisfied_over_no_progress() {
-        let summary = "GAH_DISPOSITION: already_satisfied\nfile:src/foo.rs\ntest:tests::foo_works";
+        let summary =
+            "PARASAUR_DISPOSITION: already_satisfied\nfile:src/foo.rs\ntest:tests::foo_works";
         let diff = DiffSummary::default();
         let d = classify_backend_disposition(summary, &diff);
         assert_eq!(
@@ -408,7 +409,7 @@ mod tests {
 
     #[test]
     fn classify_distinguishes_already_satisfied_from_no_progress() {
-        let with_evidence = "GAH_DISPOSITION: already_satisfied\nfile:src/foo.rs";
+        let with_evidence = "PARASAUR_DISPOSITION: already_satisfied\nfile:src/foo.rs";
         let without = "Done.";
         assert!(matches!(
             classify_backend_disposition(with_evidence, &DiffSummary::default()),
@@ -422,7 +423,7 @@ mod tests {
 
     #[test]
     fn classify_rejects_test_only_coverage_regression() {
-        let summary = "GAH_DISPOSITION: already_satisfied\nfile:tests/legacy.rs";
+        let summary = "PARASAUR_DISPOSITION: already_satisfied\nfile:tests/legacy.rs";
         let diff = DiffSummary {
             changed_files: vec!["tests/legacy.rs".into()],
             test_files: vec!["tests/legacy.rs".into()],
@@ -438,7 +439,7 @@ mod tests {
 
     #[test]
     fn test_only_regression_is_rejected_even_with_evidence_claim() {
-        let summary = "GAH_DISPOSITION: already_satisfied\nfile:src/foo.rs";
+        let summary = "PARASAUR_DISPOSITION: already_satisfied\nfile:src/foo.rs";
         let diff = DiffSummary {
             changed_files: vec!["tests/legacy.rs".into()],
             test_files: vec!["tests/legacy.rs".into()],

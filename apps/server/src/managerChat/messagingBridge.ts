@@ -201,9 +201,9 @@ export class MessagingBridge {
   constructor(options: MessagingBridgeOptions = {}) {
     this.directory = options.stateDir ?? join(stateBase(), 'messaging-bridge');
     this.transport = options.transport ?? new FetchTelegramTransport();
-    this.telegramSecret = options.telegramSecret ?? process.env.GAH_TELEGRAM_WEBHOOK_SECRET?.trim() ?? '';
+    this.telegramSecret = options.telegramSecret ?? process.env.PARASAUR_TELEGRAM_WEBHOOK_SECRET?.trim() ?? '';
     if (this.telegramSecret && !/^[A-Za-z0-9_-]{1,256}$/.test(this.telegramSecret)) {
-      throw new Error('GAH_TELEGRAM_WEBHOOK_SECRET must contain 1–256 letters, digits, underscores, or hyphens.');
+      throw new Error('PARASAUR_TELEGRAM_WEBHOOK_SECRET must contain 1–256 letters, digits, underscores, or hyphens.');
     }
     this.respondPermission = options.respondPermission ?? respondManagerChatPermission;
     this.sendTurn = options.sendTurn ?? (async ({ profile, text, requestId, onPermission }) =>

@@ -42,7 +42,7 @@ const MAX_OUTPUT_CHARS = 200_000;
  * own clean-tree guard on the very next run. */
 function statePath(): string {
   return (
-    process.env.GAH_ADMIN_UPDATE_STATE_PATH ||
+    process.env.PARASAUR_ADMIN_UPDATE_STATE_PATH ||
     resolve(process.env.XDG_STATE_HOME || resolve(homedir(), '.local', 'state'), 'gah', 'admin-update-state.json')
   );
 }

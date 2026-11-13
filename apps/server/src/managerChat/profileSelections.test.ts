@@ -24,10 +24,10 @@ const empty: Listing = { models: [], reasoningEfforts: [], currentModelId: undef
 
 test('a best-effort empty listing never retires saved selections; a confirmed empty catalog does', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-profile-selections-'));
-  const previous = process.env.GAH_MANAGER_CHAT_SETTINGS_PATH;
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(dir, 'settings.json');
+  const previous = process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH;
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(dir, 'settings.json');
   t.after(() => {
-    if (previous === undefined) delete process.env.GAH_MANAGER_CHAT_SETTINGS_PATH; else process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = previous;
+    if (previous === undefined) delete process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH; else process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = previous;
     rmSync(dir, { recursive: true, force: true });
   });
   setModelOverrideForProfile('p', 'openhands', 'saved-model');

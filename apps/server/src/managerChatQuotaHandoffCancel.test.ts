@@ -33,9 +33,9 @@ test('cancelling a quota-handoff turn stuck on a never-settling fallback settles
   // Isolate every shell-out and network call from this real dev machine's
   // state: a fixture `gah` binary (never the real CLI/profiles) and an
   // unreachable memory gateway (fails open, fast).
-  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
+  process.env.PARASAUR_BINARY = join(fixtures, 'gah', 'gah');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
   process.env.TDAI_GATEWAY_URL = 'http://127.0.0.1:1';
   setSessionLogOptions({ stateDir: join(stateDir, 'chat') });
 
@@ -129,10 +129,10 @@ test('the exact Claude session limit switches to AGY and keeps that route on the
   const claude = resolveAdapter('claude'); const agy = resolveAdapter('agy');
   const savedClaude = claude.runTurn; const savedAgy = agy.runTurn;
   const profile = `quota-pin-${Date.now()}`;
-  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(dir, 'settings.json');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(dir, 'gateway.json');
-  process.env.GAH_FIXTURE_QUOTA_ROUTES = '["agy"]';
+  process.env.PARASAUR_BINARY = join(fixtures, 'gah', 'gah');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(dir, 'settings.json');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(dir, 'gateway.json');
+  process.env.PARASAUR_FIXTURE_QUOTA_ROUTES = '["agy"]';
   process.env.TDAI_GATEWAY_URL = 'http://127.0.0.1:1';
   setSessionLogOptions({ stateDir: join(dir, 'chat') });
   const calls: string[] = [];

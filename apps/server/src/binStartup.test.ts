@@ -35,7 +35,7 @@ if(args[0]==='status'){
   const child = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), fileURLToPath(new URL('./bin.ts', import.meta.url))], {
     cwd: root, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: { PATH: process.env.PATH, HOME: root, XDG_CONFIG_HOME: join(root, 'config'), HOST: '127.0.0.1', PORT: String(port),
-      GAH_BINARY: cli, GAH_WEB_ROOT: '', GAH_DISABLE_PRICE_REFRESH: '1', COORDINATOR_TOKEN: 'startup-fixture-owner' }
+      PARASAUR_BINARY: cli, PARASAUR_WEB_ROOT: '', PARASAUR_DISABLE_PRICE_REFRESH: '1', COORDINATOR_TOKEN: 'startup-fixture-owner' }
   });
   let output = '';
   child.stdout.on('data', data => { output = (output + data).slice(-20000); });

@@ -63,7 +63,7 @@ export class ClaimsService {
   private persistenceUncertain = false;
 
   constructor(configPath?: string, private readonly now: () => number = Date.now) {
-    this.configPath = configPath || process.env.GAH_CLAIMS_CONFIG_PATH || resolve(process.cwd(), 'config/claims-config.json');
+    this.configPath = configPath || process.env.PARASAUR_CLAIMS_CONFIG_PATH || resolve(process.cwd(), 'config/claims-config.json');
     this.load();
   }
 

@@ -54,7 +54,7 @@ export function browserOriginAllowed(req: { headers: IncomingHttpHeaders }, prot
   try {
     if (req.headers.origin === undefined) return true;
     const target = new URL(`${protocol}://${req.headers.host}`);
-    const configured = (process.env.GAH_WS_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean).map(origin => new URL(origin.trim()).origin);
+    const configured = (process.env.PARASAUR_WS_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean).map(origin => new URL(origin.trim()).origin);
     const hostname = target.hostname.replace(/^\[|\]$/g, '');
     if (!isIP(hostname) && !isLocalAddress(hostname) && !configured.includes(target.origin)) return false;
     const origin = new URL(req.headers.origin);
@@ -86,9 +86,9 @@ export function createAuthorizedWebSocketServer(server: Server, role?: 'central'
     verifyClient: ({ req }, done) => {
       const protocol = requestProtocol(req);
       if (!browserOriginAllowed(req, protocol)) return done(false, 403, 'WebSocket origin or host is not allowed');
-      const worker = (role ?? process.env.GAH_NODE_ROLE) === 'worker';
+      const worker = (role ?? process.env.PARASAUR_NODE_ROLE) === 'worker';
       const local = isTrustedLocalRequest({ socket: req.socket, headers: req.headers, protocol });
-      if (!local && protocol !== 'https' && process.env.GAH_ALLOW_INSECURE_HTTP !== '1') return done(false, 403, 'Remote WebSockets require TLS');
+      if (!local && protocol !== 'https' && process.env.PARASAUR_ALLOW_INSECURE_HTTP !== '1') return done(false, 403, 'Remote WebSockets require TLS');
       const authorization = req.headers.authorization;
       const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : browserToken(req);
       if (token && coordinatorTokenMatches(token)) return done(true);
@@ -114,7 +114,7 @@ export function createAuthorizedWebSocketServer(server: Server, role?: 'central'
       }
       if (!worker && local && !suppliedToken) return done(true);
       // A bad supplied credential is not silently downgraded into compatibility mode.
-      if (token === null && !suppliedToken && cookie === undefined && req.headers.origin && !worker && process.env.GAH_WS_AUTH_MODE === 'trusted_lan') {
+      if (token === null && !suppliedToken && cookie === undefined && req.headers.origin && !worker && process.env.PARASAUR_WS_AUTH_MODE === 'trusted_lan') {
         compatibilityRequests.add(req);
         return done(true);
       }
@@ -139,7 +139,7 @@ export function createAuthorizedWebSocketServer(server: Server, role?: 'central'
       ws.once('close', () => { clearTimeout(expiry); unsubscribe(); });
     }
     if (compatibilityRequests.has(req)) compatibilityClients.add(ws);
-    if ((role ?? process.env.GAH_NODE_ROLE) !== 'worker' && process.env.GAH_WS_AUTH_MODE === 'trusted_lan') compatibilityWarnings.add(ws);
+    if ((role ?? process.env.PARASAUR_NODE_ROLE) !== 'worker' && process.env.PARASAUR_WS_AUTH_MODE === 'trusted_lan') compatibilityWarnings.add(ws);
   });
   return wss;
 }

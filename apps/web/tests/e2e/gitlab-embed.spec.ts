@@ -19,7 +19,7 @@ import { expect, test, type APIRequestContext } from '@playwright/test';
 
 const issueContext = '/embed?gitlab=https%3A%2F%2Fgitlab.example.com&url=https%3A%2F%2Fgitlab.example.com%2Fteam%2Fproject&project=team%2Fproject&kind=issue&iid=42';
 
-const mockUrl = () => process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+const mockUrl = () => process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
 
 /** Stand the mock's project list up the way a real GitLab install has it:
  * two uniquely matching GitLab profiles for the two projects the panel

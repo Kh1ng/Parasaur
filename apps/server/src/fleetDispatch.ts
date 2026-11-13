@@ -126,8 +126,8 @@ function openNodeSocket(advertisedUrl: string, headers: Record<string, string>):
 }
 
 function leaseStorePath(defaultPath: string): string {
-  if (process.env.GAH_DISPATCH_LEASES_PATH) {
-    return process.env.GAH_DISPATCH_LEASES_PATH;
+  if (process.env.PARASAUR_DISPATCH_LEASES_PATH) {
+    return process.env.PARASAUR_DISPATCH_LEASES_PATH;
   }
   return defaultPath;
 }

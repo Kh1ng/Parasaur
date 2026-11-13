@@ -217,7 +217,7 @@ const DEFAULT_MAINTENANCE_INTERVAL_MS = 15 * 60_000;
 const FIRST_TICK_DELAY_MS = 30_000;
 
 function maintenanceIntervalMs(): number {
-  const raw = Number.parseInt(process.env.GAH_CHAT_MAINTENANCE_INTERVAL_MS ?? '', 10);
+  const raw = Number.parseInt(process.env.PARASAUR_CHAT_MAINTENANCE_INTERVAL_MS ?? '', 10);
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAINTENANCE_INTERVAL_MS;
 }
 

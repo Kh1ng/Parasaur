@@ -1,5 +1,5 @@
 // Route-level coverage for GET /api/usage/rollup (#940): the endpoint reads
-// GAH's own manager-chat session logs, so the test points GAH_CHAT_STATE_DIR
+// GAH's own manager-chat session logs, so the test points PARASAUR_CHAT_STATE_DIR
 // at a fabricated state dir and asserts the aggregated payload.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -18,13 +18,13 @@ const NOW = Date.now();
 test('GET /api/usage/rollup aggregates session-log usage and bounds the window', async () => {
   resetCachedCoordinatorIdentity();
   const tmpIdentityDir = mkdtempSync(join(tmpdir(), 'gah-test-identity-'));
-  const savedIdentityPath = process.env.GAH_COORDINATOR_IDENTITY_PATH;
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(tmpIdentityDir, 'coordinator-identity.json');
+  const savedIdentityPath = process.env.PARASAUR_COORDINATOR_IDENTITY_PATH;
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(tmpIdentityDir, 'coordinator-identity.json');
   resetCachedCoordinatorIdentity();
 
   const stateDir = mkdtempSync(join(tmpdir(), 'gah-usage-route-'));
-  const savedChatState = process.env.GAH_CHAT_STATE_DIR;
-  process.env.GAH_CHAT_STATE_DIR = stateDir;
+  const savedChatState = process.env.PARASAUR_CHAT_STATE_DIR;
+  process.env.PARASAUR_CHAT_STATE_DIR = stateDir;
   setChatSessionStoreOptions({ stateDir });
 
   const logDir = join(stateDir, 'project-gah', 'session-live1');
@@ -71,10 +71,10 @@ test('GET /api/usage/rollup aggregates session-log usage and bounds the window',
   } finally {
     server.close();
     setChatSessionStoreOptions({ stateDir: undefined });
-    if (savedChatState === undefined) delete process.env.GAH_CHAT_STATE_DIR;
-    else process.env.GAH_CHAT_STATE_DIR = savedChatState;
-    if (savedIdentityPath === undefined) delete process.env.GAH_COORDINATOR_IDENTITY_PATH;
-    else process.env.GAH_COORDINATOR_IDENTITY_PATH = savedIdentityPath;
+    if (savedChatState === undefined) delete process.env.PARASAUR_CHAT_STATE_DIR;
+    else process.env.PARASAUR_CHAT_STATE_DIR = savedChatState;
+    if (savedIdentityPath === undefined) delete process.env.PARASAUR_COORDINATOR_IDENTITY_PATH;
+    else process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = savedIdentityPath;
     resetCachedCoordinatorIdentity();
     rmSync(stateDir, { recursive: true, force: true });
     rmSync(tmpIdentityDir, { recursive: true, force: true });

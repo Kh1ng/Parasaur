@@ -26,7 +26,7 @@ fn effective_uid() -> u32 {
     // suite also runs under a root account (#1561). Release binaries do not
     // compile this branch and always check the live effective uid.
     #[cfg(debug_assertions)]
-    if let Some(uid) = env::var("GAH_TEST_EFFECTIVE_UID")
+    if let Some(uid) = env::var("PARASAUR_TEST_EFFECTIVE_UID")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
     {
@@ -60,7 +60,7 @@ impl UnitValues {
         Ok(())
     }
 
-    /// The config file the rendered unit's `GAH_CONFIG_PATH` points at; the
+    /// The config file the rendered unit's `PARASAUR_CONFIG_PATH` points at; the
     /// ownership repair reads the same file to find the state roots (#1626).
     pub(super) fn config_path(&self) -> &Path {
         &self.config
@@ -294,7 +294,7 @@ mod tests {
         assert!(rendered.contains("\nUser=tester\n"));
         assert!(rendered.contains("\nWorkingDirectory=/srv/other user/src/gah\n"));
         assert!(rendered.contains(
-            "\nEnvironment=\"GAH_CONFIG_PATH=/srv/other user/.config/gah/config.toml\"\n"
+            "\nEnvironment=\"PARASAUR_CONFIG_PATH=/srv/other user/.config/gah/config.toml\"\n"
         ));
         assert!(rendered.contains("\nExecStart=\"/srv/other user/node 22/bin/node\" apps/server"));
         assert!(rendered.contains("\nEnvironment=\"PATH=/srv/other user/node 22/bin:"));

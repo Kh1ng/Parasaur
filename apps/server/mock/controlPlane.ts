@@ -1894,7 +1894,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
   app.get('/api/settings/gateway', (_req, res) => res.json(state.gateway));
   app.post('/api/settings/gateway/bootstrap-command', (_req, res) => {
     res.set('Cache-Control', 'no-store');
-    res.json({ command: 'GAH_GATEWAY_MODE=remote GAH_GATEWAY_API_KEY=mock-only-token bash bootstrap.sh' } satisfies GatewayBootstrapCommand);
+    res.json({ command: 'PARASAUR_GATEWAY_MODE=remote PARASAUR_GATEWAY_API_KEY=mock-only-token bash bootstrap.sh' } satisfies GatewayBootstrapCommand);
   });
   app.put('/api/settings/gateway', (req, res) => {
     state.gateway = {

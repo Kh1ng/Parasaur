@@ -18,7 +18,7 @@ fn command(
         .args(args)
         .arg("--config-path")
         .arg(cfg)
-        .env("GAH_LEDGER_PATH", ledger);
+        .env("PARASAUR_LEDGER_PATH", ledger);
     cmd
 }
 fn show(cfg: &std::path::Path, ledger: &std::path::Path, args: &[&str]) -> Value {
@@ -208,7 +208,7 @@ fn manager_log_concurrent_adds() {
                     "--config-path",
                 ])
                 .arg(&cfg)
-                .env("GAH_LEDGER_PATH", &ledger)
+                .env("PARASAUR_LEDGER_PATH", &ledger)
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .unwrap(),

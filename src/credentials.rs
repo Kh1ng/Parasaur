@@ -133,6 +133,7 @@ fn validate(info: &CredentialInfo) -> Result<()> {
                     .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
                 || !name.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
                 || !(name.ends_with("_API_KEY") || name.ends_with("_ACCESS_TOKEN"))
+                || name.starts_with("PARASAUR_")
                 || name.starts_with("GAH_")
                 || name.starts_with("LD_")
                 || name.starts_with("DYLD_")

@@ -1,7 +1,7 @@
 import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 import { openProjects } from './helpers/navigation.js';
 
-const MOCK_BASE_URL = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+const MOCK_BASE_URL = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
 
 type Scenario =
   | 'normal'

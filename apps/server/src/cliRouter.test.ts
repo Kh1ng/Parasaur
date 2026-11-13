@@ -831,8 +831,8 @@ test('GET reports unavailable (not default strategy as live) when routing config
 test('settings file: corrupt reads throw, atomic private write, unique temp, no leftovers', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-cli-router-fs-'));
   const path = join(dir, 'sub', 'cli-router.json');
-  const prev = process.env.GAH_CLI_ROUTER_SETTINGS_PATH;
-  process.env.GAH_CLI_ROUTER_SETTINGS_PATH = path;
+  const prev = process.env.PARASAUR_CLI_ROUTER_SETTINGS_PATH;
+  process.env.PARASAUR_CLI_ROUTER_SETTINGS_PATH = path;
   try {
     assert.equal(readSettings(), null);
     writeSettings({ url: 'https://r.example.com', apiKey: 'a', managementKey: 'm' });
@@ -845,7 +845,7 @@ test('settings file: corrupt reads throw, atomic private write, unique temp, no 
       assert.throws(() => readSettings(), /corrupted/);
     }
   } finally {
-    if (prev === undefined) delete process.env.GAH_CLI_ROUTER_SETTINGS_PATH; else process.env.GAH_CLI_ROUTER_SETTINGS_PATH = prev;
+    if (prev === undefined) delete process.env.PARASAUR_CLI_ROUTER_SETTINGS_PATH; else process.env.PARASAUR_CLI_ROUTER_SETTINGS_PATH = prev;
     rmSync(dir, { recursive: true, force: true });
   }
 });

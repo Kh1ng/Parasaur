@@ -84,7 +84,7 @@ fn quota_account_costs_follow_recorded_identity_and_snapshot_profile_period() {
             "--config-path",
         ])
         .arg(cfg)
-        .env("GAH_LEDGER_PATH", &ledger)
+        .env("PARASAUR_LEDGER_PATH", &ledger)
         .assert()
         .success();
     let snapshot: Value = serde_json::from_slice(&output.get_output().stdout).unwrap();

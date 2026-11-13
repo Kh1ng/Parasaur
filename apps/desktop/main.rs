@@ -520,7 +520,7 @@ fn macos_service(settings: &DesktopSettings, action: &str, role: &str) -> Result
             &settings.repository_path,
             &profile,
         ])
-        .env("GAH_DESKTOP_SERVER_PORT", settings.server_port.to_string())
+        .env("PARASAUR_DESKTOP_SERVER_PORT", settings.server_port.to_string())
         .status()
         .map_err(|error| format!("Cannot run the macOS service controller: {error}"))?;
     if status.success() {
@@ -632,7 +632,7 @@ async fn set_node_role(
             &role,
             "--yes",
         ])
-        .env("GAH_DESKTOP_SERVER_PORT", settings.server_port.to_string())
+        .env("PARASAUR_DESKTOP_SERVER_PORT", settings.server_port.to_string())
         .status();
     let update_error = match updated {
         Ok(status) if status.success() => None,
@@ -972,7 +972,22 @@ fn menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
     }
 }
 
+/// Settings were named `GAH_*` before the product became Parasaur. A launch
+/// agent or shortcut from an older install still sets the old names, so give
+/// each one its current name unless that is already set.
+fn adopt_legacy_settings() {
+    let vars: Vec<_> = std::env::vars_os().collect();
+    for (name, value) in &vars {
+        let Some(rest) = name.to_str().and_then(|name| name.strip_prefix("GAH_")) else { continue };
+        let current = format!("PARASAUR_{rest}");
+        if std::env::var_os(&current).is_none() {
+            std::env::set_var(current, value);
+        }
+    }
+}
+
 fn main() {
+    adopt_legacy_settings();
     tauri::Builder::default()
         .manage(navigation_recovery::NavigationRecovery::default())
         .manage({

@@ -355,7 +355,7 @@ mod transition_tests {
 mod clock_tests {
     #[test]
     fn availability_local_offset_uses_injected_january() {
-        const CHILD: &str = "GAH_TIMEZONE_CLOCK_PROBE";
+        const CHILD: &str = "PARASAUR_TIMEZONE_CLOCK_PROBE";
         if std::env::var_os(CHILD).is_none() {
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "dispatch::attempts::availability::clock_tests::availability_local_offset_uses_injected_january", "--nocapture"])

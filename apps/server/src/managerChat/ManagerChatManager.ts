@@ -242,7 +242,7 @@ const PROFILE_INFO_TTL_MS = 30_000;
  * enough (every session turn) but change rarely, and `gah profile list`
  * shells out to the Rust CLI. A cache MISS forces one refresh before
  * giving up, so a freshly created profile is chattable immediately
- * (and tests that swap GAH_FIXTURE_PROFILE_LIST see the new list). */
+ * (and tests that swap PARASAUR_FIXTURE_PROFILE_LIST see the new list). */
 async function findProfileInfo(profile: string): Promise<ProfileSummary | null> {
   const now = Date.now();
   if (!profileInfoCache || now - profileInfoCache.at > PROFILE_INFO_TTL_MS) {

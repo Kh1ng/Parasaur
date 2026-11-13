@@ -196,13 +196,13 @@ mod tests {
         make_fake_bin(
             &f.bin_dir,
             "openhands",
-            "#!/bin/sh\necho \"bound=$GAH_TEST_BOUND_KEY\"\n",
+            "#!/bin/sh\necho \"bound=$PARASAUR_TEST_BOUND_KEY\"\n",
         );
         let value = "child-only-bound-value-91e3";
-        crate::redact::register_secret("GAH_TEST_BOUND_KEY", value);
+        crate::redact::register_secret("PARASAUR_TEST_BOUND_KEY", value);
         let envs = vec![
             ("PATH".to_string(), f.bin_dir.to_string_lossy().into_owned()),
-            ("GAH_TEST_BOUND_KEY".to_string(), value.to_string()),
+            ("PARASAUR_TEST_BOUND_KEY".to_string(), value.to_string()),
         ];
 
         let result = run_with_executable(
@@ -219,7 +219,10 @@ mod tests {
 
         let log = fs::read_to_string(result.log_path).unwrap();
         assert!(!log.contains(value), "raw bound secret persisted: {log}");
-        assert!(log.contains("bound=[REDACTED:GAH_TEST_BOUND_KEY]"), "{log}");
+        assert!(
+            log.contains("bound=[REDACTED:PARASAUR_TEST_BOUND_KEY]"),
+            "{log}"
+        );
     }
 
     #[test]

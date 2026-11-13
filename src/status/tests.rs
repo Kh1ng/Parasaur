@@ -122,7 +122,7 @@ default_target_branch = "main"
     .unwrap();
     let mut cfg = crate::config::load(Some(path.to_str().unwrap())).unwrap();
     // Keep every status test's ledger inside its own temp directory
-    // without mutating the process-global GAH_LEDGER_PATH override.
+    // without mutating the process-global PARASAUR_LEDGER_PATH override.
     cfg.defaults.artifact_root = tmp.path().to_string_lossy().into_owned();
     cfg
 }

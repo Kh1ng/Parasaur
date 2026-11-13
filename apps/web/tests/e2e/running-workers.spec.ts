@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { RunningWorker } from '@git-agent-harness/contracts';
-const mockUrl = `http://127.0.0.1:${process.env.GAH_MOCK_TEST_PORT ?? '3774'}`;
+const mockUrl = `http://127.0.0.1:${process.env.PARASAUR_MOCK_TEST_PORT ?? '3774'}`;
 test.afterEach(async ({ page, request }) => {
   await page.unrouteAll({ behavior: 'ignoreErrors' });
   await request.post(`${mockUrl}/api/mock/scenario`, { data: { name: 'normal' } });

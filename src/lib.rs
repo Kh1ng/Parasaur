@@ -32,6 +32,7 @@ pub mod init;
 pub mod installer;
 pub mod job_kind;
 pub mod ledger;
+pub mod legacy_settings;
 pub mod manager;
 pub mod manager_log;
 pub mod mcp;

@@ -34,8 +34,8 @@ export function networkExposureWarning(host: string): string | null {
   }
   return (
     `WARNING: gah-server is bound to ${host}, which is reachable beyond this host. ` +
-    `Remote API access requires COORDINATOR_TOKEN. TLS is required unless GAH_ALLOW_INSECURE_HTTP=1. ` +
-    `GAH_WS_AUTH_MODE=trusted_lan permits limited unauthenticated WebSocket access. ` +
+    `Remote API access requires COORDINATOR_TOKEN. TLS is required unless PARASAUR_ALLOW_INSECURE_HTTP=1. ` +
+    `PARASAUR_WS_AUTH_MODE=trusted_lan permits limited unauthenticated WebSocket access. ` +
     `Restrict network access (firewall/VPN/Tailscale) or set HOST=127.0.0.1 ` +
     `in /etc/gah/server.env. See docs/WEBSOCKET_AUTH_532.md.`
   );

@@ -11,8 +11,8 @@ export { readAgentUpdates } from './agentCliState.js';
 
 const exec = promisify(execFile);
 const UPDATABLE = new Set<string>(['claude', 'codex', 'opencode', 'vibe', 'agy']);
-export const agentUpdatesEnabled = () => process.env.GAH_ENABLE_ADMIN_UPDATE === '1';
-export const agentAutoUpdateEnabled = () => process.env.GAH_AUTO_UPDATE_AGENT_CLIS === '1';
+export const agentUpdatesEnabled = () => process.env.PARASAUR_ENABLE_ADMIN_UPDATE === '1';
+export const agentAutoUpdateEnabled = () => process.env.PARASAUR_AUTO_UPDATE_AGENT_CLIS === '1';
 
 export class AgentCliError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }

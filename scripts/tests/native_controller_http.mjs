@@ -30,12 +30,12 @@ const base=mkdtempSync(join(homedir(),'.cache/parasaur-controller-http.'));chmod
 const home=join(base,'home'),bins=join(base,'bin'),repo=join(base,'repo'),state=join(base,'state'),root=join(base,'runs');
 for(const path of [home,bins,repo,state,root])mkdirSync(path,{mode:0o700});
 const owner=randomBytes(32).toString('hex'),workerId='controller-http-fixture';
-for(const key of Object.keys(process.env))if(key.startsWith('GAH_'))delete process.env[key];
+for(const key of Object.keys(process.env))if(/^(PARASAUR|GAH)_/.test(key))delete process.env[key];
 Object.assign(process.env,{HOME:home,PATH:`${bins}:/usr/bin:/bin`,GITHUB_TOKEN:'fixture-token',COORDINATOR_TOKEN:owner,
-  GAH_BINARY:binary,GAH_LEDGER_PATH:join(state,'ledger.jsonl'),GAH_EVENTS_PATH:join(state,'events.jsonl'),
-  GAH_CLAIM_STATE_PATH:join(base,'local-claims.json'),GAH_COORDINATOR_IDENTITY_PATH:join(base,'identity.json'),
+  PARASAUR_BINARY:binary,PARASAUR_LEDGER_PATH:join(state,'ledger.jsonl'),PARASAUR_EVENTS_PATH:join(state,'events.jsonl'),
+  PARASAUR_CLAIM_STATE_PATH:join(base,'local-claims.json'),PARASAUR_COORDINATOR_IDENTITY_PATH:join(base,'identity.json'),
   XDG_CONFIG_HOME:join(home,'.config'),XDG_DATA_HOME:join(home,'.local/share'),XDG_STATE_HOME:join(home,'.local/state')});
-writeFileSync(process.env.GAH_COORDINATOR_IDENTITY_PATH,JSON.stringify({node_id:workerId}),{mode:0o600});
+writeFileSync(process.env.PARASAUR_COORDINATOR_IDENTITY_PATH,JSON.stringify({node_id:workerId}),{mode:0o600});
 function sync(command,args) {
   const result=spawnSync(command,args,{env:process.env,encoding:'utf8',timeout:30_000});
   assert.equal(result.status,0,`${command}: ${result.stderr}`);return result.stdout;
@@ -65,12 +65,12 @@ for(const name of ['main.py','model.py','api.py'])writeFileSync(join(forge,name)
 const forgeState=join(forge,'state.json');
 writeFileSync(forgeState,JSON.stringify({now:new Date().toISOString(),login:'fixture',repo:'fixture/diagnostic',project:'42',
   issues:{},pulls:{},branches:{},checks:{},pipelines:{},labels:[],next_number:1,next_id:1,calls:[],effects:[]}),{mode:0o600});
-writeFileSync(join(bins,'gh'),`#!/bin/sh\nexport GAH_TEST_NOW="$(/usr/bin/date -u +%Y-%m-%dT%H:%M:%S.000Z)"\nexec /usr/bin/python3 '${join(forge,'main.py')}' '${forgeState}' '${join(forge,'commands.log')}' gh "$@"\n`,{mode:0o700});
+writeFileSync(join(bins,'gh'),`#!/bin/sh\nexport PARASAUR_TEST_NOW="$(/usr/bin/date -u +%Y-%m-%dT%H:%M:%S.000Z)"\nexec /usr/bin/python3 '${join(forge,'main.py')}' '${forgeState}' '${join(forge,'commands.log')}' gh "$@"\n`,{mode:0o700});
 sync('gh',['api','repos/fixture/diagnostic/issues','--method','POST','--raw-field','title=Disposable native controller task',
   '--raw-field','body=Update README.md. Acceptance criteria: README.md contains worker edit.', '--raw-field','labels=exec:autonomous']);
 const profile={name:'fixture',repo_id:'controller-http',repo:'fixture/diagnostic'};
 const config=join(base,'central.toml'),workerConfig=join(base,'worker.toml');
-Object.assign(process.env,{GAH_CONFIG:config,GAH_CONFIG_PATH:config});
+Object.assign(process.env,{PARASAUR_CONFIG:config,PARASAUR_CONFIG_PATH:config});
 const app=express();app.use(express.json({limit:'9mb'}));app.use(authMiddleware);
 let dropReservationReply=mode==='lost-reservation';
 let dropActivationReply=mode==='lost-activation';
@@ -175,7 +175,7 @@ try {
   assert.equal(claims.getLease('fixture','#1'),undefined);
   assert.equal(view.worker_release.context_history_cleaned,true);
   assert.equal(readFileSync(marker,'utf8'),'attempt\n');
-  const rows=readFileSync(process.env.GAH_LEDGER_PATH,'utf8').trim().split('\n').map(JSON.parse);
+  const rows=readFileSync(process.env.PARASAUR_LEDGER_PATH,'utf8').trim().split('\n').map(JSON.parse);
   const result=rows.filter(row=>row.session_id===binding.run_id && row.mode==='fix');
   assert.equal(result.length,1);assert.equal(result[0].attempts_started,1);
   if(claimFault) {
@@ -200,9 +200,9 @@ try {
   }
   const lease=JSON.parse(readFileSync(join(worker.contexts.paths(binding).work,'capacity.json'),'utf8'));
   await execute('/usr/bin/python3',['-c','import fcntl,sys\nwith open(sys.argv[1]) as file: fcntl.flock(file,fcntl.LOCK_EX|fcntl.LOCK_NB)',lease.path],{timeout:5000});
-  const before=readFileSync(process.env.GAH_LEDGER_PATH,'utf8');reload();
+  const before=readFileSync(process.env.PARASAUR_LEDGER_PATH,'utf8');reload();
   await broker.reconcilePending();assert.equal(broker.get(binding.run_id).phase,'terminal');
-  assert.equal(readFileSync(process.env.GAH_LEDGER_PATH,'utf8'),before);
+  assert.equal(readFileSync(process.env.PARASAUR_LEDGER_PATH,'utf8'),before);
   let completedCycle;
   try {
     completedCycle=await execute(binary,['loop','--profile','fixture','--config-path',config,'--once'],{env:process.env,timeout:45_000,maxBuffer:128*1024});
@@ -212,7 +212,7 @@ try {
     completedCycle={stdout:'Factory remains disabled\n'};
   }
   writeFileSync(join(base,'controller-completed.stdout'),completedCycle.stdout,{mode:0o600});
-  assert.equal(readFileSync(process.env.GAH_LEDGER_PATH,'utf8'),before);
+  assert.equal(readFileSync(process.env.PARASAUR_LEDGER_PATH,'utf8'),before);
   assert.equal(readFileSync(marker,'utf8'),'attempt\n');
   assert.equal(readdirSync(root).filter(name=>name!== 'preparations').length,1);
   const report={passed:true,fixtureRoot:base,actualControllerCycle:true,actualRustPlanning:true,centralExecutableAbsent:true,

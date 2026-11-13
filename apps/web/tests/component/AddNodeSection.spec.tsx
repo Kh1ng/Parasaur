@@ -3,7 +3,7 @@ import React from 'react';
 import { AddNodeSection } from '../../src/pages/SettingsPage.js';
 
 test('Windows setup reveals the selected role explicitly and sends only the tab token', async ({ mount, page }) => {
-  const token = 'GAH_TEST_SETUP_TOKEN';
+  const token = 'PARASAUR_TEST_SETUP_TOKEN';
   const requests: { body: unknown; authorization?: string }[] = [];
   await page.route('**/api/settings/nodes/command', async (route) => {
     const body = route.request().postDataJSON();

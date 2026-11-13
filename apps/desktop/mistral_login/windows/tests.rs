@@ -4,7 +4,7 @@ use super::*;
 #[ignore = "read-only preflight against the actual selected WSL installation"]
 fn installed_wsl_mistral_preflight_is_available() {
     assert_eq!(
-        std::env::var("GAH_WINDOWS_WSL_TEST_INSTALLED_READS").as_deref(),
+        std::env::var("PARASAUR_WINDOWS_WSL_TEST_INSTALLED_READS").as_deref(),
         Ok("1")
     );
     assert!(installed());
@@ -14,10 +14,10 @@ fn installed_wsl_mistral_preflight_is_available() {
 }
 
 #[test]
-#[ignore = "requires GAH_WINDOWS_WSL_TEST_DISTRIBUTION; uses a synthetic WSL collector"]
+#[ignore = "requires PARASAUR_WINDOWS_WSL_TEST_DISTRIBUTION; uses a synthetic WSL collector"]
 fn windows_staging_preserves_connections_until_verification() {
     let settings = crate::DesktopSettings {
-        wsl_distribution: std::env::var("GAH_WINDOWS_WSL_TEST_DISTRIBUTION")
+        wsl_distribution: std::env::var("PARASAUR_WINDOWS_WSL_TEST_DISTRIBUTION")
             .expect("WSL distribution required"),
         ..Default::default()
     };
@@ -130,7 +130,7 @@ print(p)
         &[],
     );
     assert_eq!(execute(&default, false, false), "publish");
-    if let Ok(gah) = std::env::var("GAH_WINDOWS_WSL_TEST_GAH") {
+    if let Ok(gah) = std::env::var("PARASAUR_WINDOWS_WSL_TEST_GAH") {
         control("import pathlib,sys; p=pathlib.Path(sys.argv[1]); (p/'real-cli').write_text(sys.argv[2]); (p/'mode').write_text('good')", &[&gah]);
         assert_eq!(execute(&named, false, false), "connected");
         assert_eq!(execute(&default, false, false), "connected");

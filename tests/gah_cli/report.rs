@@ -46,7 +46,7 @@ fn project_and_work_item_grouping_reaches_real_report_and_ledger_cli() {
             "--config-path",
             cfg.to_str().unwrap(),
         ])
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success();
     let usage: Value = serde_json::from_slice(&usage.get_output().stdout).unwrap();
@@ -86,7 +86,7 @@ fn project_and_work_item_grouping_reaches_real_report_and_ledger_cli() {
             let output = bin()
                 .args(&args)
                 .arg("--json")
-                .env("GAH_LEDGER_PATH", &ledger_path)
+                .env("PARASAUR_LEDGER_PATH", &ledger_path)
                 .assert()
                 .success();
             let value: Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
@@ -103,7 +103,7 @@ fn project_and_work_item_grouping_reaches_real_report_and_ledger_cli() {
             assert!(row["actual_cost_usd"].is_null());
             let plain = bin()
                 .args(args)
-                .env("GAH_LEDGER_PATH", &ledger_path)
+                .env("PARASAUR_LEDGER_PATH", &ledger_path)
                 .assert()
                 .success();
             assert!(String::from_utf8_lossy(&plain.get_output().stdout).contains(&key));
@@ -132,7 +132,7 @@ fn report_json_is_supported_with_empty_ledger() {
             "--config-path",
             cfg.to_str().unwrap(),
         ])
-        .env("GAH_LEDGER_PATH", ledger_path.to_str().unwrap())
+        .env("PARASAUR_LEDGER_PATH", ledger_path.to_str().unwrap())
         .assert()
         .success();
 
@@ -164,7 +164,7 @@ fn report_series_json_emits_empty_series_for_empty_ledger() {
             "--config-path",
             cfg.to_str().unwrap(),
         ])
-        .env("GAH_LEDGER_PATH", ledger_path.to_str().unwrap())
+        .env("PARASAUR_LEDGER_PATH", ledger_path.to_str().unwrap())
         .assert()
         .success();
 

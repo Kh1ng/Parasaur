@@ -99,7 +99,7 @@ test('an older central disables exact accounts while retaining ordinary dispatch
 });
 
 test('sample factory dispatch reaches the stateful socket server and returns its account receipt', async ({ page, request }) => {
-  const base = process.env.GAH_MOCK_BASE_URL!;
+  const base = process.env.PARASAUR_MOCK_BASE_URL!;
   await request.post(`${base}/api/mock/reset`);
   try {
     await page.goto('/?profile=fixture');

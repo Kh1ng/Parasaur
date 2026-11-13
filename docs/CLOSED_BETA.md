@@ -11,8 +11,8 @@ Only the project owner provisions Auth accounts. Workspace owners invite those a
 5. From an owner terminal, submit this request with the project's URL and anon key supplied privately:
 
 ```sh
-curl --silent --show-error --include "$GAH_SUPABASE_URL/auth/v1/signup" \
-  --header "apikey: $GAH_SUPABASE_ANON_KEY" \
+curl --silent --show-error --include "$PARASAUR_SUPABASE_URL/auth/v1/signup" \
+  --header "apikey: $PARASAUR_SUPABASE_ANON_KEY" \
   --header 'Content-Type: application/json' \
   --data '{"email":"closed-beta-probe@example.test","password":"BetaProbe-Only-123!"}'
 ```
@@ -33,7 +33,7 @@ Alternatively, use [`auth.admin.createUser`](https://supabase.com/docs/reference
 ```js
 import { createClient } from '@supabase/supabase-js';
 
-const admin = createClient(process.env.GAH_SUPABASE_URL, process.env.GAH_SUPABASE_SERVICE_ROLE_KEY, {
+const admin = createClient(process.env.PARASAUR_SUPABASE_URL, process.env.PARASAUR_SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 const { data, error } = await admin.auth.admin.createUser({

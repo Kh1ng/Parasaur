@@ -17,9 +17,9 @@ if ($live.instance -ne $ready.instance -or $live.bytes -ne $ready.bytes -or $liv
 $evidence = Join-Path $repository "artifacts/native-output/$($ready.instance)"
 New-Item -ItemType Directory -Path $evidence -Force | Out-Null
 $log = Join-Path $evidence 'windows.log'
-$oldUrl = $env:GAH_WINDOWS_OUTPUT_FIXTURE_URL
+$oldUrl = $env:PARASAUR_WINDOWS_OUTPUT_FIXTURE_URL
 try {
-  $env:GAH_WINDOWS_OUTPUT_FIXTURE_URL = $ready.url
+  $env:PARASAUR_WINDOWS_OUTPUT_FIXTURE_URL = $ready.url
   & cargo test --manifest-path (Join-Path $repository 'apps/desktop/Cargo.toml') --locked native_output_stream_preserves_files_on_failure_and_cancel -- --ignored --nocapture --test-threads=1 2>&1 | Tee-Object -FilePath $log
   $nativeExit = $LASTEXITCODE
   $resultPath = Join-Path (Split-Path -Parent $readyPath) 'native-output-result.json'
@@ -31,7 +31,7 @@ try {
   }
   Write-Output "Native output evidence: $evidence"
 } finally {
-  $env:GAH_WINDOWS_OUTPUT_FIXTURE_URL = $oldUrl
+  $env:PARASAUR_WINDOWS_OUTPUT_FIXTURE_URL = $oldUrl
   try {
     Invoke-RestMethod -Method Post -Uri "$origin/__fixture/stop" -ContentType 'application/json' -Body (@{ instance = $ready.instance } | ConvertTo-Json) -TimeoutSec 5 | Out-Null
   } catch { Write-Warning 'Could not confirm fixture shutdown; inspect its original process handle.' }

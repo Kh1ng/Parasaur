@@ -4,7 +4,7 @@
 // server.ts actually shells out to; never invokes anything real.
 //
 // Success: exits 0, writes the matching recorded response to stdout.
-// Forced failure: set GAH_FIXTURE_FAIL=<name> (one of the names below) to
+// Forced failure: set PARASAUR_FIXTURE_FAIL=<name> (one of the names below) to
 // make that one subcommand exit non-zero with a stderr message instead --
 // this is how tests exercise the "CLI failure surfaces as an HTTP error,
 // never healthy-looking empty data" invariant deterministically.
@@ -16,26 +16,26 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const responsesDir = path.join(__dirname, 'responses');
 
 function respond(name) {
-  const failing = process.env.GAH_FIXTURE_FAIL;
+  const failing = process.env.PARASAUR_FIXTURE_FAIL;
   if (failing === name) {
-    const code = Number.parseInt(process.env.GAH_FIXTURE_FAIL_CODE ?? '1', 10);
-    const message = process.env.GAH_FIXTURE_FAIL_MESSAGE ?? `fixture: forced failure for '${name}'`;
+    const code = Number.parseInt(process.env.PARASAUR_FIXTURE_FAIL_CODE ?? '1', 10);
+    const message = process.env.PARASAUR_FIXTURE_FAIL_MESSAGE ?? `fixture: forced failure for '${name}'`;
     process.stderr.write(message + '\n');
     process.exit(code);
   }
   // Tests that need their own profile facts (e.g. the WP2 chat-session
   // tests pointing repo_id/local_path/worktree_base at a temp git repo) can
-  // point GAH_FIXTURE_PROFILE_LIST at an arbitrary JSON file instead of
+  // point PARASAUR_FIXTURE_PROFILE_LIST at an arbitrary JSON file instead of
   // editing the recorded response.
-  if (name === 'profile-list' && process.env.GAH_FIXTURE_PROFILE_LIST) {
-    process.stdout.write(fs.readFileSync(process.env.GAH_FIXTURE_PROFILE_LIST, 'utf8'));
+  if (name === 'profile-list' && process.env.PARASAUR_FIXTURE_PROFILE_LIST) {
+    process.stdout.write(fs.readFileSync(process.env.PARASAUR_FIXTURE_PROFILE_LIST, 'utf8'));
     process.exit(0);
   }
   // Tests that need their own ledger (e.g. the GitLab runs feed's mixed
-  // GitHub/GitLab fixtures) point GAH_FIXTURE_REPORT at a report JSON whose
+  // GitHub/GitLab fixtures) point PARASAUR_FIXTURE_REPORT at a report JSON whose
   // ledger_path selects their ledger file instead of the recorded response.
-  if (name === 'report' && process.env.GAH_FIXTURE_REPORT) {
-    process.stdout.write(fs.readFileSync(process.env.GAH_FIXTURE_REPORT, 'utf8'));
+  if (name === 'report' && process.env.PARASAUR_FIXTURE_REPORT) {
+    process.stdout.write(fs.readFileSync(process.env.PARASAUR_FIXTURE_REPORT, 'utf8'));
     process.exit(0);
   }
   const file = path.join(responsesDir, `${name}.json`);
@@ -45,12 +45,12 @@ function respond(name) {
 
 const args = process.argv.slice(2);
 const [command, sub] = args;
-if (process.env.GAH_FIXTURE_QUERY_LOG && (command === 'report' || (command === 'ledger' && sub === 'summary'))) {
-  fs.appendFileSync(process.env.GAH_FIXTURE_QUERY_LOG, JSON.stringify(args) + '\n');
+if (process.env.PARASAUR_FIXTURE_QUERY_LOG && (command === 'report' || (command === 'ledger' && sub === 'summary'))) {
+  fs.appendFileSync(process.env.PARASAUR_FIXTURE_QUERY_LOG, JSON.stringify(args) + '\n');
 }
 
 if (command === 'pm') {
-  if (process.env.GAH_FIXTURE_PM_LOG) fs.appendFileSync(process.env.GAH_FIXTURE_PM_LOG, JSON.stringify(args) + '\n');
+  if (process.env.PARASAUR_FIXTURE_PM_LOG) fs.appendFileSync(process.env.PARASAUR_FIXTURE_PM_LOG, JSON.stringify(args) + '\n');
   const profile = args.find(value => value.startsWith('--profile='))?.slice('--profile='.length);
   const provider = profile === 'github-project' ? 'github' : profile === 'gitlab-project' ? 'gitlab' : null;
   if (!provider || !args.includes('--json') || args.some(value => value.startsWith('--plan='))) process.exit(2);
@@ -81,7 +81,7 @@ if (command === 'pm') {
       : /rate limit|429|overloaded/i.test(input) ? 'transient' : 'other';
     process.stdout.write(JSON.stringify({ kind, resetAt: kind === 'hard' ? Date.now() + 3600000 : null, retryAfterMs: 1 }));
   } else {
-    const backends = JSON.parse(process.env.GAH_FIXTURE_QUOTA_ROUTES ?? '["codex"]');
+    const backends = JSON.parse(process.env.PARASAUR_FIXTURE_QUOTA_ROUTES ?? '["codex"]');
     process.stdout.write(JSON.stringify(backends.map(backend => ({ identity: { runner_kind: backend, logical_backend: backend, backend_instance: `legacy:${backend}`, effective_model: null, quota_pool: null } }))));
   }
   process.exit(0);

@@ -30,8 +30,8 @@ else:
                 build.chmod(0o755)
                 export.chmod(0o755)
                 env = dict(os.environ, PATH=f'{root}:' + os.environ['PATH'], TMPDIR=stage,
-                           GAH_IOS_DEVICE='test-device', GAH_IOS_TEAM='test-team',
-                           GAH_IOS_CENTRAL_URL='https://central.example.test',
+                           PARASAUR_IOS_DEVICE='test-device', PARASAUR_IOS_TEAM='test-team',
+                           PARASAUR_IOS_CENTRAL_URL='https://central.example.test',
                            TEST_STATUS=str(status), MAKE_BUNDLE=str(int(bundle)))
                 result = subprocess.run(['bash', str(helper)], env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, status, result.stdout + result.stderr)

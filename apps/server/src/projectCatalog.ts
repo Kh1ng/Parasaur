@@ -28,7 +28,7 @@ interface ProjectCatalogFile {
 }
 
 function catalogPath(): string {
-  return process.env.GAH_PROJECT_CATALOG_PATH
+  return process.env.PARASAUR_PROJECT_CATALOG_PATH
     || resolve(process.env.XDG_CONFIG_HOME || resolve(homedir(), '.config'), 'gah/projects.json');
 }
 
@@ -249,7 +249,7 @@ function dataRoot(): string {
 }
 
 function projectsRoot(): string {
-  const root = resolve(process.env.GAH_PROJECTS_ROOT || resolve(dataRoot(), 'gah/projects'));
+  const root = resolve(process.env.PARASAUR_PROJECTS_ROOT || resolve(dataRoot(), 'gah/projects'));
   if (root === parse(root).root) throw new Error('Managed projects root cannot be the filesystem root');
   return root;
 }

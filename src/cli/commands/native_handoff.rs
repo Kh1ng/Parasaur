@@ -257,9 +257,9 @@ pub fn run(args: Args) -> Result<()> {
             config_path,
         } => {
             for key in [
-                "GAH_LEDGER_PATH",
-                "GAH_EVENTS_PATH",
-                "GAH_RECONCILIATION_PATH",
+                "PARASAUR_LEDGER_PATH",
+                "PARASAUR_EVENTS_PATH",
+                "PARASAUR_RECONCILIATION_PATH",
             ] {
                 std::env::remove_var(key);
             }
@@ -358,9 +358,9 @@ pub fn run(args: Args) -> Result<()> {
             // This private child must read the verified job history, not an
             // inherited worker or controller ledger/event path.
             for key in [
-                "GAH_LEDGER_PATH",
-                "GAH_EVENTS_PATH",
-                "GAH_RECONCILIATION_PATH",
+                "PARASAUR_LEDGER_PATH",
+                "PARASAUR_EVENTS_PATH",
+                "PARASAUR_RECONCILIATION_PATH",
             ] {
                 std::env::remove_var(key);
             }

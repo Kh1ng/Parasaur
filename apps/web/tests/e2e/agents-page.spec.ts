@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const mockUrl = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+const mockUrl = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
 
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: 'wait' });

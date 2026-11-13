@@ -20,7 +20,7 @@ test('maintenance CLI sends the coordinator token and reports transport rejectio
     for await (const chunk of req) body += chunk;
     assert.deepEqual(JSON.parse(body), { dryRun: false });
     if (rejectTransport) {
-      res.writeHead(403).end('Remote or cross-origin access requires TLS unless GAH_ALLOW_INSECURE_HTTP=1');
+      res.writeHead(403).end('Remote or cross-origin access requires TLS unless PARASAUR_ALLOW_INSECURE_HTTP=1');
     } else if (req.headers.authorization !== `Bearer ${token}`) {
       res.writeHead(401).end('Authentication token required');
     } else {
@@ -43,7 +43,7 @@ test('maintenance CLI sends the coordinator token and reports transport rejectio
   rejectTransport = true;
   await assert.rejects(run(process.execPath, args, options), (error: unknown) => {
     assert.ok(error instanceof Error && 'stderr' in error);
-    assert.match(String(error.stderr), /403.*requires TLS.*GAH_ALLOW_INSECURE_HTTP=1/);
+    assert.match(String(error.stderr), /403.*requires TLS.*PARASAUR_ALLOW_INSECURE_HTTP=1/);
     assert.ok(!String(error.stderr).includes(token));
     return true;
   });

@@ -676,11 +676,11 @@ pub(super) fn attempt_usage(
                     let log_usage = usage::parse_generic_usage(&text, "attempt_output_log");
                     merged = usage::merge_usage(merged, log_usage);
                     // Optionally enrich with a live `/usage` PTY probe (issue
-                    // #153). Gated behind GAH_CLAUDE_LIVE_USAGE so normal
+                    // #153). Gated behind PARASAUR_CLAUDE_LIVE_USAGE so normal
                     // dispatch stays bounded — the probe only runs when the
                     // operator explicitly opts in.
                     if let Some(path) = claude_path {
-                        if std::env::var_os("GAH_CLAUDE_LIVE_USAGE").is_some() {
+                        if std::env::var_os("PARASAUR_CLAUDE_LIVE_USAGE").is_some() {
                             if let Ok(capture) =
                                 crate::claude_monitor::capture_usage_via_pty(path, None)
                             {

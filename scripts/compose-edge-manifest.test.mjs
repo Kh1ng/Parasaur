@@ -66,13 +66,13 @@ test('merges per-platform fragments into the signed latest.json feed', t => {
       }],
       ['fragment-windows.json', {
         platform_keys: ['windows-x86_64'],
-        asset_name: 'GAH_0.1.3_x64-setup.exe',
+        asset_name: 'PARASAUR_0.1.3_x64-setup.exe',
         signature: 'minisig-windows'
       }]
     ]
   });
   writeFileSync(join(dir, 'GAH.app.tar.gz'), 'macos-bundle');
-  writeFileSync(join(dir, 'GAH_0.1.3_x64-setup.exe'), 'windows-bundle');
+  writeFileSync(join(dir, 'PARASAUR_0.1.3_x64-setup.exe'), 'windows-bundle');
   const result = run();
   assert.equal(result.status, 0, result.stderr);
   const feed = JSON.parse(readFileSync(join(dir, 'latest.json'), 'utf8'));
@@ -82,7 +82,7 @@ test('merges per-platform fragments into the signed latest.json feed', t => {
   assert.equal(feed.platforms['darwin-aarch64'].signature, 'minisig-macos');
   assert.equal(
     feed.platforms['windows-x86_64'].url,
-    'https://github.com/Kh1ng/git-agent-harness/releases/download/edge/GAH_0.1.3_x64-setup.exe'
+    'https://github.com/Kh1ng/git-agent-harness/releases/download/edge/PARASAUR_0.1.3_x64-setup.exe'
   );
 });
 

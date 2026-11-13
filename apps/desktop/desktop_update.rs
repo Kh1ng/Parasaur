@@ -27,7 +27,7 @@ pub struct DesktopUpdateStatus {
 }
 
 /// The updater feed configuration: endpoint + minisign public key. The key
-/// comes from GAH_DESKTOP_UPDATER_PUBKEY, or from
+/// comes from PARASAUR_DESKTOP_UPDATER_PUBKEY, or from
 /// `$XDG_CONFIG_HOME/gah/desktop-updater.json`
 /// (`{"endpoint": "...", "pubkey": "..."}`) so launchd/registry-managed
 /// installs can provision it without rebuilding the app. Without XDG_CONFIG_HOME,
@@ -46,7 +46,7 @@ fn config_path() -> PathBuf {
 }
 
 fn updater_config() -> Result<UpdaterConfig, String> {
-    let explicit = std::env::var("GAH_DESKTOP_UPDATER_CONFIG").ok();
+    let explicit = std::env::var("PARASAUR_DESKTOP_UPDATER_CONFIG").ok();
     let config_file = explicit
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
@@ -79,11 +79,11 @@ fn updater_config() -> Result<UpdaterConfig, String> {
         }
         return Ok(UpdaterConfig { endpoint, pub_key });
     }
-    let pub_key = std::env::var("GAH_DESKTOP_UPDATER_PUBKEY").unwrap_or_default();
-    let endpoint = std::env::var("GAH_DESKTOP_UPDATER_ENDPOINT")
+    let pub_key = std::env::var("PARASAUR_DESKTOP_UPDATER_PUBKEY").unwrap_or_default();
+    let endpoint = std::env::var("PARASAUR_DESKTOP_UPDATER_ENDPOINT")
         .unwrap_or_else(|_| DEFAULT_ENDPOINT.to_string());
     if pub_key.is_empty() {
-        return Err("updater not configured: set GAH_DESKTOP_UPDATER_PUBKEY (or GAH_DESKTOP_UPDATER_CONFIG)".to_string());
+        return Err("updater not configured: set PARASAUR_DESKTOP_UPDATER_PUBKEY (or PARASAUR_DESKTOP_UPDATER_CONFIG)".to_string());
     }
     Ok(UpdaterConfig { endpoint, pub_key })
 }
@@ -161,7 +161,7 @@ mod tests {
         let config = updater_config().unwrap();
         assert_eq!(
             config.pub_key,
-            std::env::var("GAH_TEST_EXPECTED_KEY").unwrap()
+            std::env::var("PARASAUR_TEST_EXPECTED_KEY").unwrap()
         );
         assert_eq!(config.endpoint, DEFAULT_ENDPOINT);
     }
@@ -203,11 +203,11 @@ mod tests {
                 .current_dir(&cwd)
                 .env_remove("HOME")
                 .env_remove("XDG_CONFIG_HOME")
-                .env_remove("GAH_DESKTOP_UPDATER_CONFIG")
-                .env_remove("GAH_DESKTOP_UPDATER_PUBKEY")
-                .env_remove("GAH_DESKTOP_UPDATER_ENDPOINT")
+                .env_remove("PARASAUR_DESKTOP_UPDATER_CONFIG")
+                .env_remove("PARASAUR_DESKTOP_UPDATER_PUBKEY")
+                .env_remove("PARASAUR_DESKTOP_UPDATER_ENDPOINT")
                 .env("USERPROFILE", &profile)
-                .env("GAH_TEST_EXPECTED_KEY", expected);
+                .env("PARASAUR_TEST_EXPECTED_KEY", expected);
             match expected {
                 "xdg-key" => {
                     child.env("XDG_CONFIG_HOME", &xdg);
@@ -215,12 +215,12 @@ mod tests {
                 "explicit-key" => {
                     child
                         .env("XDG_CONFIG_HOME", &xdg)
-                        .env("GAH_DESKTOP_UPDATER_CONFIG", &explicit);
+                        .env("PARASAUR_DESKTOP_UPDATER_CONFIG", &explicit);
                 }
                 "environment-key" => {
                     child
                         .env("USERPROFILE", root.join("empty-profile"))
-                        .env("GAH_DESKTOP_UPDATER_PUBKEY", expected);
+                        .env("PARASAUR_DESKTOP_UPDATER_PUBKEY", expected);
                 }
                 _ => {}
             }

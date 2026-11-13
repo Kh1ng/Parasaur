@@ -106,10 +106,10 @@ async function withChatHarness(
   const stateDir = mkdtempSync(join(tmpdir(), 'gah-chat-harness-'));
   const savedEnv = { ...process.env };
   process.env.PATH = `${join(fixtures, 'hermes')}:${process.env.PATH}`;
-  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
-  process.env.GAH_CHAT_STATE_DIR = join(stateDir, 'chat');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
+  process.env.PARASAUR_BINARY = join(fixtures, 'gah', 'gah');
+  process.env.PARASAUR_CHAT_STATE_DIR = join(stateDir, 'chat');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
 
   let captures = 0;
   const defaultGateway = (req: http.IncomingMessage, res: http.ServerResponse, body: unknown) => {

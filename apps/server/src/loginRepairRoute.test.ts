@@ -18,8 +18,8 @@ import { createServer } from './server.js';
 test('only the owner may start a configured named account login, with no client-selected paths', async () => {
   const root = mkdtempSync(join(tmpdir(), 'gah-instance-login-route-'));
   const saved = { ...process.env };
-  Object.assign(process.env, { COORDINATOR_TOKEN: 'instance-owner-token', GAH_ALLOW_INSECURE_HTTP: '1',
-    GAH_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json'), GAH_MUTATION_STORE_PATH: join(root, 'mutations') });
+  Object.assign(process.env, { COORDINATOR_TOKEN: 'instance-owner-token', PARASAUR_ALLOW_INSECURE_HTTP: '1',
+    PARASAUR_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json'), PARASAUR_MUTATION_STORE_PATH: join(root, 'mutations') });
   resetCachedCoordinatorIdentity();
   const access = new DeviceAccess(join(root, 'devices.json'));
   const calls: string[][] = [];
@@ -79,8 +79,8 @@ test('a paired phone may repair a login it can see, and only it can read that re
   const root = mkdtempSync(join(tmpdir(), 'gah-login-repair-route-'));
   const saved = { ...process.env };
   Object.assign(process.env, {
-    COORDINATOR_TOKEN: 'repair-route-token', GAH_ALLOW_INSECURE_HTTP: '1',
-    GAH_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json'), GAH_MUTATION_STORE_PATH: join(root, 'mutations')
+    COORDINATOR_TOKEN: 'repair-route-token', PARASAUR_ALLOW_INSECURE_HTTP: '1',
+    PARASAUR_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json'), PARASAUR_MUTATION_STORE_PATH: join(root, 'mutations')
   });
   resetCachedCoordinatorIdentity();
   const access = new DeviceAccess(join(root, 'devices.json'));

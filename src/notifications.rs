@@ -46,7 +46,7 @@ type TerminalFailureCache = HashMap<TerminalFailureCacheKey, Option<TerminalFail
 
 const NOTIFICATION_ERROR_SUMMARY_MAX_BYTES: usize = 300;
 const TERMINAL_FAILURE_EVENT_DEDUPE_SECONDS: i64 = 900;
-const TERMINAL_FAILURE_EVENT_DEDUPE_SECONDS_ENV: &str = "GAH_TERMINAL_FAILURE_DEDUPE_SECONDS";
+const TERMINAL_FAILURE_EVENT_DEDUPE_SECONDS_ENV: &str = "PARASAUR_TERMINAL_FAILURE_DEDUPE_SECONDS";
 
 /// A notification-worthy controller/dispatch event. All fields are borrowed
 /// from the live dispatch/controller state to avoid cloning.

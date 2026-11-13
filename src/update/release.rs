@@ -684,7 +684,7 @@ pub fn run_release(args: ReleaseArgs) -> Result<()> {
             }
         }
         if !cfg!(target_os = "macos") {
-            match super::resolve_web_deploy_root(env::var_os("GAH_WEB_DEPLOY_ROOT"))? {
+            match super::resolve_web_deploy_root(env::var_os("PARASAUR_WEB_DEPLOY_ROOT"))? {
                 Some(root_path) => {
                     match super::deploy_web_dist(
                         &args.repo,

@@ -29,7 +29,7 @@ class MockOpenCode {
   async prompt({ sessionId }) {
     const config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? '{}');
     const cwd = this.sessionCwds.get(sessionId);
-    const agent = config.default_agent ?? process.env.GAH_TEST_OPENCODE_DEFAULT_AGENT ?? 'build';
+    const agent = config.default_agent ?? process.env.PARASAUR_TEST_OPENCODE_DEFAULT_AGENT ?? 'build';
     if (agent !== 'gah-implementer') {
       const repeated = [
         'I need to stop loading skills and actually explore the repository.\n',

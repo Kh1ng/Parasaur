@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: 'ignoreErrors' }); });
 
 test('Profile saves explicit environment source edits and refreshes redacted configured status', async ({ page, request }) => {
-  const mock = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+  const mock = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
   await request.post(`${mock}/api/mock/reset`);
   await request.patch(`${mock}/api/profiles/fixture`, { data: { env_file: 'PRIVATE_ENV_SOURCE_CANARY', env_file_prod: '/private/prod.env' } });
   let patch: unknown;

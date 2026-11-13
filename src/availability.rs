@@ -260,10 +260,10 @@ fn resolve_state_path_from_env(xdg_state_home: Option<&str>, home: Option<&str>)
         .join("availability.json")
 }
 
-/// Resolve the state file path from the real environment. `GAH_AVAILABILITY_PATH`
-/// is an explicit override, matching the existing `GAH_LEDGER_PATH` convention.
+/// Resolve the state file path from the real environment. `PARASAUR_AVAILABILITY_PATH`
+/// is an explicit override, matching the existing `PARASAUR_LEDGER_PATH` convention.
 pub fn resolve_state_path() -> PathBuf {
-    if let Ok(path) = std::env::var("GAH_AVAILABILITY_PATH") {
+    if let Ok(path) = std::env::var("PARASAUR_AVAILABILITY_PATH") {
         return PathBuf::from(path);
     }
     resolve_state_path_from_env(

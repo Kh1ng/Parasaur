@@ -20,7 +20,7 @@ export class DeviceAccess {
   private requests = new Map<string, PendingAccess>();
   private devices: StoredDevice[] | undefined;
   private revokedListeners = new Set<(id: string) => void>();
-  constructor(private path = process.env.GAH_DEVICE_STORE_PATH ?? resolve('config/paired-devices.json'), private now = Date.now) {}
+  constructor(private path = process.env.PARASAUR_DEVICE_STORE_PATH ?? resolve('config/paired-devices.json'), private now = Date.now) {}
 
   private records(): StoredDevice[] {
     if (this.devices) return this.devices;

@@ -71,7 +71,7 @@ pub fn run(args: Args) -> Result<()> {
     }
     // Override inherited opt-in: only this CLI flag authorizes job commands.
     std::env::set_var(
-        "GAH_ENFORCE_JOB_FILE",
+        "PARASAUR_ENFORCE_JOB_FILE",
         if args.enforce_job_file { "1" } else { "0" },
     );
     if args.enforce_job_file && !matches!(args.mode.as_str(), "fix" | "improve") {

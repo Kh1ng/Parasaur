@@ -17,7 +17,7 @@ import { ActivityFeed, activityFromController } from './activityFeed.js';
 
 // Other handler paths still query the CLI; keep those hermetic even though
 // the welcome handshake no longer depends on a status query.
-process.env.GAH_BINARY = fileURLToPath(new URL('../tests/fixtures/gah/gah', import.meta.url));
+process.env.PARASAUR_BINARY = fileURLToPath(new URL('../tests/fixtures/gah/gah', import.meta.url));
 
 /**
  * AC3 ("a restored WebSocket connection re-triggers a fresh REST pull",
@@ -146,8 +146,8 @@ test('server.welcome reconciles persisted leases before reporting running sessio
     ]
   }));
 
-  const previousPath = process.env.GAH_DISPATCH_LEASES_PATH;
-  process.env.GAH_DISPATCH_LEASES_PATH = leasesPath;
+  const previousPath = process.env.PARASAUR_DISPATCH_LEASES_PATH;
+  process.env.PARASAUR_DISPATCH_LEASES_PATH = leasesPath;
   try {
     await withWsServer(async (wsUrl) => {
       const ws = new WebSocket(wsUrl);
@@ -162,8 +162,8 @@ test('server.welcome reconciles persisted leases before reporting running sessio
       }
     });
   } finally {
-    if (previousPath === undefined) delete process.env.GAH_DISPATCH_LEASES_PATH;
-    else process.env.GAH_DISPATCH_LEASES_PATH = previousPath;
+    if (previousPath === undefined) delete process.env.PARASAUR_DISPATCH_LEASES_PATH;
+    else process.env.PARASAUR_DISPATCH_LEASES_PATH = previousPath;
     rmSync(dir, { recursive: true });
   }
 });
@@ -172,10 +172,10 @@ test('welcome never runs slow status or fabricates empty work observations', { s
   const dir = mkdtempSync(join(tmpdir(), 'gah-welcome-status-'));
   const cli = join(dir, 'gah');
   const queried = join(dir, 'queried');
-  const previous = process.env.GAH_BINARY;
+  const previous = process.env.PARASAUR_BINARY;
   writeFileSync(cli, `#!${process.execPath}\nconst fs=require('node:fs');fs.writeFileSync(${JSON.stringify(queried)},'queried');setTimeout(()=>process.exit(1),1000);\n`);
   chmodSync(cli, 0o755);
-  process.env.GAH_BINARY = cli;
+  process.env.PARASAUR_BINARY = cli;
   try {
     await withWsServer(async url => {
       const ws = new WebSocket(url);
@@ -190,7 +190,7 @@ test('welcome never runs slow status or fabricates empty work observations', { s
       } finally { ws.close(); }
     });
   } finally {
-    if (previous===undefined) delete process.env.GAH_BINARY; else process.env.GAH_BINARY=previous;
+    if (previous===undefined) delete process.env.PARASAUR_BINARY; else process.env.PARASAUR_BINARY=previous;
     rmSync(dir,{recursive:true});
   }
 });
@@ -380,10 +380,10 @@ test('worker websocket authenticates execution handshake and rejects manager cha
 
 test('trusted-LAN sockets receive a warning but cannot invoke session mutations', async (t) => {
   const { getFleetDispatch } = await import('./wsServer.js');
-  const savedMode = process.env.GAH_WS_AUTH_MODE;
-  const savedHttp = process.env.GAH_ALLOW_INSECURE_HTTP;
-  process.env.GAH_WS_AUTH_MODE = 'trusted_lan';
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
+  const savedMode = process.env.PARASAUR_WS_AUTH_MODE;
+  const savedHttp = process.env.PARASAUR_ALLOW_INSECURE_HTTP;
+  process.env.PARASAUR_WS_AUTH_MODE = 'trusted_lan';
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
   const server = http.createServer();
   const wss = createAuthorizedWebSocketServer(server, 'central');
   createWebSocketHandler(wss);
@@ -411,8 +411,8 @@ test('trusted-LAN sockets receive a warning but cannot invoke session mutations'
     ws.terminate();
     await new Promise<void>(resolve => wss.close(() => resolve()));
     await new Promise<void>(resolve => server.close(() => resolve()));
-    if (savedMode === undefined) delete process.env.GAH_WS_AUTH_MODE; else process.env.GAH_WS_AUTH_MODE = savedMode;
-    if (savedHttp === undefined) delete process.env.GAH_ALLOW_INSECURE_HTTP; else process.env.GAH_ALLOW_INSECURE_HTTP = savedHttp;
+    if (savedMode === undefined) delete process.env.PARASAUR_WS_AUTH_MODE; else process.env.PARASAUR_WS_AUTH_MODE = savedMode;
+    if (savedHttp === undefined) delete process.env.PARASAUR_ALLOW_INSECURE_HTTP; else process.env.PARASAUR_ALLOW_INSECURE_HTTP = savedHttp;
   }
 });
 
@@ -530,8 +530,8 @@ process.stdout.write(',' + newest.map((event) => JSON.stringify(event)).join(','
 test('an over-cap event window still refreshes the feed with the newest events (#1598)', { timeout: 20000 }, async () => {
   const fakeDir = mkdtempSync(join(tmpdir(), 'gah-overcap-events-'));
   const fakeBin = writeOverCapEventsGah(fakeDir);
-  const previousBinary = process.env.GAH_BINARY;
-  process.env.GAH_BINARY = fakeBin;
+  const previousBinary = process.env.PARASAUR_BINARY;
+  process.env.PARASAUR_BINARY = fakeBin;
   try {
     // The unlimited 30-day window read (what the HTTP endpoints request)
     // exceeds the events output cap: the incident, reproduced through the
@@ -573,7 +573,7 @@ test('an over-cap event window still refreshes the feed with the newest events (
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   } finally {
-    if (previousBinary === undefined) delete process.env.GAH_BINARY; else process.env.GAH_BINARY = previousBinary;
+    if (previousBinary === undefined) delete process.env.PARASAUR_BINARY; else process.env.PARASAUR_BINARY = previousBinary;
     rmSync(fakeDir, { recursive: true, force: true });
   }
 });

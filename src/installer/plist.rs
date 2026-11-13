@@ -243,9 +243,9 @@ mod tests {
     #[test]
     fn plistlib_output_reads_the_same() {
         // Python plistlib's layout, which existing installs carry.
-        let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n\t<key>EnvironmentVariables</key>\n\t<dict>\n\t\t<key>GAH_TAILSCALE_SERVE</key>\n\t\t<string>1</string>\n\t</dict>\n</dict>\n</plist>\n";
+        let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n\t<key>EnvironmentVariables</key>\n\t<dict>\n\t\t<key>PARASAUR_TAILSCALE_SERVE</key>\n\t\t<string>1</string>\n\t</dict>\n</dict>\n</plist>\n";
         assert_eq!(
-            environment_value(xml, "GAH_TAILSCALE_SERVE").as_deref(),
+            environment_value(xml, "PARASAUR_TAILSCALE_SERVE").as_deref(),
             Some("1")
         );
     }

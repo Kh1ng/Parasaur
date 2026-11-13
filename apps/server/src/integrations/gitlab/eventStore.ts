@@ -7,7 +7,7 @@ export const DISPATCH_RETRY_MS = 30_000;
 export const DISPATCH_LEASE_MS = 3_600_000;
 
 function configuredQueueCapacity(): number {
-  const configured = Number(process.env.GAH_GITLAB_EVENTS_QUEUE_CAPACITY);
+  const configured = Number(process.env.PARASAUR_GITLAB_EVENTS_QUEUE_CAPACITY);
   return Number.isSafeInteger(configured) && configured > 0 ? configured : 256;
 }
 

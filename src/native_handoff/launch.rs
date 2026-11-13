@@ -54,7 +54,7 @@ fn start_job(
         .arg(format!("--unit=gah-native-job-{run_id}.service"));
     for property in ["ExitType=cgroup", "RemainAfterExit=yes", "Restart=no", "KillMode=control-group", "Slice=app.slice",
         "StopWhenUnneeded=no", "UMask=0077", "TimeoutStartSec=5s",
-        "UnsetEnvironment=GAH_LEDGER_PATH GAH_EVENTS_PATH GAH_RECONCILIATION_PATH COORDINATOR_TOKEN"] {
+        "UnsetEnvironment=PARASAUR_LEDGER_PATH PARASAUR_EVENTS_PATH PARASAUR_RECONCILIATION_PATH COORDINATOR_TOKEN"] {
         command.args(["-p", property]);
     }
     command
@@ -72,7 +72,7 @@ fn start_job(
         ));
     // Retain only node-local lookup context. The owner credential is never an
     // environment property and the manager supplies the job's own invocation.
-    for key in ["HOME", "PATH", "GAH_COORDINATOR_IDENTITY_PATH"] {
+    for key in ["HOME", "PATH", "PARASAUR_COORDINATOR_IDENTITY_PATH"] {
         if let Some(value) = std::env::var_os(key) {
             let value = value
                 .to_str()

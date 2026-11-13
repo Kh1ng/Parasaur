@@ -33,9 +33,9 @@ for (const viewport of [{ width: 1000, height: 700 }, { width: 390, height: 844 
     assert.equal(await page.getByRole('link', { name: 'Open This computer' }).getAttribute('href'), 'gah://connection-recovery');
     assert.equal(await page.locator('body').innerText().then(text => text.includes('do-not-display') || text.includes('private-fragment')), false);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
-    if (process.env.GAH_RECOVERY_SCREENSHOTS) {
-      mkdirSync(process.env.GAH_RECOVERY_SCREENSHOTS, { recursive: true });
-      await page.screenshot({ path: join(process.env.GAH_RECOVERY_SCREENSHOTS, `${viewport.width}.png`) });
+    if (process.env.PARASAUR_RECOVERY_SCREENSHOTS) {
+      mkdirSync(process.env.PARASAUR_RECOVERY_SCREENSHOTS, { recursive: true });
+      await page.screenshot({ path: join(process.env.PARASAUR_RECOVERY_SCREENSHOTS, `${viewport.width}.png`) });
     }
     // Retry navigates back to the same dashboard; it does not change the saved URL.
     let retried = false;

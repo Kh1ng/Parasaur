@@ -20,9 +20,9 @@ use super::records::SCHEMA_VERSION;
 use crate::config::GahConfig;
 
 /// Destination for the telemetry repo that automatic post-attempt export
-/// writes into, same override convention as `GAH_LEDGER_PATH`/`GAH_EVENTS_PATH`.
+/// writes into, same override convention as `PARASAUR_LEDGER_PATH`/`PARASAUR_EVENTS_PATH`.
 pub fn export_repo_path(cfg: &GahConfig) -> PathBuf {
-    if let Ok(path) = std::env::var("GAH_TELEMETRY_EXPORT_PATH") {
+    if let Ok(path) = std::env::var("PARASAUR_TELEMETRY_EXPORT_PATH") {
         return PathBuf::from(path);
     }
     let artifact_root = cfg.defaults.artifact_root.trim();

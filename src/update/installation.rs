@@ -73,7 +73,7 @@ pub fn installation_plan(role: HostRole, agents: &[String]) -> Result<Vec<String
         plan.push("Build server/MCP; use sudo to install /etc/systemd/system/gah-server.service; install and enable user gah-prune.service/timer".into());
         plan.push("When the rendered gah-server.service changes User=, repair ownership of the server-managed paths (state roots, checkout config/, apps/server/dist, web root) with sudo chown -R; --no-repair-ownership refuses instead".into());
         plan.push(
-            match super::resolve_web_deploy_root(env::var_os("GAH_WEB_DEPLOY_ROOT"))? {
+            match super::resolve_web_deploy_root(env::var_os("PARASAUR_WEB_DEPLOY_ROOT"))? {
                 Some(root) => format!(
                     "Build and deploy web UI to {} (sudo; replace index and prune stale assets)",
                     root.display()

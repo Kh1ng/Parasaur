@@ -203,7 +203,7 @@ test('a gateway that accepts but never responds cannot block a turn indefinitely
 
 test('a profile that opted out of the gateway skips it entirely: no calls, no degradation', async () => {
   const settingsPath = join(tmpdir(), `gah-gateway-settings-${Date.now()}.json`);
-  process.env.GAH_GATEWAY_SETTINGS_PATH = settingsPath;
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = settingsPath;
   const savedUrl = process.env.TDAI_GATEWAY_URL;
   process.env.TDAI_GATEWAY_URL = 'http://127.0.0.1:1'; // would fail if actually called
   try {
@@ -226,7 +226,7 @@ test('a profile that opted out of the gateway skips it entirely: no calls, no de
     const recalledActive = await recall('active-profile', 'anything');
     assert.equal(recalledActive.degraded, true);
   } finally {
-    delete process.env.GAH_GATEWAY_SETTINGS_PATH;
+    delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH;
     if (savedUrl === undefined) delete process.env.TDAI_GATEWAY_URL;
     else process.env.TDAI_GATEWAY_URL = savedUrl;
     if (existsSync(settingsPath)) rmSync(settingsPath);
@@ -235,7 +235,7 @@ test('a profile that opted out of the gateway skips it entirely: no calls, no de
 
 test('a genuinely unconfigured install (no stored URL, no TDAI_GATEWAY_URL, API key alone doesn\'t count) skips the gateway entirely: no calls, no degradation', async () => {
   const settingsPath = join(tmpdir(), `gah-gateway-settings-unconfigured-${Date.now()}.json`);
-  process.env.GAH_GATEWAY_SETTINGS_PATH = settingsPath; // file does not exist -> readGatewaySettings() defaults to url: null
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = settingsPath; // file does not exist -> readGatewaySettings() defaults to url: null
   const savedUrl = process.env.TDAI_GATEWAY_URL;
   delete process.env.TDAI_GATEWAY_URL;
   try {
@@ -253,7 +253,7 @@ test('a genuinely unconfigured install (no stored URL, no TDAI_GATEWAY_URL, API 
 
     assert.equal(await flushSession('unconfigured-profile'), false);
   } finally {
-    delete process.env.GAH_GATEWAY_SETTINGS_PATH;
+    delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH;
     if (savedUrl === undefined) delete process.env.TDAI_GATEWAY_URL;
     else process.env.TDAI_GATEWAY_URL = savedUrl;
     if (existsSync(settingsPath)) rmSync(settingsPath);
@@ -272,7 +272,7 @@ test('a working gateway clears the degraded health snapshot', async () => {
 
 test('idle captures flush once after the last turn; explicit settle cancels the timer', async () => {
   const { writeGatewaySettings } = await import('./gatewaySettingsStore.js');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(testHome, 'idle-settings.json');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(testHome, 'idle-settings.json');
   const flushed: string[] = [];
   try {
     writeGatewaySettings({ contextPolicy: {settleIdleSeconds:0.08} });
@@ -289,7 +289,7 @@ test('idle captures flush once after the last turn; explicit settle cancels the 
       await new Promise(resolve => setTimeout(resolve, 100));
       assert.equal(flushed.length, 2, 'explicit settle must not flush again on the old timer');
     }, key => flushed.push(key));
-  } finally { delete process.env.GAH_GATEWAY_SETTINGS_PATH; }
+  } finally { delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH; }
 });
 
 

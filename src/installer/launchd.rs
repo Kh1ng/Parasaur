@@ -70,7 +70,7 @@ struct WorkerTransport {
 fn worker_transport(args: &Args, port: u16) -> Result<WorkerTransport> {
     let url = url::Url::parse(&args.advertised_url).map_err(|_| {
         anyhow::anyhow!(
-            "GAH_NODE_ADVERTISED_URL must be an HTTP(S) origin without credentials or a path"
+            "PARASAUR_NODE_ADVERTISED_URL must be an HTTP(S) origin without credentials or a path"
         )
     })?;
     let scheme = url.scheme();
@@ -81,7 +81,9 @@ fn worker_transport(args: &Args, port: u16) -> Result<WorkerTransport> {
         || url.fragment().is_some()
         || !matches!(url.path(), "" | "/")
     {
-        bail!("GAH_NODE_ADVERTISED_URL must be an HTTP(S) origin without credentials or a path");
+        bail!(
+            "PARASAUR_NODE_ADVERTISED_URL must be an HTTP(S) origin without credentials or a path"
+        );
     }
     let host = url
         .host_str()
@@ -97,11 +99,11 @@ fn worker_transport(args: &Args, port: u16) -> Result<WorkerTransport> {
         "authenticated_remote" => "authenticated_remote",
         "trusted_lan" => "trusted_lan",
         _ => {
-            bail!("GAH_NODE_TRANSPORT_MODE must be loopback, authenticated_remote, or trusted_lan")
+            bail!("PARASAUR_NODE_TRANSPORT_MODE must be loopback, authenticated_remote, or trusted_lan")
         }
     };
     if mode != "loopback" && url.port_or_known_default() != Some(port) {
-        bail!("a non-loopback GAH_NODE_ADVERTISED_URL must use GAH_DESKTOP_SERVER_PORT");
+        bail!("a non-loopback PARASAUR_NODE_ADVERTISED_URL must use PARASAUR_DESKTOP_SERVER_PORT");
     }
     let (host, serve) = match mode {
         "loopback" => {
@@ -124,7 +126,9 @@ fn worker_transport(args: &Args, port: u16) -> Result<WorkerTransport> {
                 bail!("trusted_lan transport requires an HTTP advertised URL");
             }
             let ip: Ipv4Addr = host.parse().map_err(|_| {
-                anyhow::anyhow!("an HTTP GAH_NODE_ADVERTISED_URL must use this Mac IPv4 address")
+                anyhow::anyhow!(
+                    "an HTTP PARASAUR_NODE_ADVERTISED_URL must use this Mac IPv4 address"
+                )
             })?;
             (ip.to_string(), false)
         }
@@ -205,7 +209,7 @@ fn env(entries: Vec<(&str, String)>) -> Plist {
 }
 
 pub fn install(args: &Args, home: &Path) -> Result<()> {
-    let port = port_number(&args.port, "GAH_DESKTOP_SERVER_PORT")?;
+    let port = port_number(&args.port, "PARASAUR_DESKTOP_SERVER_PORT")?;
     let repo_text = args.repo.to_string_lossy();
     for value in [repo_text.as_ref(), &args.profile, &args.advertised_url] {
         if value.chars().any(char::is_control) {
@@ -290,15 +294,15 @@ pub fn install(args: &Args, home: &Path) -> Result<()> {
                         ("NODE_ENV", "production".into()),
                         ("HOST", "127.0.0.1".into()),
                         ("PORT", port.to_string()),
-                        ("GAH_CONFIG_PATH", config.clone()),
+                        ("PARASAUR_CONFIG_PATH", config.clone()),
                         (
-                            "GAH_WEB_ROOT",
+                            "PARASAUR_WEB_ROOT",
                             args.repo
                                 .join("apps/web/dist")
                                 .to_string_lossy()
                                 .into_owned(),
                         ),
-                        ("GAH_ENABLE_ADMIN_UPDATE", "1".into()),
+                        ("PARASAUR_ENABLE_ADMIN_UPDATE", "1".into()),
                     ]),
                 ),
                 ("RunAtLoad", Plist::Bool(true)),
@@ -309,7 +313,7 @@ pub fn install(args: &Args, home: &Path) -> Result<()> {
                 bail!("worker build is missing; run gah update --role worker first");
             }
             let identity = worker_identity.to_string_lossy().into_owned();
-            let source = "set -a; [ ! -f \"$HOME/.config/gah/gah-loop.env\" ] || . \"$HOME/.config/gah/gah-loop.env\"; set +a; export GAH_COORDINATOR_IDENTITY_PATH=\"$2\"; exec \"$0\" \"$1\"";
+            let source = "set -a; [ ! -f \"$HOME/.config/gah/gah-loop.env\" ] || . \"$HOME/.config/gah/gah-loop.env\"; set +a; export PARASAUR_COORDINATOR_IDENTITY_PATH=\"$2\"; exec \"$0\" \"$1\"";
             agent.extend([
                 (
                     "ProgramArguments",
@@ -330,13 +334,16 @@ pub fn install(args: &Args, home: &Path) -> Result<()> {
                         ("NODE_ENV", "production".into()),
                         ("HOST", transport.host.clone()),
                         ("PORT", port.to_string()),
-                        ("GAH_CONFIG", config.clone()),
-                        ("GAH_CONFIG_PATH", config.clone()),
-                        ("GAH_BINARY", args.gah.clone()),
-                        ("GAH_COORDINATOR_IDENTITY_PATH", identity),
-                        ("GAH_NODE_ADVERTISED_URL", transport.advertised_url.clone()),
+                        ("PARASAUR_CONFIG", config.clone()),
+                        ("PARASAUR_CONFIG_PATH", config.clone()),
+                        ("PARASAUR_BINARY", args.gah.clone()),
+                        ("PARASAUR_COORDINATOR_IDENTITY_PATH", identity),
                         (
-                            "GAH_ALLOW_INSECURE_HTTP",
+                            "PARASAUR_NODE_ADVERTISED_URL",
+                            transport.advertised_url.clone(),
+                        ),
+                        (
+                            "PARASAUR_ALLOW_INSECURE_HTTP",
                             if transport.mode == "trusted_lan" {
                                 "1"
                             } else {
@@ -344,10 +351,10 @@ pub fn install(args: &Args, home: &Path) -> Result<()> {
                             }
                             .into(),
                         ),
-                        ("GAH_REGISTRY_TRANSPORT_MODE", transport.mode.into()),
-                        ("GAH_TAILSCALE_CLI", args.tailscale.clone()),
+                        ("PARASAUR_REGISTRY_TRANSPORT_MODE", transport.mode.into()),
+                        ("PARASAUR_TAILSCALE_CLI", args.tailscale.clone()),
                         (
-                            "GAH_TAILSCALE_SERVE",
+                            "PARASAUR_TAILSCALE_SERVE",
                             if transport.serve { "1" } else { "0" }.into(),
                         ),
                         (
@@ -378,9 +385,10 @@ pub fn install(args: &Args, home: &Path) -> Result<()> {
             if args.tunnel_target.chars().any(char::is_whitespace)
                 || args.tunnel_target.starts_with('-')
             {
-                bail!("GAH_NODE_SSH_TARGET must be one SSH destination without options");
+                bail!("PARASAUR_NODE_SSH_TARGET must be one SSH destination without options");
             }
-            let remote_port = port_number(&args.tunnel_remote_port, "GAH_NODE_SSH_REMOTE_PORT")?;
+            let remote_port =
+                port_number(&args.tunnel_remote_port, "PARASAUR_NODE_SSH_REMOTE_PORT")?;
             let advertised_port = url::Url::parse(&transport.advertised_url)
                 .ok()
                 .and_then(|url| url.port());
@@ -439,7 +447,7 @@ pub fn install(args: &Args, home: &Path) -> Result<()> {
             || !home.join(".config/gah/tdai-gateway.env").is_file()
             || args.npx.is_empty()
         {
-            bail!("the saved TDAI gateway is incomplete; rerun install-macos.sh with GAH_GATEWAY_MODE=colocated");
+            bail!("the saved TDAI gateway is incomplete; rerun install-macos.sh with PARASAUR_GATEWAY_MODE=colocated");
         }
         let gateway = Plist::dict(vec![
             ("Label", Plist::String(GATEWAY_LABEL.into())),

@@ -49,7 +49,7 @@ default_target_branch = "main"
         result = subprocess.run([
             str(binary), "events", "--config-path", str(config), "--profile", "real",
             "--since", "1d", "--limit", "4", "--json",
-        ], env=dict(os.environ, GAH_EVENTS_PATH=str(journal)), preexec_fn=limit_child,
+        ], env=dict(os.environ, PARASAUR_EVENTS_PATH=str(journal)), preexec_fn=limit_child,
             capture_output=True, text=True, timeout=60)
         if result.returncode:
             raise RuntimeError(f"Limited query failed ({result.returncode}): {result.stderr[:1000]}")

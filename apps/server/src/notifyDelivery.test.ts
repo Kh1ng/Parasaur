@@ -30,7 +30,7 @@ function withDirectory(run: (directory: string) => Promise<void>): Promise<void>
 
 test('the command hook gets one line per notifiable event and skips the rest', () => withDirectory(async (directory) => {
   const log = join(directory, 'hook.log');
-  const deliver = commandDelivery(BASE, { GAH_NOTIFY_COMMAND: `cat >> ${log}` })!;
+  const deliver = commandDelivery(BASE, { PARASAUR_NOTIFY_COMMAND: `cat >> ${log}` })!;
   const [receipt] = (await deliver(event())) ?? [];
   assert.deepEqual(await deliver(event({ id: 'node:x', kind: 'node_back', title: 'mac is back online' })), []);
   assert.equal(
@@ -42,7 +42,7 @@ test('the command hook gets one line per notifiable event and skips the rest', (
 
 test('the liveness variable still works as an alias for the command hook', () => withDirectory(async (directory) => {
   const log = join(directory, 'hook.log');
-  const deliver = commandDelivery(BASE, { GAH_NODE_LIVENESS_NOTIFY_COMMAND: `cat >> ${log}` });
+  const deliver = commandDelivery(BASE, { PARASAUR_NODE_LIVENESS_NOTIFY_COMMAND: `cat >> ${log}` });
   assert.ok(deliver);
   await deliver(event({ id: 'node:y', kind: 'node_offline', profile: null, sessionId: null, title: 'mac is offline', message: 'no answer' }));
   assert.match(readFileSync(log, 'utf8'), /^\[gah\] mac is offline: no answer https:\/\/central\.example\/\?page=events&event=node%3Ay\n$/);
@@ -78,7 +78,7 @@ test('channel and command receipts name the target and a short failure reason (#
   writeFileSync(gah, `#!/bin/sh\necho '{"channel":"none","ok":true}'\n`);
   assert.deepEqual(await channelDelivery(BASE, () => gah)(event()), [], 'no channel configured records no receipt');
 
-  const [hook] = (await commandDelivery(BASE, { GAH_NOTIFY_COMMAND: 'exit 3' })!(event())) ?? [];
+  const [hook] = (await commandDelivery(BASE, { PARASAUR_NOTIFY_COMMAND: 'exit 3' })!(event())) ?? [];
   assert.deepEqual({ ...hook, at: undefined }, { method: 'command', target: 'Command hook', ok: false, reason: 'exit 3', at: undefined });
 }));
 

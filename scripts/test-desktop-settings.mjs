@@ -34,12 +34,12 @@ try {
     await recovery.getByLabel('Central node address').waitFor();
     await recovery.waitForFunction(() => !document.querySelector('#connection button').disabled, null, { timeout: 2000 });
     assert.equal(await recovery.getByLabel('Central node address').inputValue(), 'https://central.test');
-    if (stalled === 'setup_check' && process.env.GAH_NAVIGATION_SCREENSHOTS) {
-      mkdirSync(process.env.GAH_NAVIGATION_SCREENSHOTS, { recursive: true });
+    if (stalled === 'setup_check' && process.env.PARASAUR_NAVIGATION_SCREENSHOTS) {
+      mkdirSync(process.env.PARASAUR_NAVIGATION_SCREENSHOTS, { recursive: true });
       for (const width of [1000, 390]) {
         await recovery.setViewportSize({ width, height: 900 });
         assert.equal(await recovery.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-        await recovery.screenshot({ path: join(process.env.GAH_NAVIGATION_SCREENSHOTS, `${width}.png`) });
+        await recovery.screenshot({ path: join(process.env.PARASAUR_NAVIGATION_SCREENSHOTS, `${width}.png`) });
       }
     }
     await recovery.getByRole('button', { name: 'Save and connect' }).click();

@@ -56,8 +56,8 @@ mod tests {
 
     const TEST_NAME: &str =
         "controller::ownership::tests::armed_process_exits_when_its_launcher_dies";
-    const ROLE_ENV: &str = "GAH_PARENT_DEATH_TEST_ROLE";
-    const STATE_ENV: &str = "GAH_PARENT_DEATH_TEST_STATE";
+    const ROLE_ENV: &str = "PARASAUR_PARENT_DEATH_TEST_ROLE";
+    const STATE_ENV: &str = "PARASAUR_PARENT_DEATH_TEST_STATE";
 
     fn process_exists(pid: i32) -> bool {
         let result = unsafe { libc::kill(pid, 0) };

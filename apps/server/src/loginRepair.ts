@@ -104,7 +104,7 @@ export interface LoginRepairDeps {
 }
 
 export function providerKeysPath(env: NodeJS.ProcessEnv = process.env): string {
-  return env.GAH_PROVIDER_KEYS_PATH ?? join(homedir(), '.config/gah/provider-keys.env');
+  return env.PARASAUR_PROVIDER_KEYS_PATH ?? join(homedir(), '.config/gah/provider-keys.env');
 }
 
 /** Keys repaired from another device live in a node-private env file; the

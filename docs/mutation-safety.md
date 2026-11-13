@@ -43,7 +43,7 @@ In particular, workers that possess the coordinator token still have owner acces
 ## Durable records
 
 The server stores receipts and `audit.jsonl` under `config/mutations`, relative to
-its working directory. `GAH_MUTATION_STORE_PATH` overrides that directory. Files
+its working directory. `PARASAUR_MUTATION_STORE_PATH` overrides that directory. Files
 use mode `0600`; newly created directories use `0700`.
 
 The journal records authenticated requests reaching the six guards, including

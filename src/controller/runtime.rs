@@ -669,7 +669,7 @@ fn record_stop_event(
 fn parallel_pass_action_limit(parallel: usize) -> usize {
     const LIMIT: usize = 128;
     #[cfg(debug_assertions)]
-    if let Some(limit) = std::env::var_os("GAH_TEST_PARALLEL_PASS_ACTION_LIMIT")
+    if let Some(limit) = std::env::var_os("PARASAUR_TEST_PARALLEL_PASS_ACTION_LIMIT")
         .and_then(|value| value.to_str().and_then(|value| value.parse::<usize>().ok()))
     {
         return limit.clamp(1, LIMIT).max(parallel);

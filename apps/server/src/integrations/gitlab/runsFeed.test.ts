@@ -392,11 +392,11 @@ test('GET /api/integrations/gitlab/runs filters mixed ledger fixtures through th
   ].join('\n') + '\n');
 
   const saved = {
-    GAH_FIXTURE_PROFILE_LIST: process.env.GAH_FIXTURE_PROFILE_LIST,
-    GAH_FIXTURE_REPORT: process.env.GAH_FIXTURE_REPORT
+    PARASAUR_FIXTURE_PROFILE_LIST: process.env.PARASAUR_FIXTURE_PROFILE_LIST,
+    PARASAUR_FIXTURE_REPORT: process.env.PARASAUR_FIXTURE_REPORT
   };
-  process.env.GAH_FIXTURE_PROFILE_LIST = profilesPath;
-  process.env.GAH_FIXTURE_REPORT = reportPath;
+  process.env.PARASAUR_FIXTURE_PROFILE_LIST = profilesPath;
+  process.env.PARASAUR_FIXTURE_REPORT = reportPath;
   try {
     await withFixtureServer(async (baseUrl) => {
       const feed = (query: string) => fetch(`${baseUrl}/api/integrations/gitlab/runs${query}`);

@@ -17,16 +17,23 @@
 # The commands Parasaur's own Settings page generates pass their choices as
 # environment variables on the `bash` side of the pipe; they become
 # `gah setup` flags below, so setup asks only what they left open:
-#   GAH_NODE_ROLE=central|standalone|worker   GAH_CENTRAL_URL=<url>
-#   GAH_GATEWAY_MODE=remote|colocated GAH_GATEWAY_URL=<url> GAH_GATEWAY_MEMORYCORE_PATH=<dir>
-#   GAH_GATEWAY_PROVIDER=ollama|openai GAH_GATEWAY_ENDPOINT=<url> and the
-#   GAH_GATEWAY_LLM_MODEL / GAH_GATEWAY_EMBEDDING_MODEL / _DIMENSIONS choices
-# Secrets (COORDINATOR_TOKEN, GAH_GATEWAY_API_KEY, GAH_GATEWAY_LLM_API_KEY,
-# GAH_GATEWAY_EMBEDDING_API_KEY) stay
+#   PARASAUR_NODE_ROLE=central|standalone|worker   PARASAUR_CENTRAL_URL=<url>
+#   PARASAUR_GATEWAY_MODE=remote|colocated PARASAUR_GATEWAY_URL=<url> PARASAUR_GATEWAY_MEMORYCORE_PATH=<dir>
+#   PARASAUR_GATEWAY_PROVIDER=ollama|openai PARASAUR_GATEWAY_ENDPOINT=<url> and the
+#   PARASAUR_GATEWAY_LLM_MODEL / PARASAUR_GATEWAY_EMBEDDING_MODEL / _DIMENSIONS choices
+# Secrets (COORDINATOR_TOKEN, PARASAUR_GATEWAY_API_KEY, PARASAUR_GATEWAY_LLM_API_KEY,
+# PARASAUR_GATEWAY_EMBEDDING_API_KEY) stay
 # in the environment; setup reads them there and never takes them as flags.
 #
-# GAH_INSTALL_DIR overrides the clone location (default: ~/git-agent-harness).
-# GAH_YES=1 accepts every default and offer without prompting.
+# PARASAUR_INSTALL_DIR overrides the clone location (default: ~/git-agent-harness).
+# PARASAUR_YES=1 accepts every default and offer without prompting.
+# Settings were named GAH_* before the product became Parasaur. Accept the old
+# names: a GAH_X with no PARASAUR_X becomes PARASAUR_X.
+for legacy_setting in "${!GAH_@}"; do
+  current_setting="PARASAUR_${legacy_setting#GAH_}"
+  [ -n "${!current_setting+set}" ] || export "$current_setting=${!legacy_setting}"
+done
+unset legacy_setting current_setting
 set -euo pipefail
 
 os="$(uname -s)"
@@ -39,15 +46,15 @@ case "$os" in
 esac
 
 # curl owns stdin (this script arrives through it), so questions go to the terminal.
-if [ "${GAH_YES:-}" != 1 ]; then
+if [ "${PARASAUR_YES:-}" != 1 ]; then
   if ! { true </dev/tty; } 2>/dev/null; then
-    echo "ERROR: no terminal to ask questions on. Run this in a terminal, or set GAH_YES=1 to accept every default." >&2
+    echo "ERROR: no terminal to ask questions on. Run this in a terminal, or set PARASAUR_YES=1 to accept every default." >&2
     exit 1
   fi
 fi
 
 ask() {
-  [ "${GAH_YES:-}" = 1 ] && return 0
+  [ "${PARASAUR_YES:-}" = 1 ] && return 0
   local answer
   printf '%s [Y/n] ' "$1" >/dev/tty
   read -r answer </dev/tty
@@ -87,7 +94,7 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
   export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
 fi
 
-install_dir="${GAH_INSTALL_DIR:-$HOME/git-agent-harness}"
+install_dir="${PARASAUR_INSTALL_DIR:-$HOME/git-agent-harness}"
 if [ -d "$install_dir/.git" ]; then
   echo "Updating the existing checkout at $install_dir"
   git -C "$install_dir" pull --ff-only
@@ -103,27 +110,27 @@ echo "Building gah. The first build takes a few minutes."
 cargo build --locked --release --bin gah
 
 args=(setup --source "$install_dir")
-case "${GAH_NODE_ROLE:-}" in
-  central|standalone|worker) args+=(--role "$GAH_NODE_ROLE") ;;
+case "${PARASAUR_NODE_ROLE:-}" in
+  central|standalone|worker) args+=(--role "$PARASAUR_NODE_ROLE") ;;
   "") ;;
-  *) echo "ERROR: GAH_NODE_ROLE must be central, standalone, or worker." >&2; exit 1 ;;
+  *) echo "ERROR: PARASAUR_NODE_ROLE must be central, standalone, or worker." >&2; exit 1 ;;
 esac
-[ -z "${GAH_CENTRAL_URL:-}" ] || args+=(--central-url "$GAH_CENTRAL_URL")
-case "${GAH_GATEWAY_MODE:-}" in
-  remote|colocated) args+=(--memory "$GAH_GATEWAY_MODE") ;;
+[ -z "${PARASAUR_CENTRAL_URL:-}" ] || args+=(--central-url "$PARASAUR_CENTRAL_URL")
+case "${PARASAUR_GATEWAY_MODE:-}" in
+  remote|colocated) args+=(--memory "$PARASAUR_GATEWAY_MODE") ;;
   "") ;;
-  *) echo "ERROR: GAH_GATEWAY_MODE must be remote or colocated." >&2; exit 1 ;;
+  *) echo "ERROR: PARASAUR_GATEWAY_MODE must be remote or colocated." >&2; exit 1 ;;
 esac
-[ -z "${GAH_GATEWAY_URL:-}" ] || args+=(--gateway-url "$GAH_GATEWAY_URL")
-[ -z "${GAH_GATEWAY_MEMORYCORE_PATH:-}" ] || args+=(--memorycore "$GAH_GATEWAY_MEMORYCORE_PATH")
-case "${GAH_FACTORY_ENABLED:-}" in
-  true|false) args+=(--factory-enabled "$GAH_FACTORY_ENABLED") ;;
+[ -z "${PARASAUR_GATEWAY_URL:-}" ] || args+=(--gateway-url "$PARASAUR_GATEWAY_URL")
+[ -z "${PARASAUR_GATEWAY_MEMORYCORE_PATH:-}" ] || args+=(--memorycore "$PARASAUR_GATEWAY_MEMORYCORE_PATH")
+case "${PARASAUR_FACTORY_ENABLED:-}" in
+  true|false) args+=(--factory-enabled "$PARASAUR_FACTORY_ENABLED") ;;
   "") ;;
-  *) echo "ERROR: GAH_FACTORY_ENABLED must be true or false." >&2; exit 1 ;;
+  *) echo "ERROR: PARASAUR_FACTORY_ENABLED must be true or false." >&2; exit 1 ;;
 esac
-[ "${GAH_YES:-}" != 1 ] || args+=(--yes)
+[ "${PARASAUR_YES:-}" != 1 ] || args+=(--yes)
 
-if [ "${GAH_YES:-}" = 1 ]; then
+if [ "${PARASAUR_YES:-}" = 1 ]; then
   exec target/release/gah "${args[@]}"
 fi
 exec target/release/gah "${args[@]}" </dev/tty

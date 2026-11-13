@@ -94,9 +94,9 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
         identity = root / 'identity.json'
         identity.write_text('{"node_id":"native-host-fixture"}')
         identity.chmod(0o600)
-        environment = {k: v for k, v in os.environ.items() if not k.startswith('GAH_')}
-        environment['GAH_COORDINATOR_IDENTITY_PATH'] = str(identity)
-        environment['GAH_LEDGER_PATH'] = str(root / 'history.jsonl')
+        environment = {k: v for k, v in os.environ.items() if not k.startswith(('PARASAUR_', 'GAH_'))}
+        environment['PARASAUR_COORDINATOR_IDENTITY_PATH'] = str(identity)
+        environment['PARASAUR_LEDGER_PATH'] = str(root / 'history.jsonl')
         request = root / 'request.json'
         request.write_text(json.dumps({'args': {
             'profile': 'fixture', 'mode': 'fix', 'backend': 'codex', 'model': 'fixture-model',
@@ -132,8 +132,8 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
         launcher = root / 'launch.py'
         stdout, stderr = root / 'reserved.json', root / 'reserve-error'
         launcher.write_text('import os\n'
-                            f'env={{k:v for k,v in os.environ.items() if not k.startswith("GAH_")}}\n'
-                            f'env["GAH_COORDINATOR_IDENTITY_PATH"]={str(identity)!r}\n'
+                            f'env={{k:v for k,v in os.environ.items() if not k.startswith(("PARASAUR_", "GAH_"))}}\n'
+                            f'env["PARASAUR_COORDINATOR_IDENTITY_PATH"]={str(identity)!r}\n'
                             f'os.dup2(os.open({str(stdout)!r},os.O_CREAT|os.O_WRONLY,0o600),1)\n'
                             f'os.dup2(os.open({str(stderr)!r},os.O_CREAT|os.O_WRONLY,0o600),2)\n'
                             f'os.execve({str(binary)!r},{arguments + ["--work-dir", str(root / "work")]!r},env)\n')
@@ -231,7 +231,7 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                 grant.update(reservation_id=response['holder_invocation'], token='c' * 64,
                              expires_at=(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=10)).isoformat())
                 entry_environment = {key: value for key, value in environment.items()
-                                     if key not in ('GAH_LEDGER_PATH', 'GAH_EVENTS_PATH', 'GAH_RECONCILIATION_PATH')}
+                                     if key not in ('PARASAUR_LEDGER_PATH', 'PARASAUR_EVENTS_PATH', 'PARASAUR_RECONCILIATION_PATH')}
                 replay = subprocess.run([str(binary), 'native-handoff', 'start', '--context-dir', str(context),
                                          '--expected-context', binding['context_sha256'], '--work-dir', str(root / 'work'),
                                          '--config-path', str(worker)], env=entry_environment,

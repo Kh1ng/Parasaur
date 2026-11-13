@@ -14,7 +14,7 @@ import type { NativeDispatchBinding, NativeStartGrant, NativeWorkerObservation }
 const MAX_OUTPUT=32*1024*1024;
 function command(binary:string,args:string[],input?:unknown):Promise<unknown> {
   const env={...process.env};
-  for(const key of ['COORDINATOR_TOKEN','GAH_LEDGER_PATH','GAH_EVENTS_PATH','GAH_RECONCILIATION_PATH']) delete env[key];
+  for(const key of ['COORDINATOR_TOKEN','PARASAUR_LEDGER_PATH','PARASAUR_EVENTS_PATH','PARASAUR_RECONCILIATION_PATH']) delete env[key];
   return new Promise((resolve,reject)=>{
     const child=spawn(binary,args,{env,stdio:['pipe','pipe','pipe'],windowsHide:true});
     const chunks:Buffer[]=[];let size=0;let failed=false;
@@ -76,8 +76,8 @@ export class NativeWorker {
     for(const value of ['Type=oneshot','RemainAfterExit=yes','FileDescriptorStoreMax=1','FileDescriptorStorePreserve=yes',
       'NotifyAccess=all','Restart=no','KillMode=control-group','StopWhenUnneeded=no','UMask=0077','TimeoutStartSec=60s',
       'StandardInput=null',`StandardOutput=file:${join(run,'admission.stdout')}`,`StandardError=file:${join(run,'admission.stderr')}`,
-      'UnsetEnvironment=COORDINATOR_TOKEN GAH_LEDGER_PATH GAH_EVENTS_PATH GAH_RECONCILIATION_PATH']) args.push('-p',value);
-    for(const key of ['HOME','PATH','GAH_COORDINATOR_IDENTITY_PATH']) {
+      'UnsetEnvironment=COORDINATOR_TOKEN PARASAUR_LEDGER_PATH PARASAUR_EVENTS_PATH PARASAUR_RECONCILIATION_PATH']) args.push('-p',value);
+    for(const key of ['HOME','PATH','PARASAUR_COORDINATOR_IDENTITY_PATH']) {
       const value=process.env[key];if(value===undefined) continue;
       if(/[\x00-\x1f\x7f]/.test(value)) throw Error('Invalid native lookup environment');
       args.push(`--setenv=${key}=${value}`);

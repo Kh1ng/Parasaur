@@ -43,9 +43,9 @@ function withEnv(testFn: (env: TestEnv) => void | Promise<void>): () => Promise<
     setChatSessionStoreOptions({ stateDir });
     setSessionLogOptions({ stateDir });
     const savedPath = process.env.PATH;
-    process.env.GAH_FAKE_GH_FIXTURE = join(fixtures, 'gh/data');
-    process.env.GAH_FAKE_GH_STATE = stateFile;
-    process.env.GAH_FAKE_GH_CALLS = callsFile;
+    process.env.PARASAUR_FAKE_GH_FIXTURE = join(fixtures, 'gh/data');
+    process.env.PARASAUR_FAKE_GH_STATE = stateFile;
+    process.env.PARASAUR_FAKE_GH_CALLS = callsFile;
     process.env.PATH = `${join(fixtures, 'gh')}:${process.env.PATH}`;
     const env: TestEnv = {
       root,
@@ -69,9 +69,9 @@ function withEnv(testFn: (env: TestEnv) => void | Promise<void>): () => Promise<
         setChatSessionStoreOptions({ stateDir: undefined });
         setSessionLogOptions({ stateDir: undefined });
         process.env.PATH = savedPath;
-        delete process.env.GAH_FAKE_GH_FIXTURE;
-        delete process.env.GAH_FAKE_GH_STATE;
-        delete process.env.GAH_FAKE_GH_CALLS;
+        delete process.env.PARASAUR_FAKE_GH_FIXTURE;
+        delete process.env.PARASAUR_FAKE_GH_STATE;
+        delete process.env.PARASAUR_FAKE_GH_CALLS;
         execFileSync('git', ['worktree', 'prune'], { cwd: checkout });
         rmSync(root, { recursive: true, force: true });
       }

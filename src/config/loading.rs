@@ -8,7 +8,7 @@ pub fn load(config_path: Option<&str>) -> Result<GahConfig> {
     let path = resolve_config_path(config_path);
     if !path.exists() {
         anyhow::bail!(
-            "no config found; set GAH_CONFIG or create {}",
+            "no config found; set PARASAUR_CONFIG or create {}",
             default_config_path().display()
         );
     }

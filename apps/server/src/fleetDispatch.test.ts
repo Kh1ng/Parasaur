@@ -1301,8 +1301,8 @@ for (const protocol of ['http:', 'https:']) {
   test(`remote dispatch and reconciliation use the ${protocol} global agent and node credential`, async (t) => {
     const secretDir = mkdtempSync(resolve(tmpdir(), 'gah-fleet-auth-'));
     const { rmSync } = await import('node:fs');
-    const previousToken = process.env.GAH_FLEET_TEST_TOKEN;
-    process.env.GAH_FLEET_TEST_TOKEN = 'node-test-secret';
+    const previousToken = process.env.PARASAUR_FLEET_TEST_TOKEN;
+    process.env.PARASAUR_FLEET_TEST_TOKEN = 'node-test-secret';
     // worker.invalid over plain HTTP is a lan link, which a central accepts only when told to.
     const previousLinks = process.env.PARASAUR_WORKER_LINKS;
     process.env.PARASAUR_WORKER_LINKS = 'lan';
@@ -1330,7 +1330,7 @@ for (const protocol of ['http:', 'https:']) {
     const nodeUrl = `${protocol}//worker.invalid:${address.port}`;
     let registeredUrl = nodeUrl;
     const registryService = {
-      getNode: () => ({ secret_ref: 'env:GAH_FLEET_TEST_TOKEN', advertised_url: registeredUrl }),
+      getNode: () => ({ secret_ref: 'env:PARASAUR_FLEET_TEST_TOKEN', advertised_url: registeredUrl }),
       getNodeObservations: async () => [makeSnapshot('worker', nodeUrl, 0, 0, 0, {
         dispatch_backend_instances: true, backend_instances: [{ backend_instance: 'work', logical_backend: 'codex',
           runner_kind: 'codex', account_label: 'work', auth_source_label: null, quota_pool: null,
@@ -1358,7 +1358,7 @@ for (const protocol of ['http:', 'https:']) {
       for (const socket of wss.clients) socket.terminate();
       await new Promise<void>((done) => wss.close(() => server.close(() => done())));
       rmSync(secretDir, { recursive: true, force: true });
-      if (previousToken === undefined) delete process.env.GAH_FLEET_TEST_TOKEN; else process.env.GAH_FLEET_TEST_TOKEN = previousToken;
+      if (previousToken === undefined) delete process.env.PARASAUR_FLEET_TEST_TOKEN; else process.env.PARASAUR_FLEET_TEST_TOKEN = previousToken;
     }
   });
 }

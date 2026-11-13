@@ -3,9 +3,9 @@
 use std::{sync::mpsc, time::Duration};
 
 #[test]
-#[ignore = "hidden native fixture; requires GAH_WINDOWS_OUTPUT_FIXTURE_URL"]
+#[ignore = "hidden native fixture; requires PARASAUR_WINDOWS_OUTPUT_FIXTURE_URL"]
 fn native_output_stream_preserves_files_on_failure_and_cancel() {
-    let url: tauri::Url = std::env::var("GAH_WINDOWS_OUTPUT_FIXTURE_URL")
+    let url: tauri::Url = std::env::var("PARASAUR_WINDOWS_OUTPUT_FIXTURE_URL")
         .expect("start the synthetic output server first")
         .parse()
         .unwrap();

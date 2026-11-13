@@ -99,10 +99,10 @@ cp config/gah-config.example.toml ~/.config/gah/config.toml
 
 `scripts/install.sh` detects the OS and runs `scripts/install-linux.sh`
 (systemd) or `scripts/install-macos.sh` (launchd). Both accept
-`GAH_NODE_ROLE=central|worker`; Linux defaults to central and macOS defaults to
+`PARASAUR_NODE_ROLE=central|worker`; Linux defaults to central and macOS defaults to
 worker. The macOS desktop can change the role later from Settings. Its local
 central service uses port 3774 by default so it can coexist with T3 Code on
-3773; set `GAH_DESKTOP_SERVER_PORT` during install to choose another port.
+3773; set `PARASAUR_DESKTOP_SERVER_PORT` during install to choose another port.
 Each macOS update also replaces `~/Applications/GAH.app` after a successful
 native build. A failed replacement restores the previous app.
 
@@ -113,23 +113,23 @@ chats, agents, repository workflows, and shared maintenance available. See
 [Optional factory automation](docs/OPERATIONS.md#optional-factory-automation).
 
 The installer asks for confirmation before making changes. For unattended
-installs, use `GAH_INSTALL_CONFIRMED=1 scripts/install.sh` to accept the
+installs, use `PARASAUR_INSTALL_CONFIRMED=1 scripts/install.sh` to accept the
 installation plan. Supply the desired role and other settings through the
 same environment variables as an interactive install.
 
-For a roaming worker using `GAH_GATEWAY_MODE=remote`, the gateway URL must
+For a roaming worker using `PARASAUR_GATEWAY_MODE=remote`, the gateway URL must
 name the central/gateway node by its tailnet IP or MagicDNS name, never a LAN
-IP or the worker's own `tailscale ip -4`. If `GAH_GATEWAY_URL` is omitted, the
+IP or the worker's own `tailscale ip -4`. If `PARASAUR_GATEWAY_URL` is omitted, the
 installer reuses the host from `registry_central_url`; a machine with no
 central config must use the Settings **Reveal setup command** or provide the
 URL explicitly. See `docs/OPERATIONS.md` for the gateway setup details.
 
 On a fresh Linux central install, the control-plane server binds its Tailscale
 IPv4 address when one is available. Otherwise, it binds `127.0.0.1`. Override
-that choice before first install with `GAH_SERVER_HOST`:
+that choice before first install with `PARASAUR_SERVER_HOST`:
 
 ```bash
-GAH_SERVER_HOST=127.0.0.1 scripts/install.sh
+PARASAUR_SERVER_HOST=127.0.0.1 scripts/install.sh
 ```
 
 This writes `/etc/gah/server.env`, read by `packaging/systemd/gah-server.service`
@@ -144,7 +144,7 @@ For the preferred tailnet setup, enable MagicDNS, name the central node
 Use the full `https://hermesagent.<tailnet-name>.ts.net` address; Tailscale
 does not issue certificates for the bare MagicDNS name. Direct HTTP to the
 detected tailnet address is an explicit compatibility mode: it requires
-`GAH_ALLOW_INSECURE_HTTP=1` and still requires a bearer token or paired-device
+`PARASAUR_ALLOW_INSECURE_HTTP=1` and still requires a bearer token or paired-device
 credential. See [Tailscale names and HTTPS](docs/OPERATIONS.md#tailscale-names-and-https-issue-943).
 
 For every deployed upgrade, use the installed CLI to update the checkout,
@@ -234,7 +234,7 @@ Provider-specific examples:
 - Per-run session directories under each profile `artifact_root/sessions/`
 - Worktrees under `defaults.worktree_base`
 - A JSONL session ledger at:
-  - `$GAH_LEDGER_PATH`, if set
+  - `$PARASAUR_LEDGER_PATH`, if set
   - otherwise `defaults.artifact_root/ledger.jsonl`, if configured
   - otherwise `~/.config/gah/ledger.jsonl`
 
@@ -245,7 +245,7 @@ For shared agent memory, see [memory hook setup](docs/MEMORY_HOOK_SETUP.md).
 Parasaur loads config from:
 
 1. `--config`
-2. `GAH_CONFIG`
+2. `PARASAUR_CONFIG`
 3. `~/.config/gah/config.toml`
 
 Minimal shape:
@@ -903,7 +903,7 @@ fixed per issue and a repeated failure is a hold, not a retry.
 ### Project skill bindings
 
 The central node stores versioned skills and their backend bindings in
-`~/.config/gah/skills.json` (`GAH_SKILL_BANK_PATH` overrides the path).
+`~/.config/gah/skills.json` (`PARASAUR_SKILL_BANK_PATH` overrides the path).
 The Chat page's **Skills** control shows the resolved set for the current
 project, chat, and backend. A blank chat edits the project override. An
 existing chat edits only that chat, so sibling chats keep the project set.

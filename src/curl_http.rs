@@ -116,13 +116,13 @@ fn request_inner(
             config.push_str("header = \"Content-Type: application/json\"\n");
             config.push_str(&format!("data = \"{}\"\n", config_value(body)));
         }
-        if let Some(ca) = std::env::var("GAH_COORDINATOR_CA_CERT")
+        if let Some(ca) = std::env::var("PARASAUR_COORDINATOR_CA_CERT")
             .ok()
             .filter(|value| coordinator_tls && !value.is_empty())
         {
             config.push_str(&format!("cacert = \"{}\"\n", config_value(&ca)));
         } else if coordinator_tls
-            && std::env::var("GAH_COORDINATOR_INSECURE_TLS").as_deref() == Ok("1")
+            && std::env::var("PARASAUR_COORDINATOR_INSECURE_TLS").as_deref() == Ok("1")
         {
             config.push_str("insecure\n");
         }

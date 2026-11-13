@@ -137,7 +137,7 @@ central node needs a checkout of the MemoryCore gateway, its npm packages,
 and nothing else: no model provider and no API key. Setup then offers
 Ollama (or another local endpoint that needs no key) or an OpenAI-compatible
 API for vector recall and memory extraction; unattended, set
-`GAH_GATEWAY_PROVIDER` to `ollama` or `openai` to pick one. Skip it
+`PARASAUR_GATEWAY_PROVIDER` to `ollama` or `openai` to pick one. Skip it
 at first; add it later with:
 
 ```bash
@@ -180,12 +180,12 @@ they stay out of shell history and process lists.
 | Environment variable | Used for |
 | --- | --- |
 | `COORDINATOR_TOKEN` | a worker's access token for its central node |
-| `GAH_GATEWAY_API_KEY` | a remote memory gateway's key |
-| `GAH_GATEWAY_LLM_API_KEY` | the colocated gateway's generation key (always optional) |
-| `GAH_GATEWAY_EMBEDDING_API_KEY` | the colocated gateway's embedding key (only for `GAH_GATEWAY_PROVIDER=openai`) |
+| `PARASAUR_GATEWAY_API_KEY` | a remote memory gateway's key |
+| `PARASAUR_GATEWAY_LLM_API_KEY` | the colocated gateway's generation key (always optional) |
+| `PARASAUR_GATEWAY_EMBEDDING_API_KEY` | the colocated gateway's embedding key (only for `PARASAUR_GATEWAY_PROVIDER=openai`) |
 
-With the paste line, set `GAH_YES=1` and the `GAH_NODE_ROLE`,
-`GAH_CENTRAL_URL`, and `GAH_GATEWAY_*` variables on the `bash` side of the
+With the paste line, set `PARASAUR_YES=1` and the `PARASAUR_NODE_ROLE`,
+`PARASAUR_CENTRAL_URL`, and `PARASAUR_GATEWAY_*` variables on the `bash` side of the
 pipe; the script turns them into these flags.
 
 ## Troubleshooting

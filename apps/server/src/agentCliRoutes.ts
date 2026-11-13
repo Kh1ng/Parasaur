@@ -102,7 +102,7 @@ export function agentCliRouter(local: AgentCliVersions, fleet: AgentCliFleet | u
   });
   router.use(requireOwner);
   router.use((_req, res, next) => {
-    if (!agentUpdatesEnabled()) return res.status(403).json({ error: 'agent_updates_disabled', message: 'Set GAH_ENABLE_ADMIN_UPDATE=1 on this node to enable agent updates.' });
+    if (!agentUpdatesEnabled()) return res.status(403).json({ error: 'agent_updates_disabled', message: 'Set PARASAUR_ENABLE_ADMIN_UPDATE=1 on this node to enable agent updates.' });
     next();
   });
   router.post('/update', mutation('agents.update'), async (req, res) => {

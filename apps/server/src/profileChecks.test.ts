@@ -14,8 +14,8 @@ test('workspace checks are owner-only, private, and command lists are validated 
   const saved = { ...process.env };
   const binary = join(root, 'fake-gah');
   writeFileSync(binary, '#!/bin/sh\nexit 91\n'); chmodSync(binary, 0o755);
-  Object.assign(process.env, { COORDINATOR_TOKEN: 'checks-owner', GAH_ALLOW_INSECURE_HTTP: '1', GAH_BINARY: binary,
-    GAH_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json') });
+  Object.assign(process.env, { COORDINATOR_TOKEN: 'checks-owner', PARASAUR_ALLOW_INSECURE_HTTP: '1', PARASAUR_BINARY: binary,
+    PARASAUR_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json') });
   resetCachedCoordinatorIdentity();
   const access = new DeviceAccess(join(root, 'devices.json'));
   let reads = 0;

@@ -48,7 +48,7 @@ pub struct GahConfig {
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 #[serde(default)]
 pub struct Defaults {
-    /// Cloud modes require GAH_SUPABASE_URL and GAH_SUPABASE_ANON_KEY in the environment.
+    /// Cloud modes require PARASAUR_SUPABASE_URL and PARASAUR_SUPABASE_ANON_KEY in the environment.
     pub orchestration_mode: OrchestrationMode,
     /// None retains factory behavior for configurations predating module selection.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -105,7 +105,7 @@ impl Defaults {
     }
 
     pub fn ledger_path(&self) -> PathBuf {
-        if let Ok(path) = std::env::var("GAH_LEDGER_PATH") {
+        if let Ok(path) = std::env::var("PARASAUR_LEDGER_PATH") {
             return PathBuf::from(path);
         }
         if !self.artifact_root.trim().is_empty() {
@@ -116,9 +116,9 @@ impl Defaults {
 
     /// TICKET-072: separate append-only log from `ledger.jsonl` (never
     /// rewrites dispatch history), same directory/override convention as
-    /// `GAH_LEDGER_PATH`.
+    /// `PARASAUR_LEDGER_PATH`.
     pub fn reconciliation_path(&self) -> PathBuf {
-        if let Ok(path) = std::env::var("GAH_RECONCILIATION_PATH") {
+        if let Ok(path) = std::env::var("PARASAUR_RECONCILIATION_PATH") {
             return PathBuf::from(path);
         }
         if !self.artifact_root.trim().is_empty() {
@@ -128,9 +128,9 @@ impl Defaults {
     }
 
     /// TICKET-083: append-only controller event stream, same convention as
-    /// `GAH_LEDGER_PATH`/`GAH_RECONCILIATION_PATH`.
+    /// `PARASAUR_LEDGER_PATH`/`PARASAUR_RECONCILIATION_PATH`.
     pub fn events_path(&self) -> PathBuf {
-        if let Ok(path) = std::env::var("GAH_EVENTS_PATH") {
+        if let Ok(path) = std::env::var("PARASAUR_EVENTS_PATH") {
             return PathBuf::from(path);
         }
         if !self.artifact_root.trim().is_empty() {
@@ -140,9 +140,9 @@ impl Defaults {
     }
 
     /// Directory `manager_wake_autonomy` audit logs are written under, same
-    /// override convention as `GAH_LEDGER_PATH`/`GAH_EVENTS_PATH`.
+    /// override convention as `PARASAUR_LEDGER_PATH`/`PARASAUR_EVENTS_PATH`.
     pub fn manager_wake_log_dir(&self) -> PathBuf {
-        if let Ok(path) = std::env::var("GAH_MANAGER_WAKE_LOG_DIR") {
+        if let Ok(path) = std::env::var("PARASAUR_MANAGER_WAKE_LOG_DIR") {
             return PathBuf::from(path);
         }
         if !self.artifact_root.trim().is_empty() {
@@ -416,13 +416,13 @@ pub fn default_config_path() -> PathBuf {
 pub fn resolve_config_path(config_path: Option<&str>) -> PathBuf {
     config_path
         .map(PathBuf::from)
-        .or_else(|| std::env::var("GAH_CONFIG").ok().map(PathBuf::from))
+        .or_else(|| std::env::var("PARASAUR_CONFIG").ok().map(PathBuf::from))
         .unwrap_or_else(default_config_path)
 }
 
 /// TICKET-106: shared canonical routing policy, inherited by every repo's
 /// config unless explicitly overridden. Separate file from the per-repo
-/// config (`GAH_CANONICAL_CONFIG` override, else `~/.config/gah/canonical.toml`
+/// config (`PARASAUR_CANONICAL_CONFIG` override, else `~/.config/gah/canonical.toml`
 /// -- same `~/.config/gah/` convention as the default repo config path).
 pub fn canonical_config_path() -> PathBuf {
     #[cfg(test)]
@@ -430,7 +430,7 @@ pub fn canonical_config_path() -> PathBuf {
         crate::test_support::canonical_config_path()
     }
     #[cfg(not(test))]
-    std::env::var("GAH_CANONICAL_CONFIG")
+    std::env::var("PARASAUR_CANONICAL_CONFIG")
         .map(PathBuf::from)
         .unwrap_or_else(|_| default_config_dir().join("canonical.toml"))
 }

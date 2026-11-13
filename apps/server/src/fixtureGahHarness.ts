@@ -18,7 +18,7 @@ import { resetCachedCoordinatorIdentity } from './coordinatorIdentity.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-/** Absolute path to the fake `gah` binary -- point `GAH_BINARY` at this. */
+/** Absolute path to the fake `gah` binary -- point `PARASAUR_BINARY` at this. */
 export const FIXTURE_GAH_BINARY = resolve(__dirname, '../tests/fixtures/gah/gah');
 
 export interface FixtureFailure {
@@ -29,7 +29,7 @@ export interface FixtureFailure {
 }
 
 /**
- * Starts a real Express app + HTTP listener with `GAH_BINARY` pointed at
+ * Starts a real Express app + HTTP listener with `PARASAUR_BINARY` pointed at
  * the fixture, restoring every mutated env var afterward. `fail`, when
  * set, makes exactly one fixture subcommand exit non-zero instead of
  * replaying its recorded response.
@@ -41,21 +41,21 @@ export async function withFixtureServer(
   resetCachedCoordinatorIdentity();
   const tmpIdentityDir = mkdtempSync(join(tmpdir(), 'gah-fixture-identity-'));
   const saved = {
-    GAH_BINARY: process.env.GAH_BINARY,
-    GAH_COORDINATOR_IDENTITY_PATH: process.env.GAH_COORDINATOR_IDENTITY_PATH,
-    GAH_FIXTURE_FAIL: process.env.GAH_FIXTURE_FAIL,
-    GAH_FIXTURE_FAIL_MESSAGE: process.env.GAH_FIXTURE_FAIL_MESSAGE,
-    GAH_FIXTURE_FAIL_CODE: process.env.GAH_FIXTURE_FAIL_CODE
+    PARASAUR_BINARY: process.env.PARASAUR_BINARY,
+    PARASAUR_COORDINATOR_IDENTITY_PATH: process.env.PARASAUR_COORDINATOR_IDENTITY_PATH,
+    PARASAUR_FIXTURE_FAIL: process.env.PARASAUR_FIXTURE_FAIL,
+    PARASAUR_FIXTURE_FAIL_MESSAGE: process.env.PARASAUR_FIXTURE_FAIL_MESSAGE,
+    PARASAUR_FIXTURE_FAIL_CODE: process.env.PARASAUR_FIXTURE_FAIL_CODE
   };
 
-  process.env.GAH_BINARY = FIXTURE_GAH_BINARY;
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(tmpIdentityDir, 'coordinator-identity.json');
+  process.env.PARASAUR_BINARY = FIXTURE_GAH_BINARY;
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(tmpIdentityDir, 'coordinator-identity.json');
   if (fail) {
-    process.env.GAH_FIXTURE_FAIL = fail.command;
-    if (fail.message !== undefined) process.env.GAH_FIXTURE_FAIL_MESSAGE = fail.message;
-    if (fail.code !== undefined) process.env.GAH_FIXTURE_FAIL_CODE = String(fail.code);
+    process.env.PARASAUR_FIXTURE_FAIL = fail.command;
+    if (fail.message !== undefined) process.env.PARASAUR_FIXTURE_FAIL_MESSAGE = fail.message;
+    if (fail.code !== undefined) process.env.PARASAUR_FIXTURE_FAIL_CODE = String(fail.code);
   } else {
-    delete process.env.GAH_FIXTURE_FAIL;
+    delete process.env.PARASAUR_FIXTURE_FAIL;
   }
   resetCachedCoordinatorIdentity();
 

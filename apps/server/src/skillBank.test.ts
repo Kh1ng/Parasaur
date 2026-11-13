@@ -27,11 +27,11 @@ import {
  * polluted a production node with 50 `bulk` skills. */
 async function withTempBank(testFn: () => void | Promise<void>): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'gah-skills-'));
-  process.env.GAH_SKILL_BANK_PATH = join(dir, 'skills.json');
+  process.env.PARASAUR_SKILL_BANK_PATH = join(dir, 'skills.json');
   try {
     await testFn();
   } finally {
-    delete process.env.GAH_SKILL_BANK_PATH;
+    delete process.env.PARASAUR_SKILL_BANK_PATH;
     rmSync(dir, { recursive: true, force: true });
   }
 }
@@ -79,14 +79,14 @@ test('two versions coexist and unversioned reads resolve to the newest', async (
 test('a corrupted bank file produces a clear error naming the file, never an empty bank', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-skills-'));
   const path = join(dir, 'skills.json');
-  process.env.GAH_SKILL_BANK_PATH = path;
+  process.env.PARASAUR_SKILL_BANK_PATH = path;
   try {
     writeFileSync(path, '{not valid json', 'utf8');
     assert.throws(() => listSkills(), /Invalid skill bank at .*skills\.json/);
     writeFileSync(path, JSON.stringify({ skills: [{ id: 'x' }] }), 'utf8');
     assert.throws(() => listSkills(), /skills\[0\]\.version must be a string/);
   } finally {
-    delete process.env.GAH_SKILL_BANK_PATH;
+    delete process.env.PARASAUR_SKILL_BANK_PATH;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -94,7 +94,7 @@ test('a corrupted bank file produces a clear error naming the file, never an emp
 test('a persisted bank validates every skill field and the complete bindings shape', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-skills-'));
   const path = join(dir, 'skills.json');
-  process.env.GAH_SKILL_BANK_PATH = path;
+  process.env.PARASAUR_SKILL_BANK_PATH = path;
   const validSkill = skill('alpha', '1.0.0');
   const invalidBanks: Array<[string, unknown]> = [
     ['skills[0].id', { skills: [{ ...validSkill, id: 1 }], bindings: {} }],
@@ -126,14 +126,14 @@ test('a persisted bank validates every skill field and the complete bindings sha
       );
     }
   } finally {
-    delete process.env.GAH_SKILL_BANK_PATH;
+    delete process.env.PARASAUR_SKILL_BANK_PATH;
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
 test('concurrent writes never interleave into a partial file', async () => {
   await withTempBank(async () => {
-    const path = process.env.GAH_SKILL_BANK_PATH!;
+    const path = process.env.PARASAUR_SKILL_BANK_PATH!;
     putSkill(skill('baseline', '1.0.0'));
     const skillBankModule = new URL('./skillBank.ts', import.meta.url).href;
     const childScript = `
@@ -157,7 +157,7 @@ test('concurrent writes never interleave into a partial file', async () => {
       const child = spawn(
         process.execPath,
         ['--import', 'tsx', '--input-type=module', '--eval', childScript, String(index)],
-        { env: { ...process.env, GAH_SKILL_BANK_PATH: path }, stdio: ['ignore', 'ignore', 'pipe'] }
+        { env: { ...process.env, PARASAUR_SKILL_BANK_PATH: path }, stdio: ['ignore', 'ignore', 'pipe'] }
       );
       let stderr = '';
       child.stderr.setEncoding('utf8');

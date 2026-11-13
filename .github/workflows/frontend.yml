@@ -58,7 +58,7 @@ jobs:
         run: npm run typecheck:mock --workspace=apps/server
 
   # Hermetic Playwright e2e + component tests (issue #636). The webServer in
-  # playwright.config.ts starts a fixture-backed apps/server (GAH_BINARY ->
+  # playwright.config.ts starts a fixture-backed apps/server (PARASAUR_BINARY ->
   # tests/fixtures/gah) plus the vite dev server, so this runs on a runner
   # with no gah binary and no gah config. Uses the same Node 20 toolchain as
   # the build job; Playwright downloads its own chromium.

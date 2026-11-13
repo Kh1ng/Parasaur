@@ -339,11 +339,11 @@ fn worker_doctor_uses_central_memory_but_keeps_role_and_provider_checks() {
             "--json",
         ])
         .env("PATH", prepend_path(&fake_bin))
-        .env_remove("GAH_NODE_ROLE")
+        .env_remove("PARASAUR_NODE_ROLE")
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN");
         if let Some(role) = override_role {
-            cmd.env("GAH_NODE_ROLE", role);
+            cmd.env("PARASAUR_NODE_ROLE", role);
         }
         let output = cmd.output().unwrap();
         assert_eq!(

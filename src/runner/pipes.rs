@@ -317,7 +317,7 @@ mod tests {
     /// process-wide, so this runs in its own re-executed test process.
     #[test]
     fn lost_child_is_never_signalled_under_ignored_sigchld() {
-        const ISOLATED: &str = "GAH_TEST_SIGCHLD_IGNORED";
+        const ISOLATED: &str = "PARASAUR_TEST_SIGCHLD_IGNORED";
         if std::env::var_os(ISOLATED).is_none() {
             let name = concat!(
                 module_path!(),
@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn startup_reset_keeps_children_waitable_under_auto_reaping_sigchld() {
         use std::os::unix::process::CommandExt;
-        const ISOLATED: &str = "GAH_TEST_SIGCHLD_AUTO_REAP";
+        const ISOLATED: &str = "PARASAUR_TEST_SIGCHLD_AUTO_REAP";
         let Ok(mode) = std::env::var(ISOLATED) else {
             let name = concat!(
                 module_path!(),

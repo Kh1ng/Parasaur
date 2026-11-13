@@ -376,9 +376,9 @@ pub fn prepare(
 /// redirect the verified job's history to unrelated local state.
 fn verify_history_environment(work: &Path) -> Result<()> {
     for (key, file) in [
-        ("GAH_LEDGER_PATH", "ledger.jsonl"),
-        ("GAH_EVENTS_PATH", "events.jsonl"),
-        ("GAH_RECONCILIATION_PATH", "reconciliation.jsonl"),
+        ("PARASAUR_LEDGER_PATH", "ledger.jsonl"),
+        ("PARASAUR_EVENTS_PATH", "events.jsonl"),
+        ("PARASAUR_RECONCILIATION_PATH", "reconciliation.jsonl"),
     ] {
         ensure!(
             std::env::var_os(key).is_none_or(|value| Path::new(&value) == work.join(file)),

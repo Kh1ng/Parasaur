@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
 import { LinkRefused, linkEnabled, linkTo, type LinkRegistration } from './workerLink.js';
 
-const SETTINGS = ['PARASAUR_WORKER_LINKS', 'GAH_ALLOW_INSECURE_HTTP', 'LINK_TEST_CREDENTIAL'] as const;
+const SETTINGS = ['PARASAUR_WORKER_LINKS', 'PARASAUR_ALLOW_INSECURE_HTTP', 'LINK_TEST_CREDENTIAL'] as const;
 
 /** Each test states the whole link environment and leaves the process as it found it. */
 function environment(t: TestContext, values: Partial<Record<typeof SETTINGS[number], string>>) {
@@ -51,7 +51,7 @@ test('a central sends plain HTTP only over the kinds its operator enabled', t =>
   assert.equal(linkTo(lan).kind, 'lan');
 
   delete process.env.PARASAUR_WORKER_LINKS;
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
   assert.deepEqual([linkTo(tailnet).kind, linkTo(lan).kind], ['tailnet', 'lan'], 'the older switch keeps enabling both');
 });
 

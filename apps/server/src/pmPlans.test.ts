@@ -42,11 +42,11 @@ test('PM endpoints preserve shared GitHub/GitLab artifacts and partial state thr
 
 test('PM API rejects unapproved publication, paths, extra arguments, and unauthenticated proxy requests before CLI work', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gah-pm-api-'));
-  const saved = { log: process.env.GAH_FIXTURE_PM_LOG, token: process.env.COORDINATOR_TOKEN, insecure: process.env.GAH_ALLOW_INSECURE_HTTP };
+  const saved = { log: process.env.PARASAUR_FIXTURE_PM_LOG, token: process.env.COORDINATOR_TOKEN, insecure: process.env.PARASAUR_ALLOW_INSECURE_HTTP };
   const log = join(directory, 'argv.jsonl');
-  process.env.GAH_FIXTURE_PM_LOG = log;
+  process.env.PARASAUR_FIXTURE_PM_LOG = log;
   process.env.COORDINATOR_TOKEN = 'fake-pm-token';
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
   try {
     await withFixtureServer(async base => {
       const expected = fixture('github');
@@ -73,7 +73,7 @@ test('PM API rejects unapproved publication, paths, extra arguments, and unauthe
       assert.equal((await fetch(`${base}/api/pm/plans?profile=github-project`)).status, 429);
     });
   } finally {
-    for (const [key, value] of Object.entries({ GAH_FIXTURE_PM_LOG: saved.log, COORDINATOR_TOKEN: saved.token, GAH_ALLOW_INSECURE_HTTP: saved.insecure })) {
+    for (const [key, value] of Object.entries({ PARASAUR_FIXTURE_PM_LOG: saved.log, COORDINATOR_TOKEN: saved.token, PARASAUR_ALLOW_INSECURE_HTTP: saved.insecure })) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
     rmSync(directory, { recursive: true });

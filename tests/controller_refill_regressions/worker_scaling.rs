@@ -151,11 +151,11 @@ fn pass(
         )
         .env("HOME", &s.home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_QUOTA_STORE_PATH", &s.quota)
+        .env("PARASAUR_QUOTA_STORE_PATH", &s.quota)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(now) = now_override {
-        command.env("GAH_TEST_NOW", now.format(&Rfc3339).unwrap());
+        command.env("PARASAUR_TEST_NOW", now.format(&Rfc3339).unwrap());
     }
     let child = ProcessGroupGuard::new(command.spawn().unwrap());
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -206,9 +206,9 @@ fn limits(s: &Scaled, now_override: Option<OffsetDateTime>) -> serde_json::Value
         )
         .env("HOME", &s.home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_QUOTA_STORE_PATH", &s.quota);
+        .env("PARASAUR_QUOTA_STORE_PATH", &s.quota);
     if let Some(now) = now_override {
-        command.env("GAH_TEST_NOW", now.format(&Rfc3339).unwrap());
+        command.env("PARASAUR_TEST_NOW", now.format(&Rfc3339).unwrap());
     }
     let output = command.output().unwrap();
     assert!(output.status.success(), "{output:?}");

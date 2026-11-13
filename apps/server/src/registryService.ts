@@ -398,7 +398,7 @@ export class RegistryService {
 
   constructor(configPath?: string | null, selfEndpoint?: string, listenerPort?: number) {
     // A worker uses local session transport without reading or writing a central registry.
-    this.configPath = configPath === null ? null : configPath || process.env.GAH_REGISTRY_CONFIG_PATH || resolve(process.cwd(), 'config/registry-config.json');
+    this.configPath = configPath === null ? null : configPath || process.env.PARASAUR_REGISTRY_CONFIG_PATH || resolve(process.cwd(), 'config/registry-config.json');
     this.selfUrl = selfEndpoint ?? null;
     this.listenerPort = listenerPort ?? (selfEndpoint ? urlPort(new URL(selfEndpoint)) : null);
     this.load();

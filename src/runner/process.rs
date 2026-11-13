@@ -28,7 +28,7 @@ static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 pub(crate) const PROCESS_CLEANUP_FAILED_EXIT_CODE: i32 = -3;
 /// Internal-only command environment used to carry a per-attempt wall-clock
 /// ceiling through backend adapters. The watcher removes it before spawning.
-pub(crate) const HARD_TIMEOUT_ENV: &str = "GAH_INTERNAL_HARD_TIMEOUT_SECONDS";
+pub(crate) const HARD_TIMEOUT_ENV: &str = "PARASAUR_INTERNAL_HARD_TIMEOUT_SECONDS";
 
 pub fn install_shutdown_handler() -> Result<()> {
     SHUTDOWN_REQUESTED.store(false, Ordering::SeqCst);
@@ -732,7 +732,7 @@ fn spawn_with_idle_watch_with_shutdown(
     // change into the baseline and later misclassify it as no progress.
     let initial_worktree_snapshot = worktree_progress_snapshot(worktree);
     // Test time is scoped to the process unless a harness opts a child in.
-    cmd.env_remove("GAH_TEST_NOW");
+    cmd.env_remove("PARASAUR_TEST_NOW");
     let mut child = cmd.spawn().with_context(|| spawn_context.to_string())?;
     // Issue #116: start sampling the backend's whole process tree immediately
     // after spawn. Sampling runs for the whole attempt -- success, idle kill,
@@ -1045,7 +1045,7 @@ mod tests {
         make_fake_bin(
             &f.bin_dir,
             "backend-hard-timeout",
-            "#!/bin/sh\nif [ -n \"$GAH_INTERNAL_HARD_TIMEOUT_SECONDS\" ]; then echo leaked; exit 99; fi\nwhile :; do echo active; sleep 0.1; done\n",
+            "#!/bin/sh\nif [ -n \"$PARASAUR_INTERNAL_HARD_TIMEOUT_SECONDS\" ]; then echo leaked; exit 99; fi\nwhile :; do echo active; sleep 0.1; done\n",
         );
         let log_path = f.session_dir.join("backend-hard-timeout.log");
         let mut command = Command::new(f.bin_dir.join("backend-hard-timeout"));

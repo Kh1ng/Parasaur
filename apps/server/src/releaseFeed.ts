@@ -5,7 +5,7 @@
  *
  * The channel is the prerelease "edge" feed by default (a green merge to
  * main publishes it; no tag needed) or the stable tag feed via
- * GAH_RELEASE_CHANNEL=stable. Results are cached for a few minutes: the
+ * PARASAUR_RELEASE_CHANNEL=stable. Results are cached for a few minutes: the
  * dashboard polls this on load, and unbounded GitHub API reads would burn
  * the anonymous rate limit for nothing.
  */
@@ -20,8 +20,8 @@ import {
 
 const exec = promisify(execFile);
 
-const RELEASE_REPO = process.env.GAH_RELEASE_REPO || 'Kh1ng/git-agent-harness';
-const CHANNEL: ReleaseChannel = process.env.GAH_RELEASE_CHANNEL === 'stable' ? 'stable' : 'edge';
+const RELEASE_REPO = process.env.PARASAUR_RELEASE_REPO || 'Kh1ng/git-agent-harness';
+const CHANNEL: ReleaseChannel = process.env.PARASAUR_RELEASE_CHANNEL === 'stable' ? 'stable' : 'edge';
 const CACHE_TTL_MS = 5 * 60_000;
 const MAX_NOTES_CHARS = 8_000;
 const MANIFEST_ASSET_NAME = 'edge-manifest.json';
@@ -39,9 +39,9 @@ interface GithubRelease {
 export interface ReleaseFeedOptions {
   fetch?: typeof fetch;
   now?: () => number;
-  /** Overrides GAH_RELEASE_REPO for tests. */
+  /** Overrides PARASAUR_RELEASE_REPO for tests. */
   repo?: string;
-  /** Overrides GAH_RELEASE_CHANNEL for tests. */
+  /** Overrides PARASAUR_RELEASE_CHANNEL for tests. */
   channel?: ReleaseChannel;
 }
 

@@ -11,13 +11,13 @@ import type { ApnsNotifications } from './apns.js';
 test('Web Push and APNs registration require authentication and mutation receipts', async () => {
   const previous = {
     token: process.env.COORDINATOR_TOKEN,
-    insecure: process.env.GAH_ALLOW_INSECURE_HTTP,
-    mutation: process.env.GAH_MUTATION_STORE_PATH
+    insecure: process.env.PARASAUR_ALLOW_INSECURE_HTTP,
+    mutation: process.env.PARASAUR_MUTATION_STORE_PATH
   };
   process.env.COORDINATOR_TOKEN = 'push-test-token';
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
   const mutationStore = mkdtempSync(join(tmpdir(), 'gah-push-routes-'));
-  process.env.GAH_MUTATION_STORE_PATH = mutationStore;
+  process.env.PARASAUR_MUTATION_STORE_PATH = mutationStore;
   let registered = false;
   const push = {
     publicKey: () => 'public-key',
@@ -73,7 +73,7 @@ test('Web Push and APNs registration require authentication and mutation receipt
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(mutationStore, { recursive: true, force: true });
-    for (const [key, value] of Object.entries({ COORDINATOR_TOKEN: previous.token, GAH_ALLOW_INSECURE_HTTP: previous.insecure, GAH_MUTATION_STORE_PATH: previous.mutation })) {
+    for (const [key, value] of Object.entries({ COORDINATOR_TOKEN: previous.token, PARASAUR_ALLOW_INSECURE_HTTP: previous.insecure, PARASAUR_MUTATION_STORE_PATH: previous.mutation })) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
   }

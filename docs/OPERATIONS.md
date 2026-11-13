@@ -83,9 +83,9 @@ with `$XDG_CONFIG_HOME/gah`. The file can contain:
 ```
 
 The default endpoint is the edge release's `latest.json` above; an `endpoint`
-field can select a managed feed. `GAH_DESKTOP_UPDATER_CONFIG` selects an explicit
-config file. With no config file, `GAH_DESKTOP_UPDATER_PUBKEY` and optional
-`GAH_DESKTOP_UPDATER_ENDPOINT` configure the client through its environment.
+field can select a managed feed. `PARASAUR_DESKTOP_UPDATER_CONFIG` selects an explicit
+config file. With no config file, `PARASAUR_DESKTOP_UPDATER_PUBKEY` and optional
+`PARASAUR_DESKTOP_UPDATER_ENDPOINT` configure the client through its environment.
 Provisioning the key, publishing signed platform artifacts and completing a
 download/install/restart check are separate release steps.
 
@@ -153,7 +153,7 @@ changing the node role.
 Without `--pull`, it builds the current branch and working tree, including
 uncommitted changes.
 
-For unattended first installs, run `GAH_INSTALL_CONFIRMED=1 scripts/install.sh`
+For unattended first installs, run `PARASAUR_INSTALL_CONFIRMED=1 scripts/install.sh`
 with the desired role and configuration environment variables. This accepts
 the installer confirmation before it writes configuration or installs services.
 For unattended updates, use `gah update --pull --yes --repo /path/to/git-agent-harness`.
@@ -173,7 +173,7 @@ other client packages.
 
 **Who serves the dashboard.** `gah-server` serves the built web app itself
 (`apps/web/dist` in the checkout), so a fresh install needs no separate web
-server and no root to deploy the dashboard (issue #1327). `GAH_WEB_ROOT` in
+server and no root to deploy the dashboard (issue #1327). `PARASAUR_WEB_ROOT` in
 `/etc/gah/server.env` overrides the directory; set it to an empty value when
 another web server serves the dashboard and `gah-server` should serve only the
 API.
@@ -181,10 +181,10 @@ API.
 **Hosts with their own web server.** `gah update` also copies the build into a
 web root for Caddy or similar (issue #896), using `sudo`:
 
-- `GAH_WEB_DEPLOY_ROOT` unset: copy to `/var/www/gah` if that directory already
+- `PARASAUR_WEB_DEPLOY_ROOT` unset: copy to `/var/www/gah` if that directory already
   exists, as on a host set up before #1327. Otherwise nothing is copied.
-- `GAH_WEB_DEPLOY_ROOT=/some/root`: copy there. The update prints the root.
-- `GAH_WEB_DEPLOY_ROOT=` (empty): never copy.
+- `PARASAUR_WEB_DEPLOY_ROOT=/some/root`: copy there. The update prints the root.
+- `PARASAUR_WEB_DEPLOY_ROOT=` (empty): never copy.
 
 An existing Caddy install therefore keeps working unchanged. To move it to
 `gah-server`, remove the dashboard site from Caddy, delete `/var/www/gah`, and
@@ -254,7 +254,7 @@ of the prebuild gate issue.
   host" below for `HOST`/port configuration). Remote REST and WebSocket access
   requires the coordinator bearer token or a paired-device credential. Remote
   transport also requires TLS unless the operator explicitly sets
-  `GAH_ALLOW_INSECURE_HTTP=1`. The server logs its effective bind address and
+  `PARASAUR_ALLOW_INSECURE_HTTP=1`. The server logs its effective bind address and
   this transport requirement at startup when it is bound non-loopback.
 - **`gah-loop@<profile>`** — the recurring bounded controller. Each iteration
   is one observe → classify → decide → execute-one-action → persist cycle.
@@ -380,14 +380,14 @@ safer persistent host: its tailnet IPv4 when available, otherwise
   the unit still starts if it's absent). Set `HOST=127.0.0.1`, a specific
   interface address, or `0.0.0.0` there instead of editing the installed
   unit. `scripts/install.sh` creates this file on first install (seed it with
-  `GAH_SERVER_HOST=127.0.0.1 scripts/install.sh`) and leaves an existing file
+  `PARASAUR_SERVER_HOST=127.0.0.1 scripts/install.sh`) and leaves an existing file
   untouched on every later run; `gah update --restart-server` never writes to
   it either, so an operator's override survives every reinstall/update.
 
 The server logs its effective bind address on every startup. When that
 address is not loopback, it also logs a prominent warning. Remote API access
 requires `COORDINATOR_TOKEN` or a paired-device credential. Plain HTTP is
-rejected unless `GAH_ALLOW_INSECURE_HTTP=1` explicitly permits it; that flag
+rejected unless `PARASAUR_ALLOW_INSECURE_HTTP=1` explicitly permits it; that flag
 does not disable authentication. Prefer loopback plus an HTTPS proxy.
 
 #### Tailscale names and HTTPS (issue #943)
@@ -408,7 +408,7 @@ system resolver.
 The preferred HTTPS setup keeps Parasaur on loopback and uses Tailscale Serve:
 
 ```bash
-GAH_SERVER_HOST=127.0.0.1 scripts/install.sh
+PARASAUR_SERVER_HOST=127.0.0.1 scripts/install.sh
 sudo tailscale serve --bg --https=443 http://127.0.0.1:3773
 tailscale serve status
 ```
@@ -420,7 +420,7 @@ HTTPS publishes the machine and tailnet DNS names in Certificate Transparency
 logs, although tailnet access rules still restrict the service.
 
 For the direct HTTP MVP, keep the installer's detected `HOST=100.x.y.z`, add
-`GAH_ALLOW_INSECURE_HTTP=1` to `/etc/gah/server.env`, and restart
+`PARASAUR_ALLOW_INSECURE_HTTP=1` to `/etc/gah/server.env`, and restart
 `gah-server`. Use `http://hermesagent:3773` or the tailnet IP. This mode still
 requires the coordinator bearer token or a paired-device credential.
 
@@ -548,7 +548,7 @@ The TDAI memory gateway (manager-chat's compaction db, `apps/server`'s
 `gah-server` install works without one (manager chat is a required
 dependency at *runtime*, not install time), but nothing configures it for
 you. `scripts/install.sh` (and its per-OS `install-linux.sh`/`install-macos.sh`
-implementations) grow two opt-in modes, selected via `GAH_GATEWAY_MODE`;
+implementations) grow two opt-in modes, selected via `PARASAUR_GATEWAY_MODE`;
 leaving it unset skips this section entirely and behaves exactly as before.
 `colocated` uses systemd on Linux and launchd on macOS. `remote` works on
 both. Worker settings go in `~/.config/gah/gah-loop.env`. The Linux and macOS
@@ -558,13 +558,13 @@ worker services read this file.
 central node):
 
 ```bash
-GAH_GATEWAY_MODE=remote \
-GAH_GATEWAY_URL=http://gateway-host:8420 \
-GAH_GATEWAY_API_KEY=<key> \
+PARASAUR_GATEWAY_MODE=remote \
+PARASAUR_GATEWAY_URL=http://gateway-host:8420 \
+PARASAUR_GATEWAY_API_KEY=<key> \
 scripts/install.sh
 ```
 
-`GAH_GATEWAY_URL` must use the **central/gateway node's tailnet address (or
+`PARASAUR_GATEWAY_URL` must use the **central/gateway node's tailnet address (or
 MagicDNS name)**, not a LAN IP. A LAN IP only works while the worker stays on
 that LAN; roaming makes recall/capture unreachable and hard-blocks manager
 chat and dispatch under issue #878's policy. It must also never be derived
@@ -576,10 +576,10 @@ scanning local interfaces for an address inside `[defaults].tailscale_cidr`
 (default `100.64.0.0/10`), failing closed with an actionable error when the
 device is not on a tailnet. `--json` emits `{"tailscale_ip": "...", "cidr":
 "..."}` for scripting. When the URL is unset, both installers reuse the host from
-`GAH_CONFIG` or `~/.config/gah/config.toml`'s `registry_central_url` and the
+`PARASAUR_CONFIG` or `~/.config/gah/config.toml`'s `registry_central_url` and the
 default gateway port `8420`. A truly new machine has no way to identify which
 tailnet peer is the gateway, so use the Settings **Reveal setup command**
-(which supplies the central's address explicitly) or set `GAH_GATEWAY_URL`.
+(which supplies the central's address explicitly) or set `PARASAUR_GATEWAY_URL`.
 
 Before writing anything, the script calls `POST /recall` against that URL
 (not `GET /health` — `/health` needs no auth, so it can't catch a wrong
@@ -603,13 +603,13 @@ Two things make this easier to actually do:
 - **A machine with nothing installed yet**: `scripts/bootstrap.sh` asks
   before installing Rust, clones this repo, builds `gah`, and runs
   `gah setup`, which checks and offers every other prerequisite before it
-  runs `scripts/install.sh`. The same `GAH_GATEWAY_*` env vars preselect the
+  runs `scripts/install.sh`. The same `PARASAUR_GATEWAY_*` env vars preselect the
   memory choice, so the one-liner still works on a brand-new machine (see
   [Getting started](GETTING_STARTED.md)):
   ```bash
   curl -fsSL https://raw.githubusercontent.com/Kh1ng/git-agent-harness/main/scripts/bootstrap.sh \
-    | GAH_GATEWAY_MODE=remote GAH_GATEWAY_URL=http://gateway-host:8420 \
-      GAH_GATEWAY_API_KEY=<key> bash
+    | PARASAUR_GATEWAY_MODE=remote PARASAUR_GATEWAY_URL=http://gateway-host:8420 \
+      PARASAUR_GATEWAY_API_KEY=<key> bash
   ```
   (Env vars go on the `bash` side of the pipe, not the `curl` side.)
 
@@ -617,8 +617,8 @@ Two things make this easier to actually do:
 the hand-deployment this replaces:
 
 ```bash
-GAH_GATEWAY_MODE=colocated \
-GAH_GATEWAY_MEMORYCORE_PATH=/path/to/TencentDB-Agent-Memory/MemoryCore \
+PARASAUR_GATEWAY_MODE=colocated \
+PARASAUR_GATEWAY_MEMORYCORE_PATH=/path/to/TencentDB-Agent-Memory/MemoryCore \
 scripts/install.sh
 ```
 
@@ -638,14 +638,14 @@ Bound to loopback by default; widen with `gah network-expose` (above) if
 another node needs to reach it, matching the guidance in the checked-in
 unit file.
 
-Re-running `scripts/install.sh` with different `GAH_GATEWAY_*` values updates
+Re-running `scripts/install.sh` with different `PARASAUR_GATEWAY_*` values updates
 only the gateway keys. The installer does not change an existing `HOST`
 value.
 
 ### Model provider for the colocated gateway (issue #1319)
 
 Shared memory needs no model provider and no API key. With
-`GAH_GATEWAY_PROVIDER` unset, the installer leaves an existing
+`PARASAUR_GATEWAY_PROVIDER` unset, the installer leaves an existing
 `tdai-gateway.local.yaml` alone, or seeds the template: keyword (BM25)
 recall, no embedding, no generation calls.
 
@@ -653,12 +653,12 @@ The gateway has three separate settings, which setup used to treat as one:
 
 | Setting | Variable | Needed |
 | --- | --- | --- |
-| Gateway access authentication | `GAH_GATEWAY_API_KEY`, stored as `TDAI_GATEWAY_API_KEY` | Always; generated when not given |
-| Embedding model (vector recall) | `GAH_GATEWAY_EMBEDDING_MODEL`, `GAH_GATEWAY_EMBEDDING_DIMENSIONS`, `GAH_GATEWAY_EMBEDDING_API_KEY` | Only with a provider; the key only for `openai` |
-| Generation model (memory extraction) | `GAH_GATEWAY_LLM_MODEL`, `GAH_GATEWAY_LLM_API_KEY` | Optional with every provider |
+| Gateway access authentication | `PARASAUR_GATEWAY_API_KEY`, stored as `TDAI_GATEWAY_API_KEY` | Always; generated when not given |
+| Embedding model (vector recall) | `PARASAUR_GATEWAY_EMBEDDING_MODEL`, `PARASAUR_GATEWAY_EMBEDDING_DIMENSIONS`, `PARASAUR_GATEWAY_EMBEDDING_API_KEY` | Only with a provider; the key only for `openai` |
+| Generation model (memory extraction) | `PARASAUR_GATEWAY_LLM_MODEL`, `PARASAUR_GATEWAY_LLM_API_KEY` | Optional with every provider |
 
-`GAH_GATEWAY_PROVIDER` selects the backend for both models, and
-`GAH_GATEWAY_ENDPOINT` overrides its address:
+`PARASAUR_GATEWAY_PROVIDER` selects the backend for both models, and
+`PARASAUR_GATEWAY_ENDPOINT` overrides its address:
 
 - `ollama`: Ollama, or any local OpenAI-compatible server that needs no key
   (LM Studio, a LiteLLM proxy, vLLM). No credential is asked for or stored.
@@ -669,7 +669,7 @@ The gateway has three separate settings, which setup used to treat as one:
 `gah setup`, Settings > Memory > Colocated Gateway Provider, and Add a Node
 (for a central or standalone node) all collect these same values and pass
 them to the installer. `gah setup --yes` selects a provider only when
-`GAH_GATEWAY_PROVIDER` is set.
+`PARASAUR_GATEWAY_PROVIDER` is set.
 
 **Gateway contract.** Read from
 [`Kh1ng/TencentDB-Agent-Memory`](https://github.com/Kh1ng/TencentDB-Agent-Memory)
@@ -697,7 +697,7 @@ writes:
 | `llm.baseUrl`, `memory.embedding.baseUrl` | endpoint, default `http://127.0.0.1:11434/v1` | endpoint, default `https://api.openai.com/v1` |
 | `llm.model` | default `llama3` | default `gpt-4o` |
 | `memory.embedding.model` | default `nomic-embed-text` | default `text-embedding-3-small` |
-| `memory.embedding.dimensions` | `GAH_GATEWAY_EMBEDDING_DIMENSIONS`, or the known size of the model | the same |
+| `memory.embedding.dimensions` | `PARASAUR_GATEWAY_EMBEDDING_DIMENSIONS`, or the known size of the model | the same |
 | `memory.embedding.sendDimensions` | `false` (Ollama rejects the field) | `true` |
 | `llm.apiKey` | `ollama`, or `${TDAI_LLM_API_KEY}` when a generation key is given | `${TDAI_LLM_API_KEY}` |
 | `memory.embedding.apiKey` | `ollama`, or `${TDAI_EMBEDDING_API_KEY}` when an embedding key is given | `${TDAI_EMBEDDING_API_KEY}` |
@@ -711,7 +711,7 @@ Rules the installers keep:
 - `openai` with no embedding key, given or stored, stops before anything is
   written.
 - An embedding model of unknown size stops the install until
-  `GAH_GATEWAY_EMBEDDING_DIMENSIONS` is set. The installer does not guess.
+  `PARASAUR_GATEWAY_EMBEDDING_DIMENSIONS` is set. The installer does not guess.
 - Linux restarts a gateway that was already running, so it picks up the new
   provider. The install then fails unless `/health` reports
   `embeddingService: true`. That shows the configuration is complete; it
@@ -893,15 +893,15 @@ gah node register \
 ```
 
 `--transport-mode` defaults to `trusted_lan` (the self-hosted tailnet
-default); the loop-start self-registration reads `GAH_REGISTRY_TRANSPORT_MODE`
-and `GAH_REGISTRY_SECRET_REF` env vars (defaults `trusted_lan` /
-`env:COORDINATOR_TOKEN`). A fresh worker can set `GAH_NODE_ADVERTISED_URL`
+default); the loop-start self-registration reads `PARASAUR_REGISTRY_TRANSPORT_MODE`
+and `PARASAUR_REGISTRY_SECRET_REF` env vars (defaults `trusted_lan` /
+`env:COORDINATOR_TOKEN`). A fresh worker can set `PARASAUR_NODE_ADVERTISED_URL`
 to create its stable identity on the first loop start. The central reaches
 each worker over a link derived from the worker's address; see
 [WORKER_LINKS.md](WORKER_LINKS.md). For a **plain HTTP** address
 (e.g. `http://100.118.97.79` on a tailnet), the central must list the link's
 kind in `PARASAUR_WORKER_LINKS` (`tailnet`, `lan`). The older
-`GAH_ALLOW_INSECURE_HTTP=1` enables both kinds, and the worker still needs it
+`PARASAUR_ALLOW_INSECURE_HTTP=1` enables both kinds, and the worker still needs it
 to accept plain-HTTP requests from the central. This flag is deliberately named for what it does —
 it lifts the TLS requirement for **every** `authMiddleware`-protected route
 (the registry, claims, and settings APIs), not just LAN registration — so
@@ -917,21 +917,21 @@ node's validated endpoint, transport, secret reference, and profile declarations
 
 ### macOS worker transport
 
-The macOS installer saves `GAH_NODE_ADVERTISED_URL` and the transport mode in the worker LaunchAgent.
+The macOS installer saves `PARASAUR_NODE_ADVERTISED_URL` and the transport mode in the worker LaunchAgent.
 Later updates use the saved values. Supply new values only when you want to change the transport.
 
 If central can reach the Mac tailnet address, use the default `trusted_lan` transport.
-You can set an HTTPS `GAH_NODE_ADVERTISED_URL` to use Tailscale Serve.
-For a plain-HTTP central URL, central must set `GAH_ALLOW_INSECURE_HTTP=1`.
+You can set an HTTPS `PARASAUR_NODE_ADVERTISED_URL` to use Tailscale Serve.
+For a plain-HTTP central URL, central must set `PARASAUR_ALLOW_INSECURE_HTTP=1`.
 
 If inbound tailnet TCP does not work, use the managed reverse SSH tunnel:
 
 ```bash
-GAH_NODE_ROLE=worker \
-GAH_CENTRAL_URL=http://192.168.5.15:3773 \
+PARASAUR_NODE_ROLE=worker \
+PARASAUR_CENTRAL_URL=http://192.168.5.15:3773 \
 COORDINATOR_TOKEN=<central-token> \
-GAH_NODE_SSH_TARGET=khing@192.168.5.15 \
-GAH_NODE_SSH_REMOTE_PORT=48774 \
+PARASAUR_NODE_SSH_TARGET=khing@192.168.5.15 \
+PARASAUR_NODE_SSH_REMOTE_PORT=48774 \
 bash scripts/install-macos.sh
 ```
 
@@ -967,7 +967,7 @@ bad a second time.
 
 The alert is a `node_offline` activity event. It reaches every delivery
 method in [Notification delivery methods](#notification-delivery-methods):
-push, APNs, the Telegram/Discord channel, and `GAH_NOTIFY_COMMAND`.
+push, APNs, the Telegram/Discord channel, and `PARASAUR_NOTIFY_COMMAND`.
 
 This is the interim, poll-based liveness model. The eventual model
 (worker nodes dial in and hold a persistent WebSocket, reusing the
@@ -1033,7 +1033,7 @@ might be a transient network blip.
 
 **Storage**: `apps/server/src/claimsService.ts` keeps leases in a plain
 JSON file (`config/claims-config.json` by default,
-`GAH_CLAIMS_CONFIG_PATH` to override) plus an in-memory `Map`, not a real
+`PARASAUR_CLAIMS_CONFIG_PATH` to override) plus an in-memory `Map`, not a real
 database. Within one server process, correctness comes from
 acquire/renew/release being synchronous functions with no `await` between
 the read-check and the write. Across processes, saves replace the whole
@@ -1112,7 +1112,7 @@ actions in the chat's worktree**, or run `gah setup --chat-permissions
 ask|bypass`. Interactive `gah setup` asks on central and standalone machines.
 An unattended run without the flag keeps the stored value. The value is
 `permissionMode` in `config/manager-chat-settings.json` (or
-`GAH_MANAGER_CHAT_SETTINGS_PATH`). A missing or unknown value means `ask`. The
+`PARASAUR_MANAGER_CHAT_SETTINGS_PATH`). A missing or unknown value means `ask`. The
 setting applies only to chats that this machine runs.
 
 With bypass on, Parasaur still asks for these requests:
@@ -1164,7 +1164,7 @@ paths writable, backend executables present, and validation commands resolve.
 
 Most Parasaur durable control state lives under `$XDG_STATE_HOME/gah/` (fallback
 `~/.local/state/gah/`). The append-only ledger, reconciliation log, event
-stream, and manager-wake logs instead follow `GAH_*_PATH` overrides or
+stream, and manager-wake logs instead follow `PARASAUR_*_PATH` overrides or
 `defaults.artifact_root` (falling back to `~/.config/gah/`). **Do not edit any
 of these by hand** — use the command listed.
 
@@ -1216,7 +1216,7 @@ one when a green, approved PR is not merging.
 ### Ledger
 
 Append-only run history (dispatch/attempt/retry/review/outcome). Path
-resolution: `$GAH_LEDGER_PATH`, else `defaults.artifact_root/ledger.jsonl`, else
+resolution: `$PARASAUR_LEDGER_PATH`, else `defaults.artifact_root/ledger.jsonl`, else
 `~/.config/gah/ledger.jsonl`.
 
 ```bash
@@ -1312,9 +1312,9 @@ login that expired or came back. Every delivery method below uses that filter.
 | --- | --- | --- |
 | Dashboard alert | Every feed event (in-page); notifiable events as system notifications | Activity page → **Enable system alerts** |
 | Web Push | Notifiable events | Same toggle, on an HTTPS dashboard |
-| APNs and Live Activity | Notifiable events; Live Activity for each running chat turn | `GAH_APNS_*` on the central server |
+| APNs and Live Activity | Notifiable events; Live Activity for each running chat turn | `PARASAUR_APNS_*` on the central server |
 | Telegram or Discord channel | Notifiable chat and node events from the feed; dispatch events directly from the Rust CLI; watchdog alerts | `gah setup --notifications-only`, or Settings → **Telegram and Discord notifications** |
-| `GAH_NOTIFY_COMMAND` | Notifiable events, as one line on stdin | Set it in the central server's environment |
+| `PARASAUR_NOTIFY_COMMAND` | Notifiable events, as one line on stdin | Set it in the central server's environment |
 | Per-profile `notify_command` | Rust dispatch and controller events only | `notify_command` on a profile |
 
 The channel is split by origin. The Rust CLI sends dispatch and controller
@@ -1355,7 +1355,7 @@ notification history.
 
 Credentials never live in the config and never reach argv. Setup and Settings
 write them to `~/.config/gah/notify.env` (mode `0600`, replaced atomically;
-`GAH_NOTIFY_CREDENTIALS_FILE` moves it). Settings sends the value once to the
+`PARASAUR_NOTIFY_CREDENTIALS_FILE` moves it). Settings sends the value once to the
 server, which passes it to `gah config set --notification-credential-stdin`
 on stdin. Responses report only where a credential was found
 (`credential_source`), never the value. The environment still works, so
@@ -1372,15 +1372,15 @@ telegram_chat_id = "12345"
 # Optional instead of ~/.config/gah/notify.env: /etc/gah/server.env and the CLI environment
 TELEGRAM_BOT_TOKEN=123456:replace-me     # telegram
 DISCORD_WEBHOOK_URL=https://discord...   # discord
-GAH_NOTIFY_COMMAND=/home/you/bin/notify  # optional shell hook
+PARASAUR_NOTIFY_COMMAND=/home/you/bin/notify  # optional shell hook
 ```
 
 When the module is on and a delivery fails, for example because the token is
 missing, the feed records a failed receipt with the reason on that
 notification. The failure never blocks setup, the loop or the dashboard.
 
-`GAH_NODE_LIVENESS_NOTIFY_COMMAND` still works as an alias for
-`GAH_NOTIFY_COMMAND`. The server prints one deprecation line at startup. The
+`PARASAUR_NODE_LIVENESS_NOTIFY_COMMAND` still works as an alias for
+`PARASAUR_NOTIFY_COMMAND`. The server prints one deprecation line at startup. The
 hook now receives every notifiable event, not only node outages. A failing
 delivery method is logged and never blocks the others.
 
@@ -1390,7 +1390,7 @@ The dashboard's **Activity** page receives dispatch completion/failure, review
 ready, node offline/back, quota constraint, gateway failure, and operator-action
 events through the existing authenticated WebSocket. The server stores a
 bounded, de-duplicated feed in `config/activity.jsonl` (override with
-`GAH_ACTIVITY_PATH`). A reconnect sends all entries after the client's last
+`PARASAUR_ACTIVITY_PATH`). A reconnect sends all entries after the client's last
 cursor. The durable feed itself does not use a client poller.
 
 Node outage, node recovery, low quota, and login-restored alerts are opt-in
@@ -1408,9 +1408,9 @@ subscribe each device again. Plain HTTP cannot register background push.
 
 The macOS tray app uses a bounded bridge that accepts alerts only from its
 configured central origin. The iPhone shell uses APNs when the central server
-has `GAH_APNS_KEY_PATH`, `GAH_APNS_KEY_ID`, and `GAH_APNS_TEAM_ID`; otherwise
+has `PARASAUR_APNS_KEY_PATH`, `PARASAUR_APNS_KEY_ID`, and `PARASAUR_APNS_TEAM_ID`; otherwise
 it retains foreground local notifications. The APNs `.p8` key must remain
-outside the repository. `GAH_APNS_ENVIRONMENT` defaults to `sandbox`; set it to
+outside the repository. `PARASAUR_APNS_ENVIRONMENT` defaults to `sandbox`; set it to
 `production` for distribution builds. Device tokens are stored with mode
 `0600` in `config/push/apns-devices.json`.
 
@@ -1607,7 +1607,7 @@ code, fixed prompt text, and the result. A pending repair is stopped after
 | claude | `claude auth login --claudeai`; the device opens the link, then pastes the code back |
 | opencode · github-copilot, gh | GitHub's device flow; the token goes to opencode's `auth.json` or to `gh auth login --with-token` |
 | other opencode providers | a pasted API key, saved to opencode's `auth.json` |
-| Mistral, Nous | a pasted API key, saved to `~/.config/gah/provider-keys.env` (`GAH_PROVIDER_KEYS_PATH`, mode `0600`) and loaded by the server at start |
+| Mistral, Nous | a pasted API key, saved to `~/.config/gah/provider-keys.env` (`PARASAUR_PROVIDER_KEYS_PATH`, mode `0600`) and loaded by the server at start |
 | hermes, agy, glab | shown as needing a terminal on that machine |
 
 A paired device may start a repair; it is the only credential change open
@@ -1625,11 +1625,11 @@ the central server:
 
 ```bash
 TELEGRAM_BOT_TOKEN=123456:replace-me
-GAH_TELEGRAM_WEBHOOK_SECRET=replace-with-a-random-secret
+PARASAUR_TELEGRAM_WEBHOOK_SECRET=replace-with-a-random-secret
 ```
 
 Register the HTTPS webhook with Telegram. Set its `secret_token` to the exact
-`GAH_TELEGRAM_WEBHOOK_SECRET` value. Telegram sends that value in the
+`PARASAUR_TELEGRAM_WEBHOOK_SECRET` value. Telegram sends that value in the
 `X-Telegram-Bot-Api-Secret-Token` header. Use 1–256 letters, digits,
 underscores, or hyphens.
 
@@ -1712,7 +1712,7 @@ manager_wake_autonomy = "review_only"
 
 Wakes are fire-and-forget but **always logged**: each queued instruction is
 written to a timestamped file under the wake log dir
-(`GAH_MANAGER_WAKE_LOG_DIR`, else `artifact_root/manager-wake-logs`). Inspect
+(`PARASAUR_MANAGER_WAKE_LOG_DIR`, else `artifact_root/manager-wake-logs`). Inspect
 after the fact to see exactly what an unsupervised agent did — a wake must never
 be unobservable. `MrMerged` never wakes (nothing left to act on).
 
@@ -1851,7 +1851,7 @@ repository workflows, and local worker API do not depend on this selection.
 Fresh standalone installs default to off. Existing configuration files without
 `defaults.factory_enabled` retain the previous enabled behavior. Updates preserve
 explicit true/false values. Fresh networked central/worker installations retain
-legacy behavior. `GAH_FACTORY_ENABLED=true|false` overrides installer selection;
+legacy behavior. `PARASAUR_FACTORY_ENABLED=true|false` overrides installer selection;
 `gah setup --factory-enabled true|false` forwards that choice. No configuration
 file means the read-only setup check reports the module off.
 
@@ -1914,7 +1914,7 @@ selected on its own, even if that ticket file has the same headings: there the
 sections stay hints. With `--mr` or `--existing-branch`, the scope check also
 counts changes already on the branch.
 
-A profile env file cannot set `GAH_ENFORCE_JOB_FILE`; only the `--enforce-job-file` flag turns enforcement on.
+A profile env file cannot set `PARASAUR_ENFORCE_JOB_FILE`; only the `--enforce-job-file` flag turns enforcement on.
 
 ## Factory spend ceilings
 
@@ -1954,7 +1954,7 @@ dispatches use the same preflight before validation, worktree creation or spend.
 ## Manager log
 
 Manager observations are appended to `manager-log.jsonl` beside the ledger;
-`GAH_LEDGER_PATH` also isolates this log. Nothing reads it to make decisions yet.
+`PARASAUR_LEDGER_PATH` also isolates this log. Nothing reads it to make decisions yet.
 
 Append an event with `gah manager-log add --work-id TICKET-1475 --phase verify --attempt 1 --tokens 200 --outcome passed`.
 Inspect events with `gah manager-log show --work-id TICKET-1475 --json`;
@@ -1964,3 +1964,28 @@ Phases: `research`, `implement`, `repair`, `supervise`, `verify`, `merge`.
 Diagnoses: `setup_environment`, `credentials`, `failed_check`, `misunderstood_task`,
 `ambiguous_requirement`, `unknown`.
 `--work-id` and the summary treat `#12`, `TICKET-12` and a bare `12` as one item.
+
+## Setting names
+
+Every setting read from the environment is named `PARASAUR_*`. Before the
+product was renamed they were `GAH_*`.
+
+The old names still work. At startup the CLI, the server, the desktop app and
+the install scripts give each `GAH_X` its `PARASAUR_X` name, unless
+`PARASAUR_X` is already set, in which case that value wins. An installed node
+therefore keeps running with the env files, systemd units and launch agents it
+already has. Files written from now on use the new names.
+
+Two things are not covered:
+
+- A setup command printed by a new central, or run by a new desktop app, passes
+  `PARASAUR_*` names to the scripts it downloads from the repository's `main`
+  branch. Those scripts must be at least as new as the central.
+- Names that are not settings keep their spelling: the `gah` command,
+  `/etc/gah`, `~/.config/gah`, the `gah-*` services, the `X-GAH-*` request
+  headers and the `window.__GAH_*__` markers the desktop app shares with the
+  dashboard.
+
+To move a node to the new names, rename the variables in its env files and
+restart its services. The code that accepts the old names is
+`src/legacy_settings.rs` and `apps/server/src/legacySettings.ts`.

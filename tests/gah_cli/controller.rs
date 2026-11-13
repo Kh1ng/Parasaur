@@ -58,7 +58,7 @@ fn loop_reports_nonzero_review_backend_as_failure_not_success() {
         ])
         .env("PATH", prepend_path(&fake_bin))
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .assert()
         .failure()
         .stderr(predicate::str::contains(
@@ -566,8 +566,8 @@ fn status_reports_human_and_json_views() {
 
     let out = bin()
         .current_dir(&root)
-        .env("GAH_AVAILABILITY_PATH", &availability_path)
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &availability_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .args([
             "status",
             "--json",
@@ -608,8 +608,8 @@ fn status_reports_human_and_json_views() {
 
     bin()
         .current_dir(&root)
-        .env("GAH_AVAILABILITY_PATH", &availability_path)
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &availability_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .args([
             "status",
             "--profile",
@@ -668,7 +668,7 @@ fn loop_once_reports_noop_when_nothing_actionable() {
         ])
         .env("PATH", prepend_path(&fake_bin))
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .assert()
         .success()
         .stdout(predicate::str::contains("no_op"));
@@ -850,7 +850,7 @@ fn loop_once_prunes_terminal_and_abandoned_open_worktrees_but_retains_live_claim
         ])
         .env("PATH", prepend_path(&fake_bin))
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_CLAIM_STATE_PATH", &claim_state)
+        .env("PARASAUR_CLAIM_STATE_PATH", &claim_state)
         .assert()
         .success();
 
@@ -948,8 +948,8 @@ fn loop_once_dispatches_an_eligible_ticket() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .assert()
         .success()
         .stdout(predicate::str::contains("dispatch_ticket"));
@@ -1001,7 +1001,7 @@ fn events_reads_back_loop_once_output_and_filters_by_profile() {
         ])
         .env("PATH", prepend_path(&fake_bin))
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .assert()
         .success();
 
@@ -1014,7 +1014,7 @@ fn events_reads_back_loop_once_output_and_filters_by_profile() {
             "real",
             "--json",
         ])
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .assert()
         .success();
     let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
@@ -1032,7 +1032,7 @@ fn events_reads_back_loop_once_output_and_filters_by_profile() {
             "some-other-profile",
             "--json",
         ])
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .assert()
         .success();
     let stdout_other = String::from_utf8_lossy(&out_other.get_output().stdout).to_string();
@@ -1094,7 +1094,7 @@ fn events_limit_keeps_only_the_newest_events_after_the_since_filter() {
                 "--json",
             ])
             .args(args)
-            .env("GAH_EVENTS_PATH", events_path)
+            .env("PARASAUR_EVENTS_PATH", events_path)
             .assert()
             .success();
         let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
@@ -1210,7 +1210,7 @@ fn loop_once_stops_on_stuck_loop_instead_of_repeating_forever() {
         ])
         .env("PATH", prepend_path(&fake_bin))
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .assert()
         .success()
         .stdout(predicate::str::contains("human_required"))

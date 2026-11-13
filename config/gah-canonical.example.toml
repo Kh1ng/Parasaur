@@ -2,7 +2,7 @@
 # own gah-config.toml unless a repo explicitly overrides a field.
 #
 # Lives separately from any single repo's config. Default location:
-# ~/.config/gah/canonical.toml (override with GAH_CANONICAL_CONFIG).
+# ~/.config/gah/canonical.toml (override with PARASAUR_CANONICAL_CONFIG).
 #
 # Merge precedence: compiled defaults < this file < repo config < CLI override.
 # Repo config wins per-field; unset fields inherit from here. Candidate

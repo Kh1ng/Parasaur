@@ -8,20 +8,20 @@ import type { ProfileSummary } from '@git-agent-harness/contracts';
 import type { ProfileAddOptions } from './gahCli.js';
 import { addProject, addRemoteProject, CheckoutHasLocalWork, importGitProject, listProjects, parseGitUrl, projectProfile, removeProject, resolveChatProject } from './projectCatalog.js';
 
-const savedCatalogPath = process.env.GAH_PROJECT_CATALOG_PATH;
+const savedCatalogPath = process.env.PARASAUR_PROJECT_CATALOG_PATH;
 const savedEnvironment = new Map(
-  ['GAH_PROJECTS_ROOT', 'XDG_DATA_HOME', 'GAH_COORDINATOR_IDENTITY_PATH']
+  ['PARASAUR_PROJECTS_ROOT', 'XDG_DATA_HOME', 'PARASAUR_COORDINATOR_IDENTITY_PATH']
     .map((name) => [name, process.env[name]])
 );
 
 beforeEach(() => {
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(mkdtempSync(join(tmpdir(), 'gah-project-identity-')), 'identity.json');
-  writeFileSync(process.env.GAH_COORDINATOR_IDENTITY_PATH, JSON.stringify({ node_id: 'local' }));
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(mkdtempSync(join(tmpdir(), 'gah-project-identity-')), 'identity.json');
+  writeFileSync(process.env.PARASAUR_COORDINATOR_IDENTITY_PATH, JSON.stringify({ node_id: 'local' }));
 });
 
 afterEach(() => {
-  if (savedCatalogPath === undefined) delete process.env.GAH_PROJECT_CATALOG_PATH;
-  else process.env.GAH_PROJECT_CATALOG_PATH = savedCatalogPath;
+  if (savedCatalogPath === undefined) delete process.env.PARASAUR_PROJECT_CATALOG_PATH;
+  else process.env.PARASAUR_PROJECT_CATALOG_PATH = savedCatalogPath;
   for (const [name, value] of savedEnvironment) {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
@@ -53,7 +53,7 @@ test('project metadata retains workspace settings while excluding environment so
 });
 
 test('catalog lists only explicitly added profiles', () => {
-  process.env.GAH_PROJECT_CATALOG_PATH = join(mkdtempSync(join(tmpdir(), 'gah-projects-')), 'projects.json');
+  process.env.PARASAUR_PROJECT_CATALOG_PATH = join(mkdtempSync(join(tmpdir(), 'gah-projects-')), 'projects.json');
   const profiles = [profile('alpha'), profile('beta')];
 
   assert.deepEqual(listProjects(profiles), []);
@@ -64,7 +64,7 @@ test('catalog lists only explicitly added profiles', () => {
 });
 
 test('catalog rejects a profile that is not configured', () => {
-  process.env.GAH_PROJECT_CATALOG_PATH = join(mkdtempSync(join(tmpdir(), 'gah-projects-')), 'projects.json');
+  process.env.PARASAUR_PROJECT_CATALOG_PATH = join(mkdtempSync(join(tmpdir(), 'gah-projects-')), 'projects.json');
   assert.throws(() => addProject('missing', [profile('alpha')]), /not configured/);
 });
 
@@ -77,7 +77,7 @@ test('git import clones, derives a profile, re-clones clean checkouts, and guard
   execFileSync('git', ['-C', source, 'add', 'package.json']);
   execFileSync('git', ['-C', source, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'initial']);
 
-  process.env.GAH_PROJECTS_ROOT = projectsRoot;
+  process.env.PARASAUR_PROJECTS_ROOT = projectsRoot;
   process.env.XDG_DATA_HOME = join(root, 'data');
   const remoteUrl = 'https://github.com/owner/repo.git';
   const git = async (args: string[]): Promise<string> => {
@@ -191,7 +191,7 @@ test('git import of an existing profile with a missing checkout clones into the 
   execFileSync('git', ['-C', source, 'add', 'package.json']);
   execFileSync('git', ['-C', source, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'initial']);
 
-  process.env.GAH_PROJECTS_ROOT = projectsRoot;
+  process.env.PARASAUR_PROJECTS_ROOT = projectsRoot;
   process.env.XDG_DATA_HOME = join(root, 'data');
   const remoteUrl = 'https://github.com/owner/repo.git';
   const git = async (args: string[]): Promise<string> => {
@@ -239,7 +239,7 @@ test('git import of an existing profile with a missing checkout clones into the 
 test('catalog migrates local strings, preserves remote ownership while offline, and removes only the selected entry', async () => {
   const root = mkdtempSync(join(tmpdir(), 'gah-project-migration-'));
   const path = join(root, 'projects.json');
-  process.env.GAH_PROJECT_CATALOG_PATH = path;
+  process.env.PARASAUR_PROJECT_CATALOG_PATH = path;
   writeFileSync(path, JSON.stringify({ profiles: ['same', 'same'] }));
   assert.deepEqual(listProjects([profile('same')], 'local').map(({ node_id, chat_profile }) => ({ node_id, chat_profile })), [{ node_id: 'local', chat_profile: 'same' }]);
   assert.equal(JSON.parse(readFileSync(path, 'utf8')).schema_version, 2);
@@ -260,7 +260,7 @@ test('catalog migrates local strings, preserves remote ownership while offline, 
 
 test('catalog corruption retains the path and never silently migrates to an empty list', () => {
   const path = join(mkdtempSync(join(tmpdir(), 'gah-project-invalid-')), 'projects.json');
-  process.env.GAH_PROJECT_CATALOG_PATH = path;
+  process.env.PARASAUR_PROJECT_CATALOG_PATH = path;
   for (const content of ['{bad json', '{"profiles":[3]}', '{"schema_version":2,"projects":[{"node_id":"remote","profile":"missing-summary"}]}']) {
     writeFileSync(path, content);
     assert.throws(() => listProjects([], 'local'), (error: unknown) => error instanceof Error && error.message.includes(path));
@@ -284,7 +284,7 @@ test('custom GitLab import requires explicit provider and preserves API authorit
 
 test('GitLab import stores API base and project ID, distinguishes hosts, and repairs verified profile metadata', async () => {
   const root = mkdtempSync(join(tmpdir(), 'gah-gitlab-import-'));
-  process.env.GAH_PROJECTS_ROOT = root;
+  process.env.PARASAUR_PROJECTS_ROOT = root;
   const gitUrl = 'https://git.example.test:8443/owner/repo.git';
   const input = { gitUrl, provider: 'gitlab' as const, providerProjectId: '123' };
   const configured = [{ ...profile('owner-repo'), provider: 'gitlab', repo: 'owner/repo', web_url: 'https://other.example.test/owner/repo' }];

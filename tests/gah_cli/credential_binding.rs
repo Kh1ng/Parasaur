@@ -408,7 +408,7 @@ fn auth_health_reports_subscription_instances_without_leaking_the_token() {
     f.add("claude-one", "claude", "claude-work");
     let output = f
         .command()
-        .env("GAH_CONFIG", f.config.to_str().unwrap())
+        .env("PARASAUR_CONFIG", f.config.to_str().unwrap())
         .args(["auth-health"])
         .output()
         .unwrap();
@@ -567,8 +567,8 @@ fn subscription_dispatch_failures_report_each_named_login() {
     .unwrap();
     let output = f
         .command()
-        .env("GAH_CONFIG", &f.config)
-        .env("GAH_AVAILABILITY_PATH", &path)
+        .env("PARASAUR_CONFIG", &f.config)
+        .env("PARASAUR_AVAILABILITY_PATH", &path)
         .args(["auth-health"])
         .output()
         .unwrap();

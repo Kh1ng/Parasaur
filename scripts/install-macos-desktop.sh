@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
 # Build and atomically replace the per-user macOS desktop application.
+# Settings were named GAH_* before the product became Parasaur. Accept the old
+# names: a GAH_X with no PARASAUR_X becomes PARASAUR_X.
+for legacy_setting in "${!GAH_@}"; do
+  current_setting="PARASAUR_${legacy_setting#GAH_}"
+  [ -n "${!current_setting+set}" ] || export "$current_setting=${!legacy_setting}"
+done
+unset legacy_setting current_setting
 set -euo pipefail
 
 repo="${1:?Usage: install-macos-desktop.sh REPOSITORY}"
 repo="$(cd "$repo" && pwd -P)"
-app_dir="${GAH_DESKTOP_APP_DIR:-$HOME/Applications}"
+app_dir="${PARASAUR_DESKTOP_APP_DIR:-$HOME/Applications}"
 target_dir="${CARGO_TARGET_DIR:-$repo/apps/desktop/target}"
 case "$target_dir" in /*) ;; *) target_dir="$repo/apps/desktop/$target_dir" ;; esac
 source_app="$target_dir/release/bundle/macos/GAH.app"
 
-if [ "${GAH_DESKTOP_SKIP_BUILD:-}" != 1 ]; then
+if [ "${PARASAUR_DESKTOP_SKIP_BUILD:-}" != 1 ]; then
   (cd "$repo/apps/desktop" && npx vite build && npx tauri build --bundles app)
 fi
 [ -d "$source_app" ] || { echo "ERROR: the desktop build did not produce $source_app" >&2; exit 1; }
@@ -59,7 +66,7 @@ echo "Installed desktop app: $target"
 
 # Release DMGs installed the same app system-wide as "GAH Worker.app". A
 # per-user install leaves that copy behind as a stale second app (#1409).
-legacy_dir="${GAH_LEGACY_APP_DIR:-/Applications}"
+legacy_dir="${PARASAUR_LEGACY_APP_DIR:-/Applications}"
 legacy="$legacy_dir/GAH Worker.app"
 if [ "$legacy_dir" != "$app_dir" ] && [ -d "$legacy" ]; then
   if rm -rf "$legacy" 2>/dev/null; then

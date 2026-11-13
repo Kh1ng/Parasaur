@@ -123,7 +123,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.cargo/bin:$PATH"
-          GAH_INSTALL_CONFIRMED=1 GAH_NODE_ROLE=standalone bash "$HOME/gah/scripts/install-linux.sh"
+          PARASAUR_INSTALL_CONFIRMED=1 PARASAUR_NODE_ROLE=standalone bash "$HOME/gah/scripts/install-linux.sh"
 
       - name: Verify service, loopback-only bind, dashboard, and role
         if: steps.scope.outputs.run == 'true'
@@ -291,7 +291,7 @@ jobs:
           improve_candidates = [{ backend = "agy", model = "test-model", priority = 100, included_in_quota = true }]
           review_candidates = [{ backend = "codex", model = "default", priority = 100, included_in_quota = true }]
           TOML
-          env -u GAH_CANONICAL_CONFIG cargo test
+          env -u PARASAUR_CANONICAL_CONFIG cargo test
 
       - name: cargo clippy
         if: steps.rust-test-scope.outputs.has_rust_changes == 'true'

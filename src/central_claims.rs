@@ -55,7 +55,7 @@ pub(crate) struct NativeHeldWork {
 /// Resolves this node's identity for claims calls from the same
 /// `coordinator-identity.json` `apps/server` reads/writes
 /// (`getCoordinatorIdentity()`), rather than generating a second one that
-/// could drift. `GAH_COORDINATOR_IDENTITY_PATH`, if set, must match
+/// could drift. `PARASAUR_COORDINATOR_IDENTITY_PATH`, if set, must match
 /// whatever `apps/server` was started with; the default assumes `gah` and
 /// `apps/server` run from the same working directory (true for the
 /// documented systemd setup in docs/OPERATIONS.md). Missing/unreadable
@@ -65,7 +65,7 @@ pub fn resolve_node_id() -> Result<String> {
     let path = crate::node_register::resolve_identity_path();
     let text = std::fs::read_to_string(&path).with_context(|| {
         format!(
-            "reading coordinator identity from {} (set GAH_COORDINATOR_IDENTITY_PATH if apps/server uses a different path)",
+            "reading coordinator identity from {} (set PARASAUR_COORDINATOR_IDENTITY_PATH if apps/server uses a different path)",
             path.display()
         )
     })?;
@@ -373,7 +373,7 @@ mod tests {
     use std::sync::Mutex;
 
     // Both resolve_node_id tests mutate the process-global
-    // GAH_COORDINATOR_IDENTITY_PATH env var; cargo test runs tests in
+    // PARASAUR_COORDINATOR_IDENTITY_PATH env var; cargo test runs tests in
     // parallel threads within one process, so without this they can
     // interleave and read each other's value (the same class of flake
     // fixed for TICKET-180's canonical-config tests).
@@ -522,9 +522,9 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("coordinator-identity.json");
         std::fs::write(&path, r#"{"node_id":"abc-123","display_name":"Test"}"#).unwrap();
-        std::env::set_var("GAH_COORDINATOR_IDENTITY_PATH", &path);
+        std::env::set_var("PARASAUR_COORDINATOR_IDENTITY_PATH", &path);
         let result = resolve_node_id();
-        std::env::remove_var("GAH_COORDINATOR_IDENTITY_PATH");
+        std::env::remove_var("PARASAUR_COORDINATOR_IDENTITY_PATH");
         assert_eq!(result.unwrap(), "abc-123");
     }
 
@@ -532,11 +532,11 @@ mod tests {
     fn resolve_node_id_fails_closed_when_the_file_is_missing() {
         let _lock = ENV_VAR_TEST_LOCK.lock().unwrap();
         std::env::set_var(
-            "GAH_COORDINATOR_IDENTITY_PATH",
+            "PARASAUR_COORDINATOR_IDENTITY_PATH",
             "/nonexistent/path/coordinator-identity.json",
         );
         let result = resolve_node_id();
-        std::env::remove_var("GAH_COORDINATOR_IDENTITY_PATH");
+        std::env::remove_var("PARASAUR_COORDINATOR_IDENTITY_PATH");
         assert!(result.is_err());
     }
 

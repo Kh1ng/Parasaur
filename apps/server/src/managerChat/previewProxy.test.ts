@@ -427,8 +427,8 @@ test('a TCP listener without an HTTP response is not adopted as a web preview', 
 });
 
 test('a preview refuses the memory gateway port', async () => {
-  const saved = { url: process.env.TDAI_GATEWAY_URL, settings: process.env.GAH_GATEWAY_SETTINGS_PATH };
-  process.env.GAH_GATEWAY_SETTINGS_PATH = '/nonexistent/gateway-settings.json';
+  const saved = { url: process.env.TDAI_GATEWAY_URL, settings: process.env.PARASAUR_GATEWAY_SETTINGS_PATH };
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = '/nonexistent/gateway-settings.json';
   previewProxy.configure({ basePort: TEST_BASE_PORT, maxPort: TEST_MAX_PORT, advertiseHost: '127.0.0.1', bindHost: '127.0.0.1', protectedPorts: [] });
   try {
     delete process.env.TDAI_GATEWAY_URL;
@@ -450,6 +450,6 @@ test('a preview refuses the memory gateway port', async () => {
     assert.equal(previewProxy.get('p', 'gw'), null);
   } finally {
     if (saved.url === undefined) delete process.env.TDAI_GATEWAY_URL; else process.env.TDAI_GATEWAY_URL = saved.url;
-    if (saved.settings === undefined) delete process.env.GAH_GATEWAY_SETTINGS_PATH; else process.env.GAH_GATEWAY_SETTINGS_PATH = saved.settings;
+    if (saved.settings === undefined) delete process.env.PARASAUR_GATEWAY_SETTINGS_PATH; else process.env.PARASAUR_GATEWAY_SETTINGS_PATH = saved.settings;
   }
 });

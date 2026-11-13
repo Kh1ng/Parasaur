@@ -262,7 +262,7 @@ export class ActivityFeed {
   private preferences = { ...DEFAULT_ACTIVITY_NOTIFICATION_PREFERENCES };
 
   constructor(
-    private path: string | null = process.env.GAH_ACTIVITY_PATH ?? resolve(process.cwd(), 'config/activity.jsonl'),
+    private path: string | null = process.env.PARASAUR_ACTIVITY_PATH ?? resolve(process.cwd(), 'config/activity.jsonl'),
     private deliver?: ActivityDeliverer,
     private now: () => number = Date.now
   ) {

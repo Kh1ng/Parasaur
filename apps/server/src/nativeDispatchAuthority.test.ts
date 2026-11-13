@@ -17,8 +17,8 @@ function fixture() {
   writeFileSync(join(root,'systemctl'),`#!${process.execPath}\nconst s=JSON.parse(require('node:fs').readFileSync(${JSON.stringify(loopFile)},'utf8'));if(s.hold)setInterval(()=>{},1000);else console.log('LoadState='+s.load+'\\nActiveState='+s.state+'\\nMainPID='+s.pid+'\\nActiveEnterTimestamp='+s.started);`,{mode:0o700});
   const executable=join(root,'gah');
   writeFileSync(executable,`#!${process.execPath}\nconst fs=require('node:fs');const p=JSON.parse(fs.readFileSync(${JSON.stringify(policyFile)},'utf8'));const work=process.argv.includes('--check-work'),route=process.argv.includes('--check-route');if(work===route)process.exit(91);if(p.restart){const s=JSON.parse(fs.readFileSync(${JSON.stringify(loopFile)},'utf8'));s.pid++;fs.writeFileSync(${JSON.stringify(loopFile)},JSON.stringify(s));}fs.writeFileSync(${JSON.stringify(entered)},work?'work':'route');if(p.hold)setInterval(()=>{},1000);else console.log(JSON.stringify(p));`,{mode:0o700});
-  const saved={PATH:process.env.PATH,GAH_BINARY:process.env.GAH_BINARY};
-  process.env.PATH=`${root}:${saved.PATH}`;process.env.GAH_BINARY=executable;
+  const saved={PATH:process.env.PATH,PARASAUR_BINARY:process.env.PARASAUR_BINARY};
+  process.env.PATH=`${root}:${saved.PATH}`;process.env.PARASAUR_BINARY=executable;
   return {root,binding,reservation,entered,check:nativeDispatchAuthority(root,'https://central.invalid',join(root,'fixture.toml')),
     loop(changes:Partial<typeof loop>){loop={...loop,...changes};save();},
     policy(changes:Partial<typeof policy>){policy={...policy,...changes};save();},

@@ -66,16 +66,19 @@ fn spawn_bin(state_root: &std::path::Path) -> ProcessCommand {
         std::env::var("CARGO_BIN_EXE_gah").unwrap_or_else(|_| "target/debug/gah".into()),
     );
     fs::create_dir_all(state_root.join("home")).unwrap();
-    cmd.env_remove("GAH_TEST_NOW");
+    cmd.env_remove("PARASAUR_TEST_NOW");
     cmd.env("HOME", state_root.join("home"));
-    cmd.env("GAH_CANONICAL_CONFIG", state_root.join("canonical.toml"));
+    cmd.env(
+        "PARASAUR_CANONICAL_CONFIG",
+        state_root.join("canonical.toml"),
+    );
     cmd.env("XDG_STATE_HOME", state_root.join("state"));
     cmd.env(
-        "GAH_AVAILABILITY_PATH",
+        "PARASAUR_AVAILABILITY_PATH",
         "/nonexistent-availability-path.json",
     );
     cmd.env(
-        "GAH_VALIDATION_CHECK_PATH",
+        "PARASAUR_VALIDATION_CHECK_PATH",
         state_root.join("validation.json"),
     );
     // Capacity leases are node-global in production. These integration
@@ -84,8 +87,8 @@ fn spawn_bin(state_root: &std::path::Path) -> ProcessCommand {
     // from one another.
     cmd.env("XDG_RUNTIME_DIR", state_root.join("runtime"));
     cmd.env("TMPDIR", support::test_temp_root());
-    cmd.env("GAH_TEST_NODE_PRESSURE_FILE", node_pressure);
-    cmd.env("GAH_TEST_NODE_CAPACITY_REPROBE_MS", "100");
+    cmd.env("PARASAUR_TEST_NODE_PRESSURE_FILE", node_pressure);
+    cmd.env("PARASAUR_TEST_NODE_CAPACITY_REPROBE_MS", "100");
     // Each dispatch recalls from and captures to the memory gateway, by
     // default http://127.0.0.1:8420. Whatever the host runs there is not part
     // of these tests, and a port that drops connections instead of refusing
@@ -456,9 +459,9 @@ fn parallel_loop_refills_with_missing_availability_after_a_fast_completion() {
             )
             .env("HOME", &home)
             .env("GITHUB_TOKEN", "token")
-            .env("GAH_LEDGER_PATH", &ledger_path)
-            .env("GAH_EVENTS_PATH", &events_path)
-            .env("GAH_QUOTA_STORE_PATH", &blocked_store)
+            .env("PARASAUR_LEDGER_PATH", &ledger_path)
+            .env("PARASAUR_EVENTS_PATH", &events_path)
+            .env("PARASAUR_QUOTA_STORE_PATH", &blocked_store)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -600,7 +603,7 @@ fn parallel_loop_selects_new_review_after_capacity_deferred_sibling() {
         )
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .output()
         .unwrap();
 
@@ -721,8 +724,8 @@ fn parallel_loop_reviews_a_finished_ticket_while_a_slow_sibling_still_runs() {
             )
             .env("HOME", &home)
             .env("GITHUB_TOKEN", "token")
-            .env("GAH_LEDGER_PATH", tmp.path().join("ledger.jsonl"))
-            .env("GAH_EVENTS_PATH", tmp.path().join("events.jsonl"))
+            .env("PARASAUR_LEDGER_PATH", tmp.path().join("ledger.jsonl"))
+            .env("PARASAUR_EVENTS_PATH", tmp.path().join("events.jsonl"))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -991,7 +994,7 @@ fn parallel_loop_reprobes_node_pressure_with_active_worker_remaining() {
             )
             .env("HOME", &home)
             .env("GITHUB_TOKEN", "token")
-            .env("GAH_TEST_NODE_PRESSURE_FILE", node_pressure.clone())
+            .env("PARASAUR_TEST_NODE_PRESSURE_FILE", node_pressure.clone())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -1157,7 +1160,7 @@ fn parallel_loop_uses_light_review_after_heavy_node_deferral() {
         )
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_TEST_NODE_PRESSURE_FILE", &node_pressure)
+        .env("PARASAUR_TEST_NODE_PRESSURE_FILE", &node_pressure)
         .output()
         .unwrap();
 
@@ -1243,7 +1246,7 @@ fn parallel_loop_waits_to_refill_until_node_pressure_recedes() {
             )
             .env("HOME", &home)
             .env("GITHUB_TOKEN", "token")
-            .env("GAH_TEST_NODE_PRESSURE_FILE", node_pressure.clone())
+            .env("PARASAUR_TEST_NODE_PRESSURE_FILE", node_pressure.clone())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -1344,7 +1347,7 @@ fn parallel_loop_remains_prompt_on_shutdown_while_node_capacity_is_deferred() {
             )
             .env("HOME", &home)
             .env("GITHUB_TOKEN", "token")
-            .env("GAH_TEST_NODE_PRESSURE_FILE", node_pressure.clone())
+            .env("PARASAUR_TEST_NODE_PRESSURE_FILE", node_pressure.clone())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -1455,7 +1458,7 @@ fn parallel_loop_reclaims_a_dead_owners_claim_and_releases_only_its_own() {
         )
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_CLAIM_STATE_PATH", &claims)
+        .env("PARASAUR_CLAIM_STATE_PATH", &claims)
         .output()
         .unwrap();
 

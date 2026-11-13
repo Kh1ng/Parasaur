@@ -19,7 +19,7 @@ test('the full integration runner refuses Windows before discovering or spawning
     `Object.defineProperty(process, 'platform', { value: 'win32' }); await import('./test.mjs');`,
   ], {
     cwd: serverRoot, encoding: 'utf8', timeout: 5_000,
-    env: { ...process.env, GAH_SERVER_TEST_DIR: join(serverRoot, 'must-not-be-discovered') },
+    env: { ...process.env, PARASAUR_SERVER_TEST_DIR: join(serverRoot, 'must-not-be-discovered') },
   });
   assert.equal(run.status, 1, run.stderr);
   assert.match(run.stderr, /requires a POSIX environment/);
@@ -34,7 +34,7 @@ interface Run { code: number | null; timedOut: boolean; output: string }
 function runNode(args: string[], timeoutMs: number, fixtureDir?: string): Promise<Run> {
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT; // this file's own runner sets it
-  if (fixtureDir) env.GAH_SERVER_TEST_DIR = fixtureDir;
+  if (fixtureDir) env.PARASAUR_SERVER_TEST_DIR = fixtureDir;
   return new Promise((resolveRun, reject) => {
     const child = spawn(process.execPath, args, { cwd: serverRoot, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';

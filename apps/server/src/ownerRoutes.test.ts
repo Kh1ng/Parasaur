@@ -13,10 +13,10 @@ import { resetCachedCoordinatorIdentity } from './coordinatorIdentity.js';
 
 test('trusted owner extensions share authentication, reject devices and remain reachable on workers', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gah-owner-routes-'));
-  const saved = { GAH_BINARY: process.env.GAH_BINARY, COORDINATOR_TOKEN: process.env.COORDINATOR_TOKEN,
-    GAH_COORDINATOR_IDENTITY_PATH: process.env.GAH_COORDINATOR_IDENTITY_PATH };
-  Object.assign(process.env, { GAH_BINARY: FIXTURE_GAH_BINARY, COORDINATOR_TOKEN: 'owner-extension-fixture',
-    GAH_COORDINATOR_IDENTITY_PATH: join(directory, 'identity.json') });
+  const saved = { PARASAUR_BINARY: process.env.PARASAUR_BINARY, COORDINATOR_TOKEN: process.env.COORDINATOR_TOKEN,
+    PARASAUR_COORDINATOR_IDENTITY_PATH: process.env.PARASAUR_COORDINATOR_IDENTITY_PATH };
+  Object.assign(process.env, { PARASAUR_BINARY: FIXTURE_GAH_BINARY, COORDINATOR_TOKEN: 'owner-extension-fixture',
+    PARASAUR_COORDINATOR_IDENTITY_PATH: join(directory, 'identity.json') });
   resetCachedCoordinatorIdentity();
   try {
     for (const role of ['central', 'worker'] as const) {

@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 #[test]
 #[ignore = "child process fixture"]
 fn transport_child() {
-    match std::env::var("GAH_CREDENTIAL_TRANSPORT_MODE")
+    match std::env::var("PARASAUR_CREDENTIAL_TRANSPORT_MODE")
         .unwrap()
         .as_str()
     {
@@ -35,7 +35,7 @@ fn pipes_keep_stdin_private_and_bound_output_failure_and_stalls() {
                 "--ignored",
                 "--nocapture",
             ])
-            .env("GAH_CREDENTIAL_TRANSPORT_MODE", mode);
+            .env("PARASAUR_CREDENTIAL_TRANSPORT_MODE", mode);
         command
     };
     let bytes = run(
@@ -61,7 +61,7 @@ fn pipes_keep_stdin_private_and_bound_output_failure_and_stalls() {
 #[ignore = "read-only check of the actual configured WSL CLI"]
 fn installed_wsl_account_metadata_is_readable() {
     assert_eq!(
-        std::env::var("GAH_WINDOWS_WSL_TEST_INSTALLED_READS").as_deref(),
+        std::env::var("PARASAUR_WINDOWS_WSL_TEST_INSTALLED_READS").as_deref(),
         Ok("1")
     );
     let bytes = super::invoke(
@@ -74,11 +74,11 @@ fn installed_wsl_account_metadata_is_readable() {
 }
 
 #[test]
-#[ignore = "requires GAH_WINDOWS_WSL_TEST_GAH and an installed WSL distribution"]
+#[ignore = "requires PARASAUR_WINDOWS_WSL_TEST_GAH and an installed WSL distribution"]
 fn real_wsl_two_accounts_and_literal_arguments() {
-    let gah = std::env::var("GAH_WINDOWS_WSL_TEST_GAH").expect("Linux fixture CLI path required");
+    let gah = std::env::var("PARASAUR_WINDOWS_WSL_TEST_GAH").expect("Linux fixture CLI path required");
     let distribution =
-        std::env::var("GAH_WINDOWS_WSL_TEST_DISTRIBUTION").expect("WSL distribution required");
+        std::env::var("PARASAUR_WINDOWS_WSL_TEST_DISTRIBUTION").expect("WSL distribution required");
     let settings = crate::DesktopSettings {
         wsl_distribution: distribution,
         ..Default::default()
@@ -130,7 +130,7 @@ runner.chmod(0o700)
                 &format!("PATH={root}/bin:/usr/bin:/bin"),
                 "OPENAI_API_KEY=synthetic-ambient-key",
                 "CODEX_API_KEY=synthetic-ambient-key",
-                &format!("GAH_CONFIG={root}/config.toml"),
+                &format!("PARASAUR_CONFIG={root}/config.toml"),
             ])
             .args(&arguments[split..]);
         isolated

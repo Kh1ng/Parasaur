@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import './legacySettings.js';
 import type { ChatReclaimResult } from '@git-agent-harness/contracts';
 
 function maintenanceUrl(): string {

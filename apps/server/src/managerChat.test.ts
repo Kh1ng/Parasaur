@@ -250,8 +250,8 @@ test('normalizeRemoteUrl strips trailing slashes and is idempotent', () => {
 
 test('model override persists per profile+backend and survives a fresh read', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-manager-chat-settings-'));
-  const prevPath = process.env.GAH_MANAGER_CHAT_SETTINGS_PATH;
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(dir, 'settings.json');
+  const prevPath = process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH;
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(dir, 'settings.json');
   try {
     assert.equal(modelOverrideForProfile('gah', 'hermes'), undefined);
     setModelOverrideForProfile('gah', 'hermes', 'local-qwen');
@@ -262,15 +262,15 @@ test('model override persists per profile+backend and survives a fresh read', ()
     assert.equal(modelOverrideForProfile('gah', 'hermes'), 'deepseek/deepseek-v4-flash-0731');
   } finally {
     rmSync(dir, { recursive: true, force: true });
-    if (prevPath === undefined) delete process.env.GAH_MANAGER_CHAT_SETTINGS_PATH;
-    else process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = prevPath;
+    if (prevPath === undefined) delete process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH;
+    else process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = prevPath;
   }
 });
 
 test('reasoning effort override persists per profile+backend', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-manager-chat-reasoning-'));
-  const prevPath = process.env.GAH_MANAGER_CHAT_SETTINGS_PATH;
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(dir, 'settings.json');
+  const prevPath = process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH;
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(dir, 'settings.json');
   try {
     assert.equal(reasoningEffortOverrideForProfile('gah', 'codex'), undefined);
     setReasoningEffortOverrideForProfile('gah', 'codex', 'xhigh');
@@ -279,8 +279,8 @@ test('reasoning effort override persists per profile+backend', () => {
     assert.equal(reasoningEffortOverrideForProfile('other', 'codex'), undefined);
   } finally {
     rmSync(dir, { recursive: true, force: true });
-    if (prevPath === undefined) delete process.env.GAH_MANAGER_CHAT_SETTINGS_PATH;
-    else process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = prevPath;
+    if (prevPath === undefined) delete process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH;
+    else process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = prevPath;
   }
 });
 

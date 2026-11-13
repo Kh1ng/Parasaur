@@ -131,8 +131,8 @@ test('unavailable audit storage prevents execution and keeps a durable reservati
 
 test('production mutation routes require keys before invoking CLI actions', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gah-mutations-routes-'));
-  const saved = process.env.GAH_MUTATION_STORE_PATH;
-  process.env.GAH_MUTATION_STORE_PATH = directory;
+  const saved = process.env.PARASAUR_MUTATION_STORE_PATH;
+  process.env.PARASAUR_MUTATION_STORE_PATH = directory;
   try {
     await withFixtureServer(async base => {
       for (const route of ['loop/start', 'loop/stop', 'hold/set', 'hold/clear', 'availability/clear', 'ledger/clear-attempts', 'profiles/fixture/prompt-policies/set']) {
@@ -142,7 +142,7 @@ test('production mutation routes require keys before invoking CLI actions', asyn
       }
     });
   } finally {
-    if (saved === undefined) delete process.env.GAH_MUTATION_STORE_PATH; else process.env.GAH_MUTATION_STORE_PATH = saved;
+    if (saved === undefined) delete process.env.PARASAUR_MUTATION_STORE_PATH; else process.env.PARASAUR_MUTATION_STORE_PATH = saved;
     rmSync(directory, { recursive: true, force: true });
   }
 });

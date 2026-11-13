@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import './legacySettings.js';
 import { createAuthorizedWebSocketServer } from './webSocketAuth.js';
 import { startModelPriceRefresh } from './modelPricing.js';
 import { helperPriceExtractor } from './modelPriceHelper.js';
@@ -126,10 +127,10 @@ async function main() {
   let stopWorkerAutoUpdate: (() => void) | undefined;
 
   // A central or standalone node serves the dashboard itself unless the
-  // operator pointed GAH_WEB_ROOT elsewhere or emptied it (#1327). A worker
+  // operator pointed PARASAUR_WEB_ROOT elsewhere or emptied it (#1327). A worker
   // has no dashboard.
-  const webRoot = node.role === 'worker' ? null : resolveWebRoot(process.env.GAH_WEB_ROOT);
-  process.env.GAH_WEB_ROOT = webRoot ?? '';
+  const webRoot = node.role === 'worker' ? null : resolveWebRoot(process.env.PARASAUR_WEB_ROOT);
+  process.env.PARASAUR_WEB_ROOT = webRoot ?? '';
 
   // Create Express app
   const app = createExpressServer({
@@ -140,7 +141,7 @@ async function main() {
     nativeDispatchRoot:node.role==='central'?join(process.env.XDG_STATE_HOME??join(homedir(),'.local','state'),'gah','native-dispatch'):undefined,
     nativeWorker:node.role==='worker' && process.platform==='linux'?new NativeWorker({
       root:join(process.env.XDG_STATE_HOME??join(homedir(),'.local','state'),'gah','native-worker'),
-      nodeId:coordinatorIdentity.node_id,binary:findGahBinary(),config:process.env.GAH_CONFIG_PATH,
+      nodeId:coordinatorIdentity.node_id,binary:findGahBinary(),config:process.env.PARASAUR_CONFIG_PATH,
       profiles:runProfileList,centralToken:()=>process.env.COORDINATOR_TOKEN,
     }):undefined,
     webPushNotifications,
@@ -263,13 +264,13 @@ async function main() {
       markReadinessCheck('providerRegistry', false, 'Provider status initialization failed');
     });
     // Model prices: checked a few seconds after start when a day old, then daily.
-    if (process.env.GAH_DISABLE_PRICE_REFRESH !== '1') startModelPriceRefresh(helperPriceExtractor(defaultProfile()), logLifecycle);
+    if (process.env.PARASAUR_DISABLE_PRICE_REFRESH !== '1') startModelPriceRefresh(helperPriceExtractor(defaultProfile()), logLifecycle);
     console.log(`WebSocket server available on ws://${HOST}:${PORT}`);
     console.log(`Health check available on http://${HOST}:${PORT}/health`);
     if (webRoot) {
       console.log(`Dashboard served from ${webRoot}`);
     } else if (node.role !== 'worker') {
-      console.warn('No dashboard is served: apps/web is not built and GAH_WEB_ROOT is not set. Run `gah update`, or set GAH_WEB_ROOT to a built web app.');
+      console.warn('No dashboard is served: apps/web is not built and PARASAUR_WEB_ROOT is not set. Run `gah update`, or set PARASAUR_WEB_ROOT to a built web app.');
     }
     const warning = networkExposureWarning(HOST);
     if (warning) {

@@ -15,16 +15,16 @@ use super::{command, local_only, read_settings, write_settings};
 const BOOTSTRAP: &str = "t=\"$(gh auth token 2>/dev/null || true)\"; curl -fsSL ${t:+-H \"Authorization: Bearer $t\"} https://raw.githubusercontent.com/Kh1ng/git-agent-harness/main/scripts/bootstrap.sh | GITHUB_TOKEN=\"$t\" bash";
 
 /// Standalone: a central node only this computer can reach, every setup
-/// default accepted. bootstrap.sh turns GAH_NODE_ROLE/GAH_YES into
-/// `gah setup` flags; install-linux.sh binds the dashboard to GAH_SERVER_HOST
+/// default accepted. bootstrap.sh turns PARASAUR_NODE_ROLE/PARASAUR_YES into
+/// `gah setup` flags; install-linux.sh binds the dashboard to PARASAUR_SERVER_HOST
 /// on first install instead of the tailnet address.
 #[cfg(not(target_os = "macos"))]
-const STANDALONE_ENV: &str = "GAH_NODE_ROLE=standalone GAH_YES=1 GAH_SERVER_HOST=127.0.0.1";
+const STANDALONE_ENV: &str = "PARASAUR_NODE_ROLE=standalone PARASAUR_YES=1 PARASAUR_SERVER_HOST=127.0.0.1";
 
-/// macOS has no standalone role, so GAH_STANDALONE=1 carries the intent to
+/// macOS has no standalone role, so PARASAUR_STANDALONE=1 carries the intent to
 /// configure-node-role.sh, which defaults a fresh install's factory module off.
 #[cfg(target_os = "macos")]
-const STANDALONE_ENV: &str = "GAH_NODE_ROLE=central GAH_STANDALONE=1 GAH_YES=1 GAH_SERVER_HOST=127.0.0.1";
+const STANDALONE_ENV: &str = "PARASAUR_NODE_ROLE=central PARASAUR_STANDALONE=1 PARASAUR_YES=1 PARASAUR_SERVER_HOST=127.0.0.1";
 
 #[derive(Serialize)]
 pub struct SetupCheck {
@@ -135,9 +135,9 @@ pub fn open_setup_terminal(window: tauri::WebviewWindow, standalone: Option<bool
     let mut line = setup_command(installed_gah().as_deref(), standalone);
     if let Some(enabled) = factory_enabled {
         line = if line.contains("scripts/bootstrap.sh") {
-            line.replacen(" bash", &format!(" GAH_FACTORY_ENABLED={enabled} bash"), 1)
+            line.replacen(" bash", &format!(" PARASAUR_FACTORY_ENABLED={enabled} bash"), 1)
         } else {
-            format!("GAH_FACTORY_ENABLED={enabled} {line}")
+            format!("PARASAUR_FACTORY_ENABLED={enabled} {line}")
         };
     }
     if !open_terminal(&line) {
@@ -268,7 +268,7 @@ fn open_terminal(line: &str) -> bool {
     terminal.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
         .arg(script)
         .args(["-Distribution", distribution])
-        .env("GAH_SETUP", line);
+        .env("PARASAUR_SETUP", line);
     if !line.contains(STANDALONE_ENV) && !settings.central_url.is_empty() {
         terminal.args(["-CentralUrl", &settings.central_url]);
     }
@@ -311,7 +311,7 @@ mod tests {
             format!("{STANDALONE_ENV} ~/.cargo/bin/gah setup --role {} --yes", if cfg!(target_os = "macos") { "central" } else { "standalone" })
         );
         // The central role alone would leave a fresh macOS standalone install's factory module on.
-        assert!(STANDALONE_ENV.contains(if cfg!(target_os = "macos") { "GAH_STANDALONE=1" } else { "GAH_NODE_ROLE=standalone" }));
+        assert!(STANDALONE_ENV.contains(if cfg!(target_os = "macos") { "PARASAUR_STANDALONE=1" } else { "PARASAUR_NODE_ROLE=standalone" }));
     }
 
     #[test]

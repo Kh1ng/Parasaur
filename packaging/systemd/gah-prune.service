@@ -20,12 +20,12 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=@REPO@
-Environment="GAH_CONFIG_PATH=@CONFIG@"
+Environment="PARASAUR_CONFIG_PATH=@CONFIG@"
 Environment="PATH=@PATH@"
 Environment=PORT=3773
 # The maintenance HTTP request uses HOST/PORT and sends COORDINATOR_TOKEN.
 # Wildcard HOST values use loopback, which needs no token. A specific remote
-# interface requires the token and explicit GAH_ALLOW_INSECURE_HTTP=1 because
+# interface requires the token and explicit PARASAUR_ALLOW_INSECURE_HTTP=1 because
 # this command connects directly over HTTP, not through a TLS reverse proxy.
 EnvironmentFile=-/etc/gah/server.env
 ExecStart="@GAH@" prune

@@ -8,15 +8,15 @@
 # directly (POST /recall before each turn, /capture after), so context
 # survives swapping which manager backend (Hermes/Codex/Claude) is running.
 #
-# GAH_GATEWAY_MODE=colocated makes scripts/install.sh render this template
-# with GAH_GATEWAY_MEMORYCORE_PATH and the Node directory on PATH. Ordinary
+# PARASAUR_GATEWAY_MODE=colocated makes scripts/install.sh render this template
+# with PARASAUR_GATEWAY_MEMORYCORE_PATH and the Node directory on PATH. Ordinary
 # GAH installs skip it. For local overrides, use:
 #   systemctl --user edit tdai-memory-gateway.service
 #
 # Config: <MemoryCore checkout>/tdai-gateway.local.yaml. A fresh install
 # seeds this from the tracked tdai-gateway.standalone.yaml template
 # (keyword recall, no model calls) if it doesn't already exist. Re-run
-# the installer with GAH_GATEWAY_PROVIDER=ollama or openai to add a model
+# the installer with PARASAUR_GATEWAY_PROVIDER=ollama or openai to add a model
 # provider; see docs/OPERATIONS.md.
 #
 # Auth: TDAI_GATEWAY_API_KEY lives in ~/.config/gah/tdai-gateway.env

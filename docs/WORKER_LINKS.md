@@ -38,7 +38,7 @@ PARASAUR_WORKER_LINKS=tailnet
 Separate several kinds with commas. A central that lists only `tailnet` refuses
 a worker that registers an ordinary LAN address.
 
-`GAH_ALLOW_INSECURE_HTTP=1` predates this setting and still enables both
+`PARASAUR_ALLOW_INSECURE_HTTP=1` predates this setting and still enables both
 plain-HTTP kinds, so existing deployments keep working. It also lifts the TLS
 requirement for requests arriving at that server, which `PARASAUR_WORKER_LINKS` does
 not. A central behind a TLS proxy can replace it with `PARASAUR_WORKER_LINKS`.
@@ -49,7 +49,7 @@ when the central refuses the address.
 ## What has not moved yet
 
 - **The worker's side.** A worker accepts plain-HTTP requests from the central
-  only with `GAH_ALLOW_INSECURE_HTTP=1`, which the WSL and macOS installers
+  only with `PARASAUR_ALLOW_INSECURE_HTTP=1`, which the WSL and macOS installers
   set. The same address classification could decide that, in
   `authMiddleware.ts` and `webSocketAuth.ts`.
 - **`transport_mode`.** Workers still send it and the link refuses a mode the
