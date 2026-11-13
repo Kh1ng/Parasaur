@@ -11,7 +11,11 @@ pub(super) fn assert_selected_generation(
             crate::ledger::FailureClass::StaleSource,
             crate::ledger::FailureStage::Preflight,
         );
-        anyhow::bail!("Selected review generation changed before reviewer launch");
+        anyhow::bail!(
+            "Selected review generation changed before reviewer launch: selected '{}', observed '{}'",
+            expected.unwrap_or_default(),
+            ledger.review_generation.as_deref().unwrap_or("none")
+        );
     }
     Ok(())
 }
