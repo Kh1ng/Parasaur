@@ -624,7 +624,14 @@ pub(super) fn no_admission_diagnostics(
         ),
     });
     if snapshot.merge_requests.is_empty() && snapshot.available_tickets.is_empty() {
-        parts.push("queue: empty (no open MRs or eligible tickets)".to_string());
+        if snapshot.open_managed_mr_count > 0 || snapshot.inflight_implementation_count > 0 {
+            parts.push(format!(
+                "queue: no selectable work ({} open managed MR(s), {} in-flight implementation(s))",
+                snapshot.open_managed_mr_count, snapshot.inflight_implementation_count
+            ));
+        } else {
+            parts.push("queue: empty (no open MRs or eligible tickets)".to_string());
+        }
     } else {
         parts.push(format!(
             "queue: {} open MR(s), {} ticket(s) considered",

@@ -46,7 +46,7 @@ function fixture() {
       async releaseReservation(_binding:NativeDispatchBinding,held:NativeHostReservation) {
         releases++;
         const journal=JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8'));
-        assert.equal(journal.phase,'cancelling'); assert.equal(journal.start_offered,false);
+        assert.equal(journal.phase,'cancelling'); assert.equal(journal.start_grant?.consumed_at,undefined);
         assert.ok(journal.reservation_release);assert.ok(claims.getLease('gah','#1525')?.native_handoff);
         return cancel({...binding,reservation_id:held.id,capacity_released:true,dispatch_started:false});
       },
@@ -75,6 +75,39 @@ function fixture() {
     reload() { claims = new ClaimsService(claimsPath, () => now); broker = new NativeDispatchBroker(deps()); return broker; },
   };
 }
+
+test('a refused start retires only after expiry, matching wrapper exit and confirmed release', async () => {
+  const f = fixture();
+  let checks = 0;
+  f.authorize(async () => ++checks === 1 ? {allowed:true} : {allowed:false,reason:'authority_unavailable'});
+  await f.broker.offerPrepared(f.run, f.binding.context_sha256);
+  const exited = {...f.binding, state:'exited_before_dispatch' as const, reservation_id:f.grant.reservation_id};
+  f.observe(exited);
+  assert.equal((await f.broker.reconcile(f.run)).phase, 'reconciling');
+  f.advance();
+  f.observe({...exited, reservation_id:'another-holder'});
+  assert.equal((await f.broker.reconcile(f.run)).phase, 'reconciling');
+  assert.equal(f.releases, 0);
+  f.observe(exited);
+  f.cancel(async () => { throw Error('lost release reply'); });
+  assert.equal((await f.reload().reconcile(f.run)).phase, 'cancelling');
+  assert.ok(f.claims.getLease('gah','#1525'));
+  f.cancel(async proof => proof);
+  assert.equal((await f.reload().reconcile(f.run)).phase, 'cancelled');
+  assert.equal(f.claims.getLease('gah','#1525'), undefined);
+  assert.equal(f.starts, 1);
+  assert.equal(f.imports, 0);
+});
+
+test('wrapper exit cannot cancel a consumed grant after a lost reply', async () => {
+  const f = fixture();
+  await f.broker.offerPrepared(f.run, f.binding.context_sha256);
+  f.advance();
+  f.observe({...f.binding,state:'exited_before_dispatch',reservation_id:f.grant.reservation_id});
+  assert.equal((await f.reload().reconcile(f.run)).phase, 'reconciling');
+  assert.ok(f.claims.getLease('gah','#1525'));
+  assert.equal(f.releases, 0);
+});
 
 async function grantEndpoint(broker: NativeDispatchBroker, worker: (id: string)=>{profiles?:string[]}|undefined) {
   const app=express();app.use(express.json());
