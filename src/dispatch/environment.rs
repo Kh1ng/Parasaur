@@ -43,7 +43,8 @@ pub(in crate::dispatch) fn profile_env_file(profile: &Profile, prod: bool) -> &s
 /// an env file can neither switch enforcement on for every direct dispatch
 /// nor silently switch the flag off.
 fn is_reserved(key: &str) -> bool {
-    key == "PARASAUR_ENFORCE_JOB_FILE"
+    const OPT_IN: &str = "PARASAUR_ENFORCE_JOB_FILE";
+    key == OPT_IN || crate::legacy_settings::legacy_name(OPT_IN).as_deref() == Some(key)
 }
 
 #[cfg(test)]
@@ -73,6 +74,22 @@ mod tests {
             Ok("exported"),
             "ordinary keys are still exported"
         );
+        // The old spelling reaches the current name, so it is refused there
+        // too, and an ordinary old-name setting replaces an inherited value.
+        std::fs::write(
+            &env_file,
+            "GAH_ENFORCE_JOB_FILE=1\nGAH_TEST_1474_CONTROL=from-the-file\n",
+        )
+        .unwrap();
+        std::env::set_var("PARASAUR_TEST_1474_CONTROL", "inherited");
+        export_profile_env(&profile, false);
+        assert_eq!(std::env::var("PARASAUR_ENFORCE_JOB_FILE").ok(), before);
+        assert_eq!(std::env::var("GAH_ENFORCE_JOB_FILE").ok(), None);
+        assert_eq!(
+            std::env::var("PARASAUR_TEST_1474_CONTROL").as_deref(),
+            Ok("from-the-file")
+        );
+        std::env::remove_var("GAH_TEST_1474_CONTROL");
         std::env::remove_var("PARASAUR_TEST_1474_CONTROL");
     }
 }

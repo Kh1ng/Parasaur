@@ -60,6 +60,11 @@ fn registration_config(inherited: &[(&str, &str)], env_file: &str) -> String {
 fn worker_registration_reads_the_env_file_before_adopting_old_names() {
     let old = [("GAH_CONFIG", "/inherited-old.toml")];
     let new = [("PARASAUR_CONFIG", "/inherited-new.toml")];
+    // What the script inherits from `gah update`, which adopts before it runs.
+    let adopted_by_caller = [
+        ("GAH_CONFIG", "/inherited-old.toml"),
+        ("PARASAUR_CONFIG", "/inherited-old.toml"),
+    ];
     for (inherited, env_file, expected) in [
         (&old[..], "", "/inherited-old.toml"),
         // An install from before the rename: the file's value is the worker's.
@@ -74,6 +79,13 @@ fn worker_registration_reads_the_env_file_before_adopting_old_names() {
             "GAH_CONFIG=/file-old.toml\nPARASAUR_CONFIG=/file-new.toml\n",
             "/file-new.toml",
         ),
+        (
+            &adopted_by_caller[..],
+            "GAH_CONFIG=/file-old.toml
+",
+            "/file-old.toml",
+        ),
+        (&adopted_by_caller[..], "", "/inherited-old.toml"),
         // A current name the caller set is not an adopted one: it stays.
         (
             &new[..],
