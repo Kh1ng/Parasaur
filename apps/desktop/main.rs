@@ -854,8 +854,12 @@ async fn set_worker_running(
                 .open(dir.join("desktop-worker.log"))
                 .map_err(|e| e.to_string())?;
             let gah = installed_gah()?;
+            let mut worker = command(gah.to_str().ok_or("Invalid worker path")?);
+            for name in adopted_names_hidden_by(&env, |name| std::env::var_os(name)) {
+                worker.env_remove(name);
+            }
             *process = Some(
-                command(gah.to_str().ok_or("Invalid worker path")?)
+                worker
                     .args(["loop", "--profile", profile])
                     .envs(env)
                     .stderr(log.try_clone().map_err(|e| e.to_string())?)
@@ -970,6 +974,26 @@ fn menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
         "quit" => app.exit(0),
         _ => {}
     }
+}
+
+/// Current setting names the worker must not inherit from this process.
+/// `file` is the worker's env file, which may name a setting the old way. The
+/// worker adopts old names itself when it starts, but only where the current
+/// name is unset, and this process already holds a current name for every old
+/// one it inherited (`adopt_legacy_settings`). That copy would hide the file's
+/// value, so it is withheld. A current name set on its own account stays.
+#[cfg(any(test, all(not(windows), not(target_os = "macos"))))]
+fn adopted_names_hidden_by(
+    file: &HashMap<String, String>,
+    inherited: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Vec<String> {
+    file.keys()
+        .filter_map(|old| {
+            let current = format!("PARASAUR_{}", old.strip_prefix("GAH_")?);
+            let copied = inherited(&current).is_some() && inherited(&current) == inherited(old);
+            (copied && !file.contains_key(&current)).then_some(current)
+        })
+        .collect()
 }
 
 /// Settings were named `GAH_*` before the product became Parasaur. A launch
@@ -1276,6 +1300,42 @@ mod tests {
         std::fs::write(&env, "return 1\n").unwrap();
         assert!(!probe("git")); // Do not fall back when an installed environment is broken.
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_worker_env_file_overrides_an_inherited_setting_under_its_old_name() {
+        let file = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect()
+        };
+        let hidden = |inherited: &[(&str, &str)], file: &HashMap<String, String>| {
+            adopted_names_hidden_by(file, |name| {
+                let value = inherited.iter().find(|(known, _)| *known == name)?.1;
+                Some(value.into())
+            })
+        };
+        let old_in_file = file(&[("GAH_CONFIG", "/worker.toml"), ("GITHUB_TOKEN", "t")]);
+        // This process copied the inherited old name at startup: the copy goes.
+        let copied = [
+            ("GAH_CONFIG", "/login.toml"),
+            ("PARASAUR_CONFIG", "/login.toml"),
+        ];
+        assert_eq!(hidden(&copied, &old_in_file), ["PARASAUR_CONFIG"]);
+        // A current name the operator set, or one the file sets itself, stays.
+        let explicit = [
+            ("GAH_CONFIG", "/login.toml"),
+            ("PARASAUR_CONFIG", "/chosen.toml"),
+        ];
+        assert!(hidden(&explicit, &old_in_file).is_empty());
+        assert!(hidden(&[("PARASAUR_CONFIG", "/chosen.toml")], &old_in_file).is_empty());
+        assert!(hidden(&[], &old_in_file).is_empty());
+        let both_in_file = file(&[
+            ("GAH_CONFIG", "/old.toml"),
+            ("PARASAUR_CONFIG", "/new.toml"),
+        ]);
+        assert!(hidden(&copied, &both_in_file).is_empty());
     }
 
     #[test]

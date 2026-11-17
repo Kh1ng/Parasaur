@@ -30,6 +30,13 @@ pub fn legacy_name(current: &str) -> Option<String> {
         .map(|rest| format!("{LEGACY}{rest}"))
 }
 
+/// The current spelling of an old setting name, for a value that reaches a
+/// process after [`adopt`] has run. `None` when `old` is not an old name.
+pub fn current_name(old: &str) -> Option<String> {
+    old.strip_prefix(LEGACY)
+        .map(|rest| format!("{CURRENT}{rest}"))
+}
+
 fn adopted(vars: impl IntoIterator<Item = (OsString, OsString)>) -> Vec<(String, OsString)> {
     let vars: Vec<(OsString, OsString)> = vars.into_iter().collect();
     vars.iter()

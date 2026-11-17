@@ -138,7 +138,7 @@ fn local_projects(settings: &DesktopSettings) -> Result<Vec<LocalProject>, Strin
     )
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, all(test, unix)))]
 const WSL_PROJECTS_SCRIPT: &str = r#"
 set -euo pipefail
 worker_env="${HOME}/.local/share/gah/worker/worker.env"
@@ -147,7 +147,9 @@ source "$worker_env" >/dev/null 2>&1
 python3 - <<'PY'
 import json, os, pathlib, subprocess
 identity = json.loads((pathlib.Path.home() / '.local/share/gah/worker/identity.json').read_text())
-profiles = json.loads(subprocess.check_output([os.environ['PARASAUR_BINARY'], 'profile', 'list', '--json']))
+# A worker installed before the settings were renamed has GAH_BINARY in its env file.
+binary = os.environ.get('PARASAUR_BINARY') or os.environ['GAH_BINARY']
+profiles = json.loads(subprocess.check_output([binary, 'profile', 'list', '--json']))
 print(json.dumps({'node_id': identity['node_id'], 'profiles': profiles}))
 PY
 "#;
@@ -766,6 +768,65 @@ pub async fn open_local_checkout(
 mod tests {
     use super::*;
     use std::fs;
+
+    /// The WSL project listing, run against a stand-in worker whose env file
+    /// holds `env_file`. The stand-in binary named `good` lists one profile;
+    /// `bad` fails.
+    #[cfg(unix)]
+    fn wsl_projects(env_file: &str) -> Option<String> {
+        use std::os::unix::fs::PermissionsExt;
+        let home = std::env::temp_dir().join(format!(
+            "gah-wsl-projects-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let worker = home.join(".local/share/gah/worker");
+        fs::create_dir_all(&worker).unwrap();
+        fs::write(worker.join("identity.json"), r#"{"node_id":"node-1"}"#).unwrap();
+        for (name, body) in [
+            ("good", "#!/bin/sh\necho '[{\"name\":\"fixture\"}]'\n"),
+            ("bad", "#!/bin/sh\nexit 1\n"),
+        ] {
+            fs::write(worker.join(name), body).unwrap();
+            fs::set_permissions(worker.join(name), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let directory = worker.to_string_lossy().into_owned();
+        fs::write(
+            worker.join("worker.env"),
+            env_file.replace("{dir}", &directory),
+        )
+        .unwrap();
+        let output = std::process::Command::new("bash")
+            .args(["-c", WSL_PROJECTS_SCRIPT])
+            .env_remove("PARASAUR_BINARY")
+            .env_remove("GAH_BINARY")
+            .env("HOME", &home)
+            .output()
+            .unwrap();
+        fs::remove_dir_all(home).unwrap();
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wsl_projects_are_listed_for_a_worker_installed_under_either_setting_name() {
+        let listed =
+            Some(r#"{"node_id": "node-1", "profiles": [{"name": "fixture"}]}"#.to_string());
+        for env_file in [
+            "export GAH_BINARY='{dir}/good'\n",
+            "export PARASAUR_BINARY='{dir}/good'\n",
+            "export GAH_BINARY='{dir}/bad'\nexport PARASAUR_BINARY='{dir}/good'\n",
+        ] {
+            assert_eq!(wsl_projects(env_file), listed, "{env_file}");
+        }
+        assert_eq!(wsl_projects("export UNRELATED=1\n"), None);
+    }
 
     #[test]
     fn origin_check_requires_the_configured_origin() {
