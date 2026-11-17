@@ -574,13 +574,16 @@ fn agent(path: &Path) -> Plist {
         .unwrap_or_else(|| panic!("{} does not parse", path.display()))
 }
 
+/// A setting from a LaunchAgent's plist, which stores settings under their
+/// pre-rename names; other keys are read as given.
 fn env_of(agent: &Plist, key: &str) -> String {
+    let stored = key.replacen("PARASAUR_", "GAH_", 1);
     agent
         .get("EnvironmentVariables")
         .unwrap()
-        .get(key)
+        .get(&stored)
         .and_then(Plist::as_str)
-        .unwrap_or_else(|| panic!("no {key}"))
+        .unwrap_or_else(|| panic!("no {stored}"))
         .to_string()
 }
 
@@ -595,9 +598,10 @@ fn arguments(agent: &Plist) -> Vec<String> {
 }
 
 /// Runs a LaunchAgent's own shell wrapper with its plist environment and a
-/// stand-in for Node, with `lines` as the operator's env file, and returns
-/// what the server would read for `setting` once startup adoption has run:
-/// the current name if set, else the old one.
+/// stand-in for Node, with `lines` as the operator's `file` (an env file the
+/// wrapper sources, or a login profile), and returns what the server would
+/// read for `setting` once startup adoption has run: the current name if set,
+/// else the old one.
 fn launched_setting(agent: &Plist, env_file: &Path, lines: &str, setting: &str) -> String {
     let saved = std::fs::read(env_file).ok();
     std::fs::write(env_file, lines).unwrap();
@@ -721,23 +725,30 @@ fn macos_launch_agents_follow_role_transport_and_tunnel() {
         checkout.join("apps/web/dist").to_string_lossy()
     );
     assert_eq!(env_of(&central, "PORT"), "4774");
-    // The operator's env file overrides the plist under either setting name;
-    // an install from before the rename still has the old one.
-    let server_env = home.join(".config/gah/server.env");
-    for (lines, expected) in [
-        ("", env_of(&central, "PARASAUR_CONFIG_PATH")),
-        ("GAH_CONFIG_PATH=/old.toml\n", "/old.toml".into()),
-        ("PARASAUR_CONFIG_PATH=/new.toml\n", "/new.toml".into()),
-        (
-            "GAH_CONFIG_PATH=/old.toml\nPARASAUR_CONFIG_PATH=/new.toml\n",
-            "/new.toml".into(),
-        ),
-    ] {
-        assert_eq!(
-            launched_setting(&central, &server_env, lines, "CONFIG_PATH"),
-            expected,
-            "{lines:?}"
-        );
+    // The operator overrides the plist under either setting name, in the env
+    // file or in the login profile the central's shell runs; an install from
+    // before the rename still uses the old name.
+    for file in [".config/gah/server.env", ".bash_profile"] {
+        let file = home.join(file);
+        for (lines, expected) in [
+            ("", env_of(&central, "PARASAUR_CONFIG_PATH")),
+            ("export GAH_CONFIG_PATH=/old.toml\n", "/old.toml".into()),
+            (
+                "export PARASAUR_CONFIG_PATH=/new.toml\n",
+                "/new.toml".into(),
+            ),
+            (
+                "export GAH_CONFIG_PATH=/old.toml PARASAUR_CONFIG_PATH=/new.toml\n",
+                "/new.toml".into(),
+            ),
+        ] {
+            assert_eq!(
+                launched_setting(&central, &file, lines, "CONFIG_PATH"),
+                expected,
+                "{}: {lines:?}",
+                file.display()
+            );
+        }
     }
     assert_eq!(
         (central.get("RunAtLoad"), central.get("KeepAlive")),
@@ -824,7 +835,7 @@ fn macos_launch_agents_follow_role_transport_and_tunnel() {
     };
     for (key, value) in entries.iter_mut() {
         if let (true, Plist::Dict(env)) = (key == "EnvironmentVariables", value) {
-            env.retain(|(name, _)| name != "PARASAUR_NODE_ADVERTISED_URL");
+            env.retain(|(name, _)| name != "GAH_NODE_ADVERTISED_URL");
         }
     }
     std::fs::write(&worker_path, Plist::Dict(entries).to_xml()).unwrap();

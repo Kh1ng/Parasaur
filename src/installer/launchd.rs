@@ -9,15 +9,6 @@ use anyhow::{bail, Context, Result};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 
-/// Shell run before a launcher sources the operator's env file. The plist
-/// supplies its settings under their current `PARASAUR_` names, and startup
-/// adoption (`legacy_settings`) keeps a current name that is already set, so
-/// a `GAH_` line in the env file would lose to the plist. Moving the plist's
-/// settings to their old names first lets the file override them under either
-/// name, as it could before the rename.
-const PLIST_SETTINGS_YIELD_TO_ENV_FILE: &str =
-    "for n in ${!PARASAUR_*}; do export \"GAH_${n#PARASAUR_}=${!n}\"; unset \"$n\"; done; ";
-
 #[derive(clap::Args, Debug, Clone, Default)]
 pub struct Args {
     #[arg(long, value_parser = ["central", "worker"])]
@@ -208,11 +199,23 @@ fn write_identity(home: &Path, repo: &Path, advertised_url: &str) -> Result<Path
     Ok(path)
 }
 
+/// A LaunchAgent's environment. Settings are written under their pre-rename
+/// `GAH_` names on purpose. The operator can override a setting after launchd
+/// has applied the plist, in the env file the wrapper sources or in a login
+/// profile, and an existing install does so under the old name. Startup
+/// adoption (`legacy_settings`) keeps a current name that is already set, so a
+/// plist value under the current name would beat every such override. Under
+/// the old name the plist loses to both spellings, and `installer plist-get`
+/// reads either.
 fn env(entries: Vec<(&str, String)>) -> Plist {
     Plist::Dict(
         entries
             .into_iter()
-            .map(|(k, v)| (k.to_string(), Plist::String(v)))
+            .map(|(name, value)| {
+                let name =
+                    crate::legacy_settings::legacy_name(name).unwrap_or_else(|| name.to_string());
+                (name, Plist::String(value))
+            })
             .collect(),
     )
 }
@@ -289,13 +292,11 @@ pub fn install(args: &Args, home: &Path) -> Result<()> {
             if !server.is_file() || !args.repo.join("apps/web/dist/index.html").is_file() {
                 bail!("central build is missing; run gah update --role central first");
             }
-            let source = format!(
-                "{PLIST_SETTINGS_YIELD_TO_ENV_FILE}set -a; [ ! -f \"$HOME/.config/gah/server.env\" ] || . \"$HOME/.config/gah/server.env\"; [ ! -f \"$HOME/.config/gah/tdai-gateway.env\" ] || . \"$HOME/.config/gah/tdai-gateway.env\"; set +a; exec \"$0\" \"$1\""
-            );
+            let source = "set -a; [ ! -f \"$HOME/.config/gah/server.env\" ] || . \"$HOME/.config/gah/server.env\"; [ ! -f \"$HOME/.config/gah/tdai-gateway.env\" ] || . \"$HOME/.config/gah/tdai-gateway.env\"; set +a; exec \"$0\" \"$1\"";
             agent.extend([
                 (
                     "ProgramArguments",
-                    Plist::strings(["/bin/bash", "-lc", &source, &args.node, &server_text]),
+                    Plist::strings(["/bin/bash", "-lc", source, &args.node, &server_text]),
                 ),
                 (
                     "EnvironmentVariables",
@@ -324,16 +325,14 @@ pub fn install(args: &Args, home: &Path) -> Result<()> {
                 bail!("worker build is missing; run gah update --role worker first");
             }
             let identity = worker_identity.to_string_lossy().into_owned();
-            let source = format!(
-                "{PLIST_SETTINGS_YIELD_TO_ENV_FILE}set -a; [ ! -f \"$HOME/.config/gah/gah-loop.env\" ] || . \"$HOME/.config/gah/gah-loop.env\"; set +a; export PARASAUR_COORDINATOR_IDENTITY_PATH=\"$2\"; exec \"$0\" \"$1\""
-            );
+            let source = "set -a; [ ! -f \"$HOME/.config/gah/gah-loop.env\" ] || . \"$HOME/.config/gah/gah-loop.env\"; set +a; export PARASAUR_COORDINATOR_IDENTITY_PATH=\"$2\"; exec \"$0\" \"$1\"";
             agent.extend([
                 (
                     "ProgramArguments",
                     Plist::strings([
                         "/bin/bash",
                         "-c",
-                        &source,
+                        source,
                         &args.node,
                         &server_text,
                         &identity,
