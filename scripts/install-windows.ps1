@@ -177,6 +177,7 @@ if ($settings.worker_ip -notin $ips) {
 & wsl.exe --distribution $settings.distribution --exec systemctl --user start gah-worker.service
 if ($LASTEXITCODE -ne 0) { throw 'Cannot start gah-worker.service.' }
 & wsl.exe --distribution $settings.distribution --exec sleep infinity
+throw "WSL worker keepalive exited (exit $LASTEXITCODE). Task Scheduler must retry the worker."
 '@
         [IO.File]::WriteAllText($startup, $startupScript.Replace('__SETTINGS__', $startupSettings.Replace("'", "''")), $utf8)
         if (-not (Get-NetFirewallRule -Name 'GAH-WSL-Worker' -ErrorAction SilentlyContinue)) {

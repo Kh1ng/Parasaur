@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { SubscriptionCards } from '../components/SubscriptionCards.js';
-import { subscriptionUsage } from '../lib/subscriptionUsage.js';
-import type { QuotaCheck, QuotaSnapshot, QuotaCandidateStatus, FleetQuotaSnapshot, AccountUsageObservation, AccountUsageModel } from '@git-agent-harness/contracts';
+import { quotaCheckProblem, subscriptionUsage, usageWindowProblem } from '../lib/subscriptionUsage.js';
+import type { QuotaCheck, QuotaObservation, QuotaSnapshot, QuotaCandidateStatus, FleetQuotaSnapshot, AccountUsageObservation, AccountUsageModel } from '@git-agent-harness/contracts';
 import { Gauge, ListChecks, CheckCircle2, Coins, Timer } from 'lucide-react';
 import { useWebSocket } from '../ws/WebSocketContext.js';
 import { useUiStore } from '../store/uiStore.js';
 import { useGahStore } from '../store/gahStore.js';
 import { useAutoRefresh } from '../hooks/useAutoRefresh.js';
 import { useWsReconnectRefresh } from '../hooks/useWsReconnectRefresh.js';
+import { useNow } from '../hooks/useNow.js';
 import { PageHeader } from '../components/ui/PageHeader.js';
 import { EmptyState, LoadingState, ErrorState } from '../components/ui/EmptyState.js';
 import { StatusBadge } from '../components/ui/StatusBadge.js';
@@ -36,15 +37,15 @@ function formatQuotaMetadata(q: {
   quota_window?: string | null;
   quota_reset_at?: string | null;
   usage_source?: string | null;
-}): string {
-  const remaining = formatRemaining(q.quota_reset_at);
+}, historical = false): string {
+  const remaining = historical ? null : formatRemaining(q.quota_reset_at);
   const reset = q.quota_reset_at?.startsWith('in ')
     ? q.quota_reset_at
     : remaining
       ? `in ${remaining}`
       : formatLocalTime(q.quota_reset_at) ?? q.quota_reset_at;
 
-  return [reset ? `Resets ${reset}` : 'No reset time', q.usage_source ? `source: ${q.usage_source}` : null]
+  return [reset ? `${historical ? 'Recorded reset' : 'Resets'} ${reset}` : 'No reset time', q.usage_source ? `source: ${q.usage_source}` : null]
     .filter(Boolean)
     .join(' · ');
 }
@@ -187,7 +188,7 @@ export function QuotaPage() {
   // the content area swaps to loading/error, so a total data-fetch failure
   // never leaves the user looking at a page with no identity and no way
   // to retry.
-  if (quota.loading && !quota.data) {
+  if (quota.loading && !quota.data && !quota.error) {
     return (
       <div className="quota-page space-y-6">
         {header}
@@ -219,9 +220,15 @@ export function QuotaPage() {
     <div className="quota-page space-y-6">
       {header}
 
-      <SubscriptionCards subscriptions={subscriptionUsage(snapshot)} />
+      {quota.error && <div role="alert" className="rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-primary">
+        <p className="font-medium">Quota snapshot unavailable</p>
+        <p className="mt-1">Showing the last recorded snapshot. Current allowances and route eligibility are unconfirmed.</p>
+        <button type="button" className="btn-secondary mt-2" disabled={quota.loading} onClick={refresh}>Retry quota</button>
+      </div>}
 
-      <QuotaCandidateLedger candidates={candidates} quotaChecks={snapshot?.quota_checks ?? []} />
+      <SubscriptionCards subscriptions={subscriptionUsage(snapshot)} unavailable={Boolean(quota.error)} />
+
+      <QuotaCandidateLedger candidates={candidates} quotaChecks={snapshot?.quota_checks ?? []} unavailable={Boolean(quota.error)} />
 
       <MistralConnectionPanel />
 
@@ -256,7 +263,7 @@ export function QuotaPage() {
               label="Candidates"
               value={String(candidates.length)}
               icon={Timer}
-              hint={candidates.length > 0 ? `${candidates.filter((c) => c.eligible_now).length} not blocked` : undefined}
+              hint={quota.error ? 'Current eligibility unconfirmed' : candidates.length > 0 ? `${candidates.filter((c) => c.eligible_now).length} not blocked` : undefined}
             />
           </section>
 
@@ -372,7 +379,12 @@ function AccountUsageDetails({ usage }: { usage: AccountUsageObservation }) {
   </div>;
 }
 
-function QuotaCandidateLedger({ candidates: configuredCandidates, quotaChecks }: { candidates: QuotaCandidateStatus[]; quotaChecks: QuotaCheck[] }) {
+function QuotaCandidateLedger({ candidates: configuredCandidates, quotaChecks, unavailable = false }: { candidates: QuotaCandidateStatus[]; quotaChecks: QuotaCheck[]; unavailable?: boolean }) {
+  const now = useNow();
+  const readingProblem = (source: QuotaLedgerRow, observation: QuotaObservation) => usageWindowProblem({
+    resetAt: observation.quota_reset_at ?? null, observedAt: observation.observed_at ?? null,
+    checkProblem: quotaCheckProblem(source, observation, quotaChecks),
+  }, now);
   // An account observation is not permission to schedule work on that account.
   const observedAccounts: QuotaLedgerRow[] = quotaChecks.filter(check =>
     check.backend_instance && (check.credential_id || (check.quota_observations?.length ?? 0) > 0 || check.status === 'failed') && !configuredCandidates.some(candidate =>
@@ -425,7 +437,7 @@ function QuotaCandidateLedger({ candidates: configuredCandidates, quotaChecks }:
               return (
                 <section key={provider} className="quota-provider-summary">
                   <div className="flex items-center justify-between gap-3 mb-3"><h4 className="text-sm font-semibold text-primary">{providerLabel(provider)}</h4><span className="text-xs text-muted">{routingScopes.length} {routingScopes.length === 1 ? 'candidate' : 'candidates'}{scopes.length > routingScopes.length ? ` · ${scopes.length - routingScopes.length} observed accounts` : ''}</span></div>
-                  {routingScopes.length > 0 ? <p className="text-2xl font-semibold text-primary tabular-nums">{routingScopes.filter(candidate => candidate.eligible_now).length}<span className="text-sm font-normal text-muted"> / {routingScopes.length} not blocked</span></p> : <p className="text-sm text-muted">No routing candidate</p>}
+                  {unavailable ? <p className="text-sm text-muted">Current route eligibility unconfirmed</p> : routingScopes.length > 0 ? <p className="text-2xl font-semibold text-primary tabular-nums">{routingScopes.filter(candidate => candidate.eligible_now).length}<span className="text-sm font-normal text-muted"> / {routingScopes.length} not blocked</span></p> : <p className="text-sm text-muted">No routing candidate</p>}
                   <p className="text-xs text-muted mt-2">{observations.length} account {observations.length === 1 ? 'observation' : 'observations'} · {observations.filter(observation => quotaPercentages(observation) !== null).length} with quota percentages</p>
                 </section>
               );
@@ -441,8 +453,8 @@ function QuotaCandidateLedger({ candidates: configuredCandidates, quotaChecks }:
                       <p className="text-sm font-medium text-primary break-words">{scopeIdentity(candidate)}</p>
                       <p className="text-xs text-muted mt-1">{candidate.observationOnly ? 'Observed account · not a routing candidate' : candidate.modes.length > 0 ? candidate.modes.join(', ') : 'candidate'}{candidate.backend === 'opencode' && ' · OpenCode runner'}{!candidate.observationOnly && !candidate.configured && ' · no profile runner override'}</p>
                       <div className="mt-2 flex flex-wrap gap-2">
-                        <StatusBadge tone={candidate.observationOnly ? 'unknown' : !candidate.eligible_now ? 'critical' : candidate.observed_at ? 'good' : 'unknown'} label={candidate.observationOnly ? 'Availability unverified' : !candidate.eligible_now ? 'Unavailable' : candidate.observed_at ? 'Eligible' : 'Availability unverified'} />
-                        {!(candidate.quota_observations ?? []).some(observation => quotaPercentages(observation) !== null) && <StatusBadge tone="unknown" label="Quota unknown" />}
+                        <StatusBadge tone={unavailable || candidate.observationOnly ? 'unknown' : !candidate.eligible_now ? 'critical' : candidate.observed_at ? 'good' : 'unknown'} label={unavailable ? 'Eligibility unconfirmed' : candidate.observationOnly ? 'Availability unverified' : !candidate.eligible_now ? 'Unavailable' : candidate.observed_at ? 'Eligible' : 'Availability unverified'} />
+                        {(unavailable || !(candidate.quota_observations ?? []).some(observation => quotaPercentages(observation) !== null && !readingProblem(candidate, observation))) && <StatusBadge tone="unknown" label="Quota unknown" />}
                         {isStale(candidate.observed_at) && <StatusBadge tone="serious" label="Stale" />}
                       </div>
                       {!candidate.observationOnly && !candidate.eligible_now && <p className="text-xs text-secondary mt-2">{candidate.reason ?? 'Unknown reason'} · {formatRemaining(candidate.unavailable_until) ? `Resets in ${formatRemaining(candidate.unavailable_until)}` : 'No known reset time'}</p>}
@@ -454,20 +466,23 @@ function QuotaCandidateLedger({ candidates: configuredCandidates, quotaChecks }:
                         const percentages = quotaPercentages(observation);
                         const window = observation.quota_window === 'vibe-code-included-monthly' ? 'Vibe Code included monthly allowance' : observation.quota_window ?? 'Unknown window';
                         const label = `${window}${observation.model ? ` · ${observation.model}` : ''}`;
+                        const problem = readingProblem(candidate, observation);
+                        const historical = unavailable || Boolean(problem);
                         return (
                           <div key={observationIndex} className="min-w-0 text-xs text-secondary">
-                            <div className="flex flex-wrap items-start justify-between gap-2 mb-2"><span>{observation.account_usage ? 'Account consumption' : label}</span>{isStale(observation.observed_at) && <StatusBadge tone="serious" label="Stale" />}</div>
+                            <div className="flex flex-wrap items-start justify-between gap-2 mb-2"><span>{observation.account_usage ? 'Account consumption' : label}</span>{historical && <StatusBadge tone="unknown" label="Last recorded" />}</div>
+                            {problem && <p className="mb-2 text-muted">{problem}</p>}
                             {observation.account_usage && <AccountUsageDetails usage={observation.account_usage} />}
                             {percentages ? (
                               <>
                                 {observation.account_usage && <p className="text-primary mt-4 mb-2">{label}</p>}
-                                <div className="flex items-baseline justify-between gap-2 tabular-nums mb-2"><span>{formatQuotaPercent(percentages.used)} used</span><span className="font-semibold text-primary">{formatQuotaPercent(percentages.remaining)} remaining</span></div>
-                                <progress className={`usage-progress router-quota-progress ${percentages.remaining < 20 ? 'text-critical' : percentages.remaining < 60 ? 'text-warning' : 'text-good'}`} max={100} value={percentages.remaining} aria-label={`${label}: ${formatQuotaPercent(percentages.used)} used, ${formatQuotaPercent(percentages.remaining)} remaining`} />
+                                <div className="flex items-baseline justify-between gap-2 tabular-nums mb-2"><span>{historical && 'Last recorded: '}{formatQuotaPercent(percentages.used)} used</span><span className="font-semibold text-primary">{formatQuotaPercent(percentages.remaining)} remaining</span></div>
+                                <progress className={`usage-progress router-quota-progress ${historical ? 'text-muted' : percentages.remaining < 20 ? 'text-critical' : percentages.remaining < 60 ? 'text-warning' : 'text-good'}`} max={100} value={percentages.remaining} aria-label={`${historical ? 'Last recorded ' : ''}${label}: ${formatQuotaPercent(percentages.used)} used, ${formatQuotaPercent(percentages.remaining)} remaining`} />
                               </>
                             ) : observation.account_usage
                               ? observation.quota_window === 'vibe-code-included-monthly' && <p className="text-muted mt-4">Monthly allowance reading unavailable</p>
                               : <p className="text-muted">No usage percentage available</p>}
-                            <p className="mt-2 text-muted">{observation.account_usage && !percentages ? `source: ${observation.usage_source ?? 'Unknown'}` : formatQuotaMetadata(observation)}</p>
+                            <p className="mt-2 text-muted">{observation.account_usage && !percentages ? `source: ${observation.usage_source ?? 'Unknown'}` : formatQuotaMetadata(observation, historical)}</p>
                             <p className="mt-1 text-muted">{formatAge(observation.observed_at) ? `Observed ${formatAge(observation.observed_at)}` : 'No observation time'}</p>
                           </div>
                         );
@@ -475,10 +490,12 @@ function QuotaCandidateLedger({ candidates: configuredCandidates, quotaChecks }:
                     </div>
                     {candidate.usage && <details className="quota-row-feedback text-xs text-muted">
                       <summary className="cursor-pointer">Usage details</summary>
+                      <p className="mt-2">These backend/model totals may include other accounts or models. See Subscriptions for account costs.</p>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
                         <span>{formatCount(candidate.usage.entries)} entries · {formatPercent(candidate.usage.success_rate)} success</span>
                         <span>{formatTokens(candidate.usage.total_tokens)} tokens · {formatCount(candidate.usage.requests_count)} requests</span>
-                        {(candidate.usage.actual_cost_usd !== null || candidate.usage.estimated_cost_usd !== null) && <span>Cost: {formatCost(candidate.usage.actual_cost_usd ?? candidate.usage.estimated_cost_usd)}</span>}
+                        <span>Recorded actual cost: {formatCost(candidate.usage.actual_cost_usd)}</span>
+                        <span>Estimated cost: {formatCost(candidate.usage.estimated_cost_usd)}</span>
                         {candidate.source && <span>Source: {candidate.source}</span>}
                       </div>
                     </details>}

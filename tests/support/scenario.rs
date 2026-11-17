@@ -358,19 +358,19 @@ impl ScenarioHarness {
             .env("HOME", self._temp.path().join("home"))
             .env("TMPDIR", self._temp.path().join("tmp"))
             .env(
-                "GAH_CANONICAL_CONFIG",
+                "PARASAUR_CANONICAL_CONFIG",
                 self._temp.path().join("canonical.toml"),
             )
             .env("XDG_STATE_HOME", self._temp.path().join("xdg-state"))
-            .env("GAH_CONFIG", &self.config_path)
+            .env("PARASAUR_CONFIG", &self.config_path)
             .env(
-                "GAH_COORDINATOR_IDENTITY_PATH",
+                "PARASAUR_COORDINATOR_IDENTITY_PATH",
                 self._temp.path().join("identity.json"),
             )
-            .env("GAH_LEDGER_PATH", &self.ledger_path)
-            .env("GAH_EVENTS_PATH", &self.events_path)
+            .env("PARASAUR_LEDGER_PATH", &self.ledger_path)
+            .env("PARASAUR_EVENTS_PATH", &self.events_path)
             .env(
-                "GAH_TEST_NOW",
+                "PARASAUR_TEST_NOW",
                 self.now
                     .format(&Rfc3339)
                     .expect("scenario clock formats as RFC3339"),
@@ -380,8 +380,8 @@ impl ScenarioHarness {
                 format!("{}:{}", self.bin_dir.display(), original_path()),
             );
         match &self.node_pressure_fixture {
-            Some(path) => command.env("GAH_TEST_NODE_PRESSURE_FILE", path),
-            None => command.env_remove("GAH_TEST_NODE_PRESSURE_FILE"),
+            Some(path) => command.env("PARASAUR_TEST_NODE_PRESSURE_FILE", path),
+            None => command.env_remove("PARASAUR_TEST_NODE_PRESSURE_FILE"),
         };
         for key in BACKTRACE_ENV_VARS {
             command.env_remove(key);

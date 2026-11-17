@@ -120,17 +120,17 @@ export async function sendTestNotification(gahBinary: () => string = findGahBina
 /** One shell hook for every notifiable event, piped as a single line on stdin
  * (the same shape as the Rust per-profile `notify_command`). */
 export function commandDelivery(baseUrl: string, env: NodeJS.ProcessEnv = process.env): ActivityDelivery | undefined {
-  let command = env.GAH_NOTIFY_COMMAND;
-  if (!command && env.GAH_NODE_LIVENESS_NOTIFY_COMMAND) {
-    console.log('GAH_NODE_LIVENESS_NOTIFY_COMMAND is deprecated; rename it to GAH_NOTIFY_COMMAND. It now receives every notifiable event.');
-    command = env.GAH_NODE_LIVENESS_NOTIFY_COMMAND;
+  let command = env.PARASAUR_NOTIFY_COMMAND;
+  if (!command && env.PARASAUR_NODE_LIVENESS_NOTIFY_COMMAND) {
+    console.log('PARASAUR_NODE_LIVENESS_NOTIFY_COMMAND is deprecated; rename it to PARASAUR_NOTIFY_COMMAND. It now receives every notifiable event.');
+    command = env.PARASAUR_NODE_LIVENESS_NOTIFY_COMMAND;
   }
   if (!command) return undefined;
   const hook = command;
   return async (event) => {
     if (!notifiableActivity(event)) return [];
     try {
-      await run('GAH_NOTIFY_COMMAND', 'sh', ['-c', hook], `${activityLine(event, baseUrl)}\n`);
+      await run('PARASAUR_NOTIFY_COMMAND', 'sh', ['-c', hook], `${activityLine(event, baseUrl)}\n`);
       return [deliveryReceipt('command', 'Command hook')];
     } catch (error) {
       console.error(`[activity] command hook failed for ${event.id}: ${error instanceof Error ? error.message : String(error)}`);

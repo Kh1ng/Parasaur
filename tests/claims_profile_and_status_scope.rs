@@ -76,7 +76,7 @@ default_target_branch = "main"
 
     let claims_by_profile_out = bin()
         .current_dir(&repo)
-        .env("GAH_CLAIM_STATE_PATH", &claim_state)
+        .env("PARASAUR_CLAIM_STATE_PATH", &claim_state)
         .env("PATH", prepend_path(&fake_bin))
         .args([
             "claims",
@@ -99,7 +99,7 @@ default_target_branch = "main"
 
     let claims_all_out = bin()
         .current_dir(&repo)
-        .env("GAH_CLAIM_STATE_PATH", &claim_state)
+        .env("PARASAUR_CLAIM_STATE_PATH", &claim_state)
         .env("PATH", prepend_path(&fake_bin))
         .args([
             "claims",
@@ -123,8 +123,8 @@ default_target_branch = "main"
 
     let status_out = bin()
         .current_dir(&repo)
-        .env("GAH_CLAIM_STATE_PATH", &claim_state)
-        .env("GAH_LEDGER_PATH", tmp.path().join("ledger.jsonl"))
+        .env("PARASAUR_CLAIM_STATE_PATH", &claim_state)
+        .env("PARASAUR_LEDGER_PATH", tmp.path().join("ledger.jsonl"))
         .env("PATH", prepend_path(&fake_bin))
         .args([
             "status",

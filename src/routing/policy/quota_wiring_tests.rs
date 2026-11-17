@@ -117,6 +117,7 @@ fn cost_aware_ordering_uses_live_quota_store_data() {
             last_failure_class: None,
             mode: "pm",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,

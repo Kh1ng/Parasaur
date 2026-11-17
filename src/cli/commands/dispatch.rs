@@ -10,6 +10,7 @@ pub struct Args {
     pub profile: String,
     pub mode: String,
     pub backend: String,
+    pub backend_instance: Option<String>,
     pub target: String,
     pub branch: Option<String>,
     pub mr: Option<String>,
@@ -38,6 +39,7 @@ impl From<Args> for CliDispatchArgs {
             profile: args.profile,
             mode: args.mode,
             backend: args.backend,
+            backend_instance: args.backend_instance,
             target: args.target,
             branch: args.branch,
             mr: args.mr,
@@ -64,9 +66,12 @@ impl From<Args> for CliDispatchArgs {
 }
 
 pub fn run(args: Args) -> Result<()> {
+    if args.backend_instance.is_some() && args.backend == "auto" {
+        anyhow::bail!("--backend-instance requires an explicit --backend");
+    }
     // Override inherited opt-in: only this CLI flag authorizes job commands.
     std::env::set_var(
-        "GAH_ENFORCE_JOB_FILE",
+        "PARASAUR_ENFORCE_JOB_FILE",
         if args.enforce_job_file { "1" } else { "0" },
     );
     if args.enforce_job_file && !matches!(args.mode.as_str(), "fix" | "improve") {
@@ -74,6 +79,12 @@ pub fn run(args: Args) -> Result<()> {
     }
     runner::install_shutdown_handler()?;
     let mut cfg = config::load(args.config_path.as_deref())?;
+    // Explicit commands report a refused spend policy as an error before
+    // acquiring claims. The dispatch layer rechecks for controller callers
+    // and for changes in history while this command was waiting for its lock.
+    if !args.dry_run {
+        crate::spend_budget::ensure_available(&cfg, &args.profile)?;
+    }
     if args.manual_worker {
         prepare_manual_worker(&mut cfg, &args)?;
         println!(
@@ -216,6 +227,7 @@ fn prepare_manual_worker(cfg: &mut config::GahConfig, args: &Args) -> Result<()>
 mod tests {
     fn manual_args(target: &str) -> super::Args {
         super::Args {
+            backend_instance: None,
             profile: "repo".into(),
             mode: "improve".into(),
             backend: "codex".into(),

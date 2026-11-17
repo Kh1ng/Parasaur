@@ -5,7 +5,61 @@
 
 use super::*;
 
+mod external_approval;
+pub(super) use external_approval::add_external_approval_operations;
+
 // Operation definitions for each CLI command module
+
+pub(super) fn add_native_handoff_operations(manifest: &mut CapabilityManifest) {
+    for action in [
+        "plan",
+        "prepare",
+        "check",
+        "check-current-policy",
+        #[cfg(target_os = "linux")]
+        "host-reserve",
+        #[cfg(target_os = "linux")]
+        "worker-status",
+        #[cfg(target_os = "linux")]
+        "execute",
+        #[cfg(target_os = "linux")]
+        "start",
+        #[cfg(target_os = "linux")]
+        "result",
+        #[cfg(target_os = "linux")]
+        "release-result",
+        #[cfg(target_os = "linux")]
+        "release-reservation",
+    ] {
+        manifest.add_operation(OperationDefinition {
+            operation_id: format!("native-handoff.{action}"), display_name: format!("Native Handoff {action}"),
+            class: OperationClass::Admin, profile_scope: ProfileScope::Global, request_schema: None, response_schema: None,
+            streaming: StreamingBehavior::None, idempotency: if matches!(action, "host-reserve" | "execute" | "start") { Idempotency::NonIdempotent } else { Idempotency::Conditional }, secret_fields: vec![],
+            remote_disposition: RemoteDisposition::LocalOnly, local_only_reason: Some(LocalOnlyReason::SecuritySensitive),
+            documentation: Some("Private native context, policy checks, host admission/recovery and fixed worker entry. Only execute consumes fresh start authority. Never expose these paths or credential stdin through a generic remote operation.".into()),
+            cli_command_path: format!("gah native-handoff {action}"), is_stable: false,
+        });
+    }
+}
+
+pub(super) fn add_isolation_host_operations(manifest: &mut CapabilityManifest) {
+    manifest.add_operation(OperationDefinition {
+        operation_id: "isolation-host.run".into(),
+        display_name: "Supervise Isolated Host Execution".into(),
+        class: OperationClass::Admin,
+        profile_scope: ProfileScope::Global,
+        request_schema: None,
+        response_schema: None,
+        streaming: StreamingBehavior::Jsonl,
+        idempotency: Idempotency::NonIdempotent,
+        secret_fields: vec![],
+        remote_disposition: RemoteDisposition::LocalOnly,
+        local_only_reason: Some(LocalOnlyReason::SecuritySensitive),
+        documentation: Some("Private descriptor protocol for host capacity, affirmative execution approval and heartbeat-bounded cgroup lifetime; never expose as a remote command.".into()),
+        cli_command_path: "gah isolation-host".into(),
+        is_stable: true,
+    });
+}
 
 pub(super) fn add_availability_operations(manifest: &mut CapabilityManifest) {
     // gah availability
@@ -341,6 +395,22 @@ pub(super) fn add_ledger_operations(manifest: &mut CapabilityManifest) {
         is_stable: true,
     });
 
+    manifest.add_operation(OperationDefinition {
+        operation_id: "ledger.receive_dispatch".into(),
+        display_name: "Receive Native Worker Result".into(),
+        class: OperationClass::Admin,
+        profile_scope: ProfileScope::Global,
+        request_schema: None,
+        response_schema: None,
+        streaming: StreamingBehavior::None,
+        idempotency: Idempotency::Idempotent,
+        secret_fields: vec![],
+        remote_disposition: RemoteDisposition::LocalOnly,
+        local_only_reason: Some(LocalOnlyReason::SecuritySensitive),
+        documentation: Some("Imports a terminal native result using the central caller's separately prepared binding; never expose worker-selected binding paths through generic remote commands.".into()),
+        cli_command_path: "gah ledger receive-dispatch".into(),
+        is_stable: false,
+    });
     // gah ledger repair-tail
     manifest.add_operation(OperationDefinition {
         operation_id: "ledger.repair_tail".to_string(),
@@ -643,147 +713,6 @@ pub(super) fn add_vibe_model_operations(manifest: &mut CapabilityManifest) {
                 .to_string(),
         ),
         cli_command_path: "gah config set-vibe-model".to_string(),
-        is_stable: true,
-    });
-}
-
-pub(super) fn add_external_approval_operations(manifest: &mut CapabilityManifest) {
-    // gah external-approval list
-    manifest.add_operation(OperationDefinition {
-        operation_id: "external_approval.list".to_string(),
-        display_name: "List External Approvals".to_string(),
-        class: OperationClass::Read,
-        profile_scope: ProfileScope::ProfileRequired,
-        request_schema: None,
-        response_schema: None,
-        streaming: StreamingBehavior::None,
-        idempotency: Idempotency::Idempotent,
-        secret_fields: vec![],
-        remote_disposition: RemoteDisposition::RemoteAvailable,
-        local_only_reason: None,
-        documentation: Some("List external approval scopes for a profile".to_string()),
-        cli_command_path: "gah external-approval list".to_string(),
-        is_stable: true,
-    });
-
-    // gah external-approval request
-    manifest.add_operation(OperationDefinition {
-        operation_id: "external_approval.request".to_string(),
-        display_name: "Request External Approval".to_string(),
-        class: OperationClass::Mutation,
-        profile_scope: ProfileScope::ProfileRequired,
-        request_schema: None,
-        response_schema: None,
-        streaming: StreamingBehavior::None,
-        idempotency: Idempotency::Idempotent,
-        secret_fields: vec![
-            SecretFieldSpec {
-                field_path: "credential_label".to_string(),
-                is_secret: false,
-                may_contain_secrets: true,
-            },
-            SecretFieldSpec {
-                field_path: "max_dollars".to_string(),
-                is_secret: false,
-                may_contain_secrets: false,
-            },
-        ],
-        remote_disposition: RemoteDisposition::RemoteAvailable,
-        local_only_reason: None,
-        documentation: Some("Record a requested external operation approval for a specific profile/repo/work item and credential label".to_string()),
-        cli_command_path: "gah external-approval request".to_string(),
-        is_stable: true,
-    });
-
-    // gah external-approval inspect
-    manifest.add_operation(OperationDefinition {
-        operation_id: "external_approval.inspect".to_string(),
-        display_name: "Inspect External Approval".to_string(),
-        class: OperationClass::Read,
-        profile_scope: ProfileScope::ProfileRequired,
-        request_schema: None,
-        response_schema: None,
-        streaming: StreamingBehavior::None,
-        idempotency: Idempotency::Idempotent,
-        secret_fields: vec![],
-        remote_disposition: RemoteDisposition::RemoteAvailable,
-        local_only_reason: None,
-        documentation: Some(
-            "Inspect the current external approval state for one exact scope".to_string(),
-        ),
-        cli_command_path: "gah external-approval inspect".to_string(),
-        is_stable: true,
-    });
-
-    // gah external-approval grant
-    manifest.add_operation(OperationDefinition {
-        operation_id: "external_approval.grant".to_string(),
-        display_name: "Grant External Approval".to_string(),
-        class: OperationClass::Mutation,
-        profile_scope: ProfileScope::ProfileRequired,
-        request_schema: None,
-        response_schema: None,
-        streaming: StreamingBehavior::None,
-        idempotency: Idempotency::Idempotent,
-        secret_fields: vec![],
-        remote_disposition: RemoteDisposition::RemoteAvailable,
-        local_only_reason: None,
-        documentation: Some("Grant the requested external approval scope".to_string()),
-        cli_command_path: "gah external-approval grant".to_string(),
-        is_stable: true,
-    });
-
-    // gah external-approval deny
-    manifest.add_operation(OperationDefinition {
-        operation_id: "external_approval.deny".to_string(),
-        display_name: "Deny External Approval".to_string(),
-        class: OperationClass::Mutation,
-        profile_scope: ProfileScope::ProfileRequired,
-        request_schema: None,
-        response_schema: None,
-        streaming: StreamingBehavior::None,
-        idempotency: Idempotency::Idempotent,
-        secret_fields: vec![],
-        remote_disposition: RemoteDisposition::RemoteAvailable,
-        local_only_reason: None,
-        documentation: Some("Deny a pending external approval request".to_string()),
-        cli_command_path: "gah external-approval deny".to_string(),
-        is_stable: true,
-    });
-
-    // gah external-approval revoke
-    manifest.add_operation(OperationDefinition {
-        operation_id: "external_approval.revoke".to_string(),
-        display_name: "Revoke External Approval".to_string(),
-        class: OperationClass::Mutation,
-        profile_scope: ProfileScope::ProfileRequired,
-        request_schema: None,
-        response_schema: None,
-        streaming: StreamingBehavior::None,
-        idempotency: Idempotency::Idempotent,
-        secret_fields: vec![],
-        remote_disposition: RemoteDisposition::RemoteAvailable,
-        local_only_reason: None,
-        documentation: Some("Revoke an active external approval".to_string()),
-        cli_command_path: "gah external-approval revoke".to_string(),
-        is_stable: true,
-    });
-
-    // gah external-approval expire
-    manifest.add_operation(OperationDefinition {
-        operation_id: "external_approval.expire".to_string(),
-        display_name: "Expire External Approval".to_string(),
-        class: OperationClass::Mutation,
-        profile_scope: ProfileScope::ProfileRequired,
-        request_schema: None,
-        response_schema: None,
-        streaming: StreamingBehavior::None,
-        idempotency: Idempotency::Idempotent,
-        secret_fields: vec![],
-        remote_disposition: RemoteDisposition::RemoteAvailable,
-        local_only_reason: None,
-        documentation: Some("Expire an external approval immediately".to_string()),
-        cli_command_path: "gah external-approval expire".to_string(),
         is_stable: true,
     });
 }

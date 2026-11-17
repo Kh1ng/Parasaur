@@ -82,6 +82,7 @@ for (const mode of ['issue', 'pr'] as const) {
       let body: unknown = {};
       if (pathname.endsWith('/nodes')) body = { nodes: [{ nodeId: 'central', displayName: 'Central', role: 'central', eligible: true, chatCapable: true }] };
       if (pathname.endsWith('/settings')) body = { profileOverrides: {}, defaultBackend: 'claude' };
+      if (pathname.endsWith('/accounts')) body = { accounts: [] };
       if (pathname.endsWith('/models')) body = { models: [], currentModelId: null };
       if (pathname.endsWith('/issues')) body = { issues: candidates };
       if (pathname.endsWith('/prs')) body = { prs: candidates };
@@ -138,7 +139,7 @@ for (const mode of ['issue', 'pr'] as const) {
 
 test('new chat is an inline panel: Close and Cancel dismiss it and the extras stay folded', async ({ mount, page }) => {
   let closed = 0;
-  await page.route('**/api/**', (route) => route.fulfill({ json: { nodes: [{ nodeId: 'central', displayName: 'Mac', role: 'central', chatCapable: true, eligible: true, lastSeenAt: null }], profileOverrides: {}, defaultBackend: 'claude', models: [], currentModelId: null } }));
+  await page.route('**/api/**', (route) => route.fulfill({ json: { nodes: [{ nodeId: 'central', displayName: 'Mac', role: 'central', chatCapable: true, eligible: true, lastSeenAt: null }], profileOverrides: {}, defaultBackend: 'claude', models: [], currentModelId: null, accounts: [] } }));
   const component = await mount(<NewChatPanel currentProfile="gah"
     profiles={[{ name: 'gah', display_name: 'GAH', repo: 'owner/gah', provider: 'github', local_path: '/tmp/gah', repo_id: 'gah', worktree_base: '/tmp/worktrees', web_url: null, max_parallel_workers: null, max_open_managed_mrs: 1, manager_wake_autonomy: null, validation_timeout_seconds: 300 }]}
     backends={[{ id: 'claude', displayName: 'Claude', implemented: true }]}

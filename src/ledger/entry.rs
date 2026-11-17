@@ -462,7 +462,8 @@ pub struct RoutingCandidateDiagnostic {
 // v10 records explicit absent-usage reasons for new rows; older rows retain
 // their unknown telemetry during persistence normalization.
 // v11 records exact bound skill versions on entries and per-attempt routes.
-pub const LEDGER_SCHEMA_VERSION: u32 = 11;
+// v12 records the observed worker process separately from the native job outcome.
+pub const LEDGER_SCHEMA_VERSION: u32 = 12;
 
 /// Version of the machine-enforced review output and lifecycle policy. Bump
 /// this when an older review opinion, retry budget, or derived human gate must
@@ -498,6 +499,8 @@ pub struct LedgerEntry {
     pub skills: Vec<super::skills::SkillVersion>,
     pub timestamp: String,
     pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_execution: Option<super::remote_dispatch::ReceivedExecution>,
     pub profile: String,
     pub display_name: String,
     pub repo_id: String,
@@ -779,6 +782,7 @@ impl LedgerEntry {
             schema_version: LEDGER_SCHEMA_VERSION,
             skills: Vec::new(),
             session_id,
+            remote_execution: None,
             profile: profile_name.to_string(),
             display_name: profile.display_name.clone(),
             repo_id: profile.repo_id.clone(),
@@ -894,6 +898,7 @@ impl LedgerEntry {
             schema_version: LEDGER_SCHEMA_VERSION,
             skills: Vec::new(),
             session_id: None,
+            remote_execution: None,
             profile: profile_name.to_string(),
             display_name: profile.display_name.clone(),
             repo_id: profile.repo_id.clone(),

@@ -1,0 +1,151 @@
+# Current enterprise integration — 2026-11-05
+
+The current assembled pair is private `8ec34f7` with public core `6b101b98`.
+It includes [exact account activity](account-activity-evidence.md), requiring
+local running execution identity and fresh worker observations.
+It includes [recorded account costs](account-cost-attribution.md), using
+canonical ledger identity instead of repeated routing totals, and
+[quota refresh recovery](quota-refresh-recovery.md), retaining unavailable state
+through retries and labeling historical allowance/capacity readings. Twenty
+assembled Windows component cases and five Playwright cases passed, including
+exact account activity, the full account UI and failed/held-retry/success workflows. These used the
+private transport's local mode, not a hosted dashboard session.
+It includes [server update recovery](server-update-recovery.md): persisted
+running updates resume observation, interrupted reads stay unconfirmed and
+unmounting stops further polling. All six recovery cases passed against this
+exact assembled private UI on Windows.
+It includes [streaming ledger reads](streamed-ledger-memory.md), removing the
+whole-file text copy while preserving full history and strict corruption errors.
+The controlled repeated probe observed lower peak and final RSS; live leak
+attribution and a long soak remain required.
+It includes [worker factory observations](worker-factory-observations.md):
+a profile-scoped, read-only Nodes check for a registered worker's controller,
+last decision and reported gates, with independent unavailable states.
+It includes [failed-refresh recovery](kanban-refresh-recovery.md), retaining
+recorded context while execution and capacity remain explicitly unconfirmed
+through failed and pending status reads. The navbar also labels retained jobs.
+Stale-only rosters show unconfirmed activity, and mixed rosters count only
+confirmed running jobs while keeping last-activity and node details inspectable.
+It includes [claim and execution evidence](kanban-claim-evidence.md), so the
+shared board no longer presents claim ownership as confirmed running work.
+It includes [bounded delivery and enrollment repair](compute-delivery-authorization.md):
+fair result replay with a shared network deadline, fixed recovery guidance and
+same-origin credential reload without rerunning completed programs.
+It includes [worker ledger release](worker-ledger-retention.md), retaining only
+bounded prior context while actions execute, with lower controlled resident memory.
+It includes [native Windows memory diagnostics](windows-memory-diagnostics.md),
+retaining real process working sets and explicit unknown CPU/load readings.
+It includes [bounded controller passes](controller-pass-turnover.md), so a busy
+queue eventually releases completed pass state and returns to config reload.
+It also includes [streaming event history](event-reader-memory.md), preserving
+full controller recovery history while bounding limited event-query retention.
+It includes the [bounded Rust capture repair](rust-output-memory.md): fixed-size
+live output retention, coalesced progress and rejection of incomplete reviewer
+evidence. This closes a reproduced path; #1681's actual Linux OOM allocation
+source and long-running stability still need live profiling.
+It retains automatic queued compute, bounded archives and durable delivery,
+with [owner/scope reconciliation](enterprise-compute-reconciliation.md) and
+[saved-output review controls](saved-output-controls.md) in shared Settings,
+now extended with [receipt retention controls](journal-retention-controls.md).
+The [workspace admission view](compute-admission-visibility.md) separates worker
+liveness from disabled, paused, capacity-limited and polling compute. Hardware
+members can see fixed recovery guidance without private dashboard access; stale
+compute observations expire independently of liveness.
+Owners can inspect the independent journal limit and confirm a bounded cleanup
+of settled, unreferenced receipts with fresh cloud retirement proof. Partial
+removal preserves durable lookup evidence and can resume after a new review.
+The [retired-claim delivery repair](compute-delivery-retirement.md) also settles
+otherwise endless pending delivery using independent exact-claim proof, while
+keeping local results and cloud outcomes distinct. Retired receipts stay visibly
+delivery-unconfirmed and require fresh proof again for owner-reviewed cleanup.
+The [Windows native output check](windows-native-output.md) adds real filesystem
+streaming, corruption and cancellation evidence without a new production bridge.
+Protocol 2 blocks launch until broker registration is durable. Full kernel
+slice-path checks and bounded housekeeping close the reproduced cleanup gaps.
+
+The current integration passed 1,106 server cases (38 explicit skips), 16 mock
+cases, typechecks, production builds and artifact/transport guards. Six new
+controlled HTTP cases cover worker reads and the central auth boundary. The
+earlier eleven Windows Nodes/panel cases and complete sample Nodes browser
+flow retain their desktop/mobile evidence; they were not rerun for this banner
+change. The release manifest and emitted dashboard bundle were checked for the
+intended revision and updater recovery copy.
+The current browser transport guards passed. The complete build log is at
+`/home/khing/.cache/parasaur-enterprise-current.1g9684x3/build.log`.
+The preceding `9d67290` / `cd67c949` matching native host,
+SHA-256 `f7a4f687e4cbb3c1478b9495064deed3e637ad8c50a52e16a394bebe8c28712f`,
+passed all 100 dedicated WSL isolation cases (one platform skip). Its fresh SQL
+replay and real local Auth/PostgREST/HTTP/WebSocket relay checks passed,
+including durable receipts, crash recovery, recipient isolation and
+authorization. Rust runtime/tests, SQL and private relay sources are unchanged by the later
+account-activity UI/core-pin change; these native/Auth checks were not rerun.
+The preceding pair and source-match manifest are retained beside
+`/home/khing/.cache/parasaur-enterprise-current.c5dg3ln7/source`; sibling
+`build.log`, `isolation-verification.log` and `auth-verification.log` record results.
+The earlier `fd4d761` / `7db57658` pair retains its 35 assembled Kanban/store checks.
+The preceding
+receipt-recovery pair retains 19 shared-output browser cases, a full sample
+Settings workflow and inspected desktop/mobile layouts. SQL source is unchanged;
+later shared UI and compute/relay runtime changes are covered
+by the current focused and integration checks above. Later
+public core changes cover runner retention, event reads, pass turnover and
+server diagnostics, with their own focused evidence. The admission-view pair
+retains its five cloud Settings
+browser cases, real SQL/Auth/PostgREST admission reporting/expiry, queue/crash
+recovery, maintenance, authorization and HTTP/WebSocket relay evidence.
+The preceding `9b4ae6d` Auth driver passed SQL replay and real Auth/PostgREST,
+preserving local 125 and cloud completed/0 during retired-claim denial with no
+extra provider attempt. Reviewed cleanup kept the other job's archive and receipt.
+Queue, crash/recovery, retry-receipt and authorization/relay checks passed.
+Earlier Windows desktop checks passed 35 ordinary cases and the separate hidden
+native output fixture. The older `ac62e3` native binary has the seven startup
+offsets and twelve repeated startup-window checks. The refreshed debug host is
+`f7a4f687`; its current dedicated isolation results are recorded above. That earlier
+timing-stress record is historical, not a claim of a new repetition on this binary.
+
+The preceding `e7d088c` / `2f8c9cf5` pair and `fe07bdd2` host passed 96 dedicated
+WSL isolation cases (one platform skip) after the Ubuntu-24.04 restart. The
+complete log is retained alongside the assembly described in the memory record.
+
+Live Linux OOM attribution/soak, legacy/unknown state resolution, hosted delivery
+authorization and per-receipt recovery UI,
+capability-metadata maintenance,
+installed Tauri large-file saving, production dispatch/client and forge runtime,
+portable aliases, ledger integration, configuration migration and complete
+shared-hardware acceptance remain unfinished. Local [CLI candidate](current-public-release.md)
+and [Windows desktop](windows-updater-config.md) updates are recorded separately.
+Live services were not upgraded or enabled for cloud compute.
+
+## Earlier integration record
+
+The private workspace build was pinned behind the finishing branch and its API
+client conflicted with current account/cancellation changes. The private source
+then targeted public core `bd377e21`, retained the model/account/factory
+recovery work, and incorporates the deployment-prefix WebSocket URL helper.
+That overlay preflight found no conflicts. The public submodule pointer at that
+point selected validated private revision `d46e6793`.
+
+The integration work also reproduced and corrected cloud request cancellation
+before admission and preservation of caller abort signals. Late replies cannot
+restart canceled reads. RPC retry budgets now bound the network call itself.
+The stronger cancellation/deadline regressions failed before their respective
+repairs and pass afterward.
+
+The final pair passed the complete combined production build: **1,003 server
+tests passed, one opt-in skip, no failures**, plus **12 mock tests**, server/web
+typechecks, production builds, private artifact/input guards and transformed
+browser transport checks. The release manifest records the exact public and
+private revisions. These private artifacts remain local.
+
+Disposable migration replay, real Auth/JWT/edge/PostgREST authorization,
+invitation/removal, node enrollment/sharing and HTTP/WebSocket relay checks also
+passed. Windows headless Chromium verified the two-account sign-in, invitation,
+acceptance, member controls and removal workflow against the real disposable
+account services. Desktop/mobile captures were inspected. Fixture processes
+were stopped and the temporary Windows session file removed.
+
+Detailed private evidence remains under the private checkout's ignored local
+validation records. No private source, credentials or fixture sessions belong
+in the public artifact. No push, hosted deployment, live workspace mutation or
+real provider job occurred. Hosted acceptance and shared-hardware execution
+isolation remain pending; these local checks do not establish beta readiness.

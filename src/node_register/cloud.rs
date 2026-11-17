@@ -38,8 +38,8 @@ impl Connection {
                 .filter(|value| !value.trim().is_empty() && !value.contains(['\r', '\n']))
                 .ok_or(CloudState::Configuration(name))
         };
-        let mut url = Url::parse(&required("GAH_SUPABASE_URL")?)
-            .map_err(|_| CloudState::Configuration("GAH_SUPABASE_URL"))?;
+        let mut url = Url::parse(&required("PARASAUR_SUPABASE_URL")?)
+            .map_err(|_| CloudState::Configuration("PARASAUR_SUPABASE_URL"))?;
         if !matches!(url.scheme(), "http" | "https")
             || url.host_str().is_none()
             || !url.username().is_empty()
@@ -47,22 +47,23 @@ impl Connection {
             || url.query().is_some()
             || url.fragment().is_some()
         {
-            return Err(CloudState::Configuration("GAH_SUPABASE_URL"));
+            return Err(CloudState::Configuration("PARASAUR_SUPABASE_URL"));
         }
         url.set_path(&format!(
             "{}/rest/v1/rpc/",
             url.path().trim_end_matches('/')
         ));
-        let workspace_id = required("GAH_SUPABASE_WORKSPACE_ID")?;
+        let workspace_id = required("PARASAUR_SUPABASE_WORKSPACE_ID")?;
         if uuid::Uuid::parse_str(&workspace_id).is_err() {
-            return Err(CloudState::Configuration("GAH_SUPABASE_WORKSPACE_ID"));
+            return Err(CloudState::Configuration("PARASAUR_SUPABASE_WORKSPACE_ID"));
         }
         Ok(Self {
             url,
             workspace_id,
-            anon_key: required("GAH_SUPABASE_ANON_KEY")?,
-            access_token: required("GAH_SUPABASE_ACCESS_TOKEN")?,
-            device_token: env("GAH_SUPABASE_DEVICE_TOKEN").filter(|value| !value.trim().is_empty()),
+            anon_key: required("PARASAUR_SUPABASE_ANON_KEY")?,
+            access_token: required("PARASAUR_SUPABASE_ACCESS_TOKEN")?,
+            device_token: env("PARASAUR_SUPABASE_DEVICE_TOKEN")
+                .filter(|value| !value.trim().is_empty()),
         })
     }
 
@@ -130,11 +131,11 @@ impl CloudRegistration {
         let connection = Connection::from_env(env)?;
         let identity_path = opts
             .and_then(|opts| opts.identity_path.clone())
-            .or_else(|| env("GAH_COORDINATOR_IDENTITY_PATH").map(Into::into))
+            .or_else(|| env("PARASAUR_COORDINATOR_IDENTITY_PATH").map(Into::into))
             .unwrap_or_else(resolve_identity_path);
         let advertised_url = opts
             .and_then(|opts| opts.advertised_url.clone())
-            .or_else(|| env("GAH_NODE_ADVERTISED_URL"));
+            .or_else(|| env("PARASAUR_NODE_ADVERTISED_URL"));
         let identity = read_or_create_identity(&identity_path, advertised_url.as_deref())
             .map_err(|_| CloudState::Identity)?;
         let profiles = opts
@@ -146,7 +147,7 @@ impl CloudRegistration {
             });
         let transport_mode = opts
             .map(|opts| opts.transport_mode.clone())
-            .or_else(|| env("GAH_REGISTRY_TRANSPORT_MODE"))
+            .or_else(|| env("PARASAUR_REGISTRY_TRANSPORT_MODE"))
             .unwrap_or_else(|| "trusted_lan".into());
         let payload = serde_json::json!({
             "p_workspace_id": connection.workspace_id,
@@ -178,7 +179,7 @@ impl CloudRegistration {
         let device_token = connection
             .device_token
             .as_deref()
-            .ok_or(CloudState::Configuration("GAH_SUPABASE_DEVICE_TOKEN"))?;
+            .ok_or(CloudState::Configuration("PARASAUR_SUPABASE_DEVICE_TOKEN"))?;
         connection.rpc(
             "cloud_node_heartbeat",
             &serde_json::json!({"p_device_token": device_token}),
@@ -189,7 +190,7 @@ impl CloudRegistration {
 
 /// Best-effort cloud sink for `gah node register`. Controller runs use
 /// `CloudHeartbeat` instead. Local mode reads no cloud credentials or identity.
-/// POST `{GAH_SUPABASE_URL}/rest/v1/rpc/register_cloud_node` upserts with a user
+/// POST `{PARASAUR_SUPABASE_URL}/rest/v1/rpc/register_cloud_node` upserts with a user
 /// JWT; POST `.../rest/v1/rpc/cloud_node_heartbeat` renews the device's 90s lease.
 /// Both send `apikey` and `Authorization: Bearer` headers. Requests time out after
 /// three seconds each. Failed upserts retry next call; repeated failures of the

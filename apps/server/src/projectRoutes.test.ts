@@ -26,7 +26,7 @@ const post = (url: string, body: unknown, headers = {}) => fetch(url, { method: 
 
 test('central import clones and adds the profile only on its authenticated worker, then records ownership', async () => {
   const root = mkdtempSync(join(tmpdir(), 'gah-remote-import-'));
-  const environment = { GAH_PROJECT_CATALOG_PATH: join(root, 'central-projects.json'), GAH_PROJECTS_ROOT: join(root, 'worker-projects'), XDG_DATA_HOME: join(root, 'worker-data'), COORDINATOR_TOKEN: 'worker-test-token', GAH_ALLOW_INSECURE_HTTP: '1' };
+  const environment = { PARASAUR_PROJECT_CATALOG_PATH: join(root, 'central-projects.json'), PARASAUR_PROJECTS_ROOT: join(root, 'worker-projects'), XDG_DATA_HOME: join(root, 'worker-data'), COORDINATOR_TOKEN: 'worker-test-token', PARASAUR_ALLOW_INSECURE_HTTP: '1' };
   const saved = Object.fromEntries(Object.keys(environment).map((key) => [key, process.env[key]]));
   Object.assign(process.env, environment);
   const centralRegistry = new RegistryService(join(root, 'registry.json'));
@@ -56,8 +56,8 @@ test('central import clones and adds the profile only on its authenticated worke
   worker.use('/api', projectRoutes({ node: workerRole, registry: new RegistryService(null), localNodeId: 'worker',
     listProfiles: async () => workerProfiles,
     addProfile: async (options) => {
-      assert.ok(options.local_path.startsWith(environment.GAH_PROJECTS_ROOT));
-      assert.equal(existsSync(environment.GAH_PROJECT_CATALOG_PATH), false, 'central catalog is not written before worker success');
+      assert.ok(options.local_path.startsWith(environment.PARASAUR_PROJECTS_ROOT));
+      assert.equal(existsSync(environment.PARASAUR_PROJECT_CATALOG_PATH), false, 'central catalog is not written before worker success');
       workerProfiles.push({ name: options.name, display_name: options.display_name || options.name, provider: options.provider, repo: options.repo, repo_id: options.repo_id || options.name,
         local_path: options.local_path, worktree_base: join(root, 'worker-worktrees'), web_url: gitUrl.replace(/\.git$/, ''),
         max_parallel_workers: null, max_open_managed_mrs: 1, manager_wake_autonomy: null, validation_timeout_seconds: 300 });
@@ -97,7 +97,7 @@ test('central import clones and adds the profile only on its authenticated worke
     healthNodeId = 'wrong-worker';
     assert.equal((await post(`${centralUrl}/api/projects/import`, { gitUrl, nodeId: 'worker' })).status, 502);
     assert.equal(workerImports, 0, 'identity preflight fails before clone/profile mutation');
-    assert.equal(existsSync(environment.GAH_PROJECT_CATALOG_PATH), false);
+    assert.equal(existsSync(environment.PARASAUR_PROJECT_CATALOG_PATH), false);
     healthNodeId = 'worker';
     const response = await post(`${centralUrl}/api/projects/import`, { gitUrl, nodeId: 'worker' });
     assert.equal(response.status, 201, await response.clone().text());
@@ -109,7 +109,7 @@ test('central import clones and adds the profile only on its authenticated worke
     assert.equal(centralProfileCalls, 0, 'remote import never reads or creates local profiles');
     assert.deepEqual(centralRegistry.getNode('worker')?.profiles, ['existing', 'owner-repository']);
     assert.equal(centralRegistry.getNode('worker')?.secret_ref, registration.secret_ref);
-    const catalog = JSON.parse(readFileSync(environment.GAH_PROJECT_CATALOG_PATH, 'utf8'));
+    const catalog = JSON.parse(readFileSync(environment.PARASAUR_PROJECT_CATALOG_PATH, 'utf8'));
     assert.equal(catalog.projects[0].node_id, 'worker');
     await close(workerServer);
     const offline = await post(`${centralUrl}/api/projects/import`, { gitUrl: 'https://github.com/owner/other', nodeId: 'worker' });

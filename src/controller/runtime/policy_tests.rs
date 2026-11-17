@@ -48,7 +48,7 @@ fn refuse_without_provider(
     }
     crate::provider::set_test_provider_path(tmp.to_str().unwrap());
     let _path = ProviderPath;
-    let outcome = execute_action(cfg, "test", action, &[], true, None).unwrap();
+    let outcome = execute_action(cfg, "test", action, None, true, None).unwrap();
     assert!(outcome.starts_with("Blocked "), "{outcome}");
     assert!(outcome.contains("POLICY BLOCKED"), "{outcome}");
     assert!(

@@ -33,12 +33,16 @@ function nextMessage<T extends ServerMessage['type']>(
 async function connect(url: string, profile: string): Promise<WebSocket> {
   const ws = new WebSocket(`${url}?profile=${profile}`);
   await once(ws, 'open');
+  // Socket open does not prove another connection's hello was processed.
+  // Replay is sent after subscription, before this fixture starts a turn.
+  const subscribed = nextMessage(ws, 'activity.replay');
   ws.send(JSON.stringify({
     type: 'client.hello',
     clientVersion: 'integration-test',
     profile,
     capabilities: { supportsTerminal: false, supportsNotifications: false, version: '1' }
   } satisfies ClientMessage));
+  await subscribed;
   return ws;
 }
 
@@ -102,10 +106,10 @@ async function withChatHarness(
   const stateDir = mkdtempSync(join(tmpdir(), 'gah-chat-harness-'));
   const savedEnv = { ...process.env };
   process.env.PATH = `${join(fixtures, 'hermes')}:${process.env.PATH}`;
-  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
-  process.env.GAH_CHAT_STATE_DIR = join(stateDir, 'chat');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
+  process.env.PARASAUR_BINARY = join(fixtures, 'gah', 'gah');
+  process.env.PARASAUR_CHAT_STATE_DIR = join(stateDir, 'chat');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
 
   let captures = 0;
   const defaultGateway = (req: http.IncomingMessage, res: http.ServerResponse, body: unknown) => {

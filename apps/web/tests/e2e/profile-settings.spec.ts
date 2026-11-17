@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const MOCK_BASE_URL = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+const MOCK_BASE_URL = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
 
 // Profile saves refresh intercepted reads; dispose of routes before the page
 // closes so a response in flight cannot fail this or the following test.

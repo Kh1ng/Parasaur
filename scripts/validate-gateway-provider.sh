@@ -2,7 +2,7 @@
 # Validate the installer's provider YAML against a MemoryCore gateway checkout.
 # Seeds tdai-gateway.local.yaml from the checkout's tracked standalone template
 # (as the installers do), applies the installers' provider step
-# (scripts/gateway-provider.mjs) for GAH_GATEWAY_PROVIDER=ollama, starts the
+# (scripts/gateway-provider.mjs) for PARASAUR_GATEWAY_PROVIDER=ollama, starts the
 # real gateway on a scratch port with scratch data, and exercises /health,
 # /capture, /recall, and /search/conversations.
 #
@@ -14,6 +14,13 @@
 # VALIDATION_EMBEDDING_DIMENSIONS override the installer defaults).
 # Output is sanitized: no credentials, only request shapes and status fields.
 # Requires node, npx (MemoryCore dependencies installed), and curl.
+# Settings were named GAH_* before the product became Parasaur. Accept the old
+# names: a GAH_X with no PARASAUR_X becomes PARASAUR_X.
+for legacy_setting in "${!GAH_@}"; do
+  current_setting="PARASAUR_${legacy_setting#GAH_}"
+  [ -n "${!current_setting+set}" ] || export "$current_setting=${!legacy_setting}"
+done
+unset legacy_setting current_setting
 set -euo pipefail
 mc="$(cd "$1" && pwd)"
 gah="$(cd "$(dirname "$0")/.." && pwd)"

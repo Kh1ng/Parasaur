@@ -1,7 +1,7 @@
 import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 import { openProjects } from './helpers/navigation.js';
 
-const MOCK_BASE_URL = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+const MOCK_BASE_URL = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
 
 type Scenario =
   | 'normal'
@@ -63,6 +63,46 @@ async function openArchivedChats(page: Page): Promise<void> {
 
 // The mock is one shared stateful process. Keep scenario mutations ordered.
 test.describe.configure({ mode: 'serial' });
+
+test('a named session browses its own account models and keeps the binding when selecting one', async ({ page, request }) => {
+  await selectScenario(request, 'models-success');
+  const created = await request.post(`${MOCK_BASE_URL}/api/manager-chat/sessions`, {
+    data: { profile: 'fixture', backend: 'codex', backendInstance: 'codex-work', model: 'work-current', title: 'Named account catalog' }
+  });
+  expect(created.ok()).toBe(true);
+  const session = await created.json() as { id: string; backendInstance: string };
+  expect(session.backendInstance).toBe('codex-work');
+  const reads: URL[] = [];
+  await page.route('**/api/manager-chat/accounts*', route => route.fulfill({ json: { accounts: [{ instance: 'codex-work', backend: 'codex', label: 'Work login', enabled: true, executableReady: true, authReady: null }] } }));
+  await page.route('**/api/manager-chat/models*', route => {
+    const url = new URL(route.request().url());
+    reads.push(url);
+    const models = url.searchParams.get('backend') !== 'codex' ? []
+      : url.searchParams.get('backendInstance') === 'codex-work'
+        ? [{ id: 'work-current', name: 'Work current' }, { id: 'work-next', name: 'Work next' }]
+        : [{ id: 'ambient-only', name: 'Ambient only' }];
+    return route.fulfill({ json: { models, reasoningEfforts: [], currentModelId: 'work-current', currentReasoningEffortId: null, contextUsage: null } });
+  });
+  await page.goto(`/?page=chat&profile=fixture&chat=${encodeURIComponent(session.id)}`);
+  const pill = page.getByRole('button', { name: 'Provider picker' });
+  await expect(pill).toContainText('Work login');
+  await expect(pill).toContainText('Work current');
+  const before = reads.length;
+  await pill.click();
+  await page.getByRole('dialog', { name: 'Provider picker' }).getByRole('button', { name: 'Browse all models' }).click();
+  const catalog = page.getByRole('dialog', { name: 'Browse models' });
+  await expect(catalog.getByRole('button', { name: /Work next\s+Codex · Work login/ })).toBeVisible();
+  await expect(catalog).not.toContainText('Ambient only');
+  const catalogRead = reads.slice(before).find(url => url.searchParams.get('backend') === 'codex');
+  expect(catalogRead?.searchParams.get('backendInstance')).toBe('codex-work');
+  const updated = page.waitForResponse(response => response.url().includes('/api/manager-chat/sessions/update') && response.request().postDataJSON()?.model === 'work-next');
+  await catalog.getByRole('button', { name: /Work next\s+Codex · Work login/ }).click();
+  const response = await updated;
+  expect(response.ok()).toBe(true);
+  expect((await response.json() as { backendInstance: string }).backendInstance).toBe('codex-work');
+  await expect(pill).toContainText('Work next');
+  await expect(pill).toContainText('Work login');
+});
 
 test('the projects rail discovers sessions created through REST', async ({ page, request }) => {
   await selectScenario(request, 'normal');

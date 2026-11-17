@@ -32,7 +32,7 @@ final class ControllerTests: XCTestCase {
     // Opt-in physical smoke test. It reads central through the app's existing
     // paired session and leaves chats, workers, and server settings untouched.
     func testPhysicalCentralNavigationAndBackgroundRecovery() throws {
-        guard let raw = ProcessInfo.processInfo.environment["GAH_IOS_LIVE_CENTRAL_URL"] else {
+        guard let raw = ProcessInfo.processInfo.environment["PARASAUR_IOS_LIVE_CENTRAL_URL"] else {
             throw XCTSkip("Run scripts/test-ios-central.sh for physical central validation.")
         }
         let address = try ServerAddress(raw)
@@ -47,7 +47,7 @@ final class ControllerTests: XCTestCase {
             app.webViews.buttons[page].firstMatch.tap()
             XCTAssertFalse(app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Authentication token required")).firstMatch.waitForExistence(timeout: 2))
             XCTAssertFalse(app.buttons["Retry connection"].exists)
-            if page == "Nodes", let node = ProcessInfo.processInfo.environment["GAH_IOS_EXPECTED_NODE"] {
+            if page == "Nodes", let node = ProcessInfo.processInfo.environment["PARASAUR_IOS_EXPECTED_NODE"] {
                 XCTAssertTrue(app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", node)).firstMatch.waitForExistence(timeout: 30))
             }
             let evidence = XCTAttachment(screenshot: app.screenshot())

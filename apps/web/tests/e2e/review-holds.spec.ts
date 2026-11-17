@@ -70,7 +70,7 @@ test('review holds are visible on Overview and do not hide ticket status in Fact
   await expect(picker.getByRole('button', { name: 'Codex', exact: true })).toBeEnabled();
   await expect(picker.getByRole('button', { name: /Hermes/ })).toBeDisabled();
   await expect(picker.getByText('Model', { exact: true })).toHaveCount(0);
-  await expect(page.locator('dt', { hasText: 'Needs review' }).locator('..').locator('dd')).toHaveText('3');
+  await expect(page.locator('dt', { hasText: 'Review / blocked' }).locator('..').locator('dd')).toHaveText('3');
   const reviewQueue = page.getByRole('list', { name: 'Review queue' });
   await expect(reviewQueue).toContainText('#640');
   await expect(reviewQueue).toContainText('#641');

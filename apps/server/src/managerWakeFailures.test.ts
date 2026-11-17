@@ -13,9 +13,9 @@ test('20 consecutive wake failures produce one activity and one channel delivery
   const directory = mkdtempSync(join(tmpdir(), 'gah-wake-failures-'));
   const saved = { ...process.env };
   Object.assign(process.env, {
-    GAH_BINARY: resolve('tests/fixtures/gah/gah'),
-    GAH_GATEWAY_SETTINGS_PATH: join(directory, 'gateway.json'),
-    GAH_MANAGER_CHAT_SETTINGS_PATH: join(directory, 'settings.json')
+    PARASAUR_BINARY: resolve('tests/fixtures/gah/gah'),
+    PARASAUR_GATEWAY_SETTINGS_PATH: join(directory, 'gateway.json'),
+    PARASAUR_MANAGER_CHAT_SETTINGS_PATH: join(directory, 'settings.json')
   });
   delete process.env.TDAI_GATEWAY_URL;
   delete process.env.TDAI_GATEWAY_API_KEY;

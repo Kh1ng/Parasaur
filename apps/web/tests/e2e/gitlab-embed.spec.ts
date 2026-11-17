@@ -1,3 +1,7 @@
+import { DeviceAccess } from '../../../server/src/deviceAccess.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import http from 'node:http';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
@@ -15,7 +19,7 @@ import { expect, test, type APIRequestContext } from '@playwright/test';
 
 const issueContext = '/embed?gitlab=https%3A%2F%2Fgitlab.example.com&url=https%3A%2F%2Fgitlab.example.com%2Fteam%2Fproject&project=team%2Fproject&kind=issue&iid=42';
 
-const mockUrl = () => process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+const mockUrl = () => process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
 
 /** Stand the mock's project list up the way a real GitLab install has it:
  * two uniquely matching GitLab profiles for the two projects the panel
@@ -121,14 +125,17 @@ test('a context update re-binds the chat to the newly matched project', async ({
   await expect(projectSelect).toHaveValue('gitlab-other');
 });
 
-test('an owner signs in through the real handoff router and the iframe keeps its token tab-scoped', async ({ page, context }) => {
+test('owner-approved panel sign-in persists as a controller cookie without copying the owner token', async ({ page, context }) => {
   const previous = process.env.COORDINATOR_TOKEN;
   process.env.COORDINATOR_TOKEN = 'owner-handoff-e2e-fixture';
+  const directory = mkdtempSync(join(tmpdir(), 'gah-embed-session-'));
+  const access = new DeviceAccess(join(directory, 'devices.json'));
   const app = express();
+  app.locals.deviceAccess = access;
   app.set('trust proxy', 'loopback');
   app.use(express.json());
   app.use(rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false }));
-  app.use('/api/pairing/handoff', sessionHandoffRouter());
+  app.use('/api/pairing/handoff', sessionHandoffRouter(access));
   app.get('/api/pairing/session', authMiddleware, (_req, res) => res.json({ principal: res.locals.authPrincipal }));
   const server = http.createServer(app);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -143,10 +150,11 @@ test('an owner signs in through the real handoff router and the iframe keeps its
       method: request.method(),
       headers: { 'Content-Type': 'application/json', Origin: base.replace('http:', 'https:'),
         'X-Forwarded-For': '198.51.100.2', 'X-Forwarded-Proto': 'https',
-        ...(request.headers().authorization ? { Authorization: request.headers().authorization } : {}) },
+        ...(request.headers().authorization ? { Authorization: request.headers().authorization } : {}),
+        ...(request.headers().cookie ? { Cookie: request.headers().cookie } : {}) },
       ...(request.postData() ? { body: request.postData()! } : {})
     });
-    await route.fulfill({ status: response.status, contentType: 'application/json', body: await response.text() });
+    await route.fulfill({ status: response.status, contentType: 'application/json', headers: response.headers.get('set-cookie') ? { 'Set-Cookie': response.headers.get('set-cookie')! } : {}, body: await response.text() });
   });
   try {
     await page.route('**/embed-parent', route => route.fulfill({ contentType: 'text/html', body: `<iframe title="panel" width="420" height="800" src="${issueContext}"></iframe>` }));
@@ -167,17 +175,24 @@ test('an owner signs in through the real handoff router and the iframe keeps its
     await signInTab.getByRole('button', { name: 'Connect GitLab panel' }).click();
     await expect(panel.getByRole('dialog', { name: 'Sign in to Parasaur' })).toHaveCount(0, { timeout: 8_000 });
     const frame = page.frames().find(candidate => candidate.url().includes('/embed?'))!;
-    expect(await frame.evaluate(() => sessionStorage.getItem('gah.coordinatorToken'))).toBe('owner-handoff-e2e-fixture');
-    // A same-origin parent shares its iframe's tab-scoped storage.
-    expect(await page.evaluate(() => sessionStorage.getItem('gah.coordinatorToken'))).toBe('owner-handoff-e2e-fixture');
+    expect(await frame.evaluate(() => sessionStorage.getItem('gah.coordinatorToken'))).toBeNull();
+    expect(await page.evaluate(() => sessionStorage.getItem('gah.coordinatorToken'))).toBeNull();
+    expect(await frame.evaluate(() => document.cookie.includes('gah_device'))).toBe(false);
+    const cookie = (await context.cookies()).find(cookie => cookie.name === 'gah_device');
+    expect(cookie?.httpOnly).toBe(true);
+    expect(cookie?.expires).toBeGreaterThan(Date.now() / 1000 + 29 * 86400);
+    await page.reload();
+    await expect(page.frameLocator('iframe').getByRole('dialog', { name: 'Sign in to Parasaur' })).toHaveCount(0);
     await signInTab.close();
     expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('gah.coordinatorToken')))).toEqual([]);
     const otherTab = await context.newPage();
     await otherTab.goto('/');
     expect(await otherTab.evaluate(() => sessionStorage.getItem('gah.coordinatorToken'))).toBeNull();
+    expect(await otherTab.evaluate(async () => (await fetch('/api/pairing/session')).json())).toMatchObject({ principal: { kind: 'device' } });
     await otherTab.close();
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
+    rmSync(directory, { recursive: true, force: true });
     if (previous === undefined) delete process.env.COORDINATOR_TOKEN; else process.env.COORDINATOR_TOKEN = previous;
   }
 });
@@ -195,4 +210,23 @@ test('the signed-out embed view keeps re-checking the auth endpoint and picks up
   await expect(page.getByRole('dialog', { name: 'Sign in to Parasaur' })).toBeVisible();
   signedIn = true;
   await expect(page.getByRole('dialog', { name: 'Sign in to Parasaur' })).toHaveCount(0, { timeout: 8_000 });
+});
+
+
+test('an older central handoff remains tab-scoped during a separate web rollout', async ({ page, context }) => {
+  const legacy = 'older-central-owner-fixture';
+  await context.route('**/api/pairing/session', route => route.request().headers().authorization === `Bearer ${legacy}`
+    ? route.fulfill({ json: { principal: { kind: 'owner' } } })
+    : route.fulfill({ status: 401, json: { message: 'Sign in required' } }));
+  await page.route('**/api/pairing/handoff', route => route.fulfill({ json: { code: 'a'.repeat(43), verifier: 'b'.repeat(43), expires_in: 60 } }));
+  await page.route('**/api/pairing/handoff/claim', route => route.fulfill({ json: { token: legacy } }));
+  await page.goto(issueContext);
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem('gah.coordinatorToken'))).toBe(legacy);
+  await expect(page.getByRole('dialog', { name: 'Sign in to Parasaur' })).toHaveCount(0);
+  expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('gah.coordinatorToken')))).toEqual([]);
+  const otherTab = await context.newPage();
+  try {
+    await otherTab.goto('/');
+    expect(await otherTab.evaluate(() => sessionStorage.getItem('gah.coordinatorToken'))).toBeNull();
+  } finally { await otherTab.close(); }
 });

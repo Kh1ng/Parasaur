@@ -17,6 +17,15 @@ fn loop_reports_nonzero_review_backend_as_failure_not_success() {
         .current_dir(&repo)
         .output()
         .unwrap();
+    // The provider must report the branch's real head: the reviewer reads the
+    // head from the fetched branch and refuses a review of any other commit.
+    let source_sha = ProcessCommand::new("git")
+        .args(["rev-parse", "gah/real-review"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    let source_sha = String::from_utf8(source_sha.stdout).unwrap();
+    let source_sha = source_sha.trim();
     checkout_branch(&repo, "main");
     let cfg = write_real_repo_config_with_extra(
         &tmp,
@@ -42,7 +51,7 @@ fn loop_reports_nonzero_review_backend_as_failure_not_success() {
         &fake_bin,
         "gh",
         &format!(
-            "#!/bin/sh\ncase \"$4\" in */pulls?*) echo '[{{\"title\":\"[GAH] Fix: TICKET-500\",\"body\":\"MR body\",\"head\":{{\"ref\":\"gah/real-review\",\"sha\":\"source-sha\"}},\"html_url\":\"https://github.com/owner/real/pull/7\",\"labels\":[],\"number\":7,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]'; exit 0;; */check-runs?*) echo '{{\"total_count\":1,\"check_runs\":[{{\"status\":\"completed\",\"conclusion\":\"success\"}}]}}'; exit 0;; */issues?*) echo '[]'; exit 0;; esac\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then echo '{{\"number\":7,\"url\":\"https://github.com/owner/real/pull/7\",\"title\":\"[GAH] Fix: TICKET-500\",\"body\":\"MR body\",\"headRefName\":\"gah/real-review\",\"baseRefName\":\"main\",\"headRefOid\":\"source-sha\",\"statusCheckRollup\":[{{\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}}]}}'; exit 0; fi\nexit 0\n"
+            "#!/bin/sh\ncase \"$4\" in */pulls?*) echo '[{{\"title\":\"[GAH] Fix: TICKET-500\",\"body\":\"MR body\",\"head\":{{\"ref\":\"gah/real-review\",\"sha\":\"{source_sha}\"}},\"html_url\":\"https://github.com/owner/real/pull/7\",\"labels\":[],\"number\":7,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]'; exit 0;; */pulls) echo '[{{\"number\":7}}]'; exit 0;; */check-runs?*) echo '{{\"total_count\":1,\"check_runs\":[{{\"status\":\"completed\",\"conclusion\":\"success\"}}]}}'; exit 0;; */issues?*) echo '[]'; exit 0;; esac\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then echo '{{\"number\":7,\"url\":\"https://github.com/owner/real/pull/7\",\"title\":\"[GAH] Fix: TICKET-500\",\"body\":\"MR body\",\"isDraft\":true,\"headRefName\":\"gah/real-review\",\"baseRefName\":\"main\",\"headRefOid\":\"{source_sha}\",\"statusCheckRollup\":[{{\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}}]}}'; exit 0; fi\nexit 0\n"
         ),
     );
 
@@ -58,7 +67,7 @@ fn loop_reports_nonzero_review_backend_as_failure_not_success() {
         ])
         .env("PATH", prepend_path(&fake_bin))
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .assert()
         .failure()
         .stderr(predicate::str::contains(
@@ -566,8 +575,8 @@ fn status_reports_human_and_json_views() {
 
     let out = bin()
         .current_dir(&root)
-        .env("GAH_AVAILABILITY_PATH", &availability_path)
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &availability_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .args([
             "status",
             "--json",
@@ -608,8 +617,8 @@ fn status_reports_human_and_json_views() {
 
     bin()
         .current_dir(&root)
-        .env("GAH_AVAILABILITY_PATH", &availability_path)
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &availability_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .args([
             "status",
             "--profile",
@@ -668,7 +677,7 @@ fn loop_once_reports_noop_when_nothing_actionable() {
         ])
         .env("PATH", prepend_path(&fake_bin))
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .assert()
         .success()
         .stdout(predicate::str::contains("no_op"));
@@ -850,7 +859,7 @@ fn loop_once_prunes_terminal_and_abandoned_open_worktrees_but_retains_live_claim
         ])
         .env("PATH", prepend_path(&fake_bin))
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_CLAIM_STATE_PATH", &claim_state)
+        .env("PARASAUR_CLAIM_STATE_PATH", &claim_state)
         .assert()
         .success();
 
@@ -948,8 +957,8 @@ fn loop_once_dispatches_an_eligible_ticket() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .assert()
         .success()
         .stdout(predicate::str::contains("dispatch_ticket"));
@@ -1001,7 +1010,7 @@ fn events_reads_back_loop_once_output_and_filters_by_profile() {
         ])
         .env("PATH", prepend_path(&fake_bin))
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .assert()
         .success();
 
@@ -1014,7 +1023,7 @@ fn events_reads_back_loop_once_output_and_filters_by_profile() {
             "real",
             "--json",
         ])
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .assert()
         .success();
     let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
@@ -1032,7 +1041,7 @@ fn events_reads_back_loop_once_output_and_filters_by_profile() {
             "some-other-profile",
             "--json",
         ])
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .assert()
         .success();
     let stdout_other = String::from_utf8_lossy(&out_other.get_output().stdout).to_string();
@@ -1094,7 +1103,7 @@ fn events_limit_keeps_only_the_newest_events_after_the_since_filter() {
                 "--json",
             ])
             .args(args)
-            .env("GAH_EVENTS_PATH", events_path)
+            .env("PARASAUR_EVENTS_PATH", events_path)
             .assert()
             .success();
         let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
@@ -1210,7 +1219,7 @@ fn loop_once_stops_on_stuck_loop_instead_of_repeating_forever() {
         ])
         .env("PATH", prepend_path(&fake_bin))
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .assert()
         .success()
         .stdout(predicate::str::contains("human_required"))

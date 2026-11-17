@@ -10,7 +10,9 @@ if ! systemctl --user show-environment >/dev/null 2>&1; then
 fi
 # An already provisioned distro must not need a sudo password to install the worker.
 missing_packages=()
-for package in ca-certificates curl git xz-utils build-essential; do
+# The CLI is prebuilt and the server build is TypeScript; no native toolchain
+# is needed on the destination just to install this worker.
+for package in ca-certificates curl git xz-utils; do
   if [ "$(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null || true)" != 'installed' ]; then
     missing_packages+=("$package")
   fi

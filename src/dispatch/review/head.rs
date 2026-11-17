@@ -17,7 +17,12 @@ pub(in crate::dispatch) fn skip_reviewed_head(
         return Ok(false);
     };
     let local = crate::review_head::locally_reviewed(
-        &ledger::read_entries(cfg)?,
+        &ledger::read_matching_entries(cfg, |candidate| {
+            candidate.profile == entry.profile
+                && candidate.repo_id == profile.repo_id
+                && candidate.mode == "review"
+                && candidate.branch.as_deref() == Some(target.source_branch.as_str())
+        })?,
         &entry.profile,
         profile,
         &target.source_branch,

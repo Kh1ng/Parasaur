@@ -9,7 +9,7 @@ setup command. Elevation enables WSL; the distribution belongs to the caller.
 [CmdletBinding()]
 param(
     [ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]*$')][string]$Distribution = 'Ubuntu',
-    [string]$SetupCommand = $env:GAH_SETUP,
+    [string]$SetupCommand = $(if ($env:PARASAUR_SETUP) { $env:PARASAUR_SETUP } else { $env:GAH_SETUP }),
     [string]$CentralUrl = '',
     [switch]$Resume
 )
@@ -24,11 +24,11 @@ function Assert-WslSuccess([string]$Action) {
 # script travels in the environment and the one quoted argument is escaped here.
 function Invoke-GahWslScript([string]$Name, [string]$Script) {
     $PSNativeCommandArgumentPassing = 'Legacy'
-    $env:GAH_SCRIPT = $Script -replace "`r", ''
-    if ($env:WSLENV -notmatch '(^|:)GAH_SCRIPT/u(:|$)') {
-        $env:WSLENV = if ($env:WSLENV) { "$($env:WSLENV):GAH_SCRIPT/u" } else { 'GAH_SCRIPT/u' }
+    $env:PARASAUR_SCRIPT = $Script -replace "`r", ''
+    if ($env:WSLENV -notmatch '(^|:)PARASAUR_SCRIPT/u(:|$)') {
+        $env:WSLENV = if ($env:WSLENV) { "$($env:WSLENV):PARASAUR_SCRIPT/u" } else { 'PARASAUR_SCRIPT/u' }
     }
-    & wsl.exe --distribution $Name --exec bash -lc 'eval \"$GAH_SCRIPT\"'
+    & wsl.exe --distribution $Name --exec bash -lc 'eval \"$PARASAUR_SCRIPT\"'
 }
 
 function Get-GahWslDistributions {

@@ -21,15 +21,15 @@ for (const remote of [true, false]) test(`${remote ? 'coordinator/worker' : 'loc
   const root = mkdtempSync(join(tmpdir(), 'gah-remote-agy-'));
   const saved = { ...process.env };
   Object.assign(process.env, {
-    GAH_GATEWAY_SETTINGS_PATH: join(root, 'gateway.json'),
+    PARASAUR_GATEWAY_SETTINGS_PATH: join(root, 'gateway.json'),
     TDAI_GATEWAY_URL: 'http://127.0.0.1:1',
-    GAH_BINARY: new URL('../tests/fixtures/gah/gah', import.meta.url).pathname,
-    GAH_FIXTURE_PROFILE_LIST: join(root, 'profiles.json'),
-    GAH_PROJECT_CATALOG_PATH: join(root, 'projects.json'),
-    GAH_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json'),
-    GAH_MANAGER_CHAT_SETTINGS_PATH: join(root, 'manager.json'),
+    PARASAUR_BINARY: new URL('../tests/fixtures/gah/gah', import.meta.url).pathname,
+    PARASAUR_FIXTURE_PROFILE_LIST: join(root, 'profiles.json'),
+    PARASAUR_PROJECT_CATALOG_PATH: join(root, 'projects.json'),
+    PARASAUR_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json'),
+    PARASAUR_MANAGER_CHAT_SETTINGS_PATH: join(root, 'manager.json'),
   });
-  writeFileSync(process.env.GAH_FIXTURE_PROFILE_LIST!, '[]');
+  writeFileSync(process.env.PARASAUR_FIXTURE_PROFILE_LIST!, '[]');
   const fixture: ProfileSummary = JSON.parse(readFileSync(new URL('../tests/fixtures/gah/responses/profile-list.json', import.meta.url), 'utf8'))[0];
   const profile = { ...fixture, name: 'worker-agy', local_path: root, worktree_base: join(root, 'worktrees') };
   let inventory = parseAgyModels(readFileSync(new URL('../../../tests/fixtures/agy/models.tsv', import.meta.url), 'utf8'), readFileSync(new URL('../../../tests/fixtures/agy/help.txt', import.meta.url), 'utf8'));
@@ -109,7 +109,7 @@ console.log(JSON.stringify({event:'result', result:{status:'SUCCESS', response:'
   const chatProfile = remote ? project.chat_profile : profile.name;
   const nodeId = remote ? 'worker' : undefined;
   if (!remote) {
-    writeFileSync(process.env.GAH_FIXTURE_PROFILE_LIST!, JSON.stringify([profile]));
+    writeFileSync(process.env.PARASAUR_FIXTURE_PROFILE_LIST!, JSON.stringify([profile]));
     Object.assign(localAdapter, adapter);
   }
   setBackendForProfile(chatProfile, 'agy');

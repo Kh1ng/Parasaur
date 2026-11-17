@@ -1,5 +1,10 @@
+#[path = "controller_refill_regressions/ledger_retention.rs"]
+#[cfg(target_os = "linux")]
+mod ledger_retention;
 #[path = "controller_refill_regressions/node_recovery.rs"]
 mod node_recovery;
+#[path = "controller_refill_regressions/pass_turnover.rs"]
+mod pass_turnover;
 mod support;
 #[path = "controller_refill_regressions/watchdog.rs"]
 mod watchdog;
@@ -61,16 +66,19 @@ fn spawn_bin(state_root: &std::path::Path) -> ProcessCommand {
         std::env::var("CARGO_BIN_EXE_gah").unwrap_or_else(|_| "target/debug/gah".into()),
     );
     fs::create_dir_all(state_root.join("home")).unwrap();
-    cmd.env_remove("GAH_TEST_NOW");
+    cmd.env_remove("PARASAUR_TEST_NOW");
     cmd.env("HOME", state_root.join("home"));
-    cmd.env("GAH_CANONICAL_CONFIG", state_root.join("canonical.toml"));
+    cmd.env(
+        "PARASAUR_CANONICAL_CONFIG",
+        state_root.join("canonical.toml"),
+    );
     cmd.env("XDG_STATE_HOME", state_root.join("state"));
     cmd.env(
-        "GAH_AVAILABILITY_PATH",
+        "PARASAUR_AVAILABILITY_PATH",
         "/nonexistent-availability-path.json",
     );
     cmd.env(
-        "GAH_VALIDATION_CHECK_PATH",
+        "PARASAUR_VALIDATION_CHECK_PATH",
         state_root.join("validation.json"),
     );
     // Capacity leases are node-global in production. These integration
@@ -79,8 +87,8 @@ fn spawn_bin(state_root: &std::path::Path) -> ProcessCommand {
     // from one another.
     cmd.env("XDG_RUNTIME_DIR", state_root.join("runtime"));
     cmd.env("TMPDIR", support::test_temp_root());
-    cmd.env("GAH_TEST_NODE_PRESSURE_FILE", node_pressure);
-    cmd.env("GAH_TEST_NODE_CAPACITY_REPROBE_MS", "100");
+    cmd.env("PARASAUR_TEST_NODE_PRESSURE_FILE", node_pressure);
+    cmd.env("PARASAUR_TEST_NODE_CAPACITY_REPROBE_MS", "100");
     // Each dispatch recalls from and captures to the memory gateway, by
     // default http://127.0.0.1:8420. Whatever the host runs there is not part
     // of these tests, and a port that drops connections instead of refusing
@@ -340,6 +348,31 @@ fn setup_fix_dispatch_repo(
     (repo, home, cfg)
 }
 
+/// Publish a one-commit `gah/real-review` branch and return its head commit.
+/// A fake provider must report this commit as the pull request's head: the
+/// reviewer reads the head from the fetched branch, and refuses a review whose
+/// head differs from the one the controller selected.
+fn push_review_branch(repo: &std::path::Path, home: &std::path::Path) -> String {
+    let git = |args: &[&str]| {
+        let output = ProcessCommand::new("git")
+            .args(args)
+            .current_dir(repo)
+            .env("HOME", home)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?} failed");
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    };
+    git(&["switch", "-c", "gah/real-review"]);
+    fs::write(repo.join("review-change.txt"), "review me\n").unwrap();
+    git(&["add", "review-change.txt"]);
+    git(&["commit", "-m", "review fixture"]);
+    git(&["push", "-u", "origin", "gah/real-review"]);
+    let head = git(&["rev-parse", "HEAD"]);
+    git(&["switch", "main"]);
+    head
+}
+
 #[test]
 // #1539: spawn_bin points availability at /nonexistent-availability-path.json.
 // A loop tick must still dispatch and refill when maintenance cannot write there.
@@ -451,9 +484,9 @@ fn parallel_loop_refills_with_missing_availability_after_a_fast_completion() {
             )
             .env("HOME", &home)
             .env("GITHUB_TOKEN", "token")
-            .env("GAH_LEDGER_PATH", &ledger_path)
-            .env("GAH_EVENTS_PATH", &events_path)
-            .env("GAH_QUOTA_STORE_PATH", &blocked_store)
+            .env("PARASAUR_LEDGER_PATH", &ledger_path)
+            .env("PARASAUR_EVENTS_PATH", &events_path)
+            .env("PARASAUR_QUOTA_STORE_PATH", &blocked_store)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -509,33 +542,7 @@ fn parallel_loop_selects_new_review_after_capacity_deferred_sibling() {
         .unwrap();
     }
 
-    ProcessCommand::new("git")
-        .args(["switch", "-c", "gah/real-review"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
-    fs::write(repo.join("review-change.txt"), "review me\n").unwrap();
-    ProcessCommand::new("git")
-        .args(["add", "review-change.txt"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
-    ProcessCommand::new("git")
-        .args(["commit", "-m", "review fixture"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
-    ProcessCommand::new("git")
-        .args(["push", "-u", "origin", "gah/real-review"])
-        .current_dir(&repo)
-        .env("HOME", &home)
-        .output()
-        .unwrap();
-    ProcessCommand::new("git")
-        .args(["switch", "main"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    let source_sha = push_review_branch(&repo, &home);
 
     let fake_bin = tmp.path().join("bin");
     let events_path = tmp.path().join("events.jsonl");
@@ -551,13 +558,13 @@ fn parallel_loop_selects_new_review_after_capacity_deferred_sibling() {
             "#!/bin/sh\n\
              case \"$4\" in\n\
                */pulls\\?*)\n\
-                 if grep -q deferred_capacity '{events_path}' 2>/dev/null; then echo '[{{\"title\":\"[GAH] Fix: TICKET-703\",\"body\":\"Review fixture\",\"head\":{{\"ref\":\"gah/real-review\",\"sha\":\"source-sha\"}},\"html_url\":\"https://github.com/owner/real/pull/7\",\"labels\":[],\"number\":7,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]'; else echo '[]'; fi\n\
+                 if grep -q deferred_capacity '{events_path}' 2>/dev/null; then echo '[{{\"title\":\"[GAH] Fix: TICKET-703\",\"body\":\"Review fixture\",\"head\":{{\"ref\":\"gah/real-review\",\"sha\":\"{source_sha}\"}},\"html_url\":\"https://github.com/owner/real/pull/7\",\"labels\":[],\"number\":7,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]'; else echo '[]'; fi\n\
                  exit 0 ;;\n\
                */pulls) echo '[{{\"number\":7}}]'; exit 0 ;;\n\
                */check-runs\\?*) echo '{{\"total_count\":1,\"check_runs\":[{{\"status\":\"completed\",\"conclusion\":\"success\"}}]}}'; exit 0 ;;\n\
              esac\n\
              if [ \"$1\" = \"api\" ]; then echo '[]'; exit 0; fi\n\
-             if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then echo '{{\"number\":7,\"url\":\"https://github.com/owner/real/pull/7\",\"title\":\"[GAH] Fix: TICKET-703\",\"body\":\"Review fixture\",\"headRefName\":\"gah/real-review\",\"baseRefName\":\"main\",\"headRefOid\":\"source-sha\",\"statusCheckRollup\":[{{\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}}]}}'; exit 0; fi\n\
+             if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then echo '{{\"number\":7,\"url\":\"https://github.com/owner/real/pull/7\",\"title\":\"[GAH] Fix: TICKET-703\",\"body\":\"Review fixture\",\"isDraft\":true,\"headRefName\":\"gah/real-review\",\"baseRefName\":\"main\",\"headRefOid\":\"{source_sha}\",\"statusCheckRollup\":[{{\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}}]}}'; exit 0; fi\n\
              if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"create\" ]; then echo 'https://github.com/owner/real/pull/1'; exit 0; fi\n\
              if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"comment\" ]; then exit 0; fi\n\
              exit 0\n",
@@ -595,7 +602,7 @@ fn parallel_loop_selects_new_review_after_capacity_deferred_sibling() {
         )
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .output()
         .unwrap();
 
@@ -651,9 +658,10 @@ fn parallel_loop_reviews_a_finished_ticket_while_a_slow_sibling_still_runs() {
         &format!(
             "#!/bin/sh\n\
              created='{created_pr}'\n\
+             head_sha() {{ git --git-dir='{origin}' rev-parse \"refs/heads/$1\"; }}\n\
              case \"$4\" in\n\
                */pulls\\?*)\n\
-                 if [ -f \"$created\" ] && [ ! -f '{review_started}' ]; then head=$(sed -n 1p \"$created\"); title=$(sed -n 2p \"$created\"); printf '[{{\"title\":\"%s\",\"body\":\"Follow-up fixture\",\"head\":{{\"ref\":\"%s\",\"sha\":\"source-sha\"}},\"html_url\":\"https://github.com/owner/real/pull/9\",\"labels\":[],\"number\":9,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]\\n' \"$title\" \"$head\"; else echo '[]'; fi\n\
+                 if [ -f \"$created\" ] && [ ! -f '{review_started}' ]; then head=$(sed -n 1p \"$created\"); title=$(sed -n 2p \"$created\"); printf '[{{\"title\":\"%s\",\"body\":\"Follow-up fixture\",\"head\":{{\"ref\":\"%s\",\"sha\":\"%s\"}},\"html_url\":\"https://github.com/owner/real/pull/9\",\"labels\":[],\"number\":9,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]\\n' \"$title\" \"$head\" \"$(head_sha \"$head\")\"; else echo '[]'; fi\n\
                  exit 0 ;;\n\
                */pulls) echo '[{{\"number\":9}}]'; exit 0 ;;\n\
                */check-runs\\?*) echo '{{\"total_count\":1,\"check_runs\":[{{\"status\":\"completed\",\"conclusion\":\"success\"}}]}}'; exit 0 ;;\n\
@@ -665,8 +673,9 @@ fn parallel_loop_reviews_a_finished_ticket_while_a_slow_sibling_still_runs() {
                if [ ! -f \"$created\" ]; then printf '%s\\n%s\\n' \"$head\" \"$title\" > \"$created\"; fi\n\
                echo 'https://github.com/owner/real/pull/9'; exit 0\n\
              fi\n\
-             if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then head=$(sed -n 1p \"$created\"); title=$(sed -n 2p \"$created\"); printf '{{\"number\":9,\"url\":\"https://github.com/owner/real/pull/9\",\"title\":\"%s\",\"body\":\"Follow-up fixture\",\"headRefName\":\"%s\",\"baseRefName\":\"main\",\"headRefOid\":\"source-sha\",\"statusCheckRollup\":[{{\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}}]}}\\n' \"$title\" \"$head\"; exit 0; fi\n\
+             if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then head=$(sed -n 1p \"$created\"); title=$(sed -n 2p \"$created\"); printf '{{\"number\":9,\"url\":\"https://github.com/owner/real/pull/9\",\"title\":\"%s\",\"body\":\"Follow-up fixture\",\"isDraft\":true,\"headRefName\":\"%s\",\"baseRefName\":\"main\",\"headRefOid\":\"%s\",\"statusCheckRollup\":[{{\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}}]}}\\n' \"$title\" \"$head\" \"$(head_sha \"$head\")\"; exit 0; fi\n\
              exit 0\n",
+            origin = tmp.path().join("github-root/owner/real.git").display(),
             created_pr = created_pr.display(),
             review_started = review_started.display(),
         ),
@@ -716,8 +725,8 @@ fn parallel_loop_reviews_a_finished_ticket_while_a_slow_sibling_still_runs() {
             )
             .env("HOME", &home)
             .env("GITHUB_TOKEN", "token")
-            .env("GAH_LEDGER_PATH", tmp.path().join("ledger.jsonl"))
-            .env("GAH_EVENTS_PATH", tmp.path().join("events.jsonl"))
+            .env("PARASAUR_LEDGER_PATH", tmp.path().join("ledger.jsonl"))
+            .env("PARASAUR_EVENTS_PATH", tmp.path().join("events.jsonl"))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -986,7 +995,7 @@ fn parallel_loop_reprobes_node_pressure_with_active_worker_remaining() {
             )
             .env("HOME", &home)
             .env("GITHUB_TOKEN", "token")
-            .env("GAH_TEST_NODE_PRESSURE_FILE", node_pressure.clone())
+            .env("PARASAUR_TEST_NODE_PRESSURE_FILE", node_pressure.clone())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -1045,33 +1054,7 @@ fn parallel_loop_uses_light_review_after_heavy_node_deferral() {
     )
     .unwrap();
 
-    ProcessCommand::new("git")
-        .args(["switch", "-c", "gah/real-review"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
-    fs::write(repo.join("review-change.txt"), "review me\n").unwrap();
-    ProcessCommand::new("git")
-        .args(["add", "review-change.txt"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
-    ProcessCommand::new("git")
-        .args(["commit", "-m", "review fixture"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
-    ProcessCommand::new("git")
-        .args(["push", "-u", "origin", "gah/real-review"])
-        .current_dir(&repo)
-        .env("HOME", &home)
-        .output()
-        .unwrap();
-    ProcessCommand::new("git")
-        .args(["switch", "main"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    let source_sha = push_review_branch(&repo, &home);
 
     let fake_bin = tmp.path().join("bin");
     let pulls_count = tmp.path().join("pulls-count");
@@ -1092,13 +1075,13 @@ fn parallel_loop_uses_light_review_after_heavy_node_deferral() {
              case \"$4\" in\n\
                */pulls\\?*)\n\
                  n=$(cat '{pulls_count}' 2>/dev/null || echo 0); n=$((n + 1)); echo \"$n\" > '{pulls_count}'\n\
-                 if [ \"$n\" -le 2 ]; then echo '[]'; else echo '[{{\"title\":\"[GAH] Fix: TICKET-701\",\"body\":\"Review fixture\",\"head\":{{\"ref\":\"gah/real-review\",\"sha\":\"source-sha\"}},\"html_url\":\"https://github.com/owner/real/pull/7\",\"labels\":[],\"number\":7,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]'; fi\n\
+                 if [ \"$n\" -le 2 ]; then echo '[]'; else echo '[{{\"title\":\"[GAH] Fix: TICKET-701\",\"body\":\"Review fixture\",\"head\":{{\"ref\":\"gah/real-review\",\"sha\":\"{source_sha}\"}},\"html_url\":\"https://github.com/owner/real/pull/7\",\"labels\":[],\"number\":7,\"state\":\"open\",\"draft\":true,\"updated_at\":\"{pr_updated_at}\"}}]'; fi\n\
                  exit 0 ;;\n\
                */pulls) echo '[{{\"number\":7}}]'; exit 0 ;;\n\
                */check-runs\\?*) echo '{{\"total_count\":1,\"check_runs\":[{{\"status\":\"completed\",\"conclusion\":\"success\"}}]}}'; exit 0 ;;\n\
              esac\n\
              if [ \"$1\" = \"api\" ]; then echo '[]'; exit 0; fi\n\
-             if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then echo '{{\"number\":7,\"url\":\"https://github.com/owner/real/pull/7\",\"title\":\"[GAH] Fix: TICKET-701\",\"body\":\"Review fixture\",\"headRefName\":\"gah/real-review\",\"baseRefName\":\"main\",\"headRefOid\":\"source-sha\",\"statusCheckRollup\":[{{\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}}]}}'; exit 0; fi\n\
+             if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then echo '{{\"number\":7,\"url\":\"https://github.com/owner/real/pull/7\",\"title\":\"[GAH] Fix: TICKET-701\",\"body\":\"Review fixture\",\"isDraft\":true,\"headRefName\":\"gah/real-review\",\"baseRefName\":\"main\",\"headRefOid\":\"{source_sha}\",\"statusCheckRollup\":[{{\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}}]}}'; exit 0; fi\n\
              if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"comment\" ]; then exit 0; fi\n\
              exit 0\n",
             pulls_count = pulls_count.display(),
@@ -1152,7 +1135,7 @@ fn parallel_loop_uses_light_review_after_heavy_node_deferral() {
         )
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_TEST_NODE_PRESSURE_FILE", &node_pressure)
+        .env("PARASAUR_TEST_NODE_PRESSURE_FILE", &node_pressure)
         .output()
         .unwrap();
 
@@ -1238,7 +1221,7 @@ fn parallel_loop_waits_to_refill_until_node_pressure_recedes() {
             )
             .env("HOME", &home)
             .env("GITHUB_TOKEN", "token")
-            .env("GAH_TEST_NODE_PRESSURE_FILE", node_pressure.clone())
+            .env("PARASAUR_TEST_NODE_PRESSURE_FILE", node_pressure.clone())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -1339,7 +1322,7 @@ fn parallel_loop_remains_prompt_on_shutdown_while_node_capacity_is_deferred() {
             )
             .env("HOME", &home)
             .env("GITHUB_TOKEN", "token")
-            .env("GAH_TEST_NODE_PRESSURE_FILE", node_pressure.clone())
+            .env("PARASAUR_TEST_NODE_PRESSURE_FILE", node_pressure.clone())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -1450,7 +1433,7 @@ fn parallel_loop_reclaims_a_dead_owners_claim_and_releases_only_its_own() {
         )
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_CLAIM_STATE_PATH", &claims)
+        .env("PARASAUR_CLAIM_STATE_PATH", &claims)
         .output()
         .unwrap();
 

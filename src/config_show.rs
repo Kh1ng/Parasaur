@@ -232,6 +232,7 @@ pub struct ConfigProfileSummary {
     pub max_implementation_failures_per_ticket: u32,
     pub max_review_cycles_per_ticket: u32,
     pub max_paid_reviews_per_ticket: u32,
+    pub spend_budget: Option<config::SpendBudget>,
     pub backend_instances: Vec<BackendInstanceSummary>,
     pub pm_candidates: Vec<RoutingCandidateSummary>,
     pub improve_candidates: Vec<RoutingCandidateSummary>,
@@ -289,8 +290,8 @@ impl SupabaseSummary {
                 .map(|_| "[REDACTED]")
         };
         Self {
-            url: redacted("GAH_SUPABASE_URL"),
-            anon_key: redacted("GAH_SUPABASE_ANON_KEY"),
+            url: redacted("PARASAUR_SUPABASE_URL"),
+            anon_key: redacted("PARASAUR_SUPABASE_ANON_KEY"),
         }
     }
 }
@@ -456,6 +457,7 @@ fn build_profile_summary(
         max_implementation_failures_per_ticket: routing.max_implementation_failures_per_ticket(),
         max_review_cycles_per_ticket: routing.max_review_cycles_per_ticket(),
         max_paid_reviews_per_ticket: routing.max_paid_reviews_per_ticket(),
+        spend_budget: routing.spend_budget.clone(),
         backend_instances,
         pm_candidates,
         improve_candidates,
@@ -568,8 +570,8 @@ mod tests {
     #[test]
     fn config_show_supabase_redacts_values_before_serialization() {
         let summary = SupabaseSummary::from_env(|name| match name {
-            "GAH_SUPABASE_URL" => Some("https://supabase.example.invalid".into()),
-            "GAH_SUPABASE_ANON_KEY" => Some("fake".into()),
+            "PARASAUR_SUPABASE_URL" => Some("https://supabase.example.invalid".into()),
+            "PARASAUR_SUPABASE_ANON_KEY" => Some("fake".into()),
             _ => panic!("CLI must not read the service-role key"),
         });
         assert_eq!(summary.url, Some("[REDACTED]"));

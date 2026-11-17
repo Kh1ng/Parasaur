@@ -11,6 +11,32 @@ const instance = (id: string, backend: string, extra: Record<string, unknown> = 
   isolated_state_configured: true, ...extra
 });
 
+test('an unknown account probe remains visible beside a healthy account of the same provider', () => {
+  const accounts = liveAccounts([
+    instance('codex-work', 'codex', { auth_ready: true, healthy: true }),
+    instance('codex-personal', 'codex', { auth_ready: null, healthy: null }),
+  ], [], Date.now());
+  const rows = buildLiveRows({ accounts, sessions: [], controllerRuns: [], claims: [], ledgers: {} });
+  expect(rows.find(row => row.key === 'codex-work')?.state).toBe('idle');
+  expect(rows.find(row => row.key === 'codex-personal')?.state).toBe('unknown');
+  expect(rows.find(row => row.key === 'codex-personal')?.reason).toContain('auth could not be checked');
+});
+
+test('Overview explains an unverified account without hiding its healthy sibling', async ({ page }) => {
+  await page.route('**/api/backend-instances**', route => route.fulfill({ json: {
+    profile: 'fixture', backend_instances: [
+      instance('codex-work', 'codex', { account_label: 'Work Codex', auth_ready: true, healthy: true }),
+      instance('codex-personal', 'codex', { account_label: 'Personal Codex', auth_ready: null, healthy: null }),
+    ],
+  } }));
+  await page.goto('/');
+  const accounts = page.getByRole('region', { name: 'Factory Agents Status' });
+  await expect(accounts).toContainText('Work Codex');
+  await expect(accounts).toContainText('Personal Codex');
+  await expect(accounts).toContainText('Account auth could not be checked');
+  await expect(accounts).not.toContainText('Cannot load agent accounts');
+});
+
 // Routes that fetch from the fixture server must not outlive the test.
 test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: 'ignoreErrors' }); });
 const worker = (run_id: string, work_id: string, backend = 'codex', model = 'gpt-6-sol', started_at = new Date(Date.now() - 120_000).toISOString()) => ({ run_id, work_id, backend, runner: backend, backend_instance: backend, model, requested_model: model, actual_model: null, mode: 'improve', node_id: 'fixture-node', branch: 'gah/fixture', started_at, last_activity_at: started_at, attempt: 1, stale_after_seconds: 900, state: 'running' });
@@ -126,7 +152,7 @@ test('Overview shows each agent account with its job, elapsed time, claim and fi
     instance('codex-work', 'codex', { enabled: false })
   ] } }));
   await page.route('**/api/work/**', (route) => route.fulfill({ json: [
-    { timestamp: new Date(Date.now() - 60_000).toISOString(), work_id: '#946', files_changed: 3 }
+    { profile: 'fixture', timestamp: new Date(Date.now() - 60_000).toISOString(), work_id: '#946', files_changed: 3 }
   ] }));
   await page.route('**/api/status**', async (route) => {
     const snapshot = await (await route.fetch()).json();

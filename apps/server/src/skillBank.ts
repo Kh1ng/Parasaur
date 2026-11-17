@@ -24,7 +24,7 @@ import { homedir } from 'node:os';
 import type { Skill, SkillBankFile, SkillBindingSource, SkillSummary, SkillSelection } from '@git-agent-harness/contracts';
 
 function bankPath(): string {
-  return process.env.GAH_SKILL_BANK_PATH
+  return process.env.PARASAUR_SKILL_BANK_PATH
     || resolve(process.env.XDG_CONFIG_HOME || resolve(homedir(), '.config'), 'gah/skills.json');
 }
 

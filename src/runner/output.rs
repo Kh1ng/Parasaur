@@ -5,10 +5,42 @@
 //! authoritative final assistant message and pass it through this module.
 
 use serde_json::Value;
+use std::io::Read;
 use std::path::Path;
 
 const SUMMARY_MAX_BYTES: usize = 2_000;
 const FALLBACK_CONTEXT_MAX_BYTES: usize = 300;
+const MAX_COMBINED_CAPTURE_BYTES: usize = 2 * crate::runner::log_copier::MAX_CAPTURE_BYTES + 1024;
+
+/// Read diagnostic text without loading an old/unbounded artifact wholesale.
+/// A prefix is not evidence of a complete backend message.
+pub(crate) fn read_capture_log(path: &Path) -> String {
+    let Ok(file) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let mut bytes = Vec::new();
+    if file
+        .take(MAX_COMBINED_CAPTURE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .is_err()
+        || bytes.len() > MAX_COMBINED_CAPTURE_BYTES
+    {
+        return String::new();
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// A missing/unreadable log or a persistent incomplete-capture marker cannot
+/// establish the final assistant message. Logs predating the marker keep their
+/// old behavior, subject to the new combined-stream bound.
+pub(crate) fn log_capture_complete(path: &Path) -> bool {
+    let marker = path.with_extension(crate::runner::log_copier::INCOMPLETE_CAPTURE_EXTENSION);
+    if !matches!(std::fs::symlink_metadata(marker), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+    {
+        return false;
+    }
+    std::fs::metadata(path).is_ok_and(|meta| meta.len() <= MAX_COMBINED_CAPTURE_BYTES as u64)
+}
 
 fn utf8_safe_prefix(value: &str, max_bytes: usize) -> &str {
     let mut end = value.len().min(max_bytes);
@@ -117,6 +149,9 @@ fn is_codex_event_type(event_type: &str) -> bool {
 /// Codex turn. Tool events, usage records, stale turns, and incomplete turns
 /// are never returned.
 pub(crate) fn extract_codex_jsonl_summary(text: &str) -> Option<String> {
+    if text.contains(crate::runner::log_copier::LIMIT_NOTICE) {
+        return None;
+    }
     let mut saw_codex_event = false;
     let mut pending_agent_message = None;
     let mut completed_agent_message = None;
@@ -221,6 +256,9 @@ pub(crate) fn extract_vibe_messages_summary(text: &str) -> Option<String> {
 /// assistant records. Accept only explicit assistant text, never observations,
 /// tool output, metrics, or arbitrary JSON fields.
 pub(crate) fn extract_openhands_jsonl_summary(text: &str) -> Option<String> {
+    if text.contains(crate::runner::log_copier::LIMIT_NOTICE) {
+        return None;
+    }
     let mut summary = None;
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         let Ok(event) = serde_json::from_str::<Value>(line) else {
@@ -262,12 +300,61 @@ pub(crate) fn extract_openhands_jsonl_summary(text: &str) -> Option<String> {
 /// assistant response in the terminal result payload. Prefer that over the
 /// raw NDJSON stream so publishable summaries stay plain text.
 pub(crate) fn extract_agy_json_summary(text: &str) -> Option<String> {
+    if text.contains(crate::runner::log_copier::LIMIT_NOTICE) {
+        return None;
+    }
     crate::usage::extract_agy_output_summary(text)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publication_requires_a_readable_bounded_log_without_capture_uncertainty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("output.log");
+        assert!(!log_capture_complete(&path));
+        std::fs::write(&path, "completed\n").unwrap();
+        assert!(log_capture_complete(&path));
+        assert_eq!(read_capture_log(&path), "completed\n");
+        let marker = path.with_extension(crate::runner::log_copier::INCOMPLETE_CAPTURE_EXTENSION);
+        std::fs::write(&marker, "").unwrap();
+        assert!(!log_capture_complete(&path));
+        assert_eq!(
+            read_capture_log(&path),
+            "completed\n",
+            "diagnostic text is not authoritative summary evidence"
+        );
+        std::fs::remove_file(marker).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len((2 * crate::runner::log_copier::MAX_CAPTURE_BYTES + 1025) as u64)
+            .unwrap();
+        assert!(!log_capture_complete(&path));
+        assert_eq!(read_capture_log(&path), "");
+    }
+
+    #[test]
+    fn clipped_capture_never_reuses_an_earlier_completed_summary() {
+        let cases = [
+            (extract_codex_jsonl_summary as fn(&str) -> Option<String>, "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Earlier result\"}}\n{\"type\":\"turn.completed\"}\n"),
+            (extract_openhands_jsonl_summary, "{\"role\":\"assistant\",\"content\":\"Earlier result\"}\n"),
+            (extract_agy_json_summary, "{\"event\":\"result\",\"result\":{\"response\":\"Earlier result\"}}\n")
+        ];
+        for (extract, prefix) in cases {
+            assert_eq!(extract(prefix).as_deref(), Some("Earlier result"));
+            assert_eq!(
+                extract(&format!(
+                    "{prefix}{}",
+                    crate::runner::log_copier::LIMIT_NOTICE
+                )),
+                None
+            );
+        }
+    }
 
     #[test]
     fn codex_selects_only_final_completed_agent_message() {

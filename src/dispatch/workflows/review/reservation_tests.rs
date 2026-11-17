@@ -188,7 +188,7 @@ fn route_attribution_does_not_clear_a_review_budget_hold() {
         None,
     );
 
-    mark_review_budget_exhausted(&mut ledger, &route, "budget exhausted");
+    mark_review_budget_exhausted(&mut ledger, &route, "budget exhausted").unwrap();
 
     assert!(ledger.human_required);
     assert_eq!(

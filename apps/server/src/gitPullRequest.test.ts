@@ -41,13 +41,13 @@ process.stdout.write(JSON.stringify(method === 'GET' ? {default_branch:'trunk'} 
   writeFileSync(join(root, 'gh'), fake, { mode: 0o755 });
   writeFileSync(join(root, 'glab'), fake, { mode: 0o755 });
   const savedPath = process.env.PATH;
-  const savedProfiles = process.env.GAH_FIXTURE_PROFILE_LIST;
+  const savedProfiles = process.env.PARASAUR_FIXTURE_PROFILE_LIST;
   process.env.PATH = `${root}:${savedPath}`;
-  process.env.GAH_FIXTURE_PROFILE_LIST = profiles;
+  process.env.PARASAUR_FIXTURE_PROFILE_LIST = profiles;
   t.after(() => {
     process.env.PATH = savedPath;
-    if (savedProfiles === undefined) delete process.env.GAH_FIXTURE_PROFILE_LIST;
-    else process.env.GAH_FIXTURE_PROFILE_LIST = savedProfiles;
+    if (savedProfiles === undefined) delete process.env.PARASAUR_FIXTURE_PROFILE_LIST;
+    else process.env.PARASAUR_FIXTURE_PROFILE_LIST = savedProfiles;
     rmSync(root, { recursive: true, force: true });
   });
   const calls = () => readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line));

@@ -26,6 +26,72 @@ test('controller events become the requested high-signal notification kinds', ()
   assert.equal(activityFromController(controller('human_required', 'memory gateway recall failed'))?.kind, 'gateway_down');
 });
 
+test('pre-launch capacity refusals stay in history without unread or delivery storms', async () => {
+  const delivered: string[] = [];
+  const feed = new ActivityFeed(null, event => { delivered.push(event.id); });
+  for (const details of [
+    'review: deferred_capacity: node admission deferred: node memory reserve would be crossed',
+    'fix_existing: deferred_capacity: no eligible backend available for preferred codex/model; skipped: codex/model: max_concurrent_reached'
+  ]) {
+    const event = activityFromController(controller('dispatch_finished', details))!;
+    assert.equal(event.kind, 'dispatch_deferred');
+    assert.equal(event.severity, 'info');
+    assert.equal(event.title, 'Waiting for capacity');
+    assert.equal(event.message, details);
+    feed.record(event);
+  }
+  assert.equal(feed.replay('gah').length, 2);
+  assert.equal(feed.unreadCount(), 0);
+  assert.equal(feed.notifications().length, 0);
+  await new Promise(done => setImmediate(done));
+  assert.deepEqual(delivered, []);
+
+  for (const details of [
+    'review: deferred_capacity: fallback capacity deferred after 2 backend attempt(s): node admission deferred: memory reserve',
+    'review: deferred_capacity: unfamiliar failure',
+    'review: backend error mentions deferred_capacity: node admission deferred: memory reserve',
+    'review: backend exited 1'
+  ]) {
+    const event = activityFromController(controller('dispatch_finished', details))!;
+    assert.equal(event.kind, 'dispatch_failed');
+    assert.equal(event.notificationMuted, undefined);
+    feed.record(event);
+  }
+  await new Promise(done => setImmediate(done));
+  assert.equal(feed.unreadCount(), 4);
+  assert.equal(delivered.length, 4);
+});
+
+test('old controller capacity notifications are corrected durably without losing receipts or real alerts', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'gah-capacity-notifications-'));
+  const path = join(directory, 'activity.jsonl');
+  const now = Date.parse('2026-09-12T13:00:00Z');
+  const wait = activityFromController(controller('dispatch_finished', 'review: deferred_capacity: node admission deferred: memory reserve'))!;
+  const old: ActivityEvent = { ...wait, kind: 'dispatch_failed', severity: 'error', title: 'Work failed', notificationMuted: false, readAt: null,
+    deliveries: [{ method: 'web_push', target: 'Windows', ok: true, at: wait.occurredAt }] };
+  const alreadyRead = { ...old, id: 'already-read', readAt: '2026-09-12T12:30:00Z' };
+  const fallback: ActivityEvent = { ...old, id: 'real-attempts', message: 'review: deferred_capacity: fallback capacity deferred after 2 backend attempt(s): node admission deferred: memory reserve' };
+  const nonController: ActivityEvent = { ...old, id: 'not-controller', origin: undefined };
+  const delivered: string[] = [];
+  try {
+    writeFileSync(path, [old, alreadyRead, fallback, nonController].map(event => JSON.stringify(event)).join('\n')+'\n');
+    const feed = new ActivityFeed(path, event => { delivered.push(event.id); }, () => now);
+    const corrected = feed.replay('gah')[0];
+    assert.deepEqual(corrected, { ...old, kind: 'dispatch_deferred', severity: 'info', title: 'Waiting for capacity', notificationMuted: true, readAt: new Date(now).toISOString() });
+    assert.equal(feed.replay('gah')[1].readAt, alreadyRead.readAt);
+    assert.deepEqual(feed.notifications().map(event => event.id).sort(), ['not-controller', 'real-attempts']);
+    assert.equal(feed.unreadCount(), 2);
+    assert.equal(feed.record(wait), false, 'The same controller receipt keeps its deduplication identity');
+    const reloaded = new ActivityFeed(path, undefined, () => now);
+    assert.deepEqual(reloaded.replay('gah'), feed.replay('gah'));
+    assert.equal(reloaded.unreadCount(), 2);
+    await new Promise(done => setImmediate(done));
+    assert.deepEqual(delivered, []);
+  } finally {
+    rmSync(directory, { recursive: true });
+  }
+});
+
 test('activity replay is durable, cursor-based, and de-duplicated', () => {
   const directory = mkdtempSync(join(tmpdir(), 'gah-activity-'));
   const path = join(directory, 'activity.jsonl');

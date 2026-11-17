@@ -32,7 +32,7 @@ use url::Url;
 
 /// The identity file `apps/server` reads/writes, in priority order.
 pub fn resolve_identity_path() -> PathBuf {
-    if let Ok(path) = std::env::var("GAH_COORDINATOR_IDENTITY_PATH") {
+    if let Ok(path) = std::env::var("PARASAUR_COORDINATOR_IDENTITY_PATH") {
         return PathBuf::from(path);
     }
     PathBuf::from("config/coordinator-identity.json")
@@ -73,7 +73,7 @@ struct NodeIdentity {
 fn read_identity(path: &Path) -> Result<NodeIdentity> {
     let text = std::fs::read_to_string(path).with_context(|| {
         format!(
-            "reading node identity from {} (set GAH_COORDINATOR_IDENTITY_PATH if it lives elsewhere)",
+            "reading node identity from {} (set PARASAUR_COORDINATOR_IDENTITY_PATH if it lives elsewhere)",
             path.display()
         )
     })?;
@@ -87,7 +87,7 @@ fn read_or_create_identity(path: &Path, advertised_url: Option<&str>) -> Result<
     }
     let advertised_url = advertised_url.ok_or_else(|| {
         anyhow::anyhow!(
-            "node identity does not exist at {}; pass --advertised-url or set GAH_NODE_ADVERTISED_URL so it can be created",
+            "node identity does not exist at {}; pass --advertised-url or set PARASAUR_NODE_ADVERTISED_URL so it can be created",
             path.display()
         )
     })?;
@@ -230,7 +230,7 @@ pub fn register_advisory(
 ) {
     match register(&RegisterOptions {
         central_url: central_url.to_string(),
-        advertised_url: std::env::var("GAH_NODE_ADVERTISED_URL").ok(),
+        advertised_url: std::env::var("PARASAUR_NODE_ADVERTISED_URL").ok(),
         transport_mode: transport_mode.to_string(),
         secret_ref: secret_ref.to_string(),
         profiles: None,

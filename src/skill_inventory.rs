@@ -67,11 +67,11 @@ pub struct SkillInventoryRecord {
 
 /// One shared file across every profile -- records carry their own
 /// `profile` field for scoping (see module docs) rather than the path
-/// itself varying per profile. `GAH_SKILL_INVENTORY_STORE_PATH` is an
-/// explicit override, matching the existing `GAH_AVAILABILITY_PATH`/
-/// `GAH_QUOTA_STORE_PATH` convention.
+/// itself varying per profile. `PARASAUR_SKILL_INVENTORY_STORE_PATH` is an
+/// explicit override, matching the existing `PARASAUR_AVAILABILITY_PATH`/
+/// `PARASAUR_QUOTA_STORE_PATH` convention.
 pub fn store_path() -> PathBuf {
-    if let Ok(path) = std::env::var("GAH_SKILL_INVENTORY_STORE_PATH") {
+    if let Ok(path) = std::env::var("PARASAUR_SKILL_INVENTORY_STORE_PATH") {
         return PathBuf::from(path);
     }
     if let Some(dir) = std::env::var_os("XDG_STATE_HOME") {

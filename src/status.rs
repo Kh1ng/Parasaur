@@ -144,6 +144,9 @@ pub struct StatusSnapshot {
     pub open_managed_mr_count: u32,
     pub inflight_implementation_count: u32,
     pub implementation_intake_paused: bool,
+    /// Calendar-UTC factory ledger spend and cost coverage. Absent when no
+    /// ceiling is configured; an incomplete enabled window holds new intake.
+    pub spend_budget: Option<crate::spend_budget::SpendBudgetStatus>,
     /// Compatibility projection keyed by logical backend name. `true` means
     /// the executable resolves with the same resolver dispatch uses.
     pub backend_configured: std::collections::HashMap<String, bool>,
@@ -761,7 +764,7 @@ fn build_snapshot_inner(
         ) else {
             continue;
         };
-        if !gates::policy_approval_still_required(
+        if !gates::execution_gate_still_required(
             cfg,
             profile_name,
             profile,
@@ -1175,6 +1178,12 @@ fn build_snapshot_inner(
 
     let snapshot = StatusSnapshot {
         schema_version: 1,
+        spend_budget: crate::spend_budget::evaluate(
+            effective_routing.spend_budget.as_ref(),
+            profile_name,
+            entries,
+            now,
+        ),
         review_contract_version: crate::ledger::CURRENT_REVIEW_CONTRACT_VERSION,
         generated_at,
         profile: profile_identity,
@@ -1247,6 +1256,11 @@ fn blocked_work_item_lines(blocked: &[Blocker]) -> Vec<String> {
             code,
             b.message.as_deref().unwrap_or(&b.kind)
         ));
+        // A reason code alone leaves the operator guessing; the plan says
+        // what releases the item.
+        if let Some(RemediationPlan::NoAutomaticRemediation { reason, .. }) = &b.remediation_plan {
+            lines.push(format!("      Next: {reason}"));
+        }
     }
     lines
 }
@@ -1255,7 +1269,14 @@ pub fn run(cfg: &GahConfig, profile_name: &str, json: bool, light: bool) -> Resu
     let now = crate::clock::now_utc();
     let snapshot = build_snapshot_with(cfg, profile_name, now, !light)?;
 
-    let node = crate::node_role::NodeRoleStatus::resolve(&cfg.defaults)?;
+    let mut node = crate::node_role::NodeRoleStatus::resolve(&cfg.defaults)?;
+    if node.central_url.is_some() {
+        node.central_claim_observation = Some(crate::central_claims::observations::latest(
+            cfg,
+            profile_name,
+            crate::config::get_profile(cfg, profile_name)?,
+        ));
+    }
     if json {
         let mut output = serde_json::to_value(&snapshot)?;
         output["node"] = serde_json::to_value(&node)?;
@@ -1273,6 +1294,12 @@ pub fn run(cfg: &GahConfig, profile_name: &str, json: bool, light: bool) -> Resu
             node.role,
             node.central_url.as_deref().unwrap_or("(unset)")
         );
+        if let Some(observation) = &node.central_claim_observation {
+            println!(
+                "Central claim observation: {}",
+                serde_json::to_string(observation)?
+            );
+        }
         println!(
             "Observations: Sync={}, Availability={}, Ledger={}",
             snapshot.observations.sync.status,

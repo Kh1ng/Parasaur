@@ -44,7 +44,7 @@ fn memory_setup_checks_authenticated_recall_and_names_the_key_file_on_401() {
     let home = test_tempdir();
     let curl = home.path().join("curl");
     let request = home.path().join("request");
-    fs::write(&curl, "#!/bin/sh\n/bin/cat > \"$GAH_TEST_MEMORY_REQUEST\"\nprintf '\\n__GAH_MEMORY_GATEWAY_STATUS__:%s\\n' \"$GAH_TEST_MEMORY_STATUS\"\n").unwrap();
+    fs::write(&curl, "#!/bin/sh\n/bin/cat > \"$PARASAUR_TEST_MEMORY_REQUEST\"\nprintf '\\n__GAH_MEMORY_GATEWAY_STATUS__:%s\\n' \"$PARASAUR_TEST_MEMORY_STATUS\"\n").unwrap();
     fs::set_permissions(&curl, fs::Permissions::from_mode(0o700)).unwrap();
     let key_file = home.path().join(".config/gah/tdai-gateway.env");
     let path = format!(
@@ -76,8 +76,8 @@ fn memory_setup_checks_authenticated_recall_and_names_the_key_file_on_401() {
             ])
             .arg(home.path())
             .env("PATH", &path)
-            .env("GAH_TEST_MEMORY_REQUEST", &request)
-            .env("GAH_TEST_MEMORY_STATUS", "200");
+            .env("PARASAUR_TEST_MEMORY_REQUEST", &request)
+            .env("PARASAUR_TEST_MEMORY_STATUS", "200");
         if file_only {
             command.env_remove("TDAI_GATEWAY_API_KEY");
         } else {
@@ -103,8 +103,8 @@ fn memory_setup_checks_authenticated_recall_and_names_the_key_file_on_401() {
         ])
         .arg(home.path())
         .env("PATH", &path)
-        .env("GAH_TEST_MEMORY_REQUEST", &request)
-        .env("GAH_TEST_MEMORY_STATUS", "401")
+        .env("PARASAUR_TEST_MEMORY_REQUEST", &request)
+        .env("PARASAUR_TEST_MEMORY_STATUS", "401")
         .env_remove("TDAI_GATEWAY_API_KEY")
         .assert()
         .failure()
@@ -128,7 +128,7 @@ case "$*" in
   --version) echo systemd ;;
   *list-units*) printf 'gah-loop@local.service loaded active running\ngah-watchdog.service loaded inactive dead\ngah-server.service loaded active running\n' ;;
   *list-unit-files*) printf 'gah-loop@.service disabled\ngah-loop@local.service enabled\ngah-watchdog.timer enabled\ngah-prune.timer enabled\ngah-quota-refresh.timer enabled\n' ;;
-  *) printf '%s\n' "$*" >> "$GAH_FACTORY_TEST_LOG" ;;
+  *) printf '%s\n' "$*" >> "$PARASAUR_FACTORY_TEST_LOG" ;;
 esac
 "#,
     );
@@ -145,7 +145,7 @@ esac
                     std::env::var("PATH").unwrap()
                 ),
             )
-            .env("GAH_FACTORY_TEST_LOG", &log)
+            .env("PARASAUR_FACTORY_TEST_LOG", &log)
             .assert()
             .success();
         let saved: toml::Value = toml::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
@@ -186,9 +186,9 @@ fn standalone_installer_defaults_off_but_preserves_existing_selection() {
     let cli = home.path().join("fake-gah");
     write_executable(
         &cli,
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$GAH_FACTORY_TEST_LOG\"\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$PARASAUR_FACTORY_TEST_LOG\"\n",
     );
-    // The macOS desktop's standalone install is the central role with GAH_STANDALONE=1.
+    // The macOS desktop's standalone install is the central role with PARASAUR_STANDALONE=1.
     for (role, intent, contents, selection, expected) in [
         ("standalone", None, None, None, "--factory-enabled false"),
         (
@@ -245,18 +245,18 @@ fn standalone_installer_defaults_off_but_preserves_existing_selection() {
             .arg("scripts/configure-node-role.sh")
             .arg(role)
             .arg(&cli)
-            .env("GAH_CONFIG", &config)
-            .env("GAH_FACTORY_TEST_LOG", &log)
-            .env_remove("GAH_CENTRAL_URL");
+            .env("PARASAUR_CONFIG", &config)
+            .env("PARASAUR_FACTORY_TEST_LOG", &log)
+            .env_remove("PARASAUR_CENTRAL_URL");
         if let Some(intent) = intent {
-            command.env("GAH_STANDALONE", intent);
+            command.env("PARASAUR_STANDALONE", intent);
         } else {
-            command.env_remove("GAH_STANDALONE");
+            command.env_remove("PARASAUR_STANDALONE");
         }
         if let Some(selection) = selection {
-            command.env("GAH_FACTORY_ENABLED", selection);
+            command.env("PARASAUR_FACTORY_ENABLED", selection);
         } else {
-            command.env_remove("GAH_FACTORY_ENABLED");
+            command.env_remove("PARASAUR_FACTORY_ENABLED");
         }
         assert!(command.status().unwrap().success());
         let invocation = fs::read_to_string(&log).unwrap();

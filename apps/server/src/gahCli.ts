@@ -4,13 +4,16 @@
  * Replaces the broken stdin/stdout bridge in rustBackend.ts
  */
 
-import { spawn, spawnSync, SpawnOptions, ChildProcess } from 'node:child_process';
+import { execFile, spawn, spawnSync, SpawnOptions, ChildProcess } from 'node:child_process';
 import { userInfo } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, readFileSync, readdirSync } from 'node:fs';
 import { AsyncTtlCache } from './asyncTtlCache.js';
+import { diagnosticTail } from './diagnosticTail.js';
 import type {
+  DispatchExecutionOptions,
+  DispatchUsageReport,
   StatusSnapshot,
   QuotaSnapshot,
   ControllerEvent,
@@ -21,6 +24,7 @@ import type {
   ConfigShowFull,
   ConfigProfileSummary,
   ProfileSummary,
+  ProfileChecks,
   DoctorSnapshot,
   MergeRequest,
   LedgerSummary,
@@ -51,14 +55,14 @@ function executableOnDisk(path: string): boolean {
   }
 }
 
-// Issue #635: GAH_BINARY, when set, is the first candidate tried -- lets
+// Issue #635: PARASAUR_BINARY, when set, is the first candidate tried -- lets
 // tests/deployments deterministically pin a specific binary (a fixture, or
 // a specific installed build) instead of relying on the build-path/PATH
 // search below. An unset, missing, or non-executable override is not an
 // error -- it just isn't used, and resolution falls through to the normal
 // candidates exactly as if it had never been set.
 export function findGahBinary(isExecutable: ExecutableProbe = executableOnDisk): string {
-  const override = process.env.GAH_BINARY;
+  const override = process.env.PARASAUR_BINARY;
   const possiblePaths = [
     ...(override ? [override] : []),
     resolve(__dirname, '../../../target/release/gah'),
@@ -96,8 +100,8 @@ function getConfigPath(config?: string): string | undefined {
   const possiblePaths = [
     resolve(__dirname, '../../../gah-config.toml'),
     resolve(__dirname, '../../../config/gah-config.toml'),
-    process.env.GAH_CONFIG_PATH,
-    process.env.GAH_CANONICAL_CONFIG
+    process.env.PARASAUR_CONFIG_PATH,
+    process.env.PARASAUR_CANONICAL_CONFIG
   ];
 
   for (const path of possiblePaths) {
@@ -122,7 +126,7 @@ export function getSpawnOptions(config?: string, detached?: boolean): SpawnOptio
   
   // Set config path if provided
   if (config) {
-    env.GAH_CONFIG_PATH = config;
+    env.PARASAUR_CONFIG_PATH = config;
   }
   
   const options: SpawnOptions = {
@@ -181,6 +185,48 @@ export async function runQuota(
   return runJsonCommand<QuotaSnapshot>(args, options.config);
 }
 
+/** Central-only broker plumbing. Both paths are coordinator-owned artifacts;
+ * never accept worker-supplied binding files or expose this as a generic RPC.
+ * The CLI verifies/imports the receipt and fsyncs canonical history before ack. */
+export function runReceiveNativeResult(options: { bindingFile: string; receiptFile: string; config?: string }): Promise<import('@git-agent-harness/contracts').NativeResultAcknowledgement> {
+  const config = getConfigPath(options.config ?? process.env.PARASAUR_CONFIG_PATH ?? process.env.PARASAUR_CANONICAL_CONFIG);
+  const args = ['ledger', 'receive-dispatch', '--acknowledgement', '--binding-file', options.bindingFile, '--receipt-file', options.receiptFile,
+    ...(config ? ['--config-path', config] : [])];
+  return runJsonCommand(args, config, false, undefined, 64 * 1024);
+}
+
+export interface NativeJobRequest {args:Record<string,unknown>}
+export function runPlanNativeJob(request:NativeJobRequest,catalog:import('@git-agent-harness/contracts').NativeWorkerCatalog,config?:string):Promise<NativeJobRequest> {
+  const path=getConfigPath(config??process.env.PARASAUR_CONFIG_PATH??process.env.PARASAUR_CONFIG);
+  return runJsonCommand(['native-handoff','plan',...(path?['--config-path',path]:[])],path,false,JSON.stringify({request,catalog}),8*1024*1024);
+}
+export function runPrepareNativeJob(options:{requestFile:string;output:string;nodeId:string;centralUrl:string;config?:string}):Promise<import('./nativeDispatchBroker.js').NativeDispatchBinding> {
+  const path=getConfigPath(options.config??process.env.PARASAUR_CONFIG_PATH??process.env.PARASAUR_CONFIG);
+  return runJsonCommand(['native-handoff','prepare','--request-file',options.requestFile,'--output',options.output,
+    '--node-id',options.nodeId,'--central-url',options.centralUrl,...(path?['--config-path',path]:[])],path);
+}
+
+/** Trusted central prerequisite, not an execution grant. The caller owns the
+ * context directory and must separately check loop/claim/work/host authority. */
+export async function runCheckNativePolicy(options: {
+  contextDirectory: string; contextSha256: string; nodeId: string; centralUrl: string; config?: string; signal?: AbortSignal; checkWork?: boolean; checkRoute?: boolean; workerCatalogFile?:string;
+}): Promise<import('./nativeDispatchBroker.js').NativeDispatchBinding> {
+  const config = getConfigPath(options.config ?? process.env.PARASAUR_CONFIG_PATH ?? process.env.PARASAUR_CANONICAL_CONFIG);
+  const args = ['native-handoff', 'check-current-policy', '--context-dir', options.contextDirectory,
+    '--expected-context', options.contextSha256, '--node-id', options.nodeId, '--central-url', options.centralUrl,
+    ...(config ? ['--config-path', config] : []), ...(options.checkWork ? ['--check-work'] : []), ...(options.checkRoute ? ['--check-route'] : []),
+    ...(options.workerCatalogFile?['--worker-catalog-file',options.workerCatalogFile]:[])];
+  const result = await runJsonCommand<{ binding: import('./nativeDispatchBroker.js').NativeDispatchBinding; policy_current: boolean; execution_authorized: boolean; work_current?: boolean | null; route_current?: boolean | null }>(
+    args, config, false, undefined, 64 * 1024, options.signal);
+  if (result.policy_current !== true || result.execution_authorized !== false
+    || options.checkWork && result.work_current !== true
+    || options.checkRoute && result.route_current !== true
+    || result.binding?.node_id !== options.nodeId || result.binding.context_sha256 !== options.contextSha256) {
+    throw new Error('Current native policy check returned a mismatched binding');
+  }
+  return result.binding;
+}
+
 /**
  * Shared plumbing for the `--json` subcommands -- same spawn/parse/error
  * shape, factored out so callers don't duplicate it. Fail closed: stdout
@@ -192,10 +238,11 @@ function runJsonCommand<T>(
   config?: string,
   acceptStructuredFailure = false,
   input?: string,
-  maxOutputBytes = MAX_JSON_OUTPUT_BYTES
+  maxOutputBytes = MAX_JSON_OUTPUT_BYTES,
+  signal?: AbortSignal
 ): Promise<T> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(findGahBinary(), args, { ...getSpawnOptions(config), ...(input !== undefined ? { stdio: ['pipe', 'pipe', 'pipe'] as const } : {}) });
+    const child = spawn(findGahBinary(), args, { ...getSpawnOptions(config), ...(signal ? { signal } : {}), ...(input !== undefined ? { stdio: ['pipe', 'pipe', 'pipe'] as const } : {}) });
     if (input !== undefined) { child.stdin?.on('error', () => undefined); child.stdin?.end(input); }
 
     let stdout = '';
@@ -274,6 +321,18 @@ export async function runReport(
     args.push('--config-path', options.config);
   }
   return runJsonCommand<ReportData>(args, options.config);
+}
+
+/** Read canonical dispatch usage without fetching or parsing the ledger in Node. */
+export async function runDispatchUsageReport(options: { since?: string; profile?: string; config?: string } = {}): Promise<DispatchUsageReport> {
+  const args = ['report', '--usage', '--json', '--since', options.since ?? '7d'];
+  if (options.profile) args.push('--profile', options.profile);
+  if (options.config) args.push('--config-path', options.config);
+  const report = await runJsonCommand<DispatchUsageReport>(args, options.config);
+  if (report.schema_version !== 1 || !Array.isArray(report.rows)) {
+    throw new Error('Unsupported dispatch usage report; update the node CLI');
+  }
+  return report;
 }
 
 /**
@@ -474,35 +533,35 @@ function runVoidCommand(args: string[], config: string | undefined, label: strin
  * Streams stdout to the onLine callback as lines arrive
  * Returns when the process exits
  */
-export interface DispatchOptions {
+export interface DispatchOptions extends DispatchExecutionOptions {
   profile: string;
   mode: string;
   backend?: string;
+  backendInstance?: string;
   target?: string;
   branch?: string;
   mr?: string;
   model?: string;
   budget?: number;
-  dryRun?: boolean;
   configPath?: string;
   currentBranch?: boolean;
-  retries?: number;
-  allowDraftFail?: boolean;
-  prod?: boolean;
-  allowUnknownRedBaseline?: boolean;
-  escalate?: boolean;
-  manualWorker?: boolean;
   reasoningEffort?: string;
 }
 
 export interface DispatchResult {
   exitCode: number;
   stderr: string;
+  signal?: NodeJS.Signals | null;
+  spawnFailed?: boolean;
 }
 
 export interface CancellationResult {
   cancelled: boolean;
   error?: string;
+  /** Available from the real runner after process-tree termination. */
+  result?: DispatchResult;
+  /** Set by the profile queue when it cancelled a session before launch. */
+  notStarted?: boolean;
 }
 
 export interface CancellableDispatch {
@@ -518,6 +577,7 @@ function buildDispatchArgs(options: DispatchOptions): string[] {
   if (options.backend) {
     args.push('--backend', options.backend);
   }
+  if (options.backendInstance) args.push('--backend-instance', options.backendInstance);
 
   if (options.target) {
     args.push('--target', options.target);
@@ -603,21 +663,39 @@ function waitForClose(child: ChildProcess, timeoutMs: number): Promise<boolean> 
   });
 }
 
+function processGroupIsGone(pid: number): boolean {
+  try { process.kill(-pid, 0); }
+  catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+  if (process.platform !== 'linux') return false;
+  // Orphans can remain zombies until init reaps them. They cannot execute,
+  // so they must not pin a profile forever. Never infer exit from EPERM.
+  const active = (entry: string): boolean => {
+    const stat = readFileSync(`/proc/${entry}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    return Number(fields[2]) === pid && fields[0] !== 'Z' && fields[0] !== 'X';
+  };
+  try { if (active(String(pid))) return false; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false; }
+  try {
+    for (const entry of readdirSync('/proc')) {
+      if (!/^\d+$/.test(entry)) continue;
+      try { if (active(entry)) return false; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false; }
+    }
+    return true;
+  } catch { return false; }
+}
+
 function waitForProcessGroupExit(pid: number, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const deadline = Date.now() + timeoutMs;
     const check = () => {
-      try {
-        process.kill(-pid, 0);
-      } catch {
-        resolve(true);
-        return;
-      }
+      if (processGroupIsGone(pid)) { resolve(true); return; }
       if (Date.now() >= deadline) {
         resolve(false);
         return;
       }
-      setTimeout(check, 10);
+      setTimeout(check, 50);
     };
     check();
   });
@@ -707,19 +785,34 @@ export function runDispatchCancellable(
     });
 
     child.stderr?.on('data', (data) => {
-      stderr += data.toString();
+      stderr = diagnosticTail(stderr + diagnosticTail(data.toString()));
     });
 
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       // `code` is null when the process was terminated by a signal (e.g.
       // our own SIGTERM/SIGKILL during cancellation) -- collapsing that to
       // 0 would misreport an abnormal termination as a clean success.
-      settleOnce({ exitCode: code ?? -1, stderr });
+      const result = { exitCode: code ?? -1, signal, stderr };
+      // A closed parent can leave a live descendant holding the same profile.
+      // Keep completion pending until its isolated process group is gone.
+      const confirm = () => {
+        if (process.platform !== 'win32' && child.pid) {
+          if (processGroupIsGone(child.pid)) { settleOnce(result); return; }
+          setTimeout(confirm, 250).unref?.();
+        } else { settleOnce(result); }
+      };
+      confirm();
     });
 
     child.on('error', (error) => {
+      if (child.pid) {
+        // A post-spawn signalling error does not prove the child is gone.
+        stderr = diagnosticTail(stderr + `\nDispatch process error: ${error.message}`);
+        return;
+      }
       settleOnce({
         exitCode: -1,
+        spawnFailed: true,
         stderr: `Failed to spawn gah: ${error instanceof Error ? error.message : String(error)}`
       });
     });
@@ -750,7 +843,7 @@ export function runDispatchCancellable(
             error: `Could not confirm termination of process tree for pid ${pid}`
           };
         }
-        return { cancelled: true };
+        return { cancelled: true, result: { exitCode: child.exitCode ?? -1, signal: child.signalCode, stderr } };
       } catch (error) {
         return {
           cancelled: false,
@@ -903,10 +996,10 @@ export function buildProfileAddArgs(options: ProfileAddOptions): string[] {
     args.push('--env-file-prod', options.env_file_prod);
   }
   if (options.validation_commands?.length) {
-    args.push('--validation-commands', options.validation_commands.join(','));
+    for (const command of options.validation_commands) args.push('--validation-command', command);
   }
   if (options.auto_fix_commands?.length) {
-    args.push('--auto-fix-commands', options.auto_fix_commands.join(','));
+    for (const command of options.auto_fix_commands) args.push('--auto-fix-command', command);
   }
   if (options.max_parallel_workers !== undefined && options.max_parallel_workers !== null) {
     args.push('--max-parallel-workers', String(options.max_parallel_workers));
@@ -1080,10 +1173,14 @@ export function buildProfileSetArgs(options: ProfileSetOptions): string[] {
     args.push('--env-file-prod', options.env_file_prod);
   }
   if (options.validation_commands?.length) {
-    args.push('--validation-commands', options.validation_commands.join(','));
+    for (const command of options.validation_commands) args.push('--validation-command', command);
+  } else if (options.validation_commands !== undefined || options.clear?.includes('validation_commands')) {
+    args.push('--clear', 'validation_commands');
   }
   if (options.auto_fix_commands?.length) {
-    args.push('--auto-fix-commands', options.auto_fix_commands.join(','));
+    for (const command of options.auto_fix_commands) args.push('--auto-fix-command', command);
+  } else if (options.auto_fix_commands !== undefined || options.clear?.includes('auto_fix_commands')) {
+    args.push('--clear', 'auto_fix_commands');
   }
   if (options.max_parallel_workers !== undefined && options.max_parallel_workers !== null) {
     args.push('--max-parallel-workers', String(options.max_parallel_workers));
@@ -1127,6 +1224,8 @@ export function buildProfileSetArgs(options: ProfileSetOptions): string[] {
       'manager_wake_autonomy',
       'validation_timeout_seconds',
       'hold_contract_changes',
+      'validation_commands',
+      'auto_fix_commands',
     ])
   );
   
@@ -1160,6 +1259,17 @@ export async function runProfileSet(options: ProfileSetOptions): Promise<void> {
       reject(new Error(`Failed to spawn gah: ${error instanceof Error ? error.message : String(error)}`));
     });
   });
+}
+
+export async function runProfileChecks(profile: string): Promise<ProfileChecks> {
+  const data = await runJsonCommand<ProfileChecks>(['profile', 'show', '--json', '--', profile]);
+  if (data.profile !== profile || !Number.isFinite(data.validation_timeout_seconds)
+    || ![data.validation_commands, data.auto_fix_commands].every(list => Array.isArray(list) && list.every(command => typeof command === 'string'))) {
+    throw new Error('Invalid workspace checks response');
+  }
+  // Keep the HTTP owner view narrow even if the CLI adds more workspace fields.
+  return { profile: data.profile, validation_commands: data.validation_commands,
+    auto_fix_commands: data.auto_fix_commands, validation_timeout_seconds: data.validation_timeout_seconds };
 }
 
 export interface ProfileRemoveOptions {
@@ -1312,7 +1422,7 @@ export function classifyAuthFailure(backend: string, text: string): Promise<bool
 }
 
 export async function runNodeRole(): Promise<import('@git-agent-harness/contracts').NodeRoleStatus> {
-  const config = getConfigPath(process.env.GAH_CONFIG ?? process.env.GAH_CONFIG_PATH);
+  const config = getConfigPath(process.env.PARASAUR_CONFIG ?? process.env.PARASAUR_CONFIG_PATH);
   return runJsonCommand(['status', '--role', '--json', ...(config ? ['--config-path', config] : [])], config);
 }
 
@@ -1719,17 +1829,21 @@ interface SystemdUnitStatus {
   startedAt?: string;
 }
 
+function loopStatusArgs(profile: string): string[] {
+  return ['--user', 'show', loopServiceName(profile), '--property=LoadState', '--property=ActiveState', '--property=MainPID', '--property=ActiveEnterTimestamp', '--no-pager'];
+}
 function readSystemdLoopStatus(profile: string): SystemdUnitStatus | undefined {
-  const service = loopServiceName(profile);
   const result = spawnSync(
     'systemctl',
-    ['--user', 'show', service, '--property=LoadState', '--property=ActiveState', '--property=MainPID', '--property=ActiveEnterTimestamp', '--no-pager'],
-    { encoding: 'utf8', env: systemdUserEnv() }
+    loopStatusArgs(profile),
+    { encoding: 'utf8', env: systemdUserEnv(), timeout: 2000, maxBuffer: 16 * 1024 }
   );
   if (result.error || result.status !== 0) return undefined;
-
+  return parseSystemdUnitStatus(result.stdout ?? '');
+}
+function parseSystemdUnitStatus(stdout: string): SystemdUnitStatus {
   const values = new Map<string, string>();
-  for (const line of (result.stdout ?? '').split('\n')) {
+  for (const line of stdout.split('\n')) {
     const separator = line.indexOf('=');
     if (separator > 0) values.set(line.slice(0, separator), line.slice(separator + 1));
   }
@@ -1740,6 +1854,23 @@ function readSystemdLoopStatus(profile: string): SystemdUnitStatus | undefined {
     mainPid: Number.isFinite(mainPid) && mainPid > 0 ? mainPid : undefined,
     startedAt: values.get('ActiveEnterTimestamp') || undefined
   };
+}
+
+/** Native start authority needs an active managed controller, not merely a
+ * still-present stopping process. Bound the bus query without blocking the
+ * API event loop, and expose its instance identity for checks across I/O. */
+export type LoopExecutionState = { state: 'active'; pid: number; startedAt: string } | { state: 'paused' | 'unavailable' };
+export function readLoopExecutionState(profile: string, signal?: AbortSignal): Promise<LoopExecutionState> {
+  const args = loopStatusArgs(profile);
+  return new Promise(resolvePromise => {
+    execFile('systemctl', args, { encoding: 'utf8', env: systemdUserEnv(), timeout: 2000, maxBuffer: 16 * 1024, ...(signal ? { signal } : {}) }, (error, stdout) => {
+      if (error) return resolvePromise({ state: 'unavailable' });
+      const state = parseSystemdUnitStatus(stdout);
+      if (state.loadState === 'not-found' || ['activating','deactivating','inactive','failed'].includes(state.activeState ?? '')) return resolvePromise({state:'paused'});
+      resolvePromise(state.loadState === 'loaded' && state.activeState === 'active' && state.mainPid && state.startedAt
+        ? { state: 'active', pid: state.mainPid, startedAt: state.startedAt } : {state:'unavailable'});
+    });
+  });
 }
 
 export function loopSystemctlArgs(enabled: boolean, profile: string): string[] {
@@ -1804,7 +1935,7 @@ export interface StartLoopResult {
 }
 
 export async function startLoop(profile: string): Promise<StartLoopResult> {
-  const config = getConfigPath(process.env.GAH_CONFIG ?? process.env.GAH_CONFIG_PATH);
+  const config = getConfigPath(process.env.PARASAUR_CONFIG ?? process.env.PARASAUR_CONFIG_PATH);
   const args = ['config', 'show', '--json', '--full'];
   if (config) args.push('--config', config);
   let module: ConfigShowFull | undefined;
@@ -1925,14 +2056,14 @@ export async function runPmPlanCommand(options: PmPlanCommand): Promise<import('
 
 /** Fixed work-item paid-route operations. Rust owns the approval projection. */
 export async function runPaidRouteApprovals(profile: string): Promise<import('@git-agent-harness/contracts').PaidRouteApproval[]> {
-  const config = getConfigPath(process.env.GAH_CONFIG_PATH ?? process.env.GAH_CONFIG);
+  const config = getConfigPath(process.env.PARASAUR_CONFIG_PATH ?? process.env.PARASAUR_CONFIG);
   const args = ['route-approval', 'list', `--profile=${profile}`];
   if (config) args.push(`--config-path=${config}`);
   return runJsonCommand(args, config);
 }
 
 export async function changePaidRouteApproval(action: 'grant' | 'revoke', scope: import('@git-agent-harness/contracts').PaidRouteScope): Promise<void> {
-  const config = getConfigPath(process.env.GAH_CONFIG_PATH ?? process.env.GAH_CONFIG);
+  const config = getConfigPath(process.env.PARASAUR_CONFIG_PATH ?? process.env.PARASAUR_CONFIG);
   const args = ['route-approval', action, `--profile=${scope.profile}`, `--backend=${scope.backend}`];
   if (config) args.push(`--config-path=${config}`);
   if (scope.backend_instance !== null) args.push(`--instance=${scope.backend_instance}`);
@@ -1958,10 +2089,10 @@ export interface SubscriptionRoute {
 }
 export interface QuotaFailure { kind: 'hard' | 'transient' | 'other'; resetAt: number | null; retryAfterMs: number | null }
 export function runSubscriptionRoutes(profile: string, model?: string | null): Promise<SubscriptionRoute[]> {
-  const config = getConfigPath(process.env.GAH_CONFIG_PATH ?? process.env.GAH_CONFIG);
+  const config = getConfigPath(process.env.PARASAUR_CONFIG_PATH ?? process.env.PARASAUR_CONFIG);
   return runJsonCommand(['route', '--profile', profile, ...(model ? ['--model', model] : []), ...(config ? ['--config-path', config] : [])], config);
 }
 export function runQuotaFailure(profile: string, backend: string, instance: string | null | undefined, model: string | null | undefined, message: string): Promise<QuotaFailure> {
-  const config = getConfigPath(process.env.GAH_CONFIG_PATH ?? process.env.GAH_CONFIG);
+  const config = getConfigPath(process.env.PARASAUR_CONFIG_PATH ?? process.env.PARASAUR_CONFIG);
   return runJsonCommand(['route', '--profile', profile, ...(config ? ['--config-path', config] : []), '--failure-backend', backend, ...(instance ? ['--backend-instance', instance] : []), ...(model ? ['--model', model] : [])], config, false, message.slice(0, 64 * 1024));
 }

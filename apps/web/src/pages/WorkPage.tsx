@@ -1,9 +1,9 @@
 import { RunningWorkersRoster } from '../components/RunningWorkersRoster.js';
+import { CentralClaimStatus } from '../components/CentralClaimStatus.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, ListChecks, Rocket } from 'lucide-react';
+import { ChevronRight, ListChecks } from 'lucide-react';
 import { ExternalAnchor } from '../components/ExternalAnchor';
-import type { AvailableTicket, ManagerBackendInfo, MergeRequest, ProviderKind, Session, UsageRollupTicketRow, WorkWaypointEvidence } from '@git-agent-harness/contracts';
-import { generateProviderInstanceId } from '@git-agent-harness/shared';
+import type { AvailableTicket, ManagerBackendInfo, MergeRequest, Session, UsageRollupTicketRow, WorkWaypointEvidence } from '@git-agent-harness/contracts';
 import { gahApi, GahApiError } from '../api/client.js';
 import { useWebSocket } from '../ws/WebSocketContext.js';
 import { useUiStore } from '../store/uiStore.js';
@@ -17,9 +17,10 @@ import { SessionCard } from '../components/SessionCard.js';
 import { PaidRouteApprovals } from '../components/PaidRouteApprovals.js';
 import { ExternalApprovals } from '../components/ExternalApprovals.js';
 import { ControllerActivityCard } from '../components/ControllerActivityCard.js';
-import { ProviderPicker } from '../components/ProviderPicker.js';
+import { FactoryDispatchForm } from '../components/FactoryDispatchForm.js';
 import { formatCost, formatPercent } from '../lib/format.js';
 import { workKey } from '../lib/workKey.js';
+import { reviewWaitReason } from '../lib/reviewLabels.js';
 import {
   WAYPOINTS,
   WaypointStrip,
@@ -28,90 +29,6 @@ import {
 } from '../components/WaypointProgress.js';
 
 const WORK_REFRESH_MS = 30 * 1000;
-
-const DISPATCH_MODES = ['fix', 'improve', 'review', 'pm', 'experiment'] as const;
-
-/** Minimal "start a new dispatch" form -- the dashboard could only stop/
- * command sessions that already existed, with no way to start one. Sends
- * the same `session.start` message the WS contract already defines
- * (apps/server's SessionManager.startSession); no new server-side work. */
-function NewDispatchForm({ profile, repo, backends }: { profile: string; repo: string | null; backends: ManagerBackendInfo[] }) {
-  const { sendMessage, isConnected } = useWebSocket();
-  const [mode, setMode] = useState<(typeof DISPATCH_MODES)[number]>('fix');
-  const [backend, setBackend] = useState<ProviderKind>('auto');
-  const [target, setTarget] = useState('');
-  const [justSent, setJustSent] = useState(false);
-
-  const dispatch = () => {
-    if (!repo) return;
-    sendMessage({
-      type: 'session.start',
-      requestId: `dispatch_${Date.now()}`,
-      profile,
-      providerKind: backend,
-      instanceId: generateProviderInstanceId(backend, 0),
-      repo,
-      mode,
-      backend,
-      target: target.trim() || undefined
-    });
-    setJustSent(true);
-    setTimeout(() => setJustSent(false), 3000);
-  };
-
-  return (
-    <section className="card-padded">
-      <h3 className="text-sm font-semibold text-primary mb-3 flex items-center gap-2">
-        <Rocket size={15} aria-hidden="true" />
-        Queue work
-      </h3>
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="text-xs text-muted">
-          Mode
-          <select
-            value={mode}
-            onChange={(e) => setMode(e.target.value as typeof mode)}
-            className="block mt-1 bg-raised border border-subtle rounded-md px-2 py-1.5 text-sm text-primary"
-          >
-            {DISPATCH_MODES.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
-        </label>
-        <div className="text-xs text-muted">
-          <span className="mb-1 block">Backend</span>
-          <ProviderPicker
-            backends={backends}
-            selectedBackendId={backend}
-            models={[]}
-            currentModelId={null}
-            reasoningEfforts={[]}
-            currentReasoningEffortId={null}
-            modelsLoaded
-            busy={false}
-            variant="backend"
-            triggerAriaLabel="Factory backend"
-            onSelect={(selection) => setBackend(selection.backendId as ProviderKind)}
-          />
-        </div>
-        <label className="text-xs text-muted flex-1 min-w-[160px]">
-          Target (issue number or ticket path)
-          <input
-            type="text"
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-            placeholder="e.g. 148"
-            className="block mt-1 w-full bg-raised border border-subtle rounded-md px-2 py-1.5 text-sm text-primary placeholder:text-muted"
-          />
-        </label>
-        <button onClick={dispatch} disabled={!isConnected || !repo || !backends.find(item => item.id === backend)?.implemented} className="btn-primary">
-          {justSent ? 'Sent' : 'Dispatch'}
-        </button>
-      </div>
-      {!repo && <p className="text-xs text-critical mt-2">No repo known for this profile yet -- check Settings.</p>}
-    </section>
-  );
-}
 
 type WorkPageProps = {
   sessions: Session[];
@@ -205,6 +122,7 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
   const fetchReport = useGahStore((s) => s.fetchReport);
   const [holdPending, setHoldPending] = useState<string | null>(null);
   const [holdError, setHoldError] = useState<string | null>(null);
+  const [reviewQuery, setReviewQuery] = useState('');
   const [factoryData, setFactoryData] = useState<{ profile: string | null; usageTickets: UsageRollupTicketRow[]; managerBackends: ManagerBackendInfo[] }>({
     profile: null,
     usageTickets: [],
@@ -244,6 +162,7 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
   };
 
   useEffect(() => {
+    setReviewQuery('');
     setPaidReviewWorkIds([]);
     setExternalReviewWorkIds([]);
     void refresh();
@@ -288,25 +207,29 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
     if (ticket.execution_policy?.dispatchable_now && ticket.prior_attempt_count === 0 && !ticket.has_active_claim && !ticket.has_active_mr && !ticket.human_required && !inactiveSessionKeys.has(key)) queuedWork.add(key);
   }
 
-  const reviewWork = new Map<string, { workId: string; title: string | null; url: string | null; reasons: Set<string> }>();
-  const addReviewWork = (workId: string, reason: string, title: string | null = null, url: string | null = null) => {
+  const reviewWork = new Map<string, { workId: string; title: string | null; url: string | null; reasons: Set<string>; details: Set<string> }>();
+  const addReviewWork = (workId: string, reason: string, title: string | null = null, url: string | null = null, detail?: string | null) => {
     const key = workKey(workId);
     const existing = reviewWork.get(key);
     if (existing) {
       existing.reasons.add(reason);
       if (!existing.title && title) existing.title = title;
       if (!existing.url && url) existing.url = url;
-    } else reviewWork.set(key, { workId, title, url, reasons: new Set([reason]) });
+      if (detail) existing.details.add(detail);
+    } else reviewWork.set(key, { workId, title, url, reasons: new Set([reason]), details: new Set(detail ? [detail] : []) });
   };
   for (const workId of heldWorkIds) addReviewWork(workId, 'Review hold');
   for (const ticket of status.data?.available_tickets ?? []) if (ticket.human_required) addReviewWork(ticket.work_id ?? ticket.normalized_work_identity ?? ticket.ticket_path, 'Human required', ticket.title);
-  for (const mergeRequest of status.data?.merge_requests ?? []) if (!mergeRequest.merged && mergeRequest.work_id) addReviewWork(mergeRequest.work_id, 'Pull request', mergeRequest.title ?? null, mergeRequest.url);
+  for (const mergeRequest of status.data?.merge_requests ?? []) if (!mergeRequest.merged && mergeRequest.work_id) addReviewWork(mergeRequest.work_id, 'Pull request', mergeRequest.title ?? null, mergeRequest.url, reviewWaitReason(mergeRequest));
   for (const blocker of status.data?.blocked_work_items ?? []) {
     const workId = blocker.remediation_plan?.work_id ?? blocker.source_reference;
-    if (workId) addReviewWork(workId, blocker.reason_code?.replace(/_/g, ' ') ?? 'Blocked');
+    if (workId) addReviewWork(workId, blocker.reason_code?.replace(/_/g, ' ') ?? 'Blocked', null, null, blocker.message);
   }
   for (const workId of paidReviewWorkIds) addReviewWork(workId, 'Paid route approval');
   for (const workId of externalReviewWorkIds) addReviewWork(workId, 'External API approval');
+  const query = reviewQuery.trim().toLocaleLowerCase();
+  const visibleReviewWork = [...reviewWork.values()].filter(item => !query
+    || [item.workId, item.title, ...item.reasons, ...item.details].some(value => value?.toLocaleLowerCase().includes(query)));
   const shippedWork = new Set((status.data?.merge_requests ?? []).filter(mergeRequest => mergeRequest.merged).map(mergeRequest => workKey(mergeRequest.work_id ?? mergeRequest.id ?? mergeRequest.branch)));
   const factoryCounts = {
     queued: queuedWork.size,
@@ -314,9 +237,13 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
     review: reviewWork.size,
     shipped: shippedWork.size
   };
+  const backendConfigured = (id: string) => status.data?.backend_configured?.[id] === true
+    || status.data?.nodes?.some(node => node.state === 'healthy'
+      && (!node.profile || node.profile === profile) && (!node.profiles.length || node.profiles.includes(profile ?? 'gah'))
+      && node.backend_configured[id] === true) === true;
   const dispatchBackends: ManagerBackendInfo[] = [
-    { id: 'auto', displayName: 'Auto', implemented: factoryData.managerBackends.some(item => item.implemented && status.data?.backend_configured?.[item.id] === true) },
-    ...factoryData.managerBackends.map(item => ({ ...item, implemented: item.implemented && status.data?.backend_configured?.[item.id] === true }))
+    { id: 'auto', displayName: 'Auto', implemented: factoryData.managerBackends.some(item => item.implemented && backendConfigured(item.id)) },
+    ...factoryData.managerBackends.map(item => ({ ...item, implemented: item.implemented && backendConfigured(item.id) }))
   ];
   const reportKey = JSON.stringify({ profile: profile ?? undefined, since: '7d', groupBy: 'backend' });
   const currentReport = report.key === reportKey && !report.error ? report.data : null;
@@ -360,50 +287,67 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
         lastUpdated={status.fetchedAt}
       />
 
+      {status.data?.node?.central_url && <CentralClaimStatus observation={status.data.node.central_claim_observation} />}
+      {(status.data?.nodes ?? []).flatMap(node => (node.central_claim_observations ?? [])
+        .filter(claim => claim.profile === profile)
+        .map(claim => <CentralClaimStatus key={`${node.node_id}:${claim.profile}`} observation={claim.observation}
+          nodeName={`${node.display_name} · ${node.node_id}`} centralUrl={claim.central_url} sourceState={claim.source_state} />))}
+
       <section aria-labelledby="factory-flow-title">
         <h3 id="factory-flow-title" className="sr-only">Factory flow</h3>
-        <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        <dl className="grid grid-cols-2 overflow-hidden rounded-lg border border-subtle sm:grid-cols-3 lg:grid-cols-6">
           {[
             ['Queued', factoryCounts.queued],
             ['Running', factoryCounts.running],
-            ['Needs review', factoryCounts.review],
+            ['Review / blocked', factoryCounts.review],
             ['Shipped', factoryCounts.shipped]
           ].map(([label, value]) => (
-            <div key={label} className="card-padded">
+            <div key={label} className="px-4 py-3">
               <dt className="text-xs text-muted">{label}</dt>
               <dd className="mt-1 text-xl font-semibold tabular-nums text-primary">{value}</dd>
             </div>
           ))}
-          <div className="card-padded col-span-2 sm:col-span-1">
+          <div className="px-4 py-3">
             <dt className="text-xs text-muted">Capacity</dt>
             <dd className="mt-1 text-xl font-semibold tabular-nums text-primary">
               {workers.length}/{status.data?.max_parallel_workers ?? '—'}
             </dd>
           </div>
-          <div className="card-padded">
+          <div className="px-4 py-3">
             <dt className="text-xs text-muted">Success · 7d</dt>
             <dd className="mt-1 text-xl font-semibold tabular-nums text-primary">{formatPercent(successRate)}</dd>
           </div>
         </dl>
       </section>
 
-      <NewDispatchForm profile={profile ?? 'gah'} repo={activeProfileRepo} backends={dispatchBackends} />
-
       {profile && (
         <div aria-labelledby="factory-review-title">
-          <h3 id="factory-review-title" className="mb-3 text-sm font-semibold text-primary">Needs review ({factoryCounts.review})</h3>
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h3 id="factory-review-title" className="text-sm font-semibold text-primary">Review and blockers ({factoryCounts.review})</h3>
+              <p className="mt-1 max-w-prose text-xs text-muted">Open pull requests, holds, and work waiting for a decision. Open details for evidence and available actions.</p>
+            </div>
+            {reviewWork.size > 0 && <label className="block w-full space-y-1 text-xs text-secondary sm:w-72">
+              <span>Find work</span>
+              <input type="search" value={reviewQuery} onChange={event => setReviewQuery(event.target.value)} placeholder="Issue, title, or blocker" className="input w-full" />
+            </label>}
+          </div>
           <div className="space-y-3">
             {reviewWork.size > 0 && (
               <ul className="card divide-y divide-subtle" aria-label="Review queue">
-                {[...reviewWork.values()].map(item => (
+                {visibleReviewWork.map(item => (
                   <li key={workKey(item.workId)} className="flex flex-wrap items-center justify-between gap-3 px-3 py-3">
-                    <button type="button" onClick={() => onOpenWork(item.workId)} className="min-h-11 min-w-0 text-left sm:min-h-0">
-                      <p className="text-sm text-primary"><span className="font-mono text-xs text-muted">{item.workId}</span>{item.title ? ` ${item.title}` : ''}</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="break-words text-sm text-primary"><span className="font-mono text-xs text-muted">{item.workId}</span>{item.title ? ` ${item.title}` : ''}</p>
                       <div className="mt-1 flex flex-wrap gap-1">
                         {[...item.reasons].map(reason => <StatusBadge key={reason} tone="warning" label={reason} />)}
                       </div>
-                    </button>
+                      {item.details.size > 0 && <div className="mt-2 max-w-prose space-y-1 break-words text-xs leading-relaxed text-secondary">
+                        {[...item.details].map(detail => <p key={detail}>{detail}</p>)}
+                      </div>}
+                    </div>
                     <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => onOpenWork(item.workId)} aria-label={`View details for ${item.workId}`} className="btn-secondary min-h-11 sm:min-h-0 sm:py-1">Details</button>
                       {item.url && <ExternalAnchor href={item.url} className="text-xs text-accent hover:underline">Open PR</ExternalAnchor>}
                       {item.reasons.has('Review hold') && (
                         <button type="button" disabled={holdPending !== null} onClick={() => clearHold(item.workId)} className="btn-secondary min-h-11 sm:min-h-0 sm:py-1">
@@ -413,6 +357,10 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
                     </div>
                   </li>
                 ))}
+                {visibleReviewWork.length === 0 && <li className="px-4 py-5 text-sm text-secondary">
+                  No work matches your search.
+                  <button type="button" onClick={() => setReviewQuery('')} className="ml-2 min-h-11 text-accent hover:underline">Clear search</button>
+                </li>}
               </ul>
             )}
             <PaidRouteApprovals
@@ -428,6 +376,14 @@ export function WorkPage({ sessions, onSelectSession, onOpenWork }: WorkPageProp
           </div>
         </div>
       )}
+
+      <FactoryDispatchForm key={JSON.stringify([profile, activeProfileRepo])} profile={profile ?? 'gah'} repo={activeProfileRepo} backends={dispatchBackends}
+        nodes={[
+          ...(status.data?.node_id ? [{ node_id: status.data.node_id, display_name: status.data.display_name ?? 'Central',
+            state: 'healthy' as const, profile: profile ?? 'gah', profiles: [], backend_instances: status.data.backend_instances ?? [],
+            dispatch_backend_instances: status.data.dispatch_backend_instances }] : []),
+          ...(status.data?.nodes ?? [])
+        ]} accountSelectionSupported={!status.error && status.data?.dispatch_backend_instances === true} />
 
       <section>
         <ControllerActivityCard activity={controllerActivity} />

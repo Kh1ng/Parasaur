@@ -45,6 +45,8 @@ export type DispatchLeaseState =
 export type ActivityKind =
   | "dispatch_completed"
   | "dispatch_failed"
+  /** A recorded pre-launch capacity refusal, retained without waking anyone. */
+  | "dispatch_deferred"
   | "review_ready"
   | "chat_turn_completed"
   | "chat_turn_failed"
@@ -152,7 +154,26 @@ export function activityPath(event: Pick<ActivityEvent, "id" | "profile" | "sess
 
 // Session type - manually defined instead of using Effect Schema
 // to avoid version compatibility issues
+export interface SessionExecutionResult {
+  reason: 'exited' | 'cancelled' | 'not_started' | 'launch_failed';
+  /** Observed OS exit code; null for signals or unavailable detail. */
+  exitCode: number | null;
+  signal: string | null;
+}
+
+export function isSessionExecutionResult(value: unknown): value is SessionExecutionResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const result = value as Record<string, unknown>;
+  return ['exited', 'cancelled', 'not_started', 'launch_failed'].includes(result.reason as string)
+    && (result.exitCode === null || (typeof result.exitCode === 'number' && Number.isSafeInteger(result.exitCode) && result.exitCode >= 0 && result.exitCode <= 4_294_967_295))
+    && (result.signal === null || (typeof result.signal === 'string' && /^SIG[A-Z0-9]+$/.test(result.signal)))
+    && !(result.exitCode !== null && result.signal !== null)
+    && (!(result.reason === 'not_started' || result.reason === 'launch_failed') || (result.exitCode === null && result.signal === null));
+}
+
 export interface Session {
+  /** Dispatch receipt correlation, retained in reconnect snapshots. */
+  requestId?: string;
   id: SessionId;
   providerKind: ProviderKind;
   instanceId: ProviderInstanceId;
@@ -163,6 +184,8 @@ export interface Session {
   leaseState?: DispatchLeaseState;
   startedAt?: string;
   endedAt?: string;
+  /** Present only after execution/termination is confirmed. Older nodes omit it. */
+  execution?: SessionExecutionResult;
   error?: string;
   repo?: string;
   branch?: string;
@@ -170,12 +193,19 @@ export interface Session {
   mr?: string;
   mode?: string;
   backend?: string;
+  /** Exact declared account on nodeId; distinct from provider transport instanceId. */
+  backendInstance?: string;
   model?: string;
   budget?: number;
   /** GitLab page context when this dispatch was started from a GitLab
    * event (#1595). The runs feed filters by it; absent for every other
    * start path. */
   gitlab?: GitLabDispatchContext;
+}
+
+/** A disconnected or unconfirmed execution still owns its dispatch lease. */
+export function isSessionTerminal(session: Pick<Session, 'status' | 'leaseState'>): boolean {
+  return session.leaseState !== 'uncertain_reconciling' && (session.status === 'stopped' || session.status === 'error');
 }
 
 // WebSocket message types
@@ -202,7 +232,8 @@ export type ServerMessage =
       serverProviderCatalog: ServerProviderCatalog;
       sessions: Session[];
       providers: Record<ProviderInstanceId, ProviderStatus>;
-      // TICKET-114: Real GAH data from CLI
+      // Legacy status fields. Current servers load work observations through
+      // REST; omission means unobserved, never an empty queue or no blockers.
       profile?: string;
       mergeRequests?: MergeRequest[];
       availability?: AvailabilityScope[];
@@ -224,6 +255,8 @@ export type ServerMessage =
     }
   | {
       type: "session.started";
+      /** Present on the direct reply, including replies that joined existing work. */
+      requestId?: string;
       session: Session;
     }
   | {
@@ -388,6 +421,18 @@ export type ServerMessage =
 
 export type ManagerChatTurn = ChatTranscriptTurn;
 
+/** Execution controls shared by local dispatch and the worker transport. */
+export interface DispatchExecutionOptions {
+  dryRun?: boolean;
+  retries?: number;
+  allowDraftFail?: boolean;
+  prod?: boolean;
+  allowUnknownRedBaseline?: boolean;
+  escalate?: boolean;
+  /** Explicit extra job outside automatic node/worker admission. */
+  manualWorker?: boolean;
+}
+
 export type ClientMessage = 
   | {
       type: "client.hello";
@@ -397,10 +442,8 @@ export type ClientMessage =
       activityCursor?: string;
       capabilities: ClientCapabilities;
     }
-  | {
+  | (DispatchExecutionOptions & {
       type: "session.start";
-      /** Explicit extra job outside automatic node/worker admission. */
-      manualWorker?: boolean;
       reasoningEffort?: string;
       requestId: string;
       /** Optional explicit node pin for fleet routing. */
@@ -419,12 +462,14 @@ export type ClientMessage =
       mr?: string;
       mode: string;
       backend?: string;
+      /** Exact account on the explicitly selected node; no sibling fallback. */
+      backendInstance?: string;
       model?: string;
       budget?: number;
       /** GitLab page context for dispatches started from GitLab events
        * (#1595); forwarded to the owning node with the session. */
       gitlab?: GitLabDispatchContext;
-    }
+    })
   | {
       type: "session.stop";
       requestId: string;
@@ -538,6 +583,8 @@ export type ClientMessage =
     };
 
 export type ClientCapabilities = {
+  /** Older clients cannot render the history-only dispatch_deferred kind. */
+  supportsCapacityWaitActivity?: boolean;
   supportsTerminal: boolean;
   supportsNotifications: boolean;
   version: string;

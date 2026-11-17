@@ -4,7 +4,7 @@ use predicates::str::contains;
 
 // The guard refuses root, and these tests also run under root CI or container
 // accounts; debug builds accept this uid in place of the live one (#1561).
-const NON_ROOT_UID: (&str, &str) = ("GAH_TEST_EFFECTIVE_UID", "1000");
+const NON_ROOT_UID: (&str, &str) = ("PARASAUR_TEST_EFFECTIVE_UID", "1000");
 
 #[test]
 fn sudo_environment_does_not_refuse_a_non_root_update() {
@@ -115,7 +115,7 @@ fn update_installs_selected_assets_and_refreshes_them_without_agent_flags() {
         );
         executable(
             &bin.join("systemctl"),
-            "printf '%s\\n' \"$*\" >> \"$GAH_TEST_SYSTEMCTL_LOG\"",
+            "printf '%s\\n' \"$*\" >> \"$PARASAUR_TEST_SYSTEMCTL_LOG\"",
         );
         executable(&bin.join("loginctl"), "exit 0");
         executable(&bin.join("sudo"), "exit 0");
@@ -128,7 +128,7 @@ fn update_installs_selected_assets_and_refreshes_them_without_agent_flags() {
                 .env("XDG_CONFIG_HOME", &config)
                 .env("CARGO_HOME", &cargo)
                 .env("PATH", &path)
-                .env("GAH_TEST_SYSTEMCTL_LOG", &log)
+                .env("PARASAUR_TEST_SYSTEMCTL_LOG", &log)
                 .env(NON_ROOT_UID.0, NON_ROOT_UID.1)
                 .args(["update", "--role", "worker", "--yes", "--repo"])
                 .arg(&repo);

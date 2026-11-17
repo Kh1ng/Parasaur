@@ -19,6 +19,13 @@ import { chatSessionStoreOptions, listSessions, stateBase } from './chatSessions
 
 const DAY_MS = 86_400_000;
 
+/** Missing or invalid readings invalidate a total; provider categories are not additive. */
+function addReading(total: number | null | undefined, reading: number | null | undefined): number | null {
+  if (total == null || reading == null || !Number.isFinite(reading) || reading < 0) return null;
+  const sum = total + reading;
+  return Number.isFinite(sum) ? sum : null;
+}
+
 function utcDay(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
 }
@@ -83,18 +90,16 @@ export function usageRollup(profile: string, days: number, opts?: { stateDir?: s
     }
     for (const event of events) {
       if (event.type !== 'assistant/message') continue;
-      if (event.timestamp < since) continue;
+      if (!Number.isFinite(event.timestamp) || event.timestamp < since || event.timestamp > now) continue;
       const usage = event.usage;
-      if (!usage || (usage.total_tokens === null && usage.input_tokens === null && usage.output_tokens === null)) {
+      if (!usage || [usage.total_tokens, usage.input_tokens, usage.output_tokens, usage.cache_read_tokens, usage.cache_write_tokens, usage.reasoning_tokens].every(value => value == null)) {
         usageUnavailable.push({
           session_id: sessionId,
           backend: event.backend,
           model: event.model,
           day: utcDay(event.timestamp)
         });
-        continue;
       }
-      const tokens = usage.total_tokens ?? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
 
       const key = `${event.backend}\u0000${event.backendInstance ?? ''}\u0000${event.model ?? ''}\u0000${utcDay(event.timestamp)}`;
       let row = totals.get(key);
@@ -108,27 +113,22 @@ export function usageRollup(profile: string, days: number, opts?: { stateDir?: s
           input_tokens: 0,
           output_tokens: 0,
           total_tokens: 0,
-          estimated_cost_usd: usage.estimated_cost_usd
+          cache_read_tokens: 0,
+          cache_write_tokens: 0,
+          reasoning_tokens: 0,
+          estimated_cost_usd: 0
         };
         totals.set(key, row);
-      } else {
-        row.estimated_cost_usd = row.estimated_cost_usd === null || usage.estimated_cost_usd === null
-          ? null
-          : row.estimated_cost_usd + usage.estimated_cost_usd;
       }
       row.turns += 1;
-      row.input_tokens += usage.input_tokens ?? 0;
-      row.output_tokens += usage.output_tokens ?? 0;
-      row.total_tokens += tokens;
+      for (const field of ['input_tokens', 'output_tokens', 'total_tokens', 'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens', 'estimated_cost_usd'] as const) {
+        row[field] = addReading(row[field], usage?.[field]);
+      }
 
-      ticketRow.estimated_cost_usd = ticketRow.turns === 0
-        ? usage.estimated_cost_usd
-        : ticketRow.estimated_cost_usd === null || usage.estimated_cost_usd === null
-          ? null
-          : ticketRow.estimated_cost_usd + usage.estimated_cost_usd;
+      ticketRow.estimated_cost_usd = addReading(ticketRow.turns === 0 ? 0 : ticketRow.estimated_cost_usd, usage?.estimated_cost_usd);
       ticketRow.turns += 1;
-      ticketRow.total_tokens += tokens;
-      ticketRow.backends[event.backend] = (ticketRow.backends[event.backend] ?? 0) + tokens;
+      ticketRow.total_tokens = addReading(ticketRow.total_tokens, usage?.total_tokens);
+      ticketRow.backends[event.backend] = addReading(Object.hasOwn(ticketRow.backends, event.backend) ? ticketRow.backends[event.backend] : 0, usage?.total_tokens);
     }
   }
 
@@ -147,6 +147,6 @@ export function usageRollup(profile: string, days: number, opts?: { stateDir?: s
     usage_unavailable: usageUnavailable,
     tickets: [...ticketTotals.values()]
       .filter((row) => row.turns > 0)
-      .sort((a, b) => b.total_tokens - a.total_tokens)
+      .sort((a, b) => a.total_tokens === null ? (b.total_tokens === null ? a.ticket.localeCompare(b.ticket) : 1) : b.total_tokens === null ? -1 : b.total_tokens - a.total_tokens)
   };
 }

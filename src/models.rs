@@ -437,12 +437,12 @@ pub struct WatchModel {
     pub max_output_per_1m: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct PolicyConfig {
     pub repo: RepoPolicy,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct RepoPolicy {
     pub trust_mode: String,
     pub allow_provider_mutation: bool,

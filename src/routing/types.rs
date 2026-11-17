@@ -8,6 +8,8 @@ use crate::execution_identity::ExecutionIdentity;
 pub struct RouteRequest<'a> {
     pub mode: &'a str,
     pub requested_backend: &'a str,
+    /// Exact declared account; unavailable bindings never select a sibling.
+    pub requested_instance: Option<&'a str>,
     pub requested_model: Option<&'a str>,
     pub recommended_backend: Option<&'a str>,
     pub recommended_model: Option<&'a str>,
@@ -33,6 +35,10 @@ pub struct RouteRequest<'a> {
 /// grants that exact pair.
 #[derive(Debug, Clone, Default)]
 pub struct RoutingRuntimeState {
+    /// Present only for a trusted central handoff. Exact worker instance IDs
+    /// replace coordinator executable checks; policy, spend, approvals and
+    /// concurrency remain canonical. Unknown auth is not invented as ready.
+    pub remote_instances: Option<HashMap<String, RemoteInstanceAvailability>>,
     pub recent_runs: HashMap<CandidateIdentity, u64>,
     pub reviewer_outcomes: HashMap<CandidateIdentity, ReviewerOutcomeMetrics>,
     pub attempted: HashSet<CandidateIdentity>,
@@ -40,6 +46,12 @@ pub struct RoutingRuntimeState {
     /// not yet been durable-logged as the final attempt record.
     pub dispatch_attempted: HashSet<CandidateIdentity>,
     pub approved: HashSet<CandidateIdentity>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RemoteInstanceAvailability {
+    pub backend: String,
+    pub models: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -243,6 +255,17 @@ impl fmt::Display for RouteError {
                 }
                 if let Some(reset) = earliest_reset {
                     write!(f, "; earliest reset: {}", reset)?;
+                }
+                // A login block has no reset time to wait for.
+                if let Some(skip) = skipped
+                    .iter()
+                    .find(|skip| skip.reason.ends_with("authentication_error"))
+                {
+                    write!(
+                        f,
+                        ". Sign in to {0} again and retry; if its login already works, run `gah availability clear --backend {0}`",
+                        skip.backend
+                    )?;
                 }
                 Ok(())
             }

@@ -8,7 +8,7 @@ gah status --role --json
 ```
 
 The worker requires a central HTTP(S) origin and `COORDINATOR_TOKEN`. The URL must not contain credentials, a query, or a path.
-An explicit `GAH_NODE_ROLE` overrides the stored role for that process. Remove the override before you change roles through configuration.
+An explicit `PARASAUR_NODE_ROLE` overrides the stored role for that process. Remove the override before you change roles through configuration.
 Restart the running server or worker service after a role change. The HTTP health response reports the role that the running server uses.
 
 Workers permit local execution, status, and readiness requests. They reject central registry, claims, settings, skills, and manager-chat requests.
@@ -20,7 +20,7 @@ The relay accepts only recall, capture, and session-end operations. Clients must
 A disabled profile skips gateway access. An unavailable gateway does not block dispatch.
 Dispatch recall runs through the backend memory hooks that `gah setup memory-hooks` installs (#830). Rust recall has no production dispatch caller.
 
-For Linux or macOS worker setup, supply `GAH_CENTRAL_URL` and `COORDINATOR_TOKEN` when you run the installer.
+For Linux or macOS worker setup, supply `PARASAUR_CENTRAL_URL` and `COORDINATOR_TOKEN` when you run the installer.
 The installer saves the token in `~/.config/gah/gah-loop.env` with mode `0600`.
 A reinstall can use the saved token.
 
@@ -34,7 +34,7 @@ The installer asks central to poll the registered worker before it reports succe
 Central can then import projects and send chat work to the Mac.
 The desktop worker control does not start `gah loop`.
 
-Configure the gateway on central. Worker installers reject `GAH_GATEWAY_MODE`.
+Configure the gateway on central. Worker installers reject `PARASAUR_GATEWAY_MODE`.
 Run project memory imports on central.
 
 The WSL installer needs a matching CLI release with `config set --node-role` and `status --role` support.

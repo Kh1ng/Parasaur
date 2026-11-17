@@ -13,9 +13,9 @@ import { createMockControlPlane } from '../../../server/mock/controlPlane.js';
 
 test('QR/manual pairing confirms the server, persists an HttpOnly session, and revokes a live browser', async ({ browser, baseURL }, testInfo) => {
   const directory = mkdtempSync(join(tmpdir(), 'gah-browser-pairing-'));
-  const saved = { token: process.env.COORDINATOR_TOKEN, http: process.env.GAH_ALLOW_INSECURE_HTTP };
+  const saved = { token: process.env.COORDINATOR_TOKEN, http: process.env.PARASAUR_ALLOW_INSECURE_HTTP };
   process.env.COORDINATOR_TOKEN = 'browser-owner-secret';
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
   const access = new DeviceAccess(join(directory, 'devices.json'));
   const mock = createMockControlPlane();
   const mockRunning = await mock.listen(0);
@@ -223,7 +223,7 @@ test('QR/manual pairing confirms the server, persists an HttpOnly session, and r
     await new Promise<void>(resolve => server.close(() => resolve()));
     await mockRunning.close();
     if (saved.token === undefined) delete process.env.COORDINATOR_TOKEN; else process.env.COORDINATOR_TOKEN = saved.token;
-    if (saved.http === undefined) delete process.env.GAH_ALLOW_INSECURE_HTTP; else process.env.GAH_ALLOW_INSECURE_HTTP = saved.http;
+    if (saved.http === undefined) delete process.env.PARASAUR_ALLOW_INSECURE_HTTP; else process.env.PARASAUR_ALLOW_INSECURE_HTTP = saved.http;
     rmSync(directory, { recursive: true, force: true });
   }
 });

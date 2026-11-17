@@ -42,7 +42,7 @@ fn telemetry_aggregate_json_reports_zero_for_empty_ledger() {
             "--config-path",
             cfg.to_str().unwrap(),
         ])
-        .env("GAH_LEDGER_PATH", ledger_path.to_str().unwrap())
+        .env("PARASAUR_LEDGER_PATH", ledger_path.to_str().unwrap())
         .assert()
         .success();
 

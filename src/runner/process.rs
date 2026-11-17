@@ -28,7 +28,7 @@ static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 pub(crate) const PROCESS_CLEANUP_FAILED_EXIT_CODE: i32 = -3;
 /// Internal-only command environment used to carry a per-attempt wall-clock
 /// ceiling through backend adapters. The watcher removes it before spawning.
-pub(crate) const HARD_TIMEOUT_ENV: &str = "GAH_INTERNAL_HARD_TIMEOUT_SECONDS";
+pub(crate) const HARD_TIMEOUT_ENV: &str = "PARASAUR_INTERNAL_HARD_TIMEOUT_SECONDS";
 
 pub fn install_shutdown_handler() -> Result<()> {
     SHUTDOWN_REQUESTED.store(false, Ordering::SeqCst);
@@ -44,7 +44,18 @@ pub fn install_shutdown_handler() -> Result<()> {
 /// block a caller on a hung backend -- unlike `spawn_with_idle_watch`, there
 /// is no idle-vs-progress distinction here, just a hard deadline.
 pub fn run_bounded(cmd: Command, timeout: Duration) -> Option<std::process::Output> {
-    run_bounded_input(cmd, timeout, None)
+    run_bounded_input(cmd, timeout, None, false)
+}
+
+/// Bounded provider-claim command whose descendants must end before its write
+/// fence completes. Keep the leader unreaped until group cleanup, and refuse
+/// unconfirmed cleanup or more than 1 MiB on either captured stream.
+#[cfg(target_os = "linux")]
+pub(crate) fn run_bounded_owned(cmd: Command, timeout: Duration) -> Option<std::process::Output> {
+    if timeout.is_zero() {
+        return None;
+    }
+    run_bounded_input(cmd, timeout, None, true)
 }
 
 /// Same deadline and process-group ownership, with private piped request input.
@@ -53,13 +64,14 @@ pub(crate) fn run_bounded_with_input(
     timeout: Duration,
     input: &[u8],
 ) -> Option<std::process::Output> {
-    run_bounded_input(cmd, timeout, Some(input))
+    run_bounded_input(cmd, timeout, Some(input), false)
 }
 
 fn run_bounded_input(
     mut cmd: Command,
     timeout: Duration,
     input: Option<&[u8]>,
+    owned: bool,
 ) -> Option<std::process::Output> {
     let mut stdout = tempfile::tempfile().ok()?;
     let mut stderr = tempfile::tempfile().ok()?;
@@ -86,15 +98,40 @@ fn run_bounded_input(
     }
     let deadline = Instant::now() + timeout;
     loop {
-        match child.try_wait() {
+        let observed = if owned {
+            #[cfg(target_os = "linux")]
+            {
+                if crate::runner::exited_without_reaping(&child).ok()? {
+                    let cleanup = kill_process_group(&mut child);
+                    let status = child.wait().ok()?;
+                    if cleanup.is_some() {
+                        return None;
+                    }
+                    Ok(Some(status))
+                } else {
+                    Ok(None)
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                child.try_wait()
+            }
+        } else {
+            child.try_wait()
+        };
+        match observed {
             Ok(Some(status)) => {
                 use std::io::Seek;
                 stdout.rewind().ok()?;
                 stderr.rewind().ok()?;
                 let mut stdout_bytes = Vec::new();
                 let mut stderr_bytes = Vec::new();
-                stdout.read_to_end(&mut stdout_bytes).ok()?;
-                stderr.read_to_end(&mut stderr_bytes).ok()?;
+                let limit = if owned { 1024 * 1024 } else { u64::MAX - 1 };
+                stdout.take(limit + 1).read_to_end(&mut stdout_bytes).ok()?;
+                stderr.take(limit + 1).read_to_end(&mut stderr_bytes).ok()?;
+                if stdout_bytes.len() as u64 > limit || stderr_bytes.len() as u64 > limit {
+                    return None;
+                }
                 return Some(std::process::Output {
                     status,
                     stdout: stdout_bytes,
@@ -134,6 +171,29 @@ fn bounded_private_stdin_cannot_block_the_process_deadline() {
     )
     .is_none());
     assert!(start.elapsed() < Duration::from_secs(5));
+}
+
+#[cfg(all(test, target_os = "linux"))]
+#[test]
+fn native_claim_command_reaps_descendants_and_bounds_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("child");
+    let mut expired = Command::new("/usr/bin/touch");
+    expired.arg(&marker);
+    assert!(run_bounded_owned(expired, Duration::ZERO).is_none());
+    assert!(!marker.exists());
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", "sleep 60 & echo $! > \"$1\"; exit 0", "fixture"]);
+    command.arg(&marker);
+    assert!(run_bounded_owned(command, Duration::from_secs(2))
+        .unwrap()
+        .status
+        .success());
+    let pid: u32 = fs::read_to_string(marker).unwrap().trim().parse().unwrap();
+    assert!(linux_process_snapshot(pid).is_none_or(|process| process.zombie));
+    let mut oversized = Command::new("/usr/bin/head");
+    oversized.args(["-c", "1048577", "/dev/zero"]);
+    assert!(run_bounded_owned(oversized, Duration::from_secs(2)).is_none());
 }
 
 pub fn shutdown_requested() -> bool {
@@ -302,6 +362,7 @@ pub(crate) struct ProcessIdentity {
 pub(crate) struct ProcessSnapshot {
     pub(crate) identity: ProcessIdentity,
     pub(crate) parent_pid: u32,
+    pub(crate) process_group: u32,
     pub(crate) zombie: bool,
 }
 
@@ -317,13 +378,14 @@ pub(crate) fn linux_process_snapshot(pid: u32) -> Option<ProcessSnapshot> {
             start_ticks: fields.get(19)?.parse().ok()?,
         },
         parent_pid: fields.get(1)?.parse().ok()?,
+        process_group: fields.get(2)?.parse().ok()?,
         zombie: fields.first().is_some_and(|state| *state == "Z"),
     })
 }
 
-/// Snapshot every live descendant by PPID, not process group. Agent CLIs may
-/// launch tool commands with `setsid`, which deliberately escapes the backend
-/// process group while remaining in its process tree.
+/// Snapshot live descendants by both PPID and membership in the root's group.
+/// PPID finds tools that escaped with `setsid`; group membership retains
+/// children reparented after their leader exits, before cleanup can run.
 #[cfg(target_os = "linux")]
 pub(crate) fn linux_descendants(root_pid: u32) -> Vec<ProcessIdentity> {
     let snapshots = fs::read_dir("/proc")
@@ -339,7 +401,9 @@ pub(crate) fn linux_descendants(root_pid: u32) -> Vec<ProcessIdentity> {
     loop {
         let mut added = false;
         for snapshot in &snapshots {
-            if ancestors.contains(&snapshot.parent_pid) && ancestors.insert(snapshot.identity.pid) {
+            if (ancestors.contains(&snapshot.parent_pid) || snapshot.process_group == root_pid)
+                && ancestors.insert(snapshot.identity.pid)
+            {
                 descendants.push(snapshot.identity);
                 added = true;
             }
@@ -488,8 +552,8 @@ fn worktree_changed_since(initial: Option<&[u8]>, worktree: &Path) -> bool {
 /// `setsid` deliberately escapes the backend process group while remaining in
 /// its process tree. Matching only on `pgrp` would miss it, causing GAH to
 /// classify a backend that is actively running the required tests as
-/// "no progress" and kill it. We therefore enumerate by PPID, so escaped
-/// verification descendants still count as observable progress. The backend
+/// "no progress" and kill it. We therefore follow parent links as well as
+/// group membership, so escaped verification descendants still count. The backend
 /// root itself is excluded: its activity is already represented by
 /// output/worktree progress, and counting a spinning root would mask a hang.
 #[cfg(target_os = "linux")]
@@ -636,6 +700,22 @@ fn spawn_with_idle_watch_with_shutdown(
     shutdown_requested: &AtomicBool,
     output_counts_as_progress: bool,
 ) -> Result<(i32, f64, crate::ledger::AttemptResourceUsage)> {
+    // Pessimistic durable evidence: even a full disk that prevents the final
+    // notice cannot make an earlier assistant message look authoritative.
+    let capture_marker =
+        log_path.with_extension(crate::runner::log_copier::INCOMPLETE_CAPTURE_EXTENSION);
+    let prior_incomplete = match fs::symlink_metadata(&capture_marker) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
+    if !prior_incomplete {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&capture_marker)
+            .context("marking backend output capture incomplete")?;
+    }
     let start = Instant::now();
     let hard_timeout = cmd
         .get_envs()
@@ -656,7 +736,7 @@ fn spawn_with_idle_watch_with_shutdown(
     // change into the baseline and later misclassify it as no progress.
     let initial_worktree_snapshot = worktree_progress_snapshot(worktree);
     // Test time is scoped to the process unless a harness opts a child in.
-    cmd.env_remove("GAH_TEST_NOW");
+    cmd.env_remove("PARASAUR_TEST_NOW");
     let mut child = cmd.spawn().with_context(|| spawn_context.to_string())?;
     // Issue #116: start sampling the backend's whole process tree immediately
     // after spawn. Sampling runs for the whole attempt -- success, idle kill,
@@ -665,7 +745,7 @@ fn spawn_with_idle_watch_with_shutdown(
     #[cfg(target_os = "linux")]
     let (resource_stop, resource_accumulator, resource_handle) =
         crate::runner::resources::spawn_resource_sampler(child.id());
-    let (progress_tx, progress_rx) = mpsc::channel();
+    let (progress_tx, progress_rx) = mpsc::sync_channel(1);
     let stdout_thread = child.stdout.take().map(|stdout| {
         copy_stream_to_file(stdout, log_path.to_path_buf(), Some(progress_tx.clone()))
     });
@@ -710,7 +790,7 @@ fn spawn_with_idle_watch_with_shutdown(
                     break Some(-2);
                 }
                 let previous_progress_at = last_progress_at;
-                while progress_rx.try_recv().is_ok() {
+                if progress_rx.try_recv().is_ok() {
                     let current_len = fs::metadata(log_path)
                         .map(|m| m.len())
                         .unwrap_or(last_seen_len);
@@ -825,7 +905,9 @@ fn spawn_with_idle_watch_with_shutdown(
         let code = status.and_then(Result::ok).and_then(|status| status.code());
         code.unwrap_or(-1)
     });
-    if !crate::runner::pipes::readers_finish_within_grace(&[&stdout_thread, &stderr_thread]) {
+    let output_complete =
+        crate::runner::pipes::readers_finish_within_grace(&[&stdout_thread, &stderr_thread]);
+    if !output_complete {
         if let Ok(mut file) = fs::OpenOptions::new().append(true).open(log_path) {
             let _ = writeln!(
                 file,
@@ -835,6 +917,14 @@ fn spawn_with_idle_watch_with_shutdown(
     }
     // Stop collecting: a copier still reading closes its pipe at its next read.
     drop(progress_rx);
+    let capture_complete = output_complete
+        && [stdout_thread, stderr_thread]
+            .into_iter()
+            .flatten()
+            .all(|reader| reader.join().unwrap_or(false));
+    if capture_complete && !prior_incomplete {
+        let _ = fs::remove_file(&capture_marker);
+    }
     if let Some(error) = cleanup_error {
         exit_code = PROCESS_CLEANUP_FAILED_EXIT_CODE;
         if let Ok(mut file) = fs::OpenOptions::new().append(true).open(log_path) {
@@ -889,594 +979,4 @@ fn spawn_with_idle_watch_with_shutdown(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[cfg(target_os = "linux")]
-    use crate::runner::backends::test_util::initialize_git_worktree;
-    use crate::runner::backends::test_util::{fixture, make_fake_bin};
-    use crate::test_support::ExecGuard;
-    use std::fs;
-
-    #[test]
-    fn idle_watch_terminates_process_group_on_shutdown_request() {
-        let _exec_guard = ExecGuard::new();
-        let f = fixture();
-        make_fake_bin(
-            &f.bin_dir,
-            "backend",
-            "#!/bin/sh\necho 'started'\nsleep 30\necho 'should not complete'\n",
-        );
-        let shutdown = std::sync::Arc::new(AtomicBool::new(false));
-        let trigger = std::sync::Arc::clone(&shutdown);
-        let log_for_trigger = f.session_dir.join("backend-output.log");
-        // Fire shutdown only once the backend's first output is confirmed in
-        // the log: under heavy parallel-test load the shell can take longer
-        // than any fixed delay to start, and a shutdown fired before its
-        // first echo would race the log assertion below.
-        let trigger_thread = thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(15);
-            loop {
-                if fs::read_to_string(&log_for_trigger)
-                    .map(|log| log.contains("started"))
-                    .unwrap_or(false)
-                {
-                    break;
-                }
-                if Instant::now() >= deadline {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(5));
-            }
-            trigger.store(true, Ordering::SeqCst);
-        });
-        let log_path = f.session_dir.join("backend-output.log");
-
-        let result = spawn_with_idle_watch_with_shutdown(
-            Command::new(f.bin_dir.join("backend")),
-            &log_path,
-            &f.worktree,
-            60,
-            "launching test backend",
-            &shutdown,
-            true,
-        )
-        .unwrap();
-
-        trigger_thread.join().unwrap();
-        assert_eq!(result.0, -2);
-        let log = fs::read_to_string(log_path).unwrap();
-        assert!(log.contains("started"));
-        assert!(!log.contains("should not complete"));
-        assert!(log.contains("shutdown requested; terminated backend process group"));
-    }
-
-    #[test]
-    fn hard_timeout_terminates_active_process_group() {
-        let _exec_guard = ExecGuard::new();
-        let f = fixture();
-        let start = time::OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
-        let clock = crate::clock::set_for_test(start);
-        make_fake_bin(
-            &f.bin_dir,
-            "backend-hard-timeout",
-            "#!/bin/sh\nif [ -n \"$GAH_INTERNAL_HARD_TIMEOUT_SECONDS\" ]; then echo leaked; exit 99; fi\nwhile :; do echo active; sleep 0.1; done\n",
-        );
-        let log_path = f.session_dir.join("backend-hard-timeout.log");
-        let mut command = Command::new(f.bin_dir.join("backend-hard-timeout"));
-        command.env(HARD_TIMEOUT_ENV, "120");
-        let handle = clock.handle();
-        let advance = thread::spawn(move || {
-            let _scope = handle.install();
-            thread::sleep(Duration::from_millis(100));
-            handle.advance(time::Duration::seconds(120));
-        });
-        let started = Instant::now();
-        let result = spawn_with_idle_watch(
-            command,
-            &log_path,
-            &f.worktree,
-            60,
-            "launching hard-timeout test backend",
-        )
-        .unwrap();
-        advance.join().unwrap();
-
-        assert_eq!(result.0, -1);
-        assert!(started.elapsed() < Duration::from_secs(5));
-        let log = fs::read_to_string(log_path).unwrap();
-        assert!(!log.contains("leaked"));
-        assert!(log.contains("configured 120s hard wall-clock timeout"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn normal_exit_reaps_a_background_child_holding_the_log_pipes() {
-        let _exec_guard = ExecGuard::new();
-        let f = fixture();
-        let pid_path = f.session_dir.join("sleeper.pid");
-        let body = format!(
-            "#!/bin/sh\nsleep 30 &\necho $! > '{}'\necho done\n",
-            pid_path.display()
-        );
-        make_fake_bin(&f.bin_dir, "backend", &body);
-        let log_path = f.session_dir.join("backend-output.log");
-        let started = Instant::now();
-        let command = Command::new(f.bin_dir.join("backend"));
-        let result = spawn_with_idle_watch(command, &log_path, &f.worktree, 60, "test").unwrap();
-
-        assert_eq!(result.0, 0);
-        assert!(started.elapsed() < Duration::from_secs(5));
-        assert!(fs::read_to_string(log_path).unwrap().contains("done"));
-        let pid = crate::runner::pipes::read_pid(&pid_path);
-        assert!(crate::runner::pipes::process_exits_within(
-            pid,
-            Duration::from_secs(2)
-        ));
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn run_bounded_kills_descendant_process_on_timeout() {
-        let _exec_guard = ExecGuard::new();
-        let f = fixture();
-        let child_pid_path = f.session_dir.join("child.pid");
-        make_fake_bin(
-            &f.bin_dir,
-            "backend",
-            &format!(
-                "#!/bin/sh\nsh -c 'echo $$ > \"{}\"; sleep 30' &\nwait\n",
-                child_pid_path.display()
-            ),
-        );
-        let command = Command::new(f.bin_dir.join("backend"));
-
-        let started = Instant::now();
-        let result = run_bounded(command, Duration::from_millis(300));
-        assert!(result.is_none());
-        assert!(started.elapsed() < Duration::from_secs(5));
-
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while !child_pid_path.exists() && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(20));
-        }
-        let child_pid = fs::read_to_string(&child_pid_path)
-            .unwrap()
-            .trim()
-            .parse::<u32>()
-            .unwrap();
-
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while linux_process_snapshot(child_pid).is_some_and(|process| !process.zombie)
-            && Instant::now() < deadline
-        {
-            thread::sleep(Duration::from_millis(20));
-        }
-        assert!(
-            linux_process_snapshot(child_pid).is_none_or(|process| process.zombie),
-            "run_bounded left descendant {child_pid} alive after its timeout, unlike every \
-             other timeout path in this file"
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn cleanup_kills_descendant_that_escaped_with_setsid() {
-        let _exec_guard = ExecGuard::new();
-        let f = fixture();
-        let escaped_pid_path = f.session_dir.join("escaped.pid");
-        make_fake_bin(
-            &f.bin_dir,
-            "backend",
-            &format!(
-                "#!/bin/sh\nsetsid sh -c 'echo $$ > \"{}\"; sleep 30' &\nwait\n",
-                escaped_pid_path.display()
-            ),
-        );
-        let mut command = Command::new(f.bin_dir.join("backend"));
-        command.stdout(Stdio::null()).stderr(Stdio::null());
-        prepare_process_group(&mut command);
-        let mut child = command.spawn().unwrap();
-
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while !escaped_pid_path.exists() && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(20));
-        }
-        let escaped_pid = fs::read_to_string(&escaped_pid_path)
-            .unwrap()
-            .trim()
-            .parse::<u32>()
-            .unwrap();
-        assert!(linux_process_snapshot(escaped_pid).is_some());
-
-        let cleanup_error = kill_process_group(&mut child);
-        let _ = child.wait();
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while linux_process_snapshot(escaped_pid).is_some_and(|process| !process.zombie)
-            && Instant::now() < deadline
-        {
-            thread::sleep(Duration::from_millis(20));
-        }
-        assert!(
-            linux_process_snapshot(escaped_pid).is_none_or(|process| process.zombie),
-            "setsid descendant {escaped_pid} survived backend cleanup"
-        );
-        assert_eq!(cleanup_error, None);
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn shutdown_watch_kills_escaped_session_and_grandchild() {
-        let _exec_guard = ExecGuard::new();
-        let f = fixture();
-        let escaped_pid_path = f.session_dir.join("escaped-session.pid");
-        let grandchild_pid_path = f.session_dir.join("escaped-grandchild.pid");
-        make_fake_bin(
-            &f.bin_dir,
-            "backend",
-            &format!(
-                "#!/bin/sh\nsetsid sh -c 'echo $$ > \"{}\"; sleep 30 & echo $! > \"{}\"; wait' &\nwait\n",
-                escaped_pid_path.display(),
-                grandchild_pid_path.display()
-            ),
-        );
-        let shutdown = std::sync::Arc::new(AtomicBool::new(false));
-        let trigger = std::sync::Arc::clone(&shutdown);
-        let ready_path = escaped_pid_path.clone();
-        let ready_grandchild_path = grandchild_pid_path.clone();
-        let trigger_thread = thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while (!ready_path.exists() || !ready_grandchild_path.exists())
-                && Instant::now() < deadline
-            {
-                thread::sleep(Duration::from_millis(10));
-            }
-            trigger.store(true, Ordering::SeqCst);
-        });
-        let log_path = f.session_dir.join("backend-output.log");
-
-        let result = spawn_with_idle_watch_with_shutdown(
-            Command::new(f.bin_dir.join("backend")),
-            &log_path,
-            &f.worktree,
-            60,
-            "launching escaped-session test backend",
-            &shutdown,
-            true,
-        )
-        .unwrap();
-        trigger_thread.join().unwrap();
-
-        assert_eq!(result.0, -2);
-        for pid_path in [&escaped_pid_path, &grandchild_pid_path] {
-            let pid = fs::read_to_string(pid_path)
-                .unwrap()
-                .trim()
-                .parse::<u32>()
-                .unwrap();
-            assert!(
-                linux_process_snapshot(pid).is_none_or(|process| process.zombie),
-                "escaped descendant {pid} survived watched shutdown"
-            );
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn idle_watch_allows_quiet_active_descendant_verification() {
-        for attempt in 1..=8 {
-            let _exec_guard = ExecGuard::new();
-            let f = fixture();
-            make_fake_bin(
-                &f.bin_dir,
-                "backend",
-                "#!/bin/sh\n# Deterministic, quiet parent with active descendant.\n/bin/yes >/dev/null &\nbackend_descendant=$!\nsleep 3\n/bin/kill -TERM \"$backend_descendant\" >/dev/null 2>&1 || true\nwait \"$backend_descendant\" 2>/dev/null || true\n",
-            );
-            let log_path = f.session_dir.join("backend-output.log");
-            let record_path = f.session_dir.join("running-worker.json");
-            fs::write(&record_path, "{}").unwrap();
-            let before = fs::metadata(&record_path).unwrap().modified().unwrap();
-            let shutdown = AtomicBool::new(false);
-
-            let result = spawn_with_idle_watch_with_shutdown(
-                Command::new(f.bin_dir.join("backend")),
-                &log_path,
-                &f.worktree,
-                2,
-                "launching quiet verification backend",
-                &shutdown,
-                true,
-            )
-            .unwrap();
-
-            assert!(
-                fs::metadata(&record_path).unwrap().modified().unwrap() > before,
-                "quiet descendant activity must heartbeat the roster"
-            );
-            assert_eq!(result.0, 0, "attempt {attempt}");
-            assert!(result.1 >= 1.0, "attempt {attempt} ended too quickly");
-            let log = fs::read_to_string(log_path).unwrap_or_default();
-            assert!(
-                !log.contains("GAH: killed after"),
-                "attempt {attempt} got log: {log}"
-            );
-        }
-    }
-
-    /// Issue #116: a backend whose tree burns CPU with a child workload
-    /// produces measured, non-null, bounded resource observations (the whole
-    /// tree is sampled, not only the short-lived wrapper PID).
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn idle_watch_reports_measured_resource_usage_for_cpu_workload() {
-        let _exec_guard = ExecGuard::new();
-        let f = fixture();
-        make_fake_bin(
-            &f.bin_dir,
-            "backend",
-            "#!/bin/sh\n/bin/yes >/dev/null &\nworkload=$!\nsleep 2\nkill \"$workload\" 2>/dev/null\nwait 2>/dev/null\n",
-        );
-        let log_path = f.session_dir.join("backend-resources.log");
-        let shutdown = AtomicBool::new(false);
-        let (exit_code, duration, resources) = spawn_with_idle_watch_with_shutdown(
-            Command::new(f.bin_dir.join("backend")),
-            &log_path,
-            &f.worktree,
-            60,
-            "launching resource-sampling test backend",
-            &shutdown,
-            true,
-        )
-        .unwrap();
-        assert_eq!(exit_code, 0);
-
-        let cpu = resources
-            .cpu_time_seconds
-            .expect("cpu metric must be present");
-        assert_eq!(cpu.quality, crate::ledger::ResourceMetricQuality::Measured);
-        let cpu_value = cpu.value.expect("measured cpu is never null");
-        assert!(cpu_value > 0.0, "cpu-consuming tree must report cpu > 0");
-        assert!(
-            cpu_value <= duration + 5.0,
-            "cpu {cpu_value}s must be bounded by attempt duration {duration}s (+slack)"
-        );
-
-        let rss = resources
-            .peak_rss_bytes
-            .expect("rss metric must be present");
-        assert_eq!(rss.quality, crate::ledger::ResourceMetricQuality::Measured);
-        let rss_value = rss.value.expect("measured rss is never null");
-        assert!(rss_value > 0.0, "live tree must report rss > 0");
-        assert!(
-            rss_value < 8.0 * 1024.0 * 1024.0 * 1024.0,
-            "rss {rss_value} bytes must be bounded (8 GiB ceiling)"
-        );
-    }
-
-    /// Issue #116: an attempt killed for idleness still keeps its observed
-    /// maxima — provenance stays `measured`, never degraded to unknown.
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn idle_kill_preserves_measured_resource_usage() {
-        let _exec_guard = ExecGuard::new();
-        let f = fixture();
-        make_fake_bin(&f.bin_dir, "backend", "#!/bin/sh\nsleep 30\n");
-        let log_path = f.session_dir.join("backend-killed-resources.log");
-        let shutdown = AtomicBool::new(false);
-        let (exit_code, _duration, resources) = spawn_with_idle_watch_with_shutdown(
-            Command::new(f.bin_dir.join("backend")),
-            &log_path,
-            &f.worktree,
-            1,
-            "launching killed resource-sampling test backend",
-            &shutdown,
-            true,
-        )
-        .unwrap();
-        assert_eq!(exit_code, -1);
-        let cpu = resources
-            .cpu_time_seconds
-            .expect("cpu metric must be present even when killed");
-        assert_eq!(cpu.quality, crate::ledger::ResourceMetricQuality::Measured);
-        let rss = resources
-            .peak_rss_bytes
-            .expect("rss metric must be present even when killed");
-        assert_eq!(rss.quality, crate::ledger::ResourceMetricQuality::Measured);
-        assert!(rss.value.is_some_and(|value| value > 0.0));
-    }
-
-    /// Issue #116: on platforms without process-tree measurement the attempt
-    /// records explicit unsupported provenance — never zero, never absent.
-    #[cfg(not(target_os = "linux"))]
-    #[test]
-    fn idle_watch_reports_unsupported_resources_off_linux() {
-        let _exec_guard = ExecGuard::new();
-        let f = fixture();
-        make_fake_bin(&f.bin_dir, "backend", "#!/bin/sh\nexit 0\n");
-        let log_path = f.session_dir.join("backend-unsupported-resources.log");
-        let shutdown = AtomicBool::new(false);
-        let (exit_code, _duration, resources) = spawn_with_idle_watch_with_shutdown(
-            Command::new(f.bin_dir.join("backend")),
-            &log_path,
-            &f.worktree,
-            60,
-            "launching unsupported-platform test backend",
-            &shutdown,
-            true,
-        )
-        .unwrap();
-        assert_eq!(exit_code, 0);
-        for metric in [resources.cpu_time_seconds, resources.peak_rss_bytes] {
-            let metric = metric.expect("unsupported metric must be present");
-            assert_eq!(
-                metric.quality,
-                crate::ledger::ResourceMetricQuality::Unsupported
-            );
-            assert!(metric.value.is_none());
-            assert!(metric.unknown_reason.is_some());
-        }
-    }
-
-    #[test]
-    fn process_activity_ignores_idle_child_churn_but_detects_real_work() {
-        let previous = vec![(10, 1, 0, 20), (11, 0, 0, 0)];
-
-        assert!(!process_group_activity_advanced(
-            Some(&previous),
-            &[(10, 1, 0, 20), (12, 0, 0, 0)]
-        ));
-        assert!(process_group_activity_advanced(
-            Some(&previous),
-            &[(10, 2, 0, 20)]
-        ));
-        assert!(process_group_activity_advanced(
-            Some(&previous),
-            &[(13, 1, 0, 0)]
-        ));
-    }
-
-    /// Issue #579 regression: a backend (OpenCode-style, worktree-progress
-    /// watch) that has produced a real diff and is then running a quiet,
-    /// long-running validation descendant must NOT be classified as no
-    /// progress and killed. The active validation subprocess is observable
-    /// progress via descendant (PPID) activity, and the real diff must
-    /// survive the run.
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn validation_descendant_preserves_diff_past_idle_threshold() {
-        for attempt in 1..=8 {
-            let _exec_guard = ExecGuard::new();
-            let f = fixture();
-            initialize_git_worktree(&f.worktree);
-            make_fake_bin(
-                &f.bin_dir,
-                "backend",
-                "#!/bin/sh\n\
-                 # Produce a real diff, then run a quiet validation descendant\n\
-                 # that stays busy past the idle threshold.\n\
-                 printf 'pub fn answer() -> u32 { 42 }\\n' > real_diff.rs\n\
-                 git add -A >/dev/null 2>&1\n\
-                 /bin/yes >/dev/null &\n\
-                 backend_descendant=$!\n\
-                 sleep 3\n\
-                 /bin/kill -TERM \"$backend_descendant\" >/dev/null 2>&1 || true\n\
-                 wait \"$backend_descendant\" 2>/dev/null || true\n",
-            );
-            let log_path = f.session_dir.join("backend-output.log");
-            let shutdown = AtomicBool::new(false);
-            let mut command = Command::new(f.bin_dir.join("backend"));
-            command.current_dir(&f.worktree);
-
-            let result = spawn_with_idle_watch_with_shutdown(
-                command,
-                &log_path,
-                &f.worktree,
-                2,
-                "launching productive validation backend",
-                &shutdown,
-                false, // output does NOT count as progress (OpenCode-style)
-            )
-            .unwrap();
-
-            assert_eq!(result.0, 0, "attempt {attempt}");
-            assert!(result.1 >= 1.0, "attempt {attempt} ended too quickly");
-            let log = fs::read_to_string(log_path).unwrap_or_default();
-            assert!(
-                !log.contains("GAH: killed after"),
-                "attempt {attempt} got log: {log}"
-            );
-            // The real diff must remain available after the run.
-            assert!(
-                f.worktree.join("real_diff.rs").exists(),
-                "attempt {attempt}: productive diff was lost"
-            );
-        }
-    }
-
-    /// Issue #579 regression: terminal attribution distinguishes a backend
-    /// killed before producing any change from one killed after producing a
-    /// diff during validation. The kill message carries the matching phrase.
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn idle_kill_attribution_uses_attempt_relative_worktree_progress() {
-        let _exec_guard = ExecGuard::new();
-        let f = fixture();
-        initialize_git_worktree(&f.worktree);
-        // No diff produced: a genuinely stalled launch.
-        make_fake_bin(&f.bin_dir, "backend", "#!/bin/sh\nsleep 5\n");
-        let log_path = f.session_dir.join("backend-output.log");
-        let shutdown = AtomicBool::new(false);
-        let result = spawn_with_idle_watch_with_shutdown(
-            Command::new(f.bin_dir.join("backend")),
-            &log_path,
-            &f.worktree,
-            1,
-            "launching stalled backend",
-            &shutdown,
-            false,
-        )
-        .unwrap();
-        assert_eq!(result.0, -1);
-        let log = fs::read_to_string(&log_path).unwrap();
-        assert!(log.contains("stalled before changes"), "got: {log}");
-        assert!(!log.contains("checkpointed changes"), "got: {log}");
-
-        // A diff that predates the backend attempt is not backend progress.
-        drop(_exec_guard);
-        let _exec_guard = ExecGuard::new();
-        let f = fixture();
-        initialize_git_worktree(&f.worktree);
-        fs::write(
-            f.worktree.join("real_diff.rs"),
-            "pub fn inherited() -> u32 { 41 }\n",
-        )
-        .unwrap();
-        make_fake_bin(&f.bin_dir, "backend", "#!/bin/sh\nsleep 5\n");
-        let log_path = f.session_dir.join("backend-output.log");
-        let shutdown = AtomicBool::new(false);
-        let result = spawn_with_idle_watch_with_shutdown(
-            Command::new(f.bin_dir.join("backend")),
-            &log_path,
-            &f.worktree,
-            1,
-            "launching stalled backend with inherited changes",
-            &shutdown,
-            false,
-        )
-        .unwrap();
-        assert_eq!(result.0, -1);
-        let log = fs::read_to_string(&log_path).unwrap();
-        assert!(log.contains("stalled before changes"), "got: {log}");
-        assert!(!log.contains("checkpointed changes"), "got: {log}");
-
-        // A change made after launch remains productive checkpointed work.
-        drop(_exec_guard);
-        let _exec_guard = ExecGuard::new();
-        let f = fixture();
-        initialize_git_worktree(&f.worktree);
-        make_fake_bin(
-            &f.bin_dir,
-            "backend",
-            "#!/bin/sh\nprintf 'pub fn answer() -> u32 { 42 }\\n' > real_diff.rs\ngit add -A >/dev/null 2>&1\nsleep 5\n",
-        );
-        let log_path = f.session_dir.join("backend-output.log");
-        let shutdown = AtomicBool::new(false);
-        let mut command = Command::new(f.bin_dir.join("backend"));
-        command.current_dir(&f.worktree);
-        let result = spawn_with_idle_watch_with_shutdown(
-            command,
-            &log_path,
-            &f.worktree,
-            1,
-            "launching stalled-but-productive backend",
-            &shutdown,
-            false,
-        )
-        .unwrap();
-        assert_eq!(result.0, -1);
-        let log = fs::read_to_string(&log_path).unwrap();
-        assert!(
-            log.contains("stalled during validation with checkpointed changes"),
-            "got: {log}"
-        );
-    }
-}
+mod tests;

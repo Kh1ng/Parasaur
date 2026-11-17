@@ -15,6 +15,7 @@ import { RegistryService } from './registryService.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { addRemoteProject } from './projectCatalog.js';
 import { configureChatRouting, chatNodes } from './chatRouting.js';
+import { chatAccounts } from './chatAccounts.js';
 import { createChatSession, startChatFromIssue, startChatFromPr, sendManagerChatMessage, archiveChatSession, getSessionView } from './managerChat/ManagerChatManager.js';
 import { getSession } from './managerChat/chatSessions.js';
 import type { ManagerAdapter } from './managerChat/registry.js';
@@ -34,21 +35,21 @@ test('central keeps history and skills while authenticated turns move between wo
     rmSync(root, { recursive: true, force: true });
   });
   Object.assign(process.env, {
-    GAH_BINARY: new URL('../tests/fixtures/gah/gah', import.meta.url).pathname,
-    GAH_FIXTURE_PROFILE_LIST: join(root, 'profiles.json'),
-    GAH_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json'),
-    GAH_PROJECT_CATALOG_PATH: join(root, 'projects.json'),
-    GAH_CHAT_STATE_DIR: join(root, 'central-chat'),
-    GAH_GATEWAY_SETTINGS_PATH: join(root, 'gateway.json'),
-    GAH_MANAGER_CHAT_SETTINGS_PATH: join(root, 'manager.json'),
-    GAH_SKILL_BANK_PATH: join(root, 'skills.json'),
-    GAH_FAKE_GH_FIXTURE: new URL('../tests/fixtures/gh/data', import.meta.url).pathname,
-    GAH_FAKE_GH_STATE: join(root, 'gh-state'),
+    PARASAUR_BINARY: new URL('../tests/fixtures/gah/gah', import.meta.url).pathname,
+    PARASAUR_FIXTURE_PROFILE_LIST: join(root, 'profiles.json'),
+    PARASAUR_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json'),
+    PARASAUR_PROJECT_CATALOG_PATH: join(root, 'projects.json'),
+    PARASAUR_CHAT_STATE_DIR: join(root, 'central-chat'),
+    PARASAUR_GATEWAY_SETTINGS_PATH: join(root, 'gateway.json'),
+    PARASAUR_MANAGER_CHAT_SETTINGS_PATH: join(root, 'manager.json'),
+    PARASAUR_SKILL_BANK_PATH: join(root, 'skills.json'),
+    PARASAUR_FAKE_GH_FIXTURE: new URL('../tests/fixtures/gh/data', import.meta.url).pathname,
+    PARASAUR_FAKE_GH_STATE: join(root, 'gh-state'),
     PATH: `${new URL('../tests/fixtures/gh', import.meta.url).pathname}:${process.env.PATH}`,
     COORDINATOR_TOKEN: 'isolated-worker-test',
-    GAH_ALLOW_INSECURE_HTTP: '1'
+    PARASAUR_ALLOW_INSECURE_HTTP: '1'
   });
-  writeFileSync(process.env.GAH_FIXTURE_PROFILE_LIST!, '[]');
+  writeFileSync(process.env.PARASAUR_FIXTURE_PROFILE_LIST!, '[]');
   let recalls = 0;
   const gateway = createServer((req, res) => {
     req.resume();
@@ -70,6 +71,7 @@ test('central keeps history and skills while authenticated turns move between wo
   const profiles: ProfileSummary[] = [];
   const seen: string[] = [];
   const unavailableForHandoff = new Set<string>();
+  const unavailableForAccounts = new Set<string>();
   const seed = join(root, 'seed');
   const remote = join(root, 'remote.git');
   mkdirSync(seed);
@@ -113,10 +115,19 @@ test('central keeps history and skills while authenticated turns move between wo
     const app = express();
     app.use(express.json(), (req, res, next) => {
       if (unavailableForHandoff.has(nodeId) && req.body?.action === 'handoff') return void res.status(503).json({ error: 'offline' });
+      if (unavailableForAccounts.has(nodeId) && req.body?.action === 'accounts') return void res.status(503).json({ error: 'offline' });
       next();
     }, rateLimit({ windowMs: 60_000, limit: 200, validate: false }), authMiddleware, workerRouteGuard(node));
     app.get('/api/status', (_req, res) => res.json({ node_id: nodeId, generated_at: new Date().toISOString(), profile: { profile: profile.name }, backend_configured: { claude: true }, backend_instances: [], availability: [] }));
-    app.use('/api/worker-chat', createWorkerChatRouter({ node, nodeId, profiles: async () => [profile], adapter: () => adapter, sessions: { stateDir: join(root, `${nodeId}-state`) } }));
+    app.use('/api/worker-chat', createWorkerChatRouter({
+      node, nodeId, profiles: async () => [profile], adapter: () => adapter,
+      accounts: async (name, backend) => {
+        assert.equal(name, 'worker-only');
+        assert.equal(backend, 'claude');
+        return [{ instance: 'shared', backend, label: `${nodeId} account`, enabled: true, executableReady: true, authReady: null }];
+      },
+      sessions: { stateDir: join(root, `${nodeId}-state`) }
+    }));
     const url = await listen(createServer(app));
     registry.registerNode({ node_id: nodeId, display_name: nodeId, advertised_url: url, version: central.version, schema_digest: central.schema_digest, transport_mode: 'loopback', secret_ref: 'env:COORDINATOR_TOKEN', profiles: [profile.name], last_observed_at: new Date().toISOString(), last_observed_state: 'healthy' });
     const denied = await fetch(`${url}/api/worker-chat`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '192.0.2.10' }, body: '{}' });
@@ -130,6 +141,13 @@ test('central keeps history and skills while authenticated turns move between wo
   await registry.getNodeObservations();
   const nodes = await chatNodes(project.chat_profile, 'claude');
   assert.equal(nodes.find(node => node.role === 'central')?.eligible, false);
+  assert.equal((await chatAccounts(project.chat_profile, 'claude', 'one'))[0].label, 'one account');
+  assert.equal((await chatAccounts(project.chat_profile, 'claude', 'two'))[0].label, 'two account');
+  unavailableForAccounts.add('one');
+  await assert.rejects(chatAccounts(project.chat_profile, 'claude', 'one'));
+  assert.equal((await chatAccounts(project.chat_profile, 'claude', 'two'))[0].label, 'two account');
+  unavailableForAccounts.clear();
+  assert.deepEqual(seen, [], 'account discovery does not start an agent');
   const session = await createChatSession(project.chat_profile, 'claude');
   const first = await sendManagerChatMessage(project.chat_profile, 'first task', 'first', session.id);
   setSkillBindings(project.chat_profile, 'claude', ['chat-only'], { sessionId: session.id });

@@ -16,6 +16,47 @@ import { DISPATCH_LEASE_MS, GitLabEventStore } from './integrations/gitlab/event
 import { GitLabEventQueue } from './integrations/gitlab/queue.js';
 import { createFleetDispatchCoordinator } from './fleetDispatch.js';
 
+test('fleet request binding survives restart and rejects changed controls without launching or replacing receipts', async () => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'gah-bound-request-'));
+  const leaseStorePath = resolve(dir, 'leases.json');
+  const transportMap = new Map<string, FakeTransport>();
+  const node = await createMockNode();
+  const registryService = { getNode: () => undefined,
+    getNodeObservations: async () => [makeSnapshot('worker-1', node.url, 0, 0, 0, { dispatch_execution_options: true })] } as unknown as RegistryService;
+  const fresh = () => createCoordinatorHarness({ leaseStorePath, registryService, transportMap,
+    published: [], coordinatorNodeId: 'central', coordinatorUrl: 'http://127.0.0.1:9999' });
+  const options = { requestId: 'bound-fleet-request', profile: 'gah', providerKind: 'codex' as const,
+    instanceId: 'codex-0', repo: 'owner/repo', mode: 'fix', target: 'ticket.md',
+    backend: 'codex', model: 'model', dryRun: true, retainReceipt: true };
+  try {
+    let fleet = fresh();
+    const starting = fleet.startSession(options);
+    await assert.rejects(fleet.startSession({ ...options, dryRun: false }), { code: 'DISPATCH_REQUEST_CONFLICT' });
+    const session = await starting;
+    node.sessions = [session];
+    for (const changed of [{ profile: 'other' }, { target: 'other.md' }, { mode: 'review' },
+      { instanceId: 'codex-1' }, { model: 'another-model' }, { dryRun: false },
+      { retries: 0 }, { budget: 0 }, { manualWorker: true }, { nodeId: 'worker-2' }]) {
+      await assert.rejects(fleet.startSession({ ...options, ...changed }), { code: 'DISPATCH_REQUEST_CONFLICT' });
+    }
+    await assert.rejects(fleet.startSession({ ...options, requestId: 'other-request', dryRun: false }), { code: 'DISPATCH_REQUEST_CONFLICT' });
+    await fleet.stopSession(session.id);
+    const bytes = readFileSync(leaseStorePath, 'utf8');
+    fleet = fresh();
+    assert.equal((await fleet.startSession({ ...options, retainReceipt: false })).id, session.id);
+    await assert.rejects(fleet.startSession({ ...options, dryRun: false }), { code: 'DISPATCH_REQUEST_CONFLICT' });
+    assert.equal(fleet.getSessionByRequestId(options.requestId)?.id, session.id);
+    assert.equal(readFileSync(leaseStorePath, 'utf8'), bytes);
+    const saved = JSON.parse(bytes);
+    delete saved.leases[0].requestFingerprint;
+    writeFileSync(leaseStorePath, JSON.stringify(saved));
+    fleet = fresh();
+    await assert.rejects(fleet.startSession(options), { code: 'DISPATCH_REQUEST_UNVERIFIED' });
+    assert.equal(fleet.getSessionByRequestId(options.requestId)?.id, session.id, 'legacy evidence stays inspectable');
+    assert.equal(transportMap.get('worker-1')?.startCalls, 1);
+  } finally { await node.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 type PublishedMessage = ServerMessage;
 
 type MockNodeHandle = {
@@ -46,6 +87,7 @@ function makeSnapshot(
     last_error_message: null,
     profile: 'gah',
     profiles: ['gah'],
+    dispatch_execution_results: true,
     backend_configured: { codex: true },
     backend_instances: [],
     availability: [],
@@ -159,6 +201,7 @@ class FakeTransport {
     target?: string;
     mode: string;
     backend?: string;
+    backendInstance?: string;
     model?: string;
     budget?: number;
   }): Promise<Session> {
@@ -170,6 +213,7 @@ class FakeTransport {
     }
     const session: Session = {
       id: options.requestId ?? `${this.nodeId}-${this.startCalls}`,
+      requestId: options.requestId,
       providerKind: options.providerKind,
       instanceId: options.instanceId,
       status: 'running',
@@ -179,6 +223,7 @@ class FakeTransport {
       target: options.target,
       mode: options.mode,
       backend: options.backend,
+      backendInstance: options.backendInstance,
       model: options.model,
       budget: options.budget
     };
@@ -196,6 +241,7 @@ class FakeTransport {
     const stopped: Session = {
       ...session,
       status: 'stopped',
+      execution: { reason: 'cancelled', exitCode: null, signal: null },
       endedAt: new Date().toISOString()
     };
     this.sessions.set(sessionId, stopped);
@@ -220,6 +266,64 @@ class FakeTransport {
 
   async close(): Promise<void> {}
 }
+
+test('named factory accounts remain node-local through admission, retries and lease recovery', async () => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'gah-fleet-account-'));
+  const node = await createMockNode();
+  const transports = new Map<string, FakeTransport>();
+  const account = (id: string) => ({
+    backend_instance: id, logical_backend: 'codex', runner_kind: 'codex', account_label: id,
+    auth_source_label: null, quota_pool: id, supported_models: ['gpt-4.1'],
+    executable_configured: true, isolated_state_configured: true, enabled: true,
+  });
+  let snapshot = makeSnapshot('worker', node.url, 0, 0, 0, {
+    dispatch_backend_instances: true,
+    backend_instances: [account('personal'), account('work')],
+    availability: [{ backend: 'codex', backend_instance: 'personal', model: null,
+      quota_pool: 'personal', eligible_now: false, reason: 'quota exhausted',
+      unavailable_until: null, source: 'test', last_error_summary: null,
+      observed_at: new Date().toISOString(), scope: 'backend_wide' }],
+  });
+  const registryService = { getNode: () => undefined, getNodeObservations: async () => [snapshot] } as unknown as RegistryService;
+  const fresh = () => createCoordinatorHarness({ leaseStorePath: resolve(dir, 'leases.json'),
+    registryService, coordinatorNodeId: 'central', coordinatorUrl: 'http://127.0.0.1:9999',
+    transportMap: transports, published: [] });
+  const options = { profile: 'gah', providerKind: 'codex' as const, instanceId: 'codex-0',
+    repo: 'owner/repo', mode: 'improve', backend: 'codex', backendInstance: 'work',
+    model: 'gpt-4.1', nodeId: 'worker', requestId: 'account-request' };
+  try {
+    let fleet = fresh();
+    for (const invalid of [{ nodeId: undefined }, { backend: 'auto' }, { backendInstance: '' }]) {
+      await assert.rejects(fleet.startSession({ ...options, ...invalid }), /exact account requires/);
+    }
+    snapshot.dispatch_backend_instances = false;
+    await assert.rejects(fleet.startSession(options), /Update worker/);
+    assert.equal(transports.size, 0, 'an old worker must not start its default account');
+    snapshot.dispatch_backend_instances = true;
+    snapshot.backend_instances[1]!.enabled = false;
+    await assert.rejects(fleet.startSession(options), /Account work.*unavailable/);
+    snapshot.backend_instances[1]!.enabled = true;
+    await assert.rejects(fleet.startSession({ ...options, model: 'unsupported' }), /Account work.*unavailable/);
+    const first = await fleet.startSession(options);
+    node.sessions = [first];
+    assert.equal(first.backendInstance, 'work');
+    assert.equal(first.nodeId, 'worker');
+    assert.equal(first.model, 'gpt-4.1');
+    assert.equal((await fleet.startSession(options)).id, first.id);
+    await assert.rejects(fleet.startSession({ ...options, backendInstance: 'personal' }), /receipt does not match/);
+    await assert.rejects(fleet.startSession({ ...options, nodeId: 'other-node' }), /receipt does not match/);
+    node.sessions = [first];
+    fleet = fresh();
+    await fleet.reconcileLeases('gah');
+    assert.equal((await fleet.startSession({ ...options, requestId: 'after-restart' })).id, first.id);
+    assert.equal(transports.get('worker')?.startCalls, 1);
+    snapshot.availability = [];
+    const second = await fleet.startSession({ ...options, requestId: 'other-account', backendInstance: 'personal' });
+    assert.notEqual(second.id, first.id, 'the same ticket on another account must not return the first account receipt');
+    assert.equal(second.backendInstance, 'personal');
+    assert.equal(transports.get('worker')?.startCalls, 2);
+  } finally { await node.close(); rmSync(dir, { recursive: true, force: true }); }
+});
 
 function createCoordinatorHarness(options: {
   leaseStorePath: string;
@@ -254,13 +358,35 @@ function createCoordinatorHarness(options: {
     transportFactory: (node, context) => {
       let transport = transportMap.get(node.nodeId);
       if (!transport) {
-        transport = new FakeTransport(node.nodeId, context.onTerminal, context.session);
+        transport = new FakeTransport(node.nodeId, context.onSessionUpdate, context.session);
         transportMap.set(node.nodeId, transport);
       }
       return transport as any;
     }
   });
 }
+
+test('execution overrides require worker support before a pinned transport starts', async () => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'gah-fleet-options-'));
+  const transports = new Map<string, FakeTransport>();
+  const snapshot = makeSnapshot('worker', 'http://127.0.0.1:9998', 0, 0, 0);
+  const registryService = { getNode: () => undefined, getNodeObservations: async () => [snapshot] } as unknown as RegistryService;
+  const coordinator = createCoordinatorHarness({ leaseStorePath: resolve(dir, 'leases.json'), registryService,
+    coordinatorNodeId: 'central', coordinatorUrl: 'http://127.0.0.1:9999', transportMap: transports, published: [] });
+  const options = { profile: 'gah', providerKind: 'codex' as const, instanceId: 'codex-0', repo: 'owner/repo', mode: 'review', nodeId: 'worker' };
+  try {
+    for (const override of [{ dryRun: true }, { retries: 0 }, { allowDraftFail: true }, { prod: true }, { allowUnknownRedBaseline: true }, { escalate: true }]) {
+      await assert.rejects(coordinator.startSession({ ...options, ...override }), /Update worker.*execution options/);
+      assert.equal(transports.size, 0, 'no remote or local fallback may execute the request');
+    }
+    snapshot.dispatch_execution_options = true;
+    const session = await coordinator.startSession({ ...options, dryRun: true, requestId: 'preview' });
+    assert.equal(session.nodeId, 'worker');
+    assert.equal(transports.get('worker')?.startCalls, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('fleet dispatch wait resolves from the terminal push event', async () => {
   const leaseDir = mkdtempSync(resolve(tmpdir(), 'gah-fleet-wait-'));
@@ -301,7 +427,8 @@ test('fleet dispatch wait resolves from the terminal push event', async () => {
       ...session,
       status: 'stopped',
       endedAt: coordinator.getSession(session.id)?.endedAt,
-      leaseState: 'terminal'
+      leaseState: 'terminal',
+      execution: { reason: 'cancelled', exitCode: null, signal: null }
     },
     timedOut: false
   });
@@ -470,7 +597,12 @@ test('fleet dispatch reuses request ids across coordinator restarts and reconcil
 
     mockNode.sessions = [];
     await restartedCoordinator.reconcileLeases('gah');
-    assert.deepEqual(restartedCoordinator.getAllSessions(), []);
+    assert.equal(restartedCoordinator.getSession(first.id)?.leaseState, 'uncertain_reconciling');
+    assert.equal(restartedCoordinator.getSession(first.id)?.endedAt, undefined);
+    const held = await restartedCoordinator.startSession({ requestId: 'new-request-same-work', profile: 'gah',
+      providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve' });
+    assert.equal(held.id, first.id);
+    assert.equal(secondTransportMap.get('worker-1')?.startCalls ?? 0, 0);
   } finally {
     await mockNode.close();
     try {
@@ -1169,18 +1301,23 @@ for (const protocol of ['http:', 'https:']) {
   test(`remote dispatch and reconciliation use the ${protocol} global agent and node credential`, async (t) => {
     const secretDir = mkdtempSync(resolve(tmpdir(), 'gah-fleet-auth-'));
     const { rmSync } = await import('node:fs');
-    const previousToken = process.env.GAH_FLEET_TEST_TOKEN;
-    process.env.GAH_FLEET_TEST_TOKEN = 'node-test-secret';
+    const previousToken = process.env.PARASAUR_FLEET_TEST_TOKEN;
+    process.env.PARASAUR_FLEET_TEST_TOKEN = 'node-test-secret';
+    // worker.invalid over plain HTTP is a lan link, which a central accepts only when told to.
+    const previousLinks = process.env.PARASAUR_WORKER_LINKS;
+    process.env.PARASAUR_WORKER_LINKS = 'lan';
+    t.after(() => { if (previousLinks === undefined) delete process.env.PARASAUR_WORKER_LINKS; else process.env.PARASAUR_WORKER_LINKS = previousLinks; });
     const authorizations: (string | undefined)[] = [];
+    const starts: Record<string, unknown>[] = [];
     const server = http.createServer();
     const wss = new WebSocketServer({ server, verifyClient: (info: { req: http.IncomingMessage }) => {
       authorizations.push(info.req.headers.authorization);
       return info.req.headers.authorization === 'Bearer node-test-secret';
     } });
-    const session: Session = { id: 'authenticated-session', providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve', status: 'running', startedAt: new Date().toISOString() };
+    const session: Session = { id: 'authenticated-session', providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve', backend: 'codex', backendInstance: 'work', model: 'chosen-model', status: 'running', startedAt: new Date().toISOString() };
     wss.on('connection', (socket) => socket.on('message', (raw) => {
       const message = JSON.parse(raw.toString()) as { type: string };
-      if (message.type === 'session.start') socket.send(JSON.stringify({ type: 'session.started', session }));
+      if (message.type === 'session.start') { starts.push(message); socket.send(JSON.stringify({ type: 'session.started', session })); }
       if (message.type === 'client.hello') socket.send(JSON.stringify({ type: 'server.welcome', sessions: [session] }));
     }));
     await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
@@ -1193,14 +1330,22 @@ for (const protocol of ['http:', 'https:']) {
     const nodeUrl = `${protocol}//worker.invalid:${address.port}`;
     let registeredUrl = nodeUrl;
     const registryService = {
-      getNode: () => ({ secret_ref: 'env:GAH_FLEET_TEST_TOKEN', advertised_url: registeredUrl }),
-      getNodeObservations: async () => [makeSnapshot('worker', nodeUrl, 0, 0, 0)]
+      getNode: () => ({ secret_ref: 'env:PARASAUR_FLEET_TEST_TOKEN', advertised_url: registeredUrl }),
+      getNodeObservations: async () => [makeSnapshot('worker', nodeUrl, 0, 0, 0, {
+        dispatch_backend_instances: true, backend_instances: [{ backend_instance: 'work', logical_backend: 'codex',
+          runner_kind: 'codex', account_label: 'work', auth_source_label: null, quota_pool: null,
+          supported_models: ['chosen-model'], enabled: true, executable_configured: true, isolated_state_configured: true }]
+      })]
     } as unknown as RegistryService;
     const coordinator = createFleetDispatchCoordinator({ registryService, pushBus: { publish() {} },
       coordinatorIdentity: { node_id: 'central', display_name: 'central', advertised_url: 'http://127.0.0.1:9999', version: '0.1.0', schema_digest: 'schema' },
       leaseStorePath: resolve(secretDir, 'leases.json') });
     try {
-      await coordinator.startSession({ requestId: 'auth-dispatch', nodeId: 'worker', profile: 'gah', providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve' });
+      await coordinator.startSession({ requestId: 'auth-dispatch', nodeId: 'worker', profile: 'gah', providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve', backend: 'codex', backendInstance: 'work', model: 'chosen-model' });
+      assert.equal(starts.length, 1);
+      assert.equal(starts[0]?.backendInstance, 'work');
+      assert.equal(starts[0]?.nodeId, 'worker');
+      assert.equal(starts[0]?.model, 'chosen-model');
       await coordinator.reconcileLeases('gah');
       assert.deepEqual(authorizations, ['Bearer node-test-secret', 'Bearer node-test-secret']);
       assert.equal(connections.mock.callCount(), 2, 'dispatch and reconciliation must both use the configured agent');
@@ -1213,7 +1358,7 @@ for (const protocol of ['http:', 'https:']) {
       for (const socket of wss.clients) socket.terminate();
       await new Promise<void>((done) => wss.close(() => server.close(() => done())));
       rmSync(secretDir, { recursive: true, force: true });
-      if (previousToken === undefined) delete process.env.GAH_FLEET_TEST_TOKEN; else process.env.GAH_FLEET_TEST_TOKEN = previousToken;
+      if (previousToken === undefined) delete process.env.PARASAUR_FLEET_TEST_TOKEN; else process.env.PARASAUR_FLEET_TEST_TOKEN = previousToken;
     }
   });
 }
@@ -1403,3 +1548,128 @@ for (const crash of ['after-acknowledgement', 'release-write-failure', 'after-re
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 }
+
+
+for (const observed of ['matching', 'missing', 'wrong-work'] as const) {
+  test(`an unacknowledged start survives coordinator restart with ${observed} worker evidence`, async () => {
+    const node = await createMockNode(); const dir = mkdtempSync(resolve(tmpdir(), 'gah-start-receipt-'));
+    const path = resolve(dir, 'leases.json'); let launches = 0;
+    const options = { requestId: 'lost-ack', nodeId: 'worker', profile: 'gah', providerKind: 'codex' as const,
+      instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve', target: '#42', backend: 'codex', model: 'gpt-4.1' };
+    const registryService = { getNode: () => undefined,
+      getNodeObservations: async () => [makeSnapshot('worker', node.url, 0, 0, 0)] } as unknown as RegistryService;
+    const deps = { registryService, pushBus: { publish() {} }, leaseStorePath: path,
+      coordinatorIdentity: { node_id: 'central', display_name: 'central', advertised_url: 'http://127.0.0.1:9999', version: '0.3.0', schema_digest: 'schema' },
+      transportFactory: () => ({ startSession: async () => {
+        launches += 1;
+        const saved = JSON.parse(readFileSync(path, 'utf8'));
+        assert.equal(saved.leases[0].state, 'offered', 'ownership must precede worker launch');
+        if (observed !== 'missing') node.sessions = [{ ...options, id: 'actual-worker-session', status: 'running',
+          repo: observed === 'wrong-work' ? 'different/repo' : options.repo }];
+        throw new Error('acknowledgement was lost');
+      }, stopSession: async () => { throw new Error('not used'); }, sendCommand: async () => {}, getSession: () => undefined, getSessions: () => [], close: async () => {} })
+    };
+    try {
+      const first = createFleetDispatchCoordinator(deps);
+      await assert.rejects(first.startSession(options), /acknowledgement was lost/);
+      assert.equal(first.getSessionByRequestId('lost-ack')?.leaseState, 'uncertain_reconciling');
+      const restarted = createFleetDispatchCoordinator(deps);
+      const recovered = await restarted.startSession(options);
+      assert.equal(launches, 1);
+      assert.equal(recovered.id, observed === 'matching' ? 'actual-worker-session' : 'offered:lost-ack');
+      assert.equal(recovered.leaseState, observed === 'matching' ? 'running' : 'uncertain_reconciling');
+      const sameWork = await restarted.startSession({ ...options, requestId: 'another-request' });
+      assert.equal(sameWork.id, recovered.id); assert.equal(launches, 1);
+    } finally { await node.close();rmSync(dir, { recursive: true, force: true }); }
+  });
+}
+
+test('a failed remote cancellation preserves its lease until a terminal result is observed', async () => {
+  const node = await createMockNode();const dir = mkdtempSync(resolve(tmpdir(), 'gah-unconfirmed-stop-'));
+  const messages: ServerMessage[] = []; let launches = 0;
+  let current: Session = { id: 'actual-stop', requestId: 'stop-receipt', providerKind: 'codex', instanceId: 'codex-0',
+    repo: 'owner/repo', mode: 'improve', target: '#42', status: 'running' };
+  const registryService = { getNode: () => undefined, getNodeObservations: async () => [makeSnapshot('worker', node.url, 0, 0, 0)] } as unknown as RegistryService;
+  const coordinator = createFleetDispatchCoordinator({ registryService, pushBus: { publish: message => { messages.push(message); } },
+    leaseStorePath: resolve(dir, 'leases.json'), coordinatorIdentity: { node_id: 'central', display_name: 'central', advertised_url: 'http://127.0.0.1:9999', version: '0.3.0', schema_digest: 'schema' },
+    transportFactory: (_node, context) => ({ startSession: async () => { launches++; return current; },
+      stopSession: async () => { current = { ...current, status: 'stopping', error: 'termination unconfirmed' };context.onSessionUpdate(current);return current; },
+      sendCommand: async () => {}, getSession: () => current, getSessions: () => [current], close: async () => {} }) });
+  const options = { requestId: 'stop-receipt', nodeId: 'worker', profile: 'gah', providerKind: 'codex' as const, instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve', target: '#42' };
+  try {
+    const started = await coordinator.startSession(options);node.sessions = [current];
+    const stopped = await coordinator.stopSession(started.id);node.sessions = [current];
+    assert.equal(stopped.status, 'stopping');assert.equal(stopped.endedAt, undefined);assert.notEqual(stopped.leaseState, 'terminal');
+    assert.equal(messages.filter(message => message.type === 'session.stopped').length, 0);
+    const duplicate = await coordinator.startSession({ ...options, requestId: 'new-id' });
+    assert.equal(duplicate.id, started.id);assert.equal(launches, 1);
+    for (const execution of [undefined, { reason: 'exited' as const, exitCode: -1, signal: null }]) {
+      current = { ...current, status: 'stopped', endedAt: new Date().toISOString(), execution };node.sessions = [current];
+      await coordinator.reconcileLeases('gah');
+      assert.equal(coordinator.getSession(started.id)?.leaseState, 'uncertain_reconciling');
+      assert.equal(coordinator.getSession(started.id)?.endedAt, undefined);
+    }
+    current = { ...current, status: 'stopped', error: undefined, endedAt: new Date().toISOString(),
+      execution: { reason: 'cancelled', exitCode: null, signal: 'SIGTERM' } };node.sessions = [current];
+    await coordinator.reconcileLeases('gah');
+    assert.equal(coordinator.getSession(started.id)?.leaseState, 'terminal');
+    assert.deepEqual(coordinator.getSession(started.id)?.execution, current.execution);
+  } finally { await node.close();rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test('losing an accepted worker socket keeps execution uncertain and ignores unrelated broadcasts', async () => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'gah-worker-disconnect-'));
+  const server = http.createServer();const wss = new WebSocketServer({ server });let starts = 0;
+  let current: Session | undefined;
+  wss.on('connection', socket => socket.on('message', raw => {
+    const message = JSON.parse(raw.toString());
+    if (message.type === 'client.hello') socket.send(JSON.stringify({ type: 'server.welcome', sessions: current ? [current] : [] }));
+    if (message.type === 'session.start') {
+      starts++;
+      socket.send(JSON.stringify({ type: 'session.started', session: { ...message, id: 'unrelated', requestId: 'other-request', status: 'running' } }));
+      current = { ...message, id: 'owned-session', status: 'running' };
+      socket.send(JSON.stringify({ type: 'session.started', session: current }));
+      socket.send(JSON.stringify({ type: 'session.stopped', session: { ...current, id: 'unrelated', requestId: 'other-request', status: 'stopped' } }));
+    }
+  }));
+  await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
+  const address = server.address();assert.ok(address && typeof address !== 'string');const url = `http://127.0.0.1:${address.port}`;
+  const registryService = { getNode: () => undefined, getNodeObservations: async () => [makeSnapshot('worker', url, 0, 0, 0)] } as unknown as RegistryService;
+  const coordinator = createFleetDispatchCoordinator({ registryService, pushBus: { publish() {} }, leaseStorePath: resolve(dir, 'leases.json'),
+    coordinatorIdentity: { node_id: 'central', display_name: 'central', advertised_url: 'http://127.0.0.1:9999', version: '0.3.0', schema_digest: 'schema' } });
+  const options = { requestId: 'socket-receipt', nodeId: 'worker', profile: 'gah', providerKind: 'codex' as const,
+    instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve', target: '#42' };
+  try {
+    const session = await coordinator.startSession(options);assert.equal(session.id, 'owned-session');
+    await new Promise(done => setTimeout(done, 20));assert.equal(coordinator.getSession(session.id)?.status, 'running');
+    for (const socket of wss.clients) socket.terminate();
+    const deadline = Date.now() + 2000;
+    while (coordinator.getSession(session.id)?.leaseState !== 'uncertain_reconciling' && Date.now() < deadline) await new Promise(done => setTimeout(done, 10));
+    assert.equal(coordinator.getSession(session.id)?.leaseState, 'uncertain_reconciling');
+    assert.equal(coordinator.getSession(session.id)?.endedAt, undefined);
+    current = undefined; // A restarted worker has lost its in-memory roster.
+    const held = await coordinator.startSession({ ...options, requestId: 'another-request' });
+    assert.equal(held.id, session.id);assert.equal(held.leaseState, 'uncertain_reconciling');assert.equal(starts, 1);
+  } finally {
+    for (const socket of wss.clients) socket.terminate();
+    await new Promise<void>(done => wss.close(() => server.close(() => done())));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test('an old worker cannot accept a new dispatch without confirmed execution support', async () => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'gah-old-worker-'));let launches = 0;
+  const registryService = { getNode: () => undefined,
+    getNodeObservations: async () => [makeSnapshot('old-worker', 'http://127.0.0.1:9998', 0, 0, 0, { dispatch_execution_results: false })] } as unknown as RegistryService;
+  const coordinator = createFleetDispatchCoordinator({ registryService, pushBus: { publish() {} }, leaseStorePath: resolve(dir, 'leases.json'),
+    coordinatorIdentity: { node_id: 'central', display_name: 'central', advertised_url: 'http://127.0.0.1:9999', version: '0.3.0', schema_digest: 'schema' },
+    transportFactory: () => { launches++;throw new Error('must not reach transport'); } });
+  try {
+    await assert.rejects(coordinator.startSession({ requestId: 'old-worker-test', nodeId: 'old-worker', profile: 'gah',
+      providerKind: 'codex', instanceId: 'codex-0', repo: 'owner/repo', mode: 'improve' }),
+      (error: unknown) => error instanceof Error && (error as Error & { code?: string }).code === 'DISPATCH_RESULTS_UNSUPPORTED');
+    assert.equal(launches, 0);assert.equal(existsSync(resolve(dir, 'leases.json')), false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

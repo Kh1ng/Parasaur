@@ -141,10 +141,10 @@ impl wizard::Effects for SystemEffects {
     }
 
     /// Sets `permissionMode` in the file the server reads (its
-    /// GAH_MANAGER_CHAT_SETTINGS_PATH, else `config/` in the checkout it runs
+    /// PARASAUR_MANAGER_CHAT_SETTINGS_PATH, else `config/` in the checkout it runs
     /// from), keeping every other setting, and replaces the file atomically.
     fn set_chat_permissions(&mut self, source: &Path, mode: wizard::ChatPermissions) -> Result<()> {
-        let path = std::env::var_os("GAH_MANAGER_CHAT_SETTINGS_PATH")
+        let path = std::env::var_os("PARASAUR_MANAGER_CHAT_SETTINGS_PATH")
             .filter(|path| !path.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| source.join("config/manager-chat-settings.json"));
@@ -265,10 +265,10 @@ pub struct Args {
     /// Central node address (worker role). The token comes from COORDINATOR_TOKEN.
     #[arg(long)]
     central_url: Option<String>,
-    /// Memory gateway address (remote memory). The key comes from GAH_GATEWAY_API_KEY.
+    /// Memory gateway address (remote memory). The key comes from PARASAUR_GATEWAY_API_KEY.
     #[arg(long)]
     gateway_url: Option<String>,
-    /// MemoryCore checkout (colocated memory). Optional generation credentials come from GAH_GATEWAY_LLM_API_KEY.
+    /// MemoryCore checkout (colocated memory). Optional generation credentials come from PARASAUR_GATEWAY_LLM_API_KEY.
     #[arg(long)]
     memorycore: Option<PathBuf>,
     /// The git-agent-harness checkout to build (default: the one this gah came from).
@@ -377,7 +377,7 @@ mod tests {
 
     #[test]
     fn chat_permissions_keep_other_manager_chat_settings() {
-        if std::env::var_os("GAH_MANAGER_CHAT_SETTINGS_PATH").is_some() {
+        if std::env::var_os("PARASAUR_MANAGER_CHAT_SETTINGS_PATH").is_some() {
             return;
         }
         let source = tempfile::tempdir().unwrap();

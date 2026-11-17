@@ -230,6 +230,11 @@ fn outage_refuses_central_claim_then_explicit_local_mode_dispatches_warmed_skill
         "{warm:?}"
     );
     assert_skill_argv(&harness);
+    let admitted = harness.run_status_json().unwrap();
+    assert_eq!(
+        admitted["node"]["central_claim_observation"]["outcome"],
+        "acquired"
+    );
     let marker = harness.artifacts_dir.join("worker-argv");
     assert_worker_dispatch_counts(&central, 0);
     fs::remove_file(&marker).unwrap();
@@ -255,6 +260,11 @@ fn outage_refuses_central_claim_then_explicit_local_mode_dispatches_warmed_skill
     );
     let status = harness.run_status_json().unwrap();
     assert_eq!(status["node"]["role"], "worker");
+    let claim = &status["node"]["central_claim_observation"];
+    assert_eq!(claim["state"], "observed");
+    assert_eq!(claim["outcome"], "refused");
+    assert_eq!(claim["work_id"], "#1516");
+    assert!(claim["observed_at"].is_string());
     assert_inventory_status(&status);
 
     // Direct free-text dispatch has no work id to arbitrate. It reaches the real
@@ -316,6 +326,7 @@ fn outage_refuses_central_claim_then_explicit_local_mode_dispatches_warmed_skill
     );
     let status = harness.run_status_json().unwrap();
     assert_eq!(status["node"]["role"], "standalone");
+    assert!(status["node"]["central_claim_observation"].is_null());
     assert_inventory_status(&status);
     assert_worker_dispatch_counts(&central, 0);
 }

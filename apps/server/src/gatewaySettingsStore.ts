@@ -53,7 +53,7 @@ export interface GatewaySettings {
 
 function settingsPath(): string {
   return (
-    process.env.GAH_GATEWAY_SETTINGS_PATH ||
+    process.env.PARASAUR_GATEWAY_SETTINGS_PATH ||
     resolve(process.cwd(), 'config/gateway-settings.json')
   );
 }

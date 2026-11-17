@@ -316,6 +316,7 @@ fn login_status(host: &dyn Host, program: &str, args: &[&str]) -> Status {
                     .map(|check| (check.success, check.stderr))
             },
         ),
+        "glab" => auth_health::classify_glab_status(probe.success, stdout, stderr),
         _ => auth_health::classify_status_output(probe.success, stdout, stderr),
     };
     // Every classifier explains a state that is not Ok.
@@ -1158,14 +1159,14 @@ pub(crate) mod tests {
         let from = doc.find(start).expect("requirements:start marker") + start.len();
         let to = doc.find(end).expect("requirements:end marker");
         let table = markdown_table();
-        if std::env::var("GAH_UPDATE_DOCS").as_deref() == Ok("1") {
+        if std::env::var("PARASAUR_UPDATE_DOCS").as_deref() == Ok("1") {
             std::fs::write(&path, format!("{}{}{}", &doc[..from], table, &doc[to..])).unwrap();
             return;
         }
         assert_eq!(
             &doc[from..to],
             table,
-            "docs/GETTING_STARTED.md is stale: run GAH_UPDATE_DOCS=1 cargo test --lib setup::"
+            "docs/GETTING_STARTED.md is stale: run PARASAUR_UPDATE_DOCS=1 cargo test --lib setup::"
         );
     }
 

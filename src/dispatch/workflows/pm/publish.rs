@@ -173,7 +173,13 @@ pub(crate) fn publish_plan(
         state_path: &state_path,
         child_depth,
     };
-    let output = publish_with_provider(&context, &mut state, &mut publisher, dry_run)?;
+    let output = if dry_run {
+        publish_with_provider(&context, &mut state, &mut publisher, true)?
+    } else {
+        crate::dispatch::native_guard::publication(profile, || {
+            publish_with_provider(&context, &mut state, &mut publisher, false)
+        })?
+    };
     let summary = PmPublicationSummary {
         plan_fingerprint: fingerprint,
         state_path,

@@ -159,8 +159,8 @@ orchestration_mode = "self_hosted"
 Export the credentials in each interactive shell that runs Parasaur:
 
 ```bash
-export GAH_SUPABASE_URL="<your-project-url>"
-export GAH_SUPABASE_ANON_KEY="<your-anon-key>"
+export PARASAUR_SUPABASE_URL="<your-project-url>"
+export PARASAUR_SUPABASE_ANON_KEY="<your-anon-key>"
 ```
 
 A blank value counts as unset.
@@ -170,8 +170,8 @@ Services do not read your shell. Each one loads a fixed env file, and the
 lines must be plain assignments:
 
 ```bash
-GAH_SUPABASE_URL="<your-project-url>"
-GAH_SUPABASE_ANON_KEY="<your-anon-key>"
+PARASAUR_SUPABASE_URL="<your-project-url>"
+PARASAUR_SUPABASE_ANON_KEY="<your-anon-key>"
 ```
 
 Add them to the file your service reads:
@@ -222,8 +222,8 @@ Expected output:
 
 ```
 orchestration_mode: self_hosted
-GAH_SUPABASE_URL: [REDACTED]
-GAH_SUPABASE_ANON_KEY: [REDACTED]
+PARASAUR_SUPABASE_URL: [REDACTED]
+PARASAUR_SUPABASE_ANON_KEY: [REDACTED]
 current_manager: (unset)
 ```
 
@@ -240,17 +240,17 @@ The JSON keeps the same redaction.
 
 ## 9. Troubleshooting
 
-**`no config found; set GAH_CONFIG or create ...`**
+**`no config found; set PARASAUR_CONFIG or create ...`**
 No config file exists. Create `~/.config/gah/config.toml`. Or point
-`GAH_CONFIG` at a file.
+`PARASAUR_CONFIG` at a file.
 
 **`parsing ...`**
 The TOML is invalid. Check the quotes and brackets. The error names the file.
 
-**`orchestration_mode = "self_hosted" requires GAH_SUPABASE_URL; export
-GAH_SUPABASE_URL before starting gah, or use [defaults] orchestration_mode =
+**`orchestration_mode = "self_hosted" requires PARASAUR_SUPABASE_URL; export
+PARASAUR_SUPABASE_URL before starting gah, or use [defaults] orchestration_mode =
 "local"`**
-Export the missing variable. The same error names `GAH_SUPABASE_ANON_KEY`
+Export the missing variable. The same error names `PARASAUR_SUPABASE_ANON_KEY`
 when the key is missing. A blank value counts as missing.
 
 **Unknown mode value.**

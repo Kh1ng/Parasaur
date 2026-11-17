@@ -138,7 +138,34 @@ pub fn extract_model_from_backend_args(backend: &str, args: &[String]) -> Option
     }
 }
 
+/// OpenCode's job role selects its agent for both implementation and review.
+/// Profile agent overrides never reach either launch; preserve every other
+/// argument, including model pins used by routing before launch.
+pub(crate) fn without_opencode_agent_override(extra_args: &[String]) -> Vec<String> {
+    let mut filtered = Vec::with_capacity(extra_args.len());
+    let mut index = 0;
+    while index < extra_args.len() {
+        let arg = &extra_args[index];
+        if arg == "--agent" {
+            index += 2;
+        } else if arg.starts_with("--agent=") {
+            index += 1;
+        } else {
+            filtered.push(arg.clone());
+            index += 1;
+        }
+    }
+    filtered
+}
+
 pub fn filtered_backend_args(backend: &str, extra_args: &[String]) -> Vec<String> {
+    let role_args;
+    let extra_args = if backend == "opencode" {
+        role_args = without_opencode_agent_override(extra_args);
+        &role_args
+    } else {
+        extra_args
+    };
     let mut filtered = Vec::with_capacity(extra_args.len());
     let mut i = 0;
     while i < extra_args.len() {
@@ -155,13 +182,11 @@ pub fn filtered_backend_args(backend: &str, extra_args: &[String]) -> Vec<String
                 }
             }
             "opencode" | "claude" => {
-                if arg == "--model" || (backend == "opencode" && arg == "--agent") {
+                if arg == "--model" {
                     i += 2;
                     continue;
                 }
-                if arg.starts_with("--model=")
-                    || (backend == "opencode" && arg.starts_with("--agent="))
-                {
+                if arg.starts_with("--model=") {
                     i += 1;
                     continue;
                 }

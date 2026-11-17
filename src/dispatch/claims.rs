@@ -486,7 +486,20 @@ fn acquire_claim_with<G>(
 
     if let Some(central_url) = central_url {
         let lease_id = crate::work_claim::normalize_work_identity(&work_id);
-        let guard = acquire_central(central_url, &lease_id)?;
+        let result = acquire_central(central_url, &lease_id);
+        if crate::central_claims::observations::record(
+            cfg,
+            profile,
+            args,
+            central_url,
+            &lease_id,
+            result.is_ok(),
+        )
+        .is_err()
+        {
+            eprintln!("warning: central claim observation could not be recorded");
+        }
+        let guard = result?;
         return Ok((Some(guard), Some(work_id)));
     }
 
@@ -699,7 +712,7 @@ fn ledger_lookup_for_ticket(
     all_mrs: &[crate::sync::SyncMr],
     index: &crate::ledger::LedgerEntriesByWorkId,
 ) -> Option<TicketHistoryLookup> {
-    let ended_runs = EndedClaimRuns::from_entries(index.values().flatten());
+    let ended_runs = EndedClaimRuns::from_entries(index.values().flatten().copied());
     ledger_lookup_for_scan(work_id, profile, all_mrs, index, &ended_runs)
 }
 
@@ -725,10 +738,11 @@ fn ledger_lookup_with_setup_reason(
         entries
             .into_iter()
             .flatten()
+            .copied()
             .filter(|e| e.repo_id == profile.repo_id),
         ended_runs,
     );
-    for e in entries.into_iter().flatten() {
+    for e in entries.into_iter().flatten().copied() {
         // The ledger is a single global file shared by every profile
         // (Defaults::ledger_path, not per-profile), and work_id is
         // just a heading-derived string like "TICKET-090" with no
@@ -935,7 +949,7 @@ pub(crate) fn scan_available_tickets(
     let entries: Vec<LedgerEntry> = ledger_entries_by_work_id
         .values()
         .flatten()
-        .cloned()
+        .map(|entry| (*entry).clone())
         .collect();
     scan_available_tickets_with_dependencies(profile, all_mrs, ledger_entries_by_work_id, &entries)
         .available_tickets
@@ -1278,8 +1292,8 @@ pub fn merge_branch(
 }
 
 pub(super) fn ensure_dispatch_capacity(profile: &Profile, worktree_base: &Path) -> Result<()> {
-    ensure_minimum_free_space(worktree_base, "worktree filesystem")?;
-    ensure_minimum_free_space(&std::env::temp_dir(), "temporary filesystem")?;
+    ensure_minimum_free_space(worktree_base, "worktree filesystem", 0)?;
+    ensure_minimum_free_space(&std::env::temp_dir(), "temporary filesystem", 0)?;
     // Ensure the isolated-target parent exists before the first backend
     // inherits it; this also proves the configured artifact root is writable
     // early without sharing mutable Cargo outputs between worktrees.
@@ -1288,7 +1302,13 @@ pub(super) fn ensure_dispatch_capacity(profile: &Profile, worktree_base: &Path) 
     Ok(())
 }
 
-fn ensure_minimum_free_space(path: &Path, label: &str) -> Result<()> {
+/// Keep the dispatch filesystem floor available after an additional bounded
+/// write. This is a capacity preflight, not an allocation or execution grant.
+pub(crate) fn ensure_minimum_free_space(
+    path: &Path,
+    label: &str,
+    reserve_bytes: u64,
+) -> Result<()> {
     #[cfg(unix)]
     {
         use std::ffi::CString;
@@ -1312,18 +1332,19 @@ fn ensure_minimum_free_space(path: &Path, label: &str) -> Result<()> {
             });
         }
         let available = (stat.f_bavail as u128).saturating_mul(stat.f_frsize as u128);
-        if available < MIN_DISPATCH_FREE_BYTES as u128 {
+        let required = MIN_DISPATCH_FREE_BYTES as u128 + reserve_bytes as u128;
+        if available < required {
             anyhow::bail!(
                 "insufficient free space on {} ({}): {} GiB available; require at least {} GiB before dispatch",
                 label,
                 path.display(),
                 available / (1024 * 1024 * 1024),
-                MIN_DISPATCH_FREE_BYTES / (1024 * 1024 * 1024),
+                required.div_ceil(1024 * 1024 * 1024),
             );
         }
     }
     #[cfg(not(unix))]
-    let _ = (path, label);
+    let _ = (path, label, reserve_bytes);
     Ok(())
 }
 

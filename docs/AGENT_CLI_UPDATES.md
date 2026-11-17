@@ -40,7 +40,7 @@ The command prints the proposed update and exits without changing the CLI. To ac
 gah agents update codex --yes
 ```
 
-The Agents page offers an Update button for outdated CLIs. This action requires owner access and `GAH_ENABLE_ADMIN_UPDATE=1` on central and the target node.
+The Agents page offers an Update button for outdated CLIs. This action requires owner access and `PARASAUR_ENABLE_ADMIN_UPDATE=1` on central and the target node.
 
 Updates use the node service account and its PATH. They do not use sudo or install missing CLIs. Provider errors and timeouts remain visible.
 
@@ -61,8 +61,8 @@ Each backend has a JSON record with its command, versions, timestamps, and outco
 To opt in, set these variables in each selected node's server environment:
 
 ```sh
-GAH_ENABLE_ADMIN_UPDATE=1
-GAH_AUTO_UPDATE_AGENT_CLIS=1
+PARASAUR_ENABLE_ADMIN_UPDATE=1
+PARASAUR_AUTO_UPDATE_AGENT_CLIS=1
 ```
 
 Restart that node's server after changing its environment. CLI auto-update is off by default and independent of the node's GAH auto-update preference.

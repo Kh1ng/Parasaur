@@ -3,6 +3,108 @@ use crate::ledger::test_util::{profile, test_config};
 use crate::ledger::{append, LedgerEntry};
 
 #[test]
+fn project_and_work_groups_keep_scope_and_count_attempt_usage_once() {
+    let (_tmp, cfg) = test_config();
+    let mut entry = LedgerEntry::new("test", &profile(), "codex", "fix", "task", None, None);
+    entry.provider = "github".into();
+    entry.repo = "owner/repo".into();
+    entry.work_id = Some("#42".into());
+    entry.usage.total_tokens = Some(999);
+    entry.usage.actual_cost_usd = Some(999.0);
+    entry.attempts = [10, 20]
+        .into_iter()
+        .enumerate()
+        .map(|(index, tokens)| crate::ledger::AttemptRecord {
+            attempt_number: index as u32 + 1,
+            backend: if index == 0 { "codex" } else { "claude" }.into(),
+            usage: LedgerUsage {
+                total_tokens: Some(tokens),
+                actual_cost_usd: Some(1.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .collect();
+    append(&cfg, &entry).unwrap();
+    for (profile_name, provider, repo, work, tokens) in [
+        ("test", "github", "owner/other", "#42", 7),
+        ("test", "gitlab", "owner/repo", "#42", 11),
+        ("other-profile", "github", "owner/repo", "#42", 13),
+        ("test", "github", "owner/repo", "#43", 17),
+    ] {
+        let mut other = entry.clone();
+        other.profile = profile_name.into();
+        other.provider = provider.into();
+        other.repo = repo.into();
+        other.work_id = Some(work.into());
+        other.attempts.clear();
+        other.usage = LedgerUsage {
+            total_tokens: Some(tokens),
+            ..Default::default()
+        };
+        append(&cfg, &other).unwrap();
+    }
+    let projects = build_summary(&cfg, "7d", None, GroupBy::Project)
+        .unwrap()
+        .grouped_by_project
+        .unwrap();
+    assert_eq!(projects.len(), 4);
+    let key = serde_json::json!(["test", "github", "owner/repo"]).to_string();
+    let project = projects
+        .iter()
+        .find(|group| group.group_key == key)
+        .unwrap();
+    assert_eq!(project.entries, 2);
+    assert_eq!(project.attempts, 3);
+    assert_eq!(project.total_tokens, Some(47));
+    assert_eq!(project.actual_cost_usd, Some(2.0));
+    let work = build_summary(&cfg, "7d", Some("test"), GroupBy::WorkItem)
+        .unwrap()
+        .grouped_by_work_item
+        .unwrap();
+    assert_eq!(work.len(), 4);
+    let key = serde_json::json!(["test", "github", "owner/repo", "#42"]).to_string();
+    let item = work.iter().find(|group| group.group_key == key).unwrap();
+    assert_eq!(item.total_tokens, Some(30));
+    assert_eq!(item.actual_cost_usd, Some(2.0));
+    assert_eq!(item.attempts, 2);
+}
+
+#[test]
+fn unknown_work_and_unknown_usage_remain_an_explicit_scoped_bucket() {
+    let (_tmp, cfg) = test_config();
+    let mut entry = LedgerEntry::new("test", &profile(), "codex", "fix", "#42", None, None);
+    entry.provider = "github".into();
+    entry.repo = "owner/repo".into();
+    entry.work_id = None;
+    append(&cfg, &entry).unwrap();
+    entry.work_id = Some("#42".into());
+    entry.usage.total_tokens = Some(0);
+    append(&cfg, &entry).unwrap();
+    let groups = build_summary(&cfg, "7d", None, GroupBy::WorkItem)
+        .unwrap()
+        .grouped_by_work_item
+        .unwrap();
+    assert_eq!(groups.len(), 2);
+    let unknown = groups
+        .iter()
+        .find(|group| {
+            serde_json::from_str::<serde_json::Value>(&group.group_key).unwrap()[3].is_null()
+        })
+        .unwrap();
+    assert_eq!(unknown.total_tokens, None);
+    assert_eq!(unknown.actual_cost_usd, None);
+    assert_eq!(
+        groups
+            .iter()
+            .find(|group| group.group_key != unknown.group_key)
+            .unwrap()
+            .total_tokens,
+        Some(0)
+    );
+}
+
+#[test]
 fn is_strong_model_returns_false_for_cheap_models() {
     assert!(!is_strong_model("deepseek-flash"));
     assert!(!is_strong_model("gpt-4o-mini"));
@@ -385,6 +487,8 @@ fn group_by_enum_parsing() {
     );
     assert_eq!("BACKEND".parse::<GroupBy>().unwrap(), GroupBy::Backend);
     assert_eq!("MODEL".parse::<GroupBy>().unwrap(), GroupBy::Model);
+    assert_eq!("PROJECT".parse::<GroupBy>().unwrap(), GroupBy::Project);
+    assert_eq!("work-item".parse::<GroupBy>().unwrap(), GroupBy::WorkItem);
     assert!("invalid".parse::<GroupBy>().is_err());
 }
 

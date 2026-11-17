@@ -38,7 +38,9 @@ function status(held = false): StatusSnapshot {
   };
 }
 
-async function routes(page: import('@playwright/test').Page) {
+async function routes(page: import('@playwright/test').Page, snapshot = status()) {
+  await page.route('**/api/events?*', route => route.fulfill({ json: [] }));
+  await page.route('**/api/status?*', route => route.fulfill({ json: snapshot }));
   await page.route('**/api/work/**', (route) => route.fulfill({ json: [entry] }));
   await page.route('**/api/profiles', (route) => route.fulfill({ json: [{ name: 'fixture', repo: 'Kh1ng/git-agent-harness' }] }));
   // Mirror the server's contract: these routes read `workId` and require an Idempotency-Key.
@@ -83,7 +85,7 @@ test('renders review and attempt evidence and runs hold, clear-attempts, and red
 });
 
 test('clears an active hold', async ({ mount, page }) => {
-  await routes(page);
+  await routes(page, status(true));
   const component = await mount(
     <MockStoreProvider statusData={status(true)}><WebSocketProvider>
       <WorkDetailDrawer workId="#42" profile="fixture" connected sessions={[]} onClose={() => {}} onRedispatch={() => {}} />
@@ -92,3 +94,49 @@ test('clears an active hold', async ({ mount, page }) => {
   await component.getByRole('button', { name: 'Clear hold' }).click();
   await expect(component.getByRole('status')).toHaveText('Hold cleared.');
 });
+
+for (const width of [1440, 390]) {
+  test(`shows every matching gate, review evidence and next steps at ${width}px`, async ({ mount, page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const snapshot = status(true);
+    Object.assign(snapshot.merge_requests[0], {
+      review_verdict: 'HUMAN_REVIEW',
+      review_gate_reason: 'review_evidence_gate: acceptance criteria need a live device check',
+      review_generation_status: 'source_changed',
+    });
+    snapshot.blocked_work_items = [
+      {
+        kind: 'human_required', source_reference: 'feat/42', reason_code: 'review_evidence_gate',
+        message: 'The reviewer could not verify background notifications on a real iPhone.',
+        remediation_plan: {
+          result: 'plan', profile: 'fixture', work_id: '#42', reason_code: 'review_evidence_gate', required_authority: 'human_reviewer',
+          safe_actions: [{ kind: 'manual_review', summary: 'Verify the notification on a locked iPhone and record the evidence.' }],
+        },
+      },
+      { kind: 'dependency', source_reference: '#42', reason_code: 'dependency_open', message: 'Waiting for the APNs setup issue to close.' },
+      { kind: 'human_required', source_reference: '#999', message: 'Unrelated gate must stay hidden.' },
+      { kind: 'human_required', source_reference: 'https://github.com/example/repo/pull/42', message: 'A legacy provider review hold has no reason code.' },
+      { kind: 'human_required', source_reference: 'feat/42', message: 'This branch is waiting for an operator.' },
+    ];
+    await routes(page, snapshot);
+    const component = await mount(
+      <MockStoreProvider statusData={snapshot}><WebSocketProvider>
+        <WorkDetailDrawer workId="#42" profile="fixture" connected sessions={[]} onClose={() => {}} onRedispatch={() => {}} />
+      </WebSocketProvider></MockStoreProvider>,
+    );
+    await expect(component.getByText('HUMAN REVIEW', { exact: true })).toBeVisible();
+    await expect(component.getByText('source_changed', { exact: true })).toBeVisible();
+    const gates = component.getByRole('region', { name: 'What is blocking this work' });
+    await expect(gates).toContainText('The reviewer could not verify background notifications on a real iPhone.');
+    await expect(gates).toContainText('Verify the notification on a locked iPhone and record the evidence.');
+    await expect(gates).toContainText('human reviewer');
+    await expect(gates).toContainText('Waiting for the APNs setup issue to close.');
+    await expect(gates).toContainText('Unknown reason');
+    await expect(gates).toContainText('This branch is waiting for an operator.');
+    await expect(gates).not.toContainText('Unrelated gate');
+    await expect(component.getByText('Automatic merging waits until this hold is cleared.')).toBeVisible();
+    const content = page.getByRole('dialog', { name: 'Drawer work' });
+    expect(await content.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await page.screenshot({ path: test.info().outputPath(`work-gates-${width}.png`) });
+  });
+}

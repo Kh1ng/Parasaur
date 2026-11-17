@@ -30,6 +30,7 @@ fn explicit_backend_never_uses_configured_fallback() {
         let request = RouteRequest {
             mode,
             requested_backend: "vibe",
+            requested_instance: None,
             requested_model: Some("mistral-medium-3.5"),
             recommended_backend: None,
             recommended_model: None,
@@ -81,6 +82,7 @@ fn codex_fallback_model_extracted_from_profile_codex_args() {
         RouteRequest {
             mode: "improve",
             requested_backend: "codex",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -113,6 +115,7 @@ fn codex_stale_args_do_not_override_resolved_model() {
         RouteRequest {
             mode: "improve",
             requested_backend: "codex",
+            requested_instance: None,
             requested_model: Some("gpt-5.4"),
             recommended_backend: None,
             recommended_model: None,
@@ -156,6 +159,7 @@ fn explicit_instance_uses_its_only_supported_model_when_model_is_omitted() {
         RouteRequest {
             mode: "fix",
             requested_backend: "agy-second",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -194,6 +198,7 @@ fn explicit_cross_mode_route_preserves_configured_usage_class() {
         RouteRequest {
             mode: "review",
             requested_backend: "opencode",
+            requested_instance: None,
             requested_model: Some("opencode/hy3-free"),
             recommended_backend: None,
             recommended_model: None,
@@ -232,6 +237,7 @@ fn auto_backend_honors_cli_model_override_in_effective_identity() {
         RouteRequest {
             mode: "improve",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: Some("custom/test-model"),
             recommended_backend: None,
             recommended_model: None,
@@ -276,6 +282,7 @@ fn profile_scalar_override_preserves_inherited_default_model() {
         RouteRequest {
             mode: "improve",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -319,6 +326,7 @@ fn preferred_backend_unavailable_falls_back() {
             last_failure_class: None,
             mode: "pm",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -348,6 +356,7 @@ fn preferred_backend_available_keeps_normal_selection() {
             last_failure_class: None,
             mode: "pm",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -389,6 +398,7 @@ fn expired_temporary_record_restores_eligibility() {
             last_failure_class: None,
             mode: "pm",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -429,6 +439,7 @@ fn backend_wide_block_blocks_all_models() {
             last_failure_class: None,
             mode: "fix",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: Some("gpt-5"),
             recommended_backend: Some("codex"),
             recommended_model: Some("gpt-5"),
@@ -480,6 +491,7 @@ fn model_specific_block_only_blocks_that_model() {
             last_failure_class: None,
             mode: "fix",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: Some("gpt-5"),
             recommended_backend: Some("codex"),
             recommended_model: Some("gpt-5"),
@@ -502,6 +514,7 @@ fn model_specific_block_only_blocks_that_model() {
             last_failure_class: None,
             mode: "fix",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: Some("gpt-5-mini"),
             recommended_backend: Some("codex"),
             recommended_model: Some("gpt-5-mini"),
@@ -541,6 +554,7 @@ fn manual_disable_blocks_indefinitely() {
             last_failure_class: None,
             mode: "pm",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -583,6 +597,7 @@ fn all_candidates_unavailable_returns_earliest_reset() {
             last_failure_class: None,
             mode: "pm",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -634,6 +649,7 @@ fn fallback_route_records_availability_reason() {
             last_failure_class: None,
             mode: "review",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -715,6 +731,7 @@ fn malformed_availability_state_surfaces_error() {
             last_failure_class: None,
             mode: "pm",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -748,6 +765,7 @@ fn candidate_list_honored_when_available() {
             last_failure_class: None,
             mode: "pm",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -798,6 +816,7 @@ fn candidate_list_skips_unavailable_candidates() {
             last_failure_class: None,
             mode: "pm",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -843,6 +862,7 @@ fn session_limit_marks_model_scope_and_reroutes_to_alternate_backend() {
         last_failure_class: None,
         mode: "pm",
         requested_backend: "auto",
+        requested_instance: None,
         requested_model: None,
         recommended_backend: None,
         recommended_model: None,
@@ -920,6 +940,7 @@ fn capacity_downgrade_skips_sibling_codex_model_in_next_attempt() {
             last_failure_class: None,
             mode: "pm",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -971,6 +992,7 @@ fn candidate_list_expired_availability_re_enters() {
             last_failure_class: None,
             mode: "pm",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -1022,6 +1044,7 @@ fn candidate_list_exhausted_errors() {
             last_failure_class: None,
             mode: "pm",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -1076,6 +1099,7 @@ fn routing_honors_shared_quota_pool() {
             last_failure_class: None,
             mode: "pm",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -1116,6 +1140,7 @@ fn routing_honors_shared_quota_pool() {
             last_failure_class: None,
             mode: "pm",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -1156,6 +1181,7 @@ fn validation_retry_skips_every_route_already_tried_in_the_same_dispatch() {
         last_failure_class: Some("validation_failure"),
         mode: "improve",
         requested_backend: "auto",
+        requested_instance: None,
         requested_model: None,
         recommended_backend: None,
         recommended_model: None,
@@ -1219,6 +1245,7 @@ fn validation_retry_returns_structured_no_route_when_all_candidates_were_tried()
             last_failure_class: Some("validation_failure"),
             mode: "improve",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: None,
             recommended_backend: None,
             recommended_model: None,
@@ -1264,6 +1291,7 @@ fn explicit_retry_cannot_switch_backend() {
             last_failure_class: Some("validation_failure"),
             mode: "improve",
             requested_backend: "codex",
+            requested_instance: None,
             requested_model: Some("gpt-5.4-mini"),
             recommended_backend: None,
             recommended_model: None,
@@ -1312,6 +1340,7 @@ fn auto_fallback_does_not_transplant_requested_model_to_another_runner() {
             last_failure_class: None,
             mode: "improve",
             requested_backend: "auto",
+            requested_instance: None,
             requested_model: Some("gpt-5.4-mini"),
             recommended_backend: Some("codex"),
             recommended_model: Some("gpt-5.4-mini"),
@@ -1330,165 +1359,5 @@ fn auto_fallback_does_not_transplant_requested_model_to_another_runner() {
     assert_ne!(decision.effective_model.as_deref(), Some("gpt-5.4-mini"));
 }
 
-#[test]
-fn same_runner_and_model_instances_remain_independently_routable() {
-    let tmp = TempDir::new().unwrap();
-    let mut profile = profile();
-    for name in ["opencode-subscription", "opencode-api"] {
-        profile.routing.backend_instances.insert(
-            name.into(),
-            crate::config::BackendInstanceConfig {
-                runner_kind: "opencode".into(),
-                logical_backend: Some("opencode".into()),
-                executable: Some("/bin/sh".into()),
-                ..Default::default()
-            },
-        );
-    }
-    let mut subscription = candidate_config("opencode", Some("openai/gpt-5"), None);
-    subscription.instance = Some("opencode-subscription".into());
-    subscription.priority = 100;
-    subscription.included_in_quota = true;
-    let mut api = candidate_config("opencode", Some("openai/gpt-5"), None);
-    api.instance = Some("opencode-api".into());
-    api.priority = 100;
-    api.marginal_cost_usd = Some(1.0);
-    profile.routing.improve_candidates = Some(vec![subscription, api]);
-    let mut runtime = RoutingRuntimeState::default();
-    runtime.recent_runs.insert(
-        CandidateIdentity::new("opencode-subscription", Some("openai/gpt-5")),
-        4,
-    );
-    runtime.recent_runs.insert(
-        CandidateIdentity::new("opencode-api", Some("openai/gpt-5")),
-        0,
-    );
-
-    let decision = decide_with_runtime(
-        &defaults(),
-        &profile,
-        RouteRequest {
-            mode: "improve",
-            requested_backend: "auto",
-            requested_model: None,
-            recommended_backend: None,
-            recommended_model: None,
-            session_id: None,
-            usage_summary: None,
-            last_failure_class: None,
-            exact_route_required: false,
-        },
-        &runtime,
-        &path(&tmp),
-        OffsetDateTime::now_utc(),
-        backend_available,
-    )
-    .unwrap();
-
-    assert_eq!(decision.identity.backend_instance, "opencode-api");
-    assert_eq!(decision.effective_backend, "opencode");
-    assert_eq!(decision.effective_model.as_deref(), Some("openai/gpt-5"));
-    assert_eq!(
-        decision
-            .routing_diagnostics
-            .as_ref()
-            .map(|diagnostics| diagnostics.candidates.len()),
-        Some(2)
-    );
-}
-
-#[test]
-fn explicit_instance_without_executable_cannot_fall_back_to_path() {
-    let tmp = TempDir::new().unwrap();
-    let mut profile = profile();
-    for (name, executable) in [("broken", None), ("working", Some("/bin/sh"))] {
-        profile.routing.backend_instances.insert(
-            name.into(),
-            crate::config::BackendInstanceConfig {
-                runner_kind: "opencode".into(),
-                logical_backend: Some("opencode".into()),
-                executable: executable.map(str::to_string),
-                ..Default::default()
-            },
-        );
-    }
-    let mut broken = candidate_config("opencode", Some("openai/gpt-5"), None);
-    broken.instance = Some("broken".into());
-    let mut working = broken.clone();
-    working.instance = Some("working".into());
-    profile.routing.improve_candidates = Some(vec![broken, working]);
-
-    let decision = decide_with(
-        &defaults(),
-        &profile,
-        RouteRequest {
-            mode: "improve",
-            requested_backend: "auto",
-            requested_model: None,
-            recommended_backend: None,
-            recommended_model: None,
-            session_id: None,
-            usage_summary: None,
-            last_failure_class: None,
-            exact_route_required: false,
-        },
-        &path(&tmp),
-        OffsetDateTime::now_utc(),
-        |_| true,
-    )
-    .unwrap();
-
-    assert_eq!(decision.identity.backend_instance, "working");
-    assert!(decision
-        .routing_reason
-        .contains("backend CLI not installed"));
-}
-
-#[test]
-fn paid_instance_approval_error_names_exact_destination() {
-    let tmp = TempDir::new().unwrap();
-    let mut profile = profile();
-    profile.routing.backend_instances.insert(
-        "opencode-api".into(),
-        crate::config::BackendInstanceConfig {
-            runner_kind: "opencode".into(),
-            logical_backend: Some("opencode".into()),
-            executable: Some("/bin/sh".into()),
-            ..Default::default()
-        },
-    );
-    let mut paid = candidate_config("opencode", Some("openai/gpt-5"), None);
-    paid.instance = Some("opencode-api".into());
-    paid.requires_approval = true;
-    profile.routing.improve_candidates = Some(vec![paid]);
-
-    let error = decide_with(
-        &defaults(),
-        &profile,
-        RouteRequest {
-            mode: "improve",
-            requested_backend: "auto",
-            requested_model: None,
-            recommended_backend: None,
-            recommended_model: None,
-            session_id: None,
-            usage_summary: None,
-            last_failure_class: None,
-            exact_route_required: false,
-        },
-        &path(&tmp),
-        OffsetDateTime::now_utc(),
-        backend_available,
-    )
-    .unwrap_err();
-    let route_error = error.downcast_ref::<RouteError>().unwrap();
-
-    assert!(matches!(
-        route_error,
-        RouteError::ApprovalRequired {
-            backend_instance: Some(instance),
-            ..
-        } if instance == "opencode-api"
-    ));
-    assert!(route_error.to_string().contains("instance opencode-api"));
-}
+#[path = "tests/instances.rs"]
+mod instances;

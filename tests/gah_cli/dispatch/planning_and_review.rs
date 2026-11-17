@@ -765,7 +765,7 @@ fn review_falls_back_to_next_candidate_on_agy_empty_output() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &fake_home)
         .env(
-            "GAH_AVAILABILITY_PATH",
+            "PARASAUR_AVAILABILITY_PATH",
             tmp.path().join("availability.json"),
         )
         .assert()
@@ -825,7 +825,7 @@ fn review_falls_back_when_agy_quota_is_only_on_stderr() {
             cfg.to_str().unwrap(),
         ])
         .env("PATH", prepend_path(&fake_bin))
-        .env("GAH_AVAILABILITY_PATH", &availability_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &availability_path)
         .assert()
         .success()
         .stdout(predicate::str::contains(
@@ -1112,8 +1112,8 @@ fn review_shutdown_records_cancelled_shutdown_and_dispatch_finished_event() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -1192,7 +1192,7 @@ fn review_gitlab_without_bot_pat_keeps_local_verdict_and_does_not_publish() {
             .success()
             .stderr(
                 predicate::str::contains(
-                    "warning: GitLab review publication incomplete; human review required\n",
+                    "warning: GitLab review publication incomplete; human review required. No bot token is set",
                 )
                 .count(1),
             );
@@ -1330,8 +1330,8 @@ EOF
             cfg.to_str().unwrap(),
         ])
         .env("PATH", prepend_path(&fake_bin))
-        .env("GAH_LEDGER_PATH", &ledger)
-        .env("GAH_EVENTS_PATH", &events)
+        .env("PARASAUR_LEDGER_PATH", &ledger)
+        .env("PARASAUR_EVENTS_PATH", &events)
         .assert()
         .failure()
         .stderr(predicate::str::contains("POLICY BLOCKED"));

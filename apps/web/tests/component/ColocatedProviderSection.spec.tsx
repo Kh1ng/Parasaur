@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/experimental-ct-react';
 import React from 'react';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ColocatedProviderSection } from '../../src/pages/SettingsPage.js';
@@ -9,22 +9,38 @@ import { unixSetupCommand } from '../../../server/src/nodeSetup.js';
 
 /** Run a generated command against a stub installer that reports what it receives. */
 function runCommand(command: string, input = ''): string {
+  if (process.platform === 'win32') throw new Error('POSIX installer fixtures require Linux, macOS, or WSL with Linux Node.');
   const checkout = mkdtempSync(join(tmpdir(), 'gah-colocated-'));
   writeFileSync(join(checkout, 'curl'), `#!/bin/sh
 cat <<'INNEREOF'
 #!/bin/sh
-printf 'path=%s\\n' "$GAH_GATEWAY_MEMORYCORE_PATH"
-printf 'llm=%s\\n' "\${GAH_GATEWAY_LLM_API_KEY-<unset>}"
-printf 'embedding=%s\\n' "\${GAH_GATEWAY_EMBEDDING_API_KEY-<unset>}"
+printf 'path=%s\\n' "$PARASAUR_GATEWAY_MEMORYCORE_PATH"
+printf 'llm=%s\\n' "\${PARASAUR_GATEWAY_LLM_API_KEY-<unset>}"
+printf 'embedding=%s\\n' "\${PARASAUR_GATEWAY_EMBEDDING_API_KEY-<unset>}"
 INNEREOF
 `);
   chmodSync(join(checkout, 'curl'), 0o755);
   // Prompts read stdin here so the test can answer them without a terminal.
   // Each hidden prompt prints a newline; only the installer's report matters.
-  return execFileSync('bash', ['-c', command.replaceAll('</dev/tty', '')], {
-    cwd: checkout, input, encoding: 'utf8', env: { PATH: checkout + ':' + (process.env.PATH ?? ''), HOME: '/destination/home' },
-  }).trimStart();
+  try {
+    return execFileSync('bash', ['-c', command.replaceAll('</dev/tty', '')], {
+      cwd: checkout, input, encoding: 'utf8', timeout: 10_000,
+      env: { PATH: checkout + ':' + (process.env.PATH ?? ''), HOME: '/destination/home' },
+    }).trimStart();
+  } finally {
+    rmSync(checkout, { recursive: true, force: true });
+  }
 }
+
+test('generated setup commands execute against a POSIX installer fixture', () => {
+  test.skip(process.platform === 'win32', 'POSIX PATH fixtures cannot intercept Windows bash forwarding into WSL.');
+  const command = (provider: 'ollama' | 'openai', path?: string) => unixSetupCommand('linux', 'standalone', 'http://127.0.0.1:3773', undefined, provider, undefined, undefined, undefined, path, undefined);
+  expect(runCommand(command('ollama'))).toBe('path=/destination/home/TencentDB-Agent-Memory/MemoryCore\nllm=<unset>\nembedding=<unset>\n');
+  expect(runCommand(command('openai'), 'generation-canary\nembedding-canary\n')).toBe('path=/destination/home/TencentDB-Agent-Memory/MemoryCore\nllm=generation-canary\nembedding=embedding-canary\n');
+  expect(runCommand(command('openai'), '\nembedding-canary\n')).toBe('path=/destination/home/TencentDB-Agent-Memory/MemoryCore\nllm=<unset>\nembedding=embedding-canary\n');
+  expect(() => runCommand(command('openai'), 'generation-canary\n\n')).toThrow();
+  expect(runCommand(command('ollama', "/srv/it's here"))).toContain("path=/srv/it's here\n");
+});
 
 test('ColocatedProviderSection generates a setup command based on user inputs', async ({ mount, page }) => {
   await page.route('/api/settings/nodes/command', async (route) => {
@@ -66,7 +82,6 @@ test('ColocatedProviderSection generates a setup command based on user inputs', 
   expect(ollamaCommand).toContain('standalone');
   expect(ollamaCommand).not.toContain('central');
   expect(ollamaCommand).not.toContain('read -rsp');
-  expect(runCommand(ollamaCommand)).toBe('path=/destination/home/TencentDB-Agent-Memory/MemoryCore\nllm=<unset>\nembedding=<unset>\n');
 
   // OpenAI prompts privately for an optional generation key and the required embedding key.
   await providerSelect.selectOption('openai');
@@ -78,17 +93,13 @@ test('ColocatedProviderSection generates a setup command based on user inputs', 
 
   const openAiCommand = unixSetupCommand('linux', 'standalone', 'http://127.0.0.1:3773', undefined, 'openai', 'https://api.openai.com/v1', 'gpt-4o', 'text-embedding-3-small', undefined, undefined);
   await expect(commandPre).toHaveText(openAiCommand);
-  expect(runCommand(openAiCommand, 'generation-canary\nembedding-canary\n')).toBe('path=/destination/home/TencentDB-Agent-Memory/MemoryCore\nllm=generation-canary\nembedding=embedding-canary\n');
-  expect(runCommand(openAiCommand, '\nembedding-canary\n')).toBe('path=/destination/home/TencentDB-Agent-Memory/MemoryCore\nllm=<unset>\nembedding=embedding-canary\n');
-  // Without an embedding key the command fails before the installer runs.
-  expect(() => runCommand(openAiCommand, 'generation-canary\n\n')).toThrow();
 
   // Absolute paths stay literal; switching back to Ollama drops the prompts.
   await component.getByLabel('MemoryCore Path').fill("/srv/it's here");
   await providerSelect.selectOption('ollama');
   await component.getByRole('button', { name: 'Reveal setup command' }).click();
   await expect(commandPre).not.toContainText('read -rsp');
-  expect(runCommand((await commandPre.textContent()) ?? '')).toContain("path=/srv/it's here\n");
+  await expect(commandPre).toContainText("/srv/it");
 
   let clipboardText = '';
   await page.exposeFunction('setClipboardText', (text: string) => {
@@ -101,9 +112,9 @@ test('ColocatedProviderSection generates a setup command based on user inputs', 
     });
   });
 
-  // The copied text is the command as shown, which the shell run above accepted.
+  // Copy exactly the displayed command.
   const shown = (await commandPre.textContent()) ?? '';
-  expect(shown).toContain('GAH_GATEWAY_PROVIDER=');
+  expect(shown).toContain('PARASAUR_GATEWAY_PROVIDER=');
   await copyButton.click();
   await expect.poll(() => clipboardText).toBe(shown);
 });

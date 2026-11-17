@@ -3,7 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { randomUUID } from 'node:crypto';
 import type { AgentVersionsSnapshot, NodeAgentVersions, RegisteredNode } from '@git-agent-harness/contracts';
 import { requireOwner } from './authMiddleware.js';
-import { nodeHeaders } from './registryService.js';
+import { linkTo, type WorkerLink } from './workerLink.js';
 import { AgentCliError, AgentCliVersions, agentUpdatesEnabled } from './agentCliVersions.js';
 import type { mutationSafety } from './mutationSafety.js';
 
@@ -17,15 +17,13 @@ export class AgentCliFleet {
     private readonly doFetch: typeof fetch = fetch) {}
 
   private async remote(node: RegisteredNode, action: 'local' | 'update' | 'scheduled-update', body?: object): Promise<NodeAgentVersions | void> {
-    const url = new URL(`/api/agents/${action}`, node.advertised_url);
-    if (url.protocol !== 'https:' && (url.protocol !== 'http:' || (process.env.GAH_ALLOW_INSECURE_HTTP !== '1'
-      && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) {
-      throw new AgentCliError(502, 'worker_transport_denied', 'This worker requires HTTPS or trusted LAN HTTP.');
-    }
+    let link: WorkerLink;
+    try { link = linkTo(node); }
+    catch (error) { throw new AgentCliError(502, 'worker_transport_denied', error instanceof Error ? error.message : 'This worker cannot be reached.'); }
     try {
-      const response = await this.doFetch(url, { method: body ? 'POST' : 'GET', redirect: 'error',
-        signal: AbortSignal.timeout(30_000), headers: { ...nodeHeaders(node), 'Content-Type': 'application/json', 'Idempotency-Key': randomUUID() },
-        ...(body ? { body: JSON.stringify(body) } : {}) });
+      const response = await link.fetch(`/api/agents/${action}`, { method: body ? 'POST' : 'GET',
+        signal: AbortSignal.timeout(30_000), headers: { 'Content-Type': 'application/json', 'Idempotency-Key': randomUUID() },
+        ...(body ? { body: JSON.stringify(body) } : {}) }, this.doFetch);
       if (!response.ok) throw new AgentCliError(response.status === 409 ? 409 : 502, 'worker_agent_request_failed', 'The worker could not complete the agent request.');
       if (action !== 'local') return;
       const result = await response.json() as NodeAgentVersions;
@@ -104,7 +102,7 @@ export function agentCliRouter(local: AgentCliVersions, fleet: AgentCliFleet | u
   });
   router.use(requireOwner);
   router.use((_req, res, next) => {
-    if (!agentUpdatesEnabled()) return res.status(403).json({ error: 'agent_updates_disabled', message: 'Set GAH_ENABLE_ADMIN_UPDATE=1 on this node to enable agent updates.' });
+    if (!agentUpdatesEnabled()) return res.status(403).json({ error: 'agent_updates_disabled', message: 'Set PARASAUR_ENABLE_ADMIN_UPDATE=1 on this node to enable agent updates.' });
     next();
   });
   router.post('/update', mutation('agents.update'), async (req, res) => {

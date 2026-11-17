@@ -90,7 +90,7 @@ function recordGatewayFailure(error: unknown): void {
 export function gatewayHealth(): GatewayHealth {
   let hookCaptureFailures = 0;
   try {
-    const config = process.env.GAH_MEMORY_HOOK_CONFIG || resolve(homedir(), '.config/gah/memory-hooks.json');
+    const config = process.env.PARASAUR_MEMORY_HOOK_CONFIG || resolve(homedir(), '.config/gah/memory-hooks.json');
     const count = JSON.parse(readFileSync(resolve(config, '..', 'memory-hook-health.json'), 'utf8')).captureFailures;
     if (Number.isSafeInteger(count) && count >= 0) hookCaptureFailures = count;
   } catch { /* A machine without hooks has no hook failures. */ }

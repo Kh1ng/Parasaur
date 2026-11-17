@@ -13,7 +13,8 @@ import { join } from 'node:path';
 import { createServer } from './server.js';
 import { RegistryService } from './registryService.js';
 import { ClaimsService } from './claimsService.js';
-import { resetCachedCoordinatorIdentity, COORDINATOR_SCHEMA_DIGEST } from './coordinatorIdentity.js';
+import { getCoordinatorIdentity, resetCachedCoordinatorIdentity, COORDINATOR_SCHEMA_DIGEST } from './coordinatorIdentity.js';
+import type { ProfileSummary } from '@git-agent-harness/contracts';
 
 function tempPath(prefix: string): string {
   return join(mkdtempSync(join(tmpdir(), prefix)), 'config.json');
@@ -21,20 +22,21 @@ function tempPath(prefix: string): string {
 
 async function withClaimsServer(
   setup: (registry: RegistryService) => void,
-  testFn: (url: string) => Promise<void>
+  testFn: (url: string, localNodeId: string) => Promise<void>,
+  profiles?: () => Promise<ProfileSummary[]>
 ) {
   resetCachedCoordinatorIdentity();
   const registryService = new RegistryService(tempPath('gah-registry-'));
   const claimsService = new ClaimsService(tempPath('gah-claims-'));
   setup(registryService);
 
-  const app = createServer({ registryService, claimsService });
+  const app = createServer({ registryService, claimsService, ...(profiles ? { runProfileList: profiles } : {}) });
   const server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const { port } = server.address() as AddressInfo;
 
   try {
-    await testFn(`http://127.0.0.1:${port}`);
+    await testFn(`http://127.0.0.1:${port}`, getCoordinatorIdentity().node_id);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     resetCachedCoordinatorIdentity();
@@ -42,6 +44,67 @@ async function withClaimsServer(
 }
 
 let nextTestPort = 10000;
+
+const localProfiles = async () => [{ name: 'gah' } as ProfileSummary];
+const claim = (url: string, action: string, nodeId: string, profile = 'gah') => fetch(`${url}/api/claims/${action}`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ node_id: nodeId, profile, work_id: 'shared-work' })
+});
+
+test('central and a registered worker arbitrate one claim without registering central as a worker', async () => {
+  await withClaimsServer(
+    registry => registerTestNode(registry, 'worker', ['gah']),
+    async (url, central) => {
+      const responses = await Promise.all([claim(url, 'acquire', central), claim(url, 'acquire', 'worker')]);
+      assert.deepEqual(responses.map(response => response.status).sort(), [200, 409]);
+      const winner = responses[0].status === 200 ? central : 'worker';
+      const other = winner === central ? 'worker' : central;
+      const conflict = await responses.find(response => response.status === 409)!.json() as { held_by: { node_id: string } };
+      assert.equal(conflict.held_by.node_id, winner);
+      assert.equal((await claim(url, 'renew', winner)).status, 200);
+      assert.equal((await claim(url, 'release', other)).status, 200);
+      assert.equal((await claim(url, 'acquire', other)).status, 409, 'another node cannot release the holder\'s claim');
+      assert.equal((await claim(url, 'release', winner)).status, 200);
+      assert.equal((await claim(url, 'acquire', other)).status, 200);
+      assert.equal((await claim(url, 'renew', other)).status, 200);
+      assert.equal((await claim(url, 'release', other)).status, 200);
+    }, localProfiles
+  );
+});
+
+test('central claim membership comes from its local profiles, not registry declarations', async () => {
+  await withClaimsServer(
+    registry => registerTestNode(registry, getCoordinatorIdentity().node_id, ['remote-only']),
+    async (url, central) => {
+      for (const action of ['acquire', 'renew', 'release']) assert.equal((await claim(url, action, central, 'remote-only')).status, 400);
+      assert.equal((await claim(url, 'acquire', central)).status, 200);
+      assert.equal((await claim(url, 'release', central)).status, 200);
+    }, localProfiles
+  );
+});
+
+test('unavailable central profile discovery refuses leases and recovers without blocking registered workers', async () => {
+  let available = false;
+  let malformed = false;
+  await withClaimsServer(
+    registry => registerTestNode(registry, 'worker', ['gah']),
+    async (url, central) => {
+      for (const action of ['acquire', 'renew', 'release']) assert.equal((await claim(url, action, central)).status, 503);
+      malformed = true;
+      assert.equal((await claim(url, 'acquire', central)).status, 503);
+      assert.equal((await claim(url, 'acquire', 'worker')).status, 200);
+      available = true;
+      assert.equal((await claim(url, 'acquire', central)).status, 409, 'failed discovery did not grant an invisible lease');
+      assert.equal((await claim(url, 'release', 'worker')).status, 200);
+      assert.equal((await claim(url, 'acquire', central)).status, 200);
+      assert.equal((await claim(url, 'release', central)).status, 200);
+    }, async () => {
+      if (available) return localProfiles();
+      if (malformed) return { name: 'gah' } as unknown as ProfileSummary[];
+      throw new Error('private discovery details');
+    }
+  );
+});
 
 function registerTestNode(registry: RegistryService, nodeId: string, profiles: string[]) {
   registry.registerNode({

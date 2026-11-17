@@ -31,7 +31,7 @@ const INHERITED_NAMES = new Set([
   'MOONSHOT_API_KEY', 'DEEPSEEK_API_KEY', 'OPENROUTER_API_KEY', 'GROQ_API_KEY',
   'TOGETHER_API_KEY', 'CEREBRAS_API_KEY',
   // Nonsecret GAH locations: `gah` launches named instances and agents run it.
-  'GAH_CONFIG', 'GAH_CONFIG_PATH', 'GAH_CANONICAL_CONFIG', 'GAH_MEMORY_HOOK_CONFIG',
+  'PARASAUR_CONFIG', 'PARASAUR_CONFIG_PATH', 'PARASAUR_CANONICAL_CONFIG', 'PARASAUR_MEMORY_HOOK_CONFIG',
   // The memory gateway endpoint (not its key) for session memory hooks.
   'TDAI_GATEWAY_URL'
 ]);

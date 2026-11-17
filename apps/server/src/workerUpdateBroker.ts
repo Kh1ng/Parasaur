@@ -1,9 +1,8 @@
 /**
  * Coordinator-side worker update broker (issue #1416). The coordinator
  * tells a worker to update by POSTing to the worker's /api/worker-update
- * (same transport rules as the login repair broker: TLS off-loopback
- * unless GAH_ALLOW_INSECURE_HTTP=1, the node's Bearer secret, fixed error
- * text) and can sweep the whole fleet at once. The worker decides when it
+ * over that worker's link (see workerLink.ts) and can sweep the whole
+ * fleet at once. The worker decides when it
  * is safe to run the update -- a mid-dispatch worker finishes first.
  */
 import type {
@@ -12,7 +11,7 @@ import type {
   RegisteredNode,
   WorkerUpdateStatus
 } from '@git-agent-harness/contracts';
-import { nodeHeaders } from './registryService.js';
+import { LinkRefused, linkTo } from './workerLink.js';
 
 export class WorkerUpdateError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -118,22 +117,16 @@ export class WorkerUpdateBroker {
     }
     const node: RegisteredNode | undefined = this.deps.registry.getNode(nodeId);
     if (!node) throw new WorkerUpdateError(404, 'That node is no longer registered.');
-    const endpoint = new URL('/api/worker-update', node.advertised_url);
-    if (endpoint.protocol !== 'https:' && process.env.GAH_ALLOW_INSECURE_HTTP !== '1'
-      && !['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname)) {
-      throw new WorkerUpdateError(502, 'Updating this worker requires HTTPS or trusted LAN HTTP.');
-    }
     let response: Response;
     try {
-      response = await (this.deps.fetch ?? fetch)(endpoint, {
+      response = await linkTo(node).fetch('/api/worker-update', {
         method: 'POST',
-        redirect: 'error',
         signal: AbortSignal.timeout(20_000),
-        headers: { ...nodeHeaders(node), 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
-      });
-    } catch {
-      throw new WorkerUpdateError(502, 'The worker could not be reached.');
+      }, this.deps.fetch);
+    } catch (error) {
+      throw new WorkerUpdateError(502, error instanceof LinkRefused ? error.message : 'The worker could not be reached.');
     }
     const payload = await response.json().catch(() => null) as
       | { started?: unknown; status?: unknown; message?: unknown }

@@ -53,6 +53,28 @@ fn review_head_gate_works_without_ticket_identity_and_is_scoped_to_pr() {
     assert!(!check(entry, "test", "gah/1617", &url, "head-one"));
 }
 
+/// An opinion that was never posted must not close the head: the operator
+/// republishes it by reviewing again, and the skip records written while it
+/// was unpublished must not close the head either.
+#[test]
+fn an_unpublished_opinion_leaves_the_head_reviewable() {
+    let profile = test_profile_for_notifications();
+    let url = "https://github.com/owner/repo/pull/42";
+    let reviewed = |entries: &[LedgerEntry]| {
+        locally_reviewed(entries, "test", &profile, "gah/1617", Some(url), "head-one")
+    };
+    let mut unpublished = review(&profile);
+    unpublished.human_required_reason_code = Some("publication_failed".into());
+    let mut skip = review(&profile);
+    skip.review_verdict = None;
+    skip.validation_result = Some("skipped_duplicate_review".into());
+
+    assert!(!reviewed(&[unpublished.clone()]));
+    assert!(!reviewed(&[unpublished.clone(), skip.clone()]));
+    assert!(reviewed(&[unpublished, skip.clone(), review(&profile)]));
+    assert!(reviewed(&[skip]), "a review found on the provider");
+}
+
 #[test]
 fn review_receipts_read_later_pages_on_both_providers() {
     let _exec = crate::test_support::ExecGuard::new();

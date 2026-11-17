@@ -7,8 +7,10 @@
  * have been replaced with dynamic data from the GAH backend.
  */
 
+import { chooseDefaultProfile } from '../defaultProfile.js';
 import { generateProviderInstanceId, getSupportedProviders } from '@git-agent-harness/shared';
-import { runStatus, type StatusSnapshot } from '../gahCli.js';
+import { runProfileList, runStatus, type StatusSnapshot } from '../gahCli.js';
+import { markReadinessCheck } from '../serverReadiness.js';
 import type { AvailabilityScope, ProviderKind, ProviderStatus, ProviderInstanceId } from '@git-agent-harness/contracts';
 
 interface CachedStatus {
@@ -40,7 +42,6 @@ class ProviderRegistryImpl {
   private availableProviders: Set<ProviderKind> = new Set();
   private cachedStatus: CachedStatus | null = null;
   private refreshPromise: Promise<void> | null = null;
-  private defaultProfile: string = 'gah';
   
   constructor() {
     // Set default versions for known providers
@@ -92,13 +93,6 @@ class ProviderRegistryImpl {
   }
   
   /**
-   * Set the default profile to use for status queries
-   */
-  setDefaultProfile(profile: string): void {
-    this.defaultProfile = profile;
-  }
-  
-  /**
    * Refresh all provider statuses from the GAH CLI
    */
   async refreshAllFromGah(): Promise<void> {
@@ -120,9 +114,22 @@ class ProviderRegistryImpl {
    */
   private async doRefreshAllFromGah(): Promise<void> {
     try {
+      // No projects is a valid fresh install, not a failed provider lookup.
+      // Re-read on refresh so adding/removing projects needs no server restart.
+      const profiles = await runProfileList();
+      if (!Array.isArray(profiles)) throw new Error('Invalid profile listing');
+      if (profiles.length === 0) {
+        this.cachedStatus = null;
+        this.availableProviders.clear();
+        for (const kind of getSupportedProviders()) {
+          this.providerStatuses.set(kind, { type: 'unavailable', reason: 'No project configured' });
+        }
+        markReadinessCheck('providerRegistry', true);
+        return;
+      }
       // Get fresh status from gah CLI
       // Only availability is read, so skip the forge-backed ticket queue (#1277).
-      const snapshot = await runStatus(this.defaultProfile, undefined, true);
+      const snapshot = await runStatus(chooseDefaultProfile(profiles), undefined, true);
       this.cachedStatus = {
         snapshot,
         timestamp: Date.now(),
@@ -131,10 +138,12 @@ class ProviderRegistryImpl {
       
       // Update provider statuses from the availability data
       this.updateFromSnapshot(snapshot);
+      markReadinessCheck('providerRegistry', true);
       
       console.log(`Refreshed provider statuses from Parasaur CLI (${snapshot.availability.length} backends)`);
       
     } catch (error) {
+      markReadinessCheck('providerRegistry', false, 'Provider status refresh failed');
       console.error('Failed to refresh provider statuses from Parasaur CLI:', error);
       // Fall back to default behavior
       this.updateDefaultStatuses();

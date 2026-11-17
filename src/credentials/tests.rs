@@ -74,7 +74,7 @@ fn bindings_fail_closed_and_cannot_change_runtime_configuration() {
         "HOME",
         "PATH",
         "LD_PRELOAD",
-        "GAH_API_KEY",
+        "PARASAUR_API_KEY",
         "DYLD_API_KEY",
         "NODE_OPTIONS",
         "bad-key",

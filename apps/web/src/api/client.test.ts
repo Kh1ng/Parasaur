@@ -40,6 +40,69 @@ function captureFetch(): { requested: () => URL; requests: { url: string; init?:
 
 const CONTEXT = { project: 'group/repo', kind: 'issue' as const, iid: 42, gitlab: 'https://gitlab.example.com', branch: 'main', limit: 10 };
 
+test.each(['status', 'decision'] as const)('factory %s reads time out a silent response body and permit a subsequent read', async kind => {
+  const original = globalThis.fetch;
+  jest.useFakeTimers();
+  const read = () => kind === 'status' ? gahApi.getLoopStatus('work') : gahApi.getLoopDecision('work');
+  globalThis.fetch = (async (_input, init) => ({
+    ok: true,
+    json: () => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new Error('read aborted')), { once: true });
+    })
+  })) as typeof fetch;
+  try {
+    await withInjectedBootstrap({ basePath: '/parasaur' }, async () => {
+      const pending = read().catch(error => error);
+      await jest.advanceTimersByTimeAsync(15_000);
+      expect(await pending).toEqual(new Error('read aborted'));
+      expect(jest.getTimerCount()).toBe(0);
+      globalThis.fetch = (async () => new Response('null')) as typeof fetch;
+      expect(await read()).toBeNull();
+      expect(jest.getTimerCount()).toBe(0);
+    });
+  } finally {
+    globalThis.fetch = original;
+    jest.useRealTimers();
+  }
+});
+
+test('model and account discovery forward cancellation without losing node, instance or deployment identity', async () => {
+  const captured = captureFetch();
+  const controller = new AbortController();
+  try {
+    await withInjectedBootstrap({ basePath: '/parasaur' }, async () => {
+      await gahApi.getManagerChatModelsForBackend('work', 'codex', 'worker-one', 'work-account', controller.signal);
+      expect(captured.requested().pathname).toBe('/parasaur/api/manager-chat/models');
+      expect(captured.requested().searchParams.get('profile')).toBe('work');
+      expect(captured.requested().searchParams.get('nodeId')).toBe('worker-one');
+      expect(captured.requested().searchParams.get('backendInstance')).toBe('work-account');
+      expect(captured.requests[0].init?.signal).toBe(controller.signal);
+      await gahApi.getChatAccounts('work', 'codex', 'worker-two', controller.signal);
+      expect(captured.requested().pathname).toBe('/parasaur/api/manager-chat/accounts');
+      expect(captured.requested().searchParams.get('profile')).toBe('work');
+      expect(captured.requested().searchParams.get('backend')).toBe('codex');
+      expect(captured.requested().searchParams.get('nodeId')).toBe('worker-two');
+      expect(captured.requests[1].init?.signal).toBe(controller.signal);
+    });
+  } finally { captured.restore(); }
+});
+
+test('work history stays project-scoped even when an older server returns every project', async () => {
+  const original = globalThis.fetch;
+  let requested = '';
+  globalThis.fetch = (async input => {
+    requested = String(input);
+    return new Response(JSON.stringify([{ profile: 'alpha' }, { profile: 'beta' }]));
+  }) as typeof fetch;
+  try {
+    expect(await gahApi.getWorkTimeline('#42', 'beta')).toEqual([{ profile: 'beta' }]);
+    expect(new URL(requested).searchParams.get('profile')).toBe('beta');
+    expect(await gahApi.getWorkTimeline('#42')).toEqual([{ profile: 'alpha' }, { profile: 'beta' }]);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test('getGitLabRuns keeps the deployment prefix in the request URL', async () => {
   await withInjectedBootstrap({ basePath: '/parasaur', gitLabOrigins: [] }, async () => {
     const fetch = captureFetch();

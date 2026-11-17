@@ -25,14 +25,29 @@ pub mod capabilities;
 pub mod commands;
 
 pub fn run() -> Result<()> {
-    let _agy_refresh_guard = AgyRefreshGuard;
     // Before any thread, runtime or child: process-group cleanup needs exited
     // children to stay unreaped until it has signalled their group.
     crate::runner::pipes::keep_exited_children_waitable()
         .context("restoring the default SIGCHLD disposition")?;
+    let cli = Cli::try_parse().unwrap_or_else(|exit| {
+        // `--version` and `--help` end here. They are often an upgraded
+        // binary's first run, so they add the missing alias too (#1364).
+        crate::update::heal_parasaur_alias();
+        exit.exit()
+    });
+    // The private host protocol must not probe providers, repair aliases or
+    // resolve ambient user configuration before supervising its exact job.
+    if let Commands::IsolationHost(args) = cli.command {
+        return commands::isolation_host::run(args);
+    }
+    if let Commands::NativeHandoff(args) = cli.command {
+        return commands::native_handoff::run(args);
+    }
+    let _agy_refresh_guard = AgyRefreshGuard;
     crate::update::heal_parasaur_alias();
-    let cli = Cli::parse();
     match cli.command {
+        Commands::IsolationHost(_) => unreachable!("handled before interactive startup"),
+        Commands::NativeHandoff(_) => unreachable!("handled before interactive startup"),
         Commands::Memory(args) => commands::memory::run(args)?,
         Commands::Diag(args) => commands::diag::run(args)?,
         Commands::Route(args) => commands::route::run(
@@ -141,6 +156,7 @@ pub fn run() -> Result<()> {
             default_target_branch,
             provider_api_base,
             provider_project_id,
+            trusted_issue_human_authors: Vec::new(),
             artifact_root,
             worktree_base,
             oh_profile,
@@ -253,6 +269,7 @@ pub fn run() -> Result<()> {
             profile,
             mode,
             backend,
+            backend_instance,
             target,
             branch,
             mr,
@@ -277,6 +294,7 @@ pub fn run() -> Result<()> {
             profile,
             mode,
             backend,
+            backend_instance,
             target,
             branch,
             mr,
@@ -320,6 +338,7 @@ pub fn run() -> Result<()> {
             group_by,
             json,
             series,
+            usage,
             bucket,
         } => commands::report::run(commands::report::Args {
             since,
@@ -328,6 +347,7 @@ pub fn run() -> Result<()> {
             group_by,
             json,
             series,
+            usage,
             bucket,
         })?,
 

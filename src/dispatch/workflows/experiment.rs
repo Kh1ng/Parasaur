@@ -38,6 +38,7 @@ pub(crate) fn experiment(
             last_failure_class: None,
             mode: "experiment",
             requested_backend: config::canonical_backend_name(&args.backend),
+            requested_instance: args.backend_instance.as_deref(),
             requested_model: args.model.as_deref(),
             recommended_backend: None,
             recommended_model: None,
@@ -48,7 +49,7 @@ pub(crate) fn experiment(
         None,
         ledger,
     )?;
-    apply_route_to_ledger(ledger, &route);
+    apply_route_to_ledger(ledger, &route)?;
     preflight_identity(profile, &route.identity)?;
     let llm = resolve_llm(
         cfg,
@@ -296,7 +297,7 @@ pub(crate) fn experiment(
         commit_msg.push_str(&backend_summary);
     }
     let push_url = profile.push_url()?;
-    let push_pat = profile.pat();
+    let push_pat = crate::provider::push_token(profile);
     if worktree::has_uncommitted_changes(&wt)? {
         ledger.commit_attempted = true;
         worktree::stage_all(&wt)?;

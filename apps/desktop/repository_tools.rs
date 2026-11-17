@@ -9,15 +9,21 @@ pub struct RepositoryTool {
 }
 
 #[tauri::command]
-pub fn repository_tools(window: tauri::WebviewWindow) -> Result<Vec<RepositoryTool>, String> {
+pub async fn repository_tools(window: tauri::WebviewWindow) -> Result<Vec<RepositoryTool>, String> {
     local_only(&window)?;
-    Ok(["gh", "glab"]
-        .into_iter()
-        .map(|program| RepositoryTool {
-            program,
-            installed: repository_tool_installed(program),
-        })
-        .collect())
+    // WSL startup and shell profiles may block. Keep native menus and the
+    // connection recovery path available while checking repository tools.
+    tauri::async_runtime::spawn_blocking(|| {
+        ["gh", "glab"]
+            .into_iter()
+            .map(|program| RepositoryTool {
+                program,
+                installed: repository_tool_installed(program),
+            })
+            .collect()
+    })
+    .await
+    .map_err(|_| "Repository tools could not be checked on this computer.".into())
 }
 
 // Check the environment where GAH runs, including the worker environment in WSL.
@@ -56,11 +62,11 @@ fn path_has_executable(paths: &std::ffi::OsStr, program: &str) -> bool {
 mod tests {
     #[test]
     fn detects_homebrew_repository_tools_outside_launchd_path() {
-        if std::env::var_os("GAH_TEST_LAUNCHD_PATH").is_none() {
+        if std::env::var_os("PARASAUR_TEST_LAUNCHD_PATH").is_none() {
             let result = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "repository_tools::tests::detects_homebrew_repository_tools_outside_launchd_path"])
                 .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
-                .env("GAH_TEST_LAUNCHD_PATH", "1")
+                .env("PARASAUR_TEST_LAUNCHD_PATH", "1")
                 .status().unwrap();
             assert!(result.success());
             return;

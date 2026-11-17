@@ -321,7 +321,7 @@ pub fn run_review_backend_for_identity(
     #[cfg(target_os = "linux")]
     let (resource_stop, resource_accumulator, resource_handle) =
         crate::runner::resources::spawn_resource_sampler(child.id());
-    let (progress_tx, progress_rx) = mpsc::channel();
+    let (progress_tx, progress_rx) = mpsc::sync_channel(1);
     let stdout_thread = child
         .stdout
         .take()
@@ -368,7 +368,7 @@ pub fn run_review_backend_for_identity(
                 // running tests).
                 let stdout_len = fs::metadata(&stdout_path).map(|m| m.len()).unwrap_or(0);
                 let stderr_len = fs::metadata(&stderr_path).map(|m| m.len()).unwrap_or(0);
-                let stream_grew = progress_rx.try_iter().last().is_some()
+                let stream_grew = progress_rx.try_recv().is_ok()
                     || stdout_len > last_stdout_len
                     || stderr_len > last_stderr_len;
                 if stream_grew {
@@ -469,16 +469,22 @@ pub fn run_review_backend_for_identity(
     });
     let output_complete =
         crate::runner::pipes::readers_finish_within_grace(&[&stdout_thread, &stderr_thread]);
-    if progress_rx.try_iter().last().is_some() {
+    if progress_rx.try_recv().is_ok() {
         last_progress_elapsed_secs = Some(start.elapsed().as_secs_f64());
     }
     // Stop collecting: a copier still reading closes its pipe at its next read.
     drop(progress_rx);
+    let capture_complete = output_complete
+        && [stdout_thread, stderr_thread]
+            .into_iter()
+            .flatten()
+            .all(|reader| reader.join().unwrap_or(false));
 
-    let raw_stdout = read_text_file(&stdout_path);
+    let (raw_stdout, stdout_read_complete) = read_text_file(&stdout_path);
     let usage_artifacts = usage_capture.finish(worktree, session_dir, &raw_stdout, env_vars);
     let mut stdout = usage_artifacts.review_text.unwrap_or(raw_stdout);
-    let mut stderr = read_text_file(&stderr_path);
+    let (mut stderr, stderr_read_complete) = read_text_file(&stderr_path);
+    let capture_complete = capture_complete && stdout_read_complete && stderr_read_complete;
     if !output_complete {
         if !stderr.is_empty() {
             stderr.push('\n');
@@ -492,6 +498,10 @@ pub fn run_review_backend_for_identity(
         stderr.push_str("GAH: harness process cleanup failed: ");
         stderr.push_str(&error);
         ReviewProcessOutcome::CleanupFailure(error)
+    } else if !capture_complete && matches!(outcome, ReviewProcessOutcome::Success) {
+        stdout.clear();
+        stderr.push_str("\nGAH: reviewer output capture was incomplete or exceeded its 16 MiB per-stream limit; no verdict accepted.");
+        ReviewProcessOutcome::NonZeroExit(-1)
     } else if matches!(backend, "agy" | "agy-main" | "agy-second")
         && matches!(outcome, ReviewProcessOutcome::Success)
         && stdout.trim().is_empty()
@@ -536,15 +546,18 @@ fn exit_outcome(status: std::process::ExitStatus) -> ReviewProcessOutcome {
     ReviewProcessOutcome::SpawnFailure
 }
 
-fn read_text_file(path: &Path) -> String {
+/// Existing/reused logs can predate the capture bound. Never load their whole
+/// contents or accept a verdict parsed from an arbitrarily truncated prefix.
+fn read_text_file(path: &Path) -> (String, bool) {
     let mut buf = Vec::new();
-    let Ok(mut file) = fs::File::open(path) else {
-        return String::new();
+    let Ok(file) = fs::File::open(path) else {
+        return (String::new(), false);
     };
-    if file.read_to_end(&mut buf).is_err() {
-        return String::new();
+    let limit = crate::runner::log_copier::MAX_CAPTURE_BYTES;
+    if file.take(limit as u64 + 1).read_to_end(&mut buf).is_err() || buf.len() > limit {
+        return (String::new(), false);
     }
-    String::from_utf8_lossy(&buf).to_string()
+    (String::from_utf8_lossy(&buf).to_string(), true)
 }
 
 #[cfg(test)]
@@ -552,6 +565,42 @@ mod tests {
     use super::*;
     use crate::runner::backends::test_util::*;
     use crate::test_support::PathGuard;
+
+    #[test]
+    fn old_oversized_review_log_is_not_loaded_or_treated_as_complete() {
+        let f = fixture();
+        let path = f.session_dir.join("old-review.log");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(crate::runner::log_copier::MAX_CAPTURE_BYTES as u64 + 1)
+            .unwrap();
+        assert_eq!(read_text_file(&path), (String::new(), false));
+    }
+
+    #[test]
+    fn oversized_reviewer_output_cannot_approve_using_a_captured_prefix() {
+        let _exec_guard = crate::test_support::ExecGuard::new();
+        let f = fixture();
+        make_fake_bin(&f.bin_dir, "claude", "#!/bin/sh\nprintf 'Review notes\\n{\"verdict\":\"APPROVE\",\"confidence\":\"high\",\"human_required\":false,\"blocking_findings\":[],\"non_blocking_findings\":[],\"risk_notes\":[],\"evidence\":[\"file:change.txt\"]}\\n'\nhead -c 33554432 /dev/zero | tr '\\000' x\n");
+        let _path = PathGuard::set(&f.bin_dir);
+        let result = run_review_backend(
+            &test_profile(),
+            "claude",
+            &f.worktree,
+            "task",
+            &f.session_dir,
+            None,
+            &[],
+        );
+        assert_eq!(result.outcome, ReviewProcessOutcome::NonZeroExit(-1));
+        assert!(result.stdout.is_empty());
+        assert!(result.stderr.contains("no verdict accepted"));
+        let raw = fs::read_to_string(f.session_dir.join("review-stdout.log")).unwrap();
+        assert!(raw.contains("APPROVE") && raw.contains("remaining output omitted"));
+        assert!(
+            raw.len() < 1024,
+            "oversized unfinished line is never retained"
+        );
+    }
 
     #[test]
     fn review_watchdog_obeys_clock() {
@@ -811,7 +860,8 @@ mod tests {
 
     /// A reviewer leaves a newline-free writer in its own session, which
     /// group cleanup cannot reach. The review returns after the drain grace
-    /// and its copier closes the pipe; the writer records the EPIPE.
+    /// and its copier closes the pipe; the writer records the EPIPE. Partial
+    /// reviewer text remains diagnostic evidence, never a successful verdict.
     #[cfg(unix)]
     #[test]
     fn run_review_backend_return_releases_an_escaped_endless_writer() {
@@ -840,7 +890,7 @@ mod tests {
             });
         fs::write(&stop, "").unwrap();
 
-        assert_eq!(result.outcome, ReviewProcessOutcome::Success);
+        assert_eq!(result.outcome, ReviewProcessOutcome::NonZeroExit(-1));
         assert!(
             elapsed < Duration::from_secs(10),
             "returned after {elapsed:?}"
@@ -849,9 +899,11 @@ mod tests {
             released,
             "copier kept reading the escaped writer after return"
         );
-        assert!(result.stdout.contains("review done"));
+        assert!(result.stdout.is_empty());
+        let captured = fs::read_to_string(f.session_dir.join("review-stdout.log")).unwrap();
+        assert!(captured.contains("review done"));
         assert!(
-            !result.stdout.contains("xxxx"),
+            !captured.contains("xxxx"),
             "abandoned partial line was flushed"
         );
         assert!(result.stderr.contains("still held open"));
@@ -865,7 +917,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_review_backend_never_signals_a_lost_reviewer() {
-        const ISOLATED: &str = "GAH_TEST_REVIEW_SIGCHLD_IGNORED";
+        const ISOLATED: &str = "PARASAUR_TEST_REVIEW_SIGCHLD_IGNORED";
         if std::env::var_os(ISOLATED).is_none() {
             let name = concat!(
                 module_path!(),

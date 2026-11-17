@@ -47,6 +47,14 @@
           "local": true
         },
         {
+          "identifier": "remote-navigation-presentation",
+          "description": "Acknowledge current dashboard content; native code checks the configured origin and active attempt",
+          "windows": ["dashboard"],
+          "permissions": ["allow-navigation-presented"],
+          "remote": { "urls": ["http://*:*", "https://*:*"] },
+          "local": false
+        },
+        {
           "identifier": "remote-open-project",
           "description": "Configured central dashboards may resolve and open only local GAH checkout identifiers",
           "windows": [
@@ -58,8 +66,8 @@
           ],
           "remote": {
             "urls": [
-              "http://*",
-              "https://*"
+              "http://*:*",
+              "https://*:*"
             ]
           },
           "local": false
@@ -75,8 +83,8 @@
           ],
           "remote": {
             "urls": [
-              "http://*",
-              "https://*"
+              "http://*:*",
+              "https://*:*"
             ]
           },
           "local": false

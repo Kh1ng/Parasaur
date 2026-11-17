@@ -120,6 +120,8 @@ export type AvailabilityScopeKind = 'backend_wide' | 'model_specific' | 'quota_p
 
 export interface AvailabilityScope {
   backend: string;
+  /** Exact account when the observation is instance-scoped. */
+  backend_instance?: string | null;
   model: string | null;
   /** Present only when this scope is a quota-pool-level observation. */
   quota_pool?: string | null;
@@ -291,6 +293,10 @@ export interface MergeRequest {
   review_gate_reason?: string | null;
   /** Immutable PR/MR head commit used for review identity. */
   source_sha?: string | null;
+  /** Completed review receipt for this head; suppresses duplicate reviewer calls. */
+  last_reviewed_head?: string | null;
+  /** A current-head veto that prevents automatic merge without creating a durable hold. */
+  merge_review_block_reason?: string | null;
   /** Provider-created commit that landed a merged PR/MR. */
   merge_commit_sha?: string | null;
   review_contract_version: number;
@@ -399,7 +405,13 @@ export interface PmParentStatus {
 export interface NodeRoleStatus {
   role: 'central' | 'standalone' | 'worker';
   central_url: string | null;
+  /** Latest admission attempt for this profile/repository/central, never a health probe or live lease. */
+  central_claim_observation?: CentralClaimObservation;
 }
+
+export type CentralClaimObservation =
+  | { state: 'not_observed' | 'unavailable' }
+  | { state: 'observed'; outcome: 'acquired' | 'refused' | 'unknown'; observed_at: string; work_id: string | null };
 
 /** Dispatch-runtime observation, separate from lock ownership. Null routing facts are unknown. */
 export interface RunningWorker {
@@ -423,6 +435,15 @@ export interface RunningWorker {
 }
 
 export interface StatusSnapshot {
+  /** Server identity; absent from a standalone CLI status response. */
+  node_id?: string;
+  display_name?: string;
+  /** Server supports exact node-local factory account selection. Absent on older servers. */
+  dispatch_backend_instances?: boolean;
+  /** Absent on workers that silently ignore dispatch execution controls. */
+  dispatch_execution_options?: boolean;
+  /** Confirms termination before releasing work and reports observed exit data. */
+  dispatch_execution_results?: boolean;
   /** Host role added in #938; absent on older CLIs. */
   node?: NodeRoleStatus;
   node_capacity?: NodeCapacitySettings;
@@ -486,6 +507,20 @@ export interface StatusSnapshot {
   open_managed_mr_count: number;
   inflight_implementation_count: number;
   implementation_intake_paused: boolean;
+  /** Calendar-UTC factory ledger ceiling; missing costs hold enabled intake. */
+  spend_budget?: {
+    cost_basis: 'actual' | 'estimated';
+    scope: 'recorded-factory-ledger';
+    windows: Array<{
+      window: 'day' | 'month'; starts_at: string; resets_at: string;
+      limit_usd: number; reported_usd: number | null;
+      measured_observations: number; unmeasured_observations: number;
+      exhausted: boolean; incomplete: boolean;
+    }>;
+    intake_held: boolean;
+    hold_reason: string | null;
+    retry_at: string;
+  } | null;
   /** Compatibility projection keyed by logical backend name. A `true` value
    * means the executable resolves through the same resolver dispatch uses. */
   backend_configured: Record<string, boolean>;
@@ -565,6 +600,18 @@ export interface QuotaCheck {
   failing_since?: string | null;
 }
 
+/** Canonical ledger costs for one exact execution instance, not provider billing. */
+export interface QuotaAccountSpend {
+  backend: string;
+  /** Null history remains unattributed rather than assigned to a default account. */
+  backend_instance: string | null;
+  observations: number;
+  actual_cost_usd: number | null;
+  estimated_cost_usd: number | null;
+  /** Recorded usage observations without actual cost; not all attempted executions. */
+  actual_cost_unknown_observations: number;
+}
+
 export interface QuotaSnapshot {
   /** v3 adds auth_required/not_configured checks and optional checked_at;
    * central also accepts legacy v2 worker snapshots. */
@@ -580,6 +627,8 @@ export interface QuotaSnapshot {
   profile: ProfileIdentity;
   since: string;
   usage: QuotaUsageSummary;
+  /** Optional for older workers. Candidate summaries are not account totals. */
+  account_spend?: QuotaAccountSpend[];
   candidates: QuotaCandidateStatus[];
 }
 
@@ -695,13 +744,14 @@ export interface BackendModelComparison {
 }
 
 /** Clap values shared by `gah report` and `gah ledger summary` (ledger::GroupBy). */
-export const REPORT_GROUP_BY_VALUES = ['none', 'backend', 'model', 'skill', 'difficulty', 'backend-difficulty'] as const;
+export const REPORT_GROUP_BY_VALUES = ['none', 'backend', 'model', 'skill', 'difficulty', 'backend-difficulty', 'project', 'work-item'] as const;
 export type ReportGroupBy = typeof REPORT_GROUP_BY_VALUES[number];
 
 /**
  * Actual token/cost burn observed by GAH itself, aggregated from the
  * manager-chat session logs (#940): every assistant message the backends
- * reported usage for, grouped by backend + model + UTC day. Unlike the
+ * logged, grouped by backend + account + model + UTC day. Unknown readings
+ * remain in their groups and invalidate complete sums. Unlike the
  * dispatch-ledger comparison above, this covers manager-chat turns --
  * where nearly all work happens now -- so subscription-burn questions
  * ("how much of the codex plan did yesterday cost?") have a real answer.
@@ -715,9 +765,14 @@ export interface UsageRollupRow {
   /** UTC day the turn's assistant message was logged, e.g. 2026-08-30. */
   day: string;
   turns: number;
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
+  /** A sum requires a valid reading from every included turn. */
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  /** Independent provider categories; they may overlap other counters. */
+  cache_read_tokens?: number | null;
+  cache_write_tokens?: number | null;
+  reasoning_tokens?: number | null;
   /** null when any included turn did not report cost. */
   estimated_cost_usd: number | null;
 }
@@ -754,11 +809,11 @@ export interface UsageRollupTicketRow {
   /** The session's title, when one was set. */
   title: string | null;
   turns: number;
-  total_tokens: number;
+  total_tokens: number | null;
   /** null when any included turn did not report cost. */
   estimated_cost_usd: number | null;
   /** tokens per backend, e.g. { codex: 1500 }. */
-  backends: Record<string, number>;
+  backends: Record<string, number | null>;
 }
 
 export interface ReportData {
@@ -838,6 +893,9 @@ export interface ProfileSummary {
   provider: string;
   repo: string;
   local_path: string;
+  /** Workspace configuration metadata; absent on older nodes. */
+  artifact_root?: string;
+  default_target_branch?: string;
   /** Stable repo identity used for GAH-owned branch/worktree naming
    * (`gah/<repo_id>-<ts>`, `gah-chat-<repo_id>-<session>`). Clients that
    * materialize worktrees MUST use this rather than deriving from `repo`,
@@ -877,6 +935,15 @@ export interface ProfileSummary {
   /** Effective idle window before daily chat maintenance archives a live
    * session. Defaults to 14 when omitted from profile TOML. */
   chat_session_idle_days?: number;
+}
+
+/** Owner-only workspace checks. Command text may contain private values and
+ * must not be included in public profile/configuration projections. */
+export interface ProfileChecks {
+  profile: string;
+  validation_commands: string[];
+  auto_fix_commands: string[];
+  validation_timeout_seconds: number;
 }
 
 /** Catalog ownership is node-qualified. Paths describe the owning worker, never a central checkout. */
@@ -1239,6 +1306,12 @@ export interface EventPolicySummary {
  * view. Values reflect inheritance through defaults + canonical + repo config
  * for the requested profile. */
 export interface ConfigProfileSummary {
+  /** Explicit calendar-UTC factory-ledger intake policy; absent on older CLIs. */
+  spend_budget?: {
+    daily_usd?: number | null;
+    monthly_usd?: number | null;
+    cost_basis: 'actual' | 'estimated';
+  } | null;
   /** Absent on older CLIs; provider event ingestion must fail closed. */
   event_policy?: EventPolicySummary;
   profile: string;
@@ -1346,8 +1419,10 @@ export type ControllerEventType =
   | 'action_decided'
   | 'dispatch_started'
   | 'dispatch_finished'
+  | 'central_claim_attempt'
   | 'backend_marked_unavailable'
   | 'wait_selected'
+  | 'spend_budget_held'
   | 'human_required'
   | 'duplicate_guard_triggered'
   | 'loop_stopped';
@@ -1363,6 +1438,7 @@ export interface ControllerEvent {
   remediation_plan?: RemediationPlan | null;
   /** Routes the router passed over, when the dispatch ended because none could take it. */
   skipped?: SkippedRoute[];
+  central_claim?: { central_url: string; repo_id: string; outcome: 'acquired' | 'refused' | 'unknown' };
 }
 
 /** One backend and model the router considered and passed over (src/events.rs SkippedRoute). */
@@ -1550,6 +1626,13 @@ export interface AttemptRoutingRecord {
 }
 
 export interface LedgerEntry {
+  /** Observed worker CLI termination, independent of validation or publication. */
+  remote_execution?: {
+    node_id: string;
+    termination: { reason: 'exited' | 'cancelled'; exit_code: number | null; signal: string | null };
+    receipt_sha256: string;
+    context_sha256: string;
+  };
   skills?: SkillVersion[];
   timestamp: string;
   session_id: string | null;
@@ -1661,6 +1744,10 @@ export interface LedgerSummary {
   grouped_by_skill?: LedgerGroupSummary[];
   grouped_by_difficulty?: LedgerGroupSummary[];
   grouped_by_backend_difficulty?: LedgerGroupSummary[];
+  /** JSON tuple keys [profile, provider, repository]. */
+  grouped_by_project?: LedgerGroupSummary[];
+  /** Project tuple plus nullable work id. */
+  grouped_by_work_item?: LedgerGroupSummary[];
 }
 
 /** `ledger::summary::GroupSummary`; unknown observations remain null. */

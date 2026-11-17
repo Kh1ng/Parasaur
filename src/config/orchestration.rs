@@ -30,7 +30,7 @@ impl OrchestrationMode {
         if self == Self::Local {
             return Ok(());
         }
-        for name in ["GAH_SUPABASE_URL", "GAH_SUPABASE_ANON_KEY"] {
+        for name in ["PARASAUR_SUPABASE_URL", "PARASAUR_SUPABASE_ANON_KEY"] {
             if env(name).is_none_or(|value| value.trim().is_empty()) {
                 bail!(
                     "orchestration_mode = \"{self}\" requires {name}; export {name} before starting gah, or use [defaults] orchestration_mode = \"local\""
@@ -78,7 +78,7 @@ mod tests {
             .validate_with_env(|_| panic!("local mode must not read cloud credentials"))
             .unwrap();
         for mode in [OrchestrationMode::Hosted, OrchestrationMode::SelfHosted] {
-            for name in ["GAH_SUPABASE_URL", "GAH_SUPABASE_ANON_KEY"] {
+            for name in ["PARASAUR_SUPABASE_URL", "PARASAUR_SUPABASE_ANON_KEY"] {
                 for missing in [None, Some(""), Some(" \t ")] {
                     let error = mode
                         .validate_with_env(|key| {
@@ -96,8 +96,8 @@ mod tests {
                 }
             }
             mode.validate_with_env(|key| match key {
-                "GAH_SUPABASE_URL" => Some("https://supabase.example.invalid".into()),
-                "GAH_SUPABASE_ANON_KEY" => Some("obviously-fake-anon-key".into()),
+                "PARASAUR_SUPABASE_URL" => Some("https://supabase.example.invalid".into()),
+                "PARASAUR_SUPABASE_ANON_KEY" => Some("obviously-fake-anon-key".into()),
                 _ => panic!("CLI must not read the service-role key"),
             })
             .unwrap();

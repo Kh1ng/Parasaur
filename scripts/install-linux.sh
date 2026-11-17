@@ -4,6 +4,13 @@
 # gateway unit) -- there is no macOS equivalent of any of this. See
 # scripts/install-macos.sh for that host, and scripts/install.sh for the
 # OS-detecting entrypoint that picks between the two.
+# Settings were named GAH_* before the product became Parasaur. Accept the old
+# names: a GAH_X with no PARASAUR_X becomes PARASAUR_X.
+for legacy_setting in "${!GAH_@}"; do
+  current_setting="PARASAUR_${legacy_setting#GAH_}"
+  [ -n "${!current_setting+set}" ] || export "$current_setting=${!legacy_setting}"
+done
+unset legacy_setting current_setting
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,18 +22,18 @@ cd "$repo_root"
 # "central" (default) preserves prior behavior exactly. "worker" installs
 # just the CLI + dispatch-loop unit: no apps/server build, no
 # gah-server.service.
-role="${GAH_NODE_ROLE:-central}"
+role="${PARASAUR_NODE_ROLE:-central}"
 case "$role" in
   central|standalone|worker) ;;
-  *) echo "ERROR: unknown GAH_NODE_ROLE='$role' (expected 'central', 'standalone', or 'worker')" >&2; exit 1 ;;
+  *) echo "ERROR: unknown PARASAUR_NODE_ROLE='$role' (expected 'central', 'standalone', or 'worker')" >&2; exit 1 ;;
 esac
 
 
 # Confirm the entire installer before persisting role, credentials, or gateway
 # settings. The update below reuses this approval rather than prompting again.
-if [ -z "${GAH_INSTALL_CONFIRMED:-}" ]; then
+if [ -z "${PARASAUR_INSTALL_CONFIRMED:-}" ]; then
   echo "Install Parasaur for role '$role' from $repo_root; configure node settings, credentials, and role services."
-  echo "Gateway mode: ${GAH_GATEWAY_MODE:-none}; agent assets: ${GAH_INSTALL_AGENT:-none}."
+  echo "Gateway mode: ${PARASAUR_GATEWAY_MODE:-none}; agent assets: ${PARASAUR_INSTALL_AGENT:-none}."
   echo '  - Persist node role and optional central URL in Parasaur configuration; write worker coordinator credentials to ~/.config/gah/gah-loop.env when supplied.'
   echo '  - Install only gah (and its parasaur alias) into $CARGO_HOME/bin (default ~/.cargo/bin); build dependencies and outputs in the checkout.'
   echo '  - Install gah-loop@.service and gah-watchdog.service/timer in the user systemd directory; enable user lingering via loginctl/sudo.'
@@ -34,7 +41,7 @@ if [ -z "${GAH_INSTALL_CONFIRMED:-}" ]; then
     echo '  - Build server/MCP; use sudo to write /etc/systemd/system/gah-server.service; install and enable user gah-prune.service/timer.'
     # Unset copies only into a web root an earlier install created; otherwise
     # gah-server serves the checkout's build and no sudo is needed for it.
-    web_deploy_root=${GAH_WEB_DEPLOY_ROOT-$([ ! -d /var/www/gah ] || echo /var/www/gah)}
+    web_deploy_root=${PARASAUR_WEB_DEPLOY_ROOT-$([ ! -d /var/www/gah ] || echo /var/www/gah)}
     if [ -n "$web_deploy_root" ]; then
       echo "  - Build web UI and deploy it to $web_deploy_root using sudo; replace index and prune stale assets."
     else
@@ -42,29 +49,29 @@ if [ -z "${GAH_INSTALL_CONFIRMED:-}" ]; then
     fi
     echo '  - Use sudo to create /etc/gah/server.env if absent; enable and start gah-server.service.'
     if [ "$role" = central ]; then
-      echo "  - For a new server.env, set HOST to ${GAH_SERVER_HOST:-the Tailscale IP (fallback 127.0.0.1)}; preserve existing central HOST settings."
+      echo "  - For a new server.env, set HOST to ${PARASAUR_SERVER_HOST:-the Tailscale IP (fallback 127.0.0.1)}; preserve existing central HOST settings."
     fi
     if [ "$role" = standalone ]; then
-      echo "  - Set HOST=${GAH_SERVER_HOST:-127.0.0.1} in /etc/gah/server.env and restart gah-server.service."
+      echo "  - Set HOST=${PARASAUR_SERVER_HOST:-127.0.0.1} in /etc/gah/server.env and restart gah-server.service."
     fi
   fi
   if [ "$role" != standalone ]; then
     echo '  - Enable Tailscale accept-dns when Tailscale is installed (sudo).'
   fi
-  case "${GAH_GATEWAY_MODE:-}" in
+  case "${PARASAUR_GATEWAY_MODE:-}" in
     remote|colocated)
       echo '  - Configure gateway URL in ~/.config/gah/gah-loop.env and, for central/standalone, /etc/gah/server.env (sudo); store gateway credentials in ~/.config/gah/tdai-gateway.env.'
-      if [ "$GAH_GATEWAY_MODE" = colocated ]; then
-        echo "  - Seed ${GAH_GATEWAY_MEMORYCORE_PATH:-<MemoryCore checkout>}/tdai-gateway.local.yaml if absent; install and enable user tdai-memory-gateway.service."
+      if [ "$PARASAUR_GATEWAY_MODE" = colocated ]; then
+        echo "  - Seed ${PARASAUR_GATEWAY_MEMORYCORE_PATH:-<MemoryCore checkout>}/tdai-gateway.local.yaml if absent; install and enable user tdai-memory-gateway.service."
       else
         echo '  - Check remote gateway reachability and authentication.'
       fi
       ;;
   esac
-  if [ -n "${GAH_IMPORT_REPO:-}" ]; then
-    echo "  - Import project context from $GAH_IMPORT_REPO into the configured memory gateway."
+  if [ -n "${PARASAUR_IMPORT_REPO:-}" ]; then
+    echo "  - Import project context from $PARASAUR_IMPORT_REPO into the configured memory gateway."
   fi
-  case "${GAH_INSTALL_AGENT:-}" in
+  case "${PARASAUR_INSTALL_AGENT:-}" in
     opencode) echo '  - Install OpenCode files in the user config directory opencode/agents/.' ;;
     codex|vibe) echo '  - Install and enable user gah-quota-refresh.service/timer where systemd is available.' ;;
   esac
@@ -86,7 +93,7 @@ bash "$repo_root/scripts/configure-node-role.sh" "$role" cargo run --locked --bi
 # units it installs survive reboots without a login session. Only central,
 # which already needs sudo here, may prompt; a worker host without root uses
 # `sudo -n`, so it still installs cleanly and only gets a warning.
-cargo run --locked --bin gah -- update --repo "$repo_root" --role "$role" --yes ${GAH_INSTALL_AGENT:+--agent "$GAH_INSTALL_AGENT"}
+cargo run --locked --bin gah -- update --repo "$repo_root" --role "$role" --yes ${PARASAUR_INSTALL_AGENT:+--agent "$PARASAUR_INSTALL_AGENT"}
 
 # tailscale-dns-guard:start -- extracted verbatim by
 # tests/source_structure.rs::standalone_install_never_touches_tailscale,
@@ -106,7 +113,7 @@ fi
 # central install; later central installs and `gah update --restart-server`
 # leave it untouched. Standalone reasserts loopback on
 # every install, including a switch from an existing networked server. Set
-# GAH_SERVER_HOST to explicitly choose another bind address.
+# PARASAUR_SERVER_HOST to explicitly choose another bind address.
 # server-env-config:start -- exercised by
 # tests/source_structure.rs::standalone_rebinds_an_existing_server_env.
 server_env_file=/etc/gah/server.env
@@ -115,7 +122,7 @@ if [ "$role" = "central" ] || [ "$role" = "standalone" ]; then
     sudo install -d -m 0755 /etc/gah
     # server-host-default:start -- exercised without sudo/file writes by
     # tests/source_structure.rs::install_linux_prefers_the_tailnet_bind_host.
-    server_host="${GAH_SERVER_HOST:-}"
+    server_host="${PARASAUR_SERVER_HOST:-}"
     if [ -z "$server_host" ]; then
       if [ "$role" = "standalone" ]; then
         server_host=127.0.0.1
@@ -130,7 +137,7 @@ if [ "$role" = "central" ] || [ "$role" = "standalone" ]; then
     echo "Created $server_env_file (set HOST= there to change the bind address without editing the unit)"
   else
     if [ "$role" = "standalone" ]; then
-      server_host="${GAH_SERVER_HOST:-127.0.0.1}"
+      server_host="${PARASAUR_SERVER_HOST:-127.0.0.1}"
       printf '%s' "$server_host" | sudo "$(command -v gah || echo "$HOME/.cargo/bin/gah")" installer env-set --file "$server_env_file" HOST
       echo "Set HOST=$server_host in $server_env_file for standalone mode"
     else
@@ -140,11 +147,11 @@ if [ "$role" = "central" ] || [ "$role" = "standalone" ]; then
 fi
 # server-env-config:end
 
-# Memory gateway placement (issue #880). Opt-in: GAH_GATEWAY_MODE unset (the
+# Memory gateway placement (issue #880). Opt-in: PARASAUR_GATEWAY_MODE unset (the
 # default) skips this whole section, so a plain `scripts/install.sh` run
 # behaves exactly as before. Upserts individual keys rather than HOST's
 # create-once-then-never-touch semantics, so re-running install.sh with
-# different GAH_GATEWAY_* values updates just those keys and leaves
+# different PARASAUR_GATEWAY_* values updates just those keys and leaves
 # everything else alone.
 #
 # Targets depend on role: gah-server.service (central only) reads
@@ -181,19 +188,19 @@ upsert_gateway_env_line() {
 }
 # gateway-target-mapping:end
 
-case "${GAH_GATEWAY_MODE:-}" in
+case "${PARASAUR_GATEWAY_MODE:-}" in
   remote)
     # gateway-url-default:start -- extracted verbatim by
     # tests/source_structure.rs::install_linux_defaults_gateway_url_to_central_host.
     # Issue #947: use the already-configured central host; `tailscale ip -4`
     # would return this worker's own address, not the remote gateway's.
-    if [ -z "${GAH_GATEWAY_URL:-}" ]; then
-      gah_config="${GAH_CONFIG:-$HOME/.config/gah/config.toml}"
+    if [ -z "${PARASAUR_GATEWAY_URL:-}" ]; then
+      gah_config="${PARASAUR_CONFIG:-$HOME/.config/gah/config.toml}"
       registry_central_url=""
       if [ -f "$gah_config" ]; then
         registry_central_url="$(sed -n 's/^[[:space:]]*registry_central_url[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$gah_config" | head -1)"
       fi
-      : "${registry_central_url:?GAH_GATEWAY_MODE=remote requires GAH_GATEWAY_URL or registry_central_url in $gah_config; a worker cannot infer which Tailscale peer hosts the gateway}"
+      : "${registry_central_url:?PARASAUR_GATEWAY_MODE=remote requires PARASAUR_GATEWAY_URL or registry_central_url in $gah_config; a worker cannot infer which Tailscale peer hosts the gateway}"
       case "$registry_central_url" in
         http://*|https://*) ;;
         *) echo "ERROR: registry_central_url in $gah_config must be an http(s) URL" >&2; exit 1 ;;
@@ -202,15 +209,15 @@ case "${GAH_GATEWAY_MODE:-}" in
       central_authority="${central_authority%%/*}"
       central_host="${central_authority%%:*}"
       : "${central_host:?registry_central_url in $gah_config has no host}"
-      GAH_GATEWAY_URL="http://${central_host}:8420"
-      echo "GAH_GATEWAY_URL not set; defaulting to configured central host: $GAH_GATEWAY_URL" >&2
+      PARASAUR_GATEWAY_URL="http://${central_host}:8420"
+      echo "PARASAUR_GATEWAY_URL not set; defaulting to configured central host: $PARASAUR_GATEWAY_URL" >&2
     fi
     # gateway-url-default:end
-    echo "Checking remote gateway reachability and auth: $GAH_GATEWAY_URL/recall"
+    echo "Checking remote gateway reachability and auth: $PARASAUR_GATEWAY_URL/recall"
     # The key reaches curl on stdin (-H @-), never in its arguments, which
     # any local user can read while curl runs.
     auth_header=()
-    if [ -n "${GAH_GATEWAY_API_KEY:-}" ]; then
+    if [ -n "${PARASAUR_GATEWAY_API_KEY:-}" ]; then
       auth_header=(-H @-)
     fi
     # GET /health needs no auth, so it can't catch a wrong API key -- POST
@@ -218,27 +225,27 @@ case "${GAH_GATEWAY_MODE:-}" in
     # it doubles as a safe reachability+credential check in one call.
     if ! curl -fsS -m 10 "${auth_header[@]}" -H "Content-Type: application/json" \
       -d '{"query":"gah install reachability check","session_key":"gah:install-check"}' \
-      "$GAH_GATEWAY_URL/recall" >/dev/null <<<"Authorization: Bearer ${GAH_GATEWAY_API_KEY:-}"; then
-      echo "ERROR: remote gateway at $GAH_GATEWAY_URL is not reachable (or rejected the API key). Aborting install -- fix reachability/credentials and re-run." >&2
+      "$PARASAUR_GATEWAY_URL/recall" >/dev/null <<<"Authorization: Bearer ${PARASAUR_GATEWAY_API_KEY:-}"; then
+      echo "ERROR: remote gateway at $PARASAUR_GATEWAY_URL is not reachable (or rejected the API key). Aborting install -- fix reachability/credentials and re-run." >&2
       exit 1
     fi
-    upsert_gateway_env_line TDAI_GATEWAY_URL "$GAH_GATEWAY_URL"
-    if [ -n "${GAH_GATEWAY_API_KEY:-}" ]; then
-      upsert_env_line "$HOME/.config/gah/tdai-gateway.env" TDAI_GATEWAY_API_KEY "$GAH_GATEWAY_API_KEY" ""
+    upsert_gateway_env_line TDAI_GATEWAY_URL "$PARASAUR_GATEWAY_URL"
+    if [ -n "${PARASAUR_GATEWAY_API_KEY:-}" ]; then
+      upsert_env_line "$HOME/.config/gah/tdai-gateway.env" TDAI_GATEWAY_API_KEY "$PARASAUR_GATEWAY_API_KEY" ""
     fi
     echo "Remote gateway confirmed reachable; wired into: ${gateway_env_files[*]}"
     ;;
   colocated)
-    : "${GAH_GATEWAY_MEMORYCORE_PATH:?GAH_GATEWAY_MODE=colocated requires GAH_GATEWAY_MEMORYCORE_PATH (path to a TencentDB-Agent-Memory/MemoryCore checkout)}"
-    if [ ! -f "$GAH_GATEWAY_MEMORYCORE_PATH/src/gateway/server.ts" ]; then
-      echo "ERROR: $GAH_GATEWAY_MEMORYCORE_PATH doesn't look like a TencentDB-Agent-Memory/MemoryCore checkout (missing src/gateway/server.ts)." >&2
+    : "${PARASAUR_GATEWAY_MEMORYCORE_PATH:?PARASAUR_GATEWAY_MODE=colocated requires PARASAUR_GATEWAY_MEMORYCORE_PATH (path to a TencentDB-Agent-Memory/MemoryCore checkout)}"
+    if [ ! -f "$PARASAUR_GATEWAY_MEMORYCORE_PATH/src/gateway/server.ts" ]; then
+      echo "ERROR: $PARASAUR_GATEWAY_MEMORYCORE_PATH doesn't look like a TencentDB-Agent-Memory/MemoryCore checkout (missing src/gateway/server.ts)." >&2
       exit 1
     fi
 
-    gateway_local_config="$GAH_GATEWAY_MEMORYCORE_PATH/tdai-gateway.local.yaml"
+    gateway_local_config="$PARASAUR_GATEWAY_MEMORYCORE_PATH/tdai-gateway.local.yaml"
     if [ ! -f "$gateway_local_config" ]; then
-      cp "$GAH_GATEWAY_MEMORYCORE_PATH/tdai-gateway.standalone.yaml" "$gateway_local_config"
-      echo "Seeded $gateway_local_config from the tracked standalone template (keyword recall, no model calls -- set GAH_GATEWAY_PROVIDER=ollama or openai to add a model provider)"
+      cp "$PARASAUR_GATEWAY_MEMORYCORE_PATH/tdai-gateway.standalone.yaml" "$gateway_local_config"
+      echo "Seeded $gateway_local_config from the tracked standalone template (keyword recall, no model calls -- set PARASAUR_GATEWAY_PROVIDER=ollama or openai to add a model provider)"
     else
       echo "Preserving existing $gateway_local_config"
     fi
@@ -246,21 +253,21 @@ case "${GAH_GATEWAY_MODE:-}" in
     # gateway-yaml-mutation:start
     gateway_env_file="$HOME/.config/gah/tdai-gateway.env"
     gateway_provider_changes=""
-    if [ -n "${GAH_GATEWAY_PROVIDER:-}" ]; then
+    if [ -n "${PARASAUR_GATEWAY_PROVIDER:-}" ]; then
       gateway_embedding_key_stored=""
       if "$(command -v gah || echo "$HOME/.cargo/bin/gah")" installer env-has --file "$gateway_env_file" TDAI_EMBEDDING_API_KEY >/dev/null 2>&1; then
         gateway_embedding_key_stored=stored
       fi
       # Prints what changed; it never sees a credential, only whether one exists.
-      gateway_provider_changes="$(node "$repo_root/scripts/gateway-provider.mjs" "$GAH_GATEWAY_MEMORYCORE_PATH" "$gateway_local_config" "$GAH_GATEWAY_PROVIDER" "${GAH_GATEWAY_ENDPOINT:-}" "${GAH_GATEWAY_LLM_MODEL:-}" "${GAH_GATEWAY_EMBEDDING_MODEL:-}" "${GAH_GATEWAY_EMBEDDING_DIMENSIONS:-}" "${GAH_GATEWAY_EMBEDDING_API_KEY:+given}" "${GAH_GATEWAY_LLM_API_KEY:+given}" "$gateway_embedding_key_stored")"
+      gateway_provider_changes="$(node "$repo_root/scripts/gateway-provider.mjs" "$PARASAUR_GATEWAY_MEMORYCORE_PATH" "$gateway_local_config" "$PARASAUR_GATEWAY_PROVIDER" "${PARASAUR_GATEWAY_ENDPOINT:-}" "${PARASAUR_GATEWAY_LLM_MODEL:-}" "${PARASAUR_GATEWAY_EMBEDDING_MODEL:-}" "${PARASAUR_GATEWAY_EMBEDDING_DIMENSIONS:-}" "${PARASAUR_GATEWAY_EMBEDDING_API_KEY:+given}" "${PARASAUR_GATEWAY_LLM_API_KEY:+given}" "$gateway_embedding_key_stored")"
     fi
     # gateway-yaml-mutation:end
 
     # gateway-env-setup:start
     install -d -m 0700 "$(dirname "$gateway_env_file")"
     # Gateway access authentication is separate from any model credential.
-    if [ -n "${GAH_GATEWAY_API_KEY:-}" ]; then
-      upsert_env_line "$gateway_env_file" TDAI_GATEWAY_API_KEY "$GAH_GATEWAY_API_KEY" ""
+    if [ -n "${PARASAUR_GATEWAY_API_KEY:-}" ]; then
+      upsert_env_line "$gateway_env_file" TDAI_GATEWAY_API_KEY "$PARASAUR_GATEWAY_API_KEY" ""
       echo "Wrote the given gateway API key to $gateway_env_file"
     elif ! "$(command -v gah || echo "$HOME/.cargo/bin/gah")" installer env-has --file "$gateway_env_file" TDAI_GATEWAY_API_KEY >/dev/null 2>&1; then
       upsert_env_line "$gateway_env_file" TDAI_GATEWAY_API_KEY "$(openssl rand -hex 24)" ""
@@ -271,15 +278,15 @@ case "${GAH_GATEWAY_MODE:-}" in
     # Model credentials are optional. A given key replaces only its own line. A
     # stored key is kept unless its endpoint changed, so a key is never sent to
     # a backend it was not issued for.
-    if [ -n "${GAH_GATEWAY_LLM_API_KEY:-}" ]; then
-      upsert_env_line "$gateway_env_file" TDAI_LLM_API_KEY "$GAH_GATEWAY_LLM_API_KEY" ""
+    if [ -n "${PARASAUR_GATEWAY_LLM_API_KEY:-}" ]; then
+      upsert_env_line "$gateway_env_file" TDAI_LLM_API_KEY "$PARASAUR_GATEWAY_LLM_API_KEY" ""
       echo "Wrote the given generation API key to $gateway_env_file"
     elif [[ "$gateway_provider_changes" == *llm-endpoint-changed* ]] && "$(command -v gah || echo "$HOME/.cargo/bin/gah")" installer env-has --file "$gateway_env_file" TDAI_LLM_API_KEY >/dev/null 2>&1; then
       upsert_env_line "$gateway_env_file" TDAI_LLM_API_KEY "" ""
       echo "Cleared the stored generation API key because the endpoint changed"
     fi
-    if [ -n "${GAH_GATEWAY_EMBEDDING_API_KEY:-}" ]; then
-      upsert_env_line "$gateway_env_file" TDAI_EMBEDDING_API_KEY "$GAH_GATEWAY_EMBEDDING_API_KEY" ""
+    if [ -n "${PARASAUR_GATEWAY_EMBEDDING_API_KEY:-}" ]; then
+      upsert_env_line "$gateway_env_file" TDAI_EMBEDDING_API_KEY "$PARASAUR_GATEWAY_EMBEDDING_API_KEY" ""
       echo "Wrote the given embedding API key to $gateway_env_file"
     elif [[ "$gateway_provider_changes" == *embedding-endpoint-changed* ]] && "$(command -v gah || echo "$HOME/.cargo/bin/gah")" installer env-has --file "$gateway_env_file" TDAI_EMBEDDING_API_KEY >/dev/null 2>&1; then
       upsert_env_line "$gateway_env_file" TDAI_EMBEDDING_API_KEY "" ""
@@ -292,7 +299,7 @@ case "${GAH_GATEWAY_MODE:-}" in
     gateway_unit_dst="$HOME/.config/systemd/user/tdai-memory-gateway.service"
     install -d -m 0755 "$(dirname "$gateway_unit_dst")"
     # gateway-unit-render:start
-    node --input-type=module - "$GAH_GATEWAY_MEMORYCORE_PATH" "$node_dir" "$gateway_unit_dst" <<'JAVASCRIPT'
+    node --input-type=module - "$PARASAUR_GATEWAY_MEMORYCORE_PATH" "$node_dir" "$gateway_unit_dst" <<'JAVASCRIPT'
 import { readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 
@@ -330,7 +337,7 @@ JAVASCRIPT
       exit 1
     fi
 
-    if [ -n "${GAH_GATEWAY_PROVIDER:-}" ]; then
+    if [ -n "${PARASAUR_GATEWAY_PROVIDER:-}" ]; then
       if ! curl -fsS http://127.0.0.1:8420/health | grep -q '"embeddingService":true'; then
         echo "ERROR: the gateway started with embedding disabled, so its provider configuration is incomplete. Read: journalctl --user -u tdai-memory-gateway.service" >&2
         exit 1
@@ -343,7 +350,7 @@ JAVASCRIPT
   "")
     ;;
   *)
-    echo "ERROR: unknown GAH_GATEWAY_MODE='$GAH_GATEWAY_MODE' (expected 'remote', 'colocated', or unset)" >&2
+    echo "ERROR: unknown PARASAUR_GATEWAY_MODE='$PARASAUR_GATEWAY_MODE' (expected 'remote', 'colocated', or unset)" >&2
     exit 1
     ;;
 esac
@@ -381,16 +388,16 @@ fi
 
 # Existing-project context import (opt-in, issue seen 2026-08-08). Reuses
 # whatever gateway this host is now wired to (colocated above, remote above,
-# or an inherited $TDAI_GATEWAY_URL). Set GAH_IMPORT_REPO to seed a project's
+# or an inherited $TDAI_GATEWAY_URL). Set PARASAUR_IMPORT_REPO to seed a project's
 # handoff/memory docs into the gateway at install time; unset skips this
-# entirely, same convention as GAH_GATEWAY_MODE.
-if [ -n "${GAH_IMPORT_REPO:-}" ]; then
-  : "${GAH_IMPORT_SESSION_KEY:?GAH_IMPORT_REPO requires GAH_IMPORT_SESSION_KEY (e.g. gah:manager:github.com/org/repo)}"
-  echo "Importing project context from $GAH_IMPORT_REPO under $GAH_IMPORT_SESSION_KEY..."
+# entirely, same convention as PARASAUR_GATEWAY_MODE.
+if [ -n "${PARASAUR_IMPORT_REPO:-}" ]; then
+  : "${PARASAUR_IMPORT_SESSION_KEY:?PARASAUR_IMPORT_REPO requires PARASAUR_IMPORT_SESSION_KEY (e.g. gah:manager:github.com/org/repo)}"
+  echo "Importing project context from $PARASAUR_IMPORT_REPO under $PARASAUR_IMPORT_SESSION_KEY..."
   "$(command -v gah || echo "$HOME/.cargo/bin/gah")" installer import-docs \
-    --repo "$GAH_IMPORT_REPO" \
-    --session-key "$GAH_IMPORT_SESSION_KEY" \
-    ${GAH_IMPORT_DOCS:+--docs "$GAH_IMPORT_DOCS"}
+    --repo "$PARASAUR_IMPORT_REPO" \
+    --session-key "$PARASAUR_IMPORT_SESSION_KEY" \
+    ${PARASAUR_IMPORT_DOCS:+--docs "$PARASAUR_IMPORT_DOCS"}
 fi
 
 if [ "$role" = "central" ] || [ "$role" = "standalone" ]; then

@@ -62,7 +62,7 @@ fn run_job_options(
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger);
+        .env("PARASAUR_LEDGER_PATH", &ledger);
     if enforce {
         command.arg("--enforce-job-file");
     }
@@ -326,7 +326,7 @@ fn job_contract_dry_run_validates_the_flag() {
         ])
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", tmp.path().join("ledger.jsonl"))
+        .env("PARASAUR_LEDGER_PATH", tmp.path().join("ledger.jsonl"))
         .output()
         .unwrap();
     assert!(!output.status.success());

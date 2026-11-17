@@ -24,6 +24,9 @@ mod identity;
 mod issue_claim;
 mod issues;
 mod metrics;
+pub(crate) mod native_guard;
+mod native_plan;
+pub(crate) use native_plan::plan_native;
 mod prior_attempts;
 mod prompts;
 mod publish;
@@ -39,6 +42,7 @@ mod validation;
 mod workflows;
 
 pub use self::review::policy::review_budget_exhausted_error;
+pub(crate) use self::review::policy::review_budget_gate_is_resolved;
 pub(crate) use self::text::utf8_safe_prefix;
 
 /// Explicitly publish a previously validated PM plan. Planning itself never
@@ -80,6 +84,7 @@ pub(crate) use self::attempts::{
     routing_runtime_state_from_entries,
 };
 
+pub(crate) use self::claims::ensure_minimum_free_space;
 pub(crate) use self::claims::{duplicate_work_error, manual_worker_work_id};
 pub use self::claims::{merge_branch, MergeExecution};
 pub(crate) use self::claims::{scan_available_tickets_with_dependencies, TicketScan};
@@ -90,10 +95,14 @@ pub use self::validation::{self_check_validation_gate, ValidationGateError};
 
 pub(super) const MIN_DISPATCH_FREE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DispatchArgs {
     pub profile: String,
     pub mode: String,
     pub backend: String,
+    /// Exact operator-selected account; retries must retain this binding.
+    pub backend_instance: Option<String>,
     pub target: String,
     pub branch: Option<String>,
     pub mr: Option<String>,
@@ -118,9 +127,9 @@ pub struct DispatchArgs {
     pub escalate: bool,
     /// TICKET-118: for FixMr action, reuse an existing branch instead of creating a new one.
     pub existing_branch: Option<String>,
-    /// Exact review generation selected by the controller for an existing-
-    /// branch repair. Direct CLI dispatches leave this unset; controller
-    /// FixMr actions require an exact match during repair-context preflight.
+    /// Exact review generation selected by central for a review or an existing-
+    /// branch repair. Direct CLI dispatches leave this unset. A prepared review
+    /// and controller FixMr require a match before any reviewer/repair launch.
     pub expected_review_generation: Option<String>,
     /// TICKET-073: deliberately bypass the fresh-worktree self-verification of
     /// a profile's `validation_commands`. Intended only for recovering from a
@@ -143,12 +152,15 @@ pub struct DispatchArgs {
     /// Parallel-controller two-phase admission: after reserving the selected
     /// route, request node capacity and wait for the controller's decision.
     /// Direct CLI dispatches leave this unset and retain blocking route waits.
+    #[serde(skip)]
     pub route_admission: Option<crate::controller::RouteNodeAdmission>,
 }
 
 pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
+    native_guard::verify(cfg, args)?;
     let profile = config::get_profile(cfg, &args.profile)?;
     environment::export_profile_env(profile, args.prod);
+    native_guard::verify_environment()?;
 
     println!("Profile: {}", profile.display_name);
     println!("Repo:    {}", profile.repo);
@@ -161,6 +173,8 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
     if args.dry_run {
         return dry_run::dry_run(cfg, profile, args);
     }
+
+    crate::spend_budget::ensure_available(cfg, &args.profile)?;
 
     // TICKET-073: self-check the validation gate in a fresh worktree (skipped
     // when unchanged) before any backend spend; its failure is distinct.
@@ -178,12 +192,15 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
     // The guard is kept alive for the rest of `run()` via this binding;
     // its `Drop` releases the claim on every exit path below, including
     // the many early returns.
-    let (_central_claim_guard, claimed_work_id) =
-        if JobKind::parse(&args.mode).map(|kind| kind.family()) == Ok(JobFamily::ImproveLike) {
-            claims::acquire_claim(cfg, profile, args, &session_dir)?
-        } else {
-            (None, None)
-        };
+    let (_central_claim_guard, claimed_work_id) = if native_guard::active() {
+        // The verified native wrapper already owns central's durable hold.
+        // Never acquire/release a second, ordinary expiring lease over it.
+        (None, args.work_id.clone())
+    } else if JobKind::parse(&args.mode).map(|kind| kind.family()) == Ok(JobFamily::ImproveLike) {
+        claims::acquire_claim(cfg, profile, args, &session_dir)?
+    } else {
+        (None, None)
+    };
 
     let mut ledger = LedgerEntry::new(
         &args.profile,
@@ -196,6 +213,8 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
     );
     ledger.work_id = args.work_id.clone();
     ledger.dispatch_reason = args.dispatch_reason.clone();
+    ledger.requested_model = args.model.clone();
+    ledger.branch = args.existing_branch.clone().or_else(|| args.branch.clone());
     let started = Instant::now();
     fs::create_dir_all(&session_dir)?;
     crate::running_workers::initialize_dispatch(&session_dir, args, &ts);
@@ -217,6 +236,7 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
         }
         Err(_) => anyhow::bail!("unknown mode: {}", args.mode),
     };
+    let result = result.and_then(|()| native_guard::finish());
     ledger.duration_seconds = Some(started.elapsed().as_secs_f64());
     claims::stamp_claimed_work_id(&mut ledger, claimed_work_id);
     if !usage_has_observation(&ledger.usage) {

@@ -13,6 +13,7 @@ import { backgroundPushDeviceCount, backgroundPushStatus, setSystemNotifications
 const EVENT_ICON: Record<ActivityKind, LucideIcon> = {
   dispatch_completed: CheckCircle2,
   dispatch_failed: XCircle,
+  dispatch_deferred: Gauge,
   review_ready: ShieldAlert,
   chat_turn_completed: MessageCircle,
   chat_turn_failed: XCircle,
@@ -71,7 +72,7 @@ function DeliveryChips({ deliveries }: { deliveries?: DeliveryReceipt[] }) {
 }
 
 function ActivityRow({ event, highlighted, onRead }: { event: ActivityEvent; highlighted: boolean; onRead: (id: string) => void }) {
-  const Icon = EVENT_ICON[event.kind];
+  const Icon = EVENT_ICON[event.kind] ?? CircleDot;
   const age = formatAge(event.occurredAt);
   const unread = event.readAt === null;
   const chat = !!(event.profile && event.sessionId);

@@ -944,3 +944,33 @@ fn fetch_remote_branch_sha_detects_a_concurrent_push_to_the_repair_branch() {
         "must observe the concurrent push, not the stale local view captured at dispatch start"
     );
 }
+
+#[test]
+fn push_probe_accepts_a_reachable_remote_and_reports_why_another_refuses() {
+    let work = TempDir::new().unwrap();
+    init_bare_repo_with_main(work.path());
+    let remote = TempDir::new().unwrap();
+    StdCommand::new("git")
+        .args(["init", "-q", "--bare"])
+        .current_dir(remote.path())
+        .output()
+        .unwrap();
+
+    probe_push_access(work.path(), remote.path().to_str().unwrap(), "").unwrap();
+    let branches = StdCommand::new("git")
+        .args(["branch", "--list"])
+        .current_dir(remote.path())
+        .output()
+        .unwrap();
+    assert!(
+        branches.stdout.is_empty(),
+        "a probe is a dry run and must leave no branch behind"
+    );
+
+    let missing = remote.path().join("no-such-repository.git");
+    let refusal = probe_push_access(work.path(), missing.to_str().unwrap(), "").unwrap_err();
+    assert!(
+        format!("{refusal:#}").contains("no-such-repository"),
+        "{refusal:#}"
+    );
+}

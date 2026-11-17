@@ -164,7 +164,7 @@ fn dispatch_command(
         .env("PATH", prepend_path(fake_bin))
         .env("HOME", home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", ledger_path);
+        .env("PARASAUR_LEDGER_PATH", ledger_path);
     command
 }
 
@@ -258,7 +258,7 @@ fn idle_backend_does_not_inherit_merge_conflict_progress_or_retry_same_route() {
 
     let mut command = dispatch_command(&cfg, &home, &ledger_path, &fake_bin, "1");
     command
-        .env("GAH_AVAILABILITY_PATH", &availability_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &availability_path)
         .assert()
         .failure()
         .stderr(predicate::str::contains("made no repository progress"));
@@ -308,8 +308,8 @@ fn shutdown_during_conflict_resolution_preserves_recovery_and_cleans_worktree() 
         .env("PATH", prepend_path(&tmp.path().join("bin")))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

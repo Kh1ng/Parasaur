@@ -21,9 +21,9 @@ test('Windows setup preserves quoted values and rejects unusable origins and rol
 });
 
 test('setup refuses unsupported worker transport and keeps credential responses out of caches', async () => {
-  const previous = { token: process.env.COORDINATOR_TOKEN, insecure: process.env.GAH_ALLOW_INSECURE_HTTP };
+  const previous = { token: process.env.COORDINATOR_TOKEN, insecure: process.env.PARASAUR_ALLOW_INSECURE_HTTP };
   process.env.COORDINATOR_TOKEN = 'test-enrollment-token';
-  delete process.env.GAH_ALLOW_INSECURE_HTTP;
+  delete process.env.PARASAUR_ALLOW_INSECURE_HTTP;
   const app = express();
   app.use(express.json());
   app.use('/api/settings/nodes', rateLimit({ windowMs: 60_000, limit: 100 }), authMiddleware, nodeSetupRouter());
@@ -46,12 +46,12 @@ test('setup refuses unsupported worker transport and keeps credential responses 
     const unixBody = await unix.json() as { command: string };
     assert.match(unixBody.command, /COORDINATOR_TOKEN/);
     assert.ok(!unixBody.command.includes('test-enrollment-token'));
-    process.env.GAH_ALLOW_INSECURE_HTTP = '1';
+    process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
     assert.equal((await request('both')).status, 200);
   } finally {
     await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
     if (previous.token === undefined) delete process.env.COORDINATOR_TOKEN; else process.env.COORDINATOR_TOKEN = previous.token;
-    if (previous.insecure === undefined) delete process.env.GAH_ALLOW_INSECURE_HTTP; else process.env.GAH_ALLOW_INSECURE_HTTP = previous.insecure;
+    if (previous.insecure === undefined) delete process.env.PARASAUR_ALLOW_INSECURE_HTTP; else process.env.PARASAUR_ALLOW_INSECURE_HTTP = previous.insecure;
   }
 });
 
@@ -89,10 +89,10 @@ test('setup rate limits installer reads and archive generation through one share
 
 
 test('setup credentials require auth through proxies, cross-origin browsers, and rebound hosts', async () => {
-  const previous = { token: process.env.COORDINATOR_TOKEN, insecure: process.env.GAH_ALLOW_INSECURE_HTTP };
+  const previous = { token: process.env.COORDINATOR_TOKEN, insecure: process.env.PARASAUR_ALLOW_INSECURE_HTTP };
   const token = 'test-setup-origin-token';
   process.env.COORDINATOR_TOKEN = token;
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
   const app = express();
   app.set('trust proxy', 'loopback');
   app.use(cors());
@@ -163,7 +163,7 @@ test('setup credentials require auth through proxies, cross-origin browsers, and
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     if (previous.token === undefined) delete process.env.COORDINATOR_TOKEN; else process.env.COORDINATOR_TOKEN = previous.token;
-    if (previous.insecure === undefined) delete process.env.GAH_ALLOW_INSECURE_HTTP; else process.env.GAH_ALLOW_INSECURE_HTTP = previous.insecure;
+    if (previous.insecure === undefined) delete process.env.PARASAUR_ALLOW_INSECURE_HTTP; else process.env.PARASAUR_ALLOW_INSECURE_HTTP = previous.insecure;
   }
 });
 
@@ -171,22 +171,22 @@ test('setup credentials require auth through proxies, cross-origin browsers, and
 test('Unix bootstrap commands select supported roles, quote origins, and prompt for credentials', () => {
   for (const os of ['linux', 'macos']) {
     const command = unixSetupCommand(os, 'worker', 'https://central.example.com:8443');
-    assert.match(command, /GAH_NODE_ROLE=/);
-    assert.match(command, /GAH_CENTRAL_URL=/);
+    assert.match(command, /PARASAUR_NODE_ROLE=/);
+    assert.match(command, /PARASAUR_CENTRAL_URL=/);
     assert.match(command, /read -rsp/);
     assert.match(command, /COORDINATOR_TOKEN/);
-    assert.ok(!command.includes('GAH_GATEWAY_API_KEY'));
+    assert.ok(!command.includes('PARASAUR_GATEWAY_API_KEY'));
     execFileSync('bash', ['-n', '-c', command]);
   }
   const central = unixSetupCommand('linux', 'central', '', 'https://memory.example.com:8420');
-  assert.match(central, /GAH_GATEWAY_MODE=remote/);
+  assert.match(central, /PARASAUR_GATEWAY_MODE=remote/);
   assert.match(central, /read -rsp/);
-  assert.match(central, /GAH_GATEWAY_API_KEY/);
+  assert.match(central, /PARASAUR_GATEWAY_API_KEY/);
   execFileSync('bash', ['-n', '-c', central]);
   const standalone = unixSetupCommand('linux', 'standalone', '');
-  assert.match(standalone, /GAH_NODE_ROLE=.*standalone/);
+  assert.match(standalone, /PARASAUR_NODE_ROLE=.*standalone/);
   assert.ok(!standalone.includes('read -rsp'));
-  assert.ok(!standalone.includes('GAH_GATEWAY'));
+  assert.ok(!standalone.includes('PARASAUR_GATEWAY'));
   execFileSync('bash', ['-n', '-c', standalone]);
   for (const args of [
     ['macos', 'central', ''], ['linux', 'both', ''], ['unknown', 'worker', 'https://central.test'],
@@ -203,10 +203,10 @@ test('Colocated Unix commands expand MemoryCore on the destination and prompt fo
   // The stub bootstrap reports what the destination installer would receive.
   writeFileSync(join(stubs, 'curl'), `#!/bin/sh
 cat <<'SCRIPT'
-printf 'path=%s\\n' "$GAH_GATEWAY_MEMORYCORE_PATH"
-printf 'provider=%s\\n' "$GAH_GATEWAY_PROVIDER"
-printf 'llm=%s\\n' "\${GAH_GATEWAY_LLM_API_KEY-<unset>}"
-printf 'embedding=%s\\n' "\${GAH_GATEWAY_EMBEDDING_API_KEY-<unset>}"
+printf 'path=%s\\n' "$PARASAUR_GATEWAY_MEMORYCORE_PATH"
+printf 'provider=%s\\n' "$PARASAUR_GATEWAY_PROVIDER"
+printf 'llm=%s\\n' "\${PARASAUR_GATEWAY_LLM_API_KEY-<unset>}"
+printf 'embedding=%s\\n' "\${PARASAUR_GATEWAY_EMBEDDING_API_KEY-<unset>}"
 SCRIPT
 `);
   chmodSync(join(stubs, 'curl'), 0o755);
@@ -225,8 +225,8 @@ SCRIPT
 
   const openai = unixSetupCommand('linux', 'central', '', undefined, 'openai', 'https://api.openai.com/v1', 'gpt-4o', 'text-embedding-3-small');
   execFileSync('bash', ['-n', '-c', openai]);
-  assert.match(openai, /read -rsp .*LLM API key.* GAH_GATEWAY_LLM_API_KEY/);
-  assert.match(openai, /read -rsp .*Embedding API key.* GAH_GATEWAY_EMBEDDING_API_KEY/);
+  assert.match(openai, /read -rsp .*LLM API key.* PARASAUR_GATEWAY_LLM_API_KEY/);
+  assert.match(openai, /read -rsp .*Embedding API key.* PARASAUR_GATEWAY_EMBEDDING_API_KEY/);
   assert.ok(!openai.includes('generation-canary') && !openai.includes('embedding-canary'));
   assert.match(run(openai, 'generation-canary\nembedding-canary\n'), /provider=openai\nllm=generation-canary\nembedding=embedding-canary\n$/);
   // Generation is optional; an empty answer leaves the variable unexported.

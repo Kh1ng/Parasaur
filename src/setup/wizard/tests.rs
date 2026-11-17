@@ -287,11 +287,11 @@ fn colocated_memory_preserves_backend_configuration_without_model_key_prompt() {
     let host = ready_host()
         .with_path(path.join("src/gateway/server.ts"))
         .with_path(path.join("node_modules"))
-        .with_env("GAH_GATEWAY_PROVIDER", "ollama")
-        .with_env("GAH_GATEWAY_ENDPOINT", "http://127.0.0.1:11434/v1")
-        .with_env("GAH_GATEWAY_LLM_MODEL", "llama3")
-        .with_env("GAH_GATEWAY_EMBEDDING_MODEL", "nomic-embed-text")
-        .with_env("GAH_GATEWAY_EMBEDDING_DIMENSIONS", "");
+        .with_env("PARASAUR_GATEWAY_PROVIDER", "ollama")
+        .with_env("PARASAUR_GATEWAY_ENDPOINT", "http://127.0.0.1:11434/v1")
+        .with_env("PARASAUR_GATEWAY_LLM_MODEL", "llama3")
+        .with_env("PARASAUR_GATEWAY_EMBEDDING_MODEL", "nomic-embed-text")
+        .with_env("PARASAUR_GATEWAY_EMBEDDING_DIMENSIONS", "");
     let mut prompter = Script::default();
     let mut effects = Recorder::default();
     let mut setup = Setup {
@@ -313,11 +313,11 @@ fn colocated_memory_preserves_backend_configuration_without_model_key_prompt() {
     assert!(effects.commands.is_empty());
     assert!(env
         .0
-        .contains(&("GAH_GATEWAY_MEMORYCORE_PATH", "/memory".into())));
+        .contains(&("PARASAUR_GATEWAY_MEMORYCORE_PATH", "/memory".into())));
     assert!(!env
         .0
         .iter()
-        .any(|(key, _)| *key == "GAH_GATEWAY_LLM_API_KEY"));
+        .any(|(key, _)| *key == "PARASAUR_GATEWAY_LLM_API_KEY"));
 }
 
 /// Issue #1319: colocated memory needs no model provider and no key.
@@ -331,8 +331,11 @@ fn colocated_memory_needs_no_provider_or_key() {
         env.0
             .iter()
             .filter(|(key, _)| {
-                key.starts_with("GAH_GATEWAY_")
-                    && !matches!(*key, "GAH_GATEWAY_MODE" | "GAH_GATEWAY_MEMORYCORE_PATH")
+                key.starts_with("PARASAUR_GATEWAY_")
+                    && !matches!(
+                        *key,
+                        "PARASAUR_GATEWAY_MODE" | "PARASAUR_GATEWAY_MEMORYCORE_PATH"
+                    )
             })
             .count()
     };
@@ -389,10 +392,13 @@ fn colocated_memory_needs_no_provider_or_key() {
     }
     .memory_settings(&mut env)
     .unwrap();
-    assert!(env.0.contains(&("GAH_GATEWAY_PROVIDER", "ollama".into())));
     assert!(env
         .0
-        .contains(&("GAH_GATEWAY_ENDPOINT", "http://127.0.0.1:11434/v1".into())));
+        .contains(&("PARASAUR_GATEWAY_PROVIDER", "ollama".into())));
+    assert!(env.0.contains(&(
+        "PARASAUR_GATEWAY_ENDPOINT",
+        "http://127.0.0.1:11434/v1".into()
+    )));
     assert!(
         !prompter.asked.iter().any(|q| q.contains("key")),
         "{:?}",
@@ -423,7 +429,7 @@ fn colocated_memory_needs_no_provider_or_key() {
     let typo = ready_host()
         .with_path(path.join("src/gateway/server.ts"))
         .with_path(path.join("node_modules"))
-        .with_env("GAH_GATEWAY_PROVIDER", "olama");
+        .with_env("PARASAUR_GATEWAY_PROVIDER", "olama");
     let mut env = InstallEnv::default();
     let error = Setup {
         host: &typo,
@@ -439,7 +445,7 @@ fn colocated_memory_needs_no_provider_or_key() {
     let rerun = ready_host()
         .with_path(path.join("src/gateway/server.ts"))
         .with_path(path.join("node_modules"))
-        .with_env("GAH_GATEWAY_PROVIDER", "openai");
+        .with_env("PARASAUR_GATEWAY_PROVIDER", "openai");
     let mut env = InstallEnv::default();
     Setup {
         host: &rerun,
@@ -449,7 +455,9 @@ fn colocated_memory_needs_no_provider_or_key() {
     }
     .memory_settings(&mut env)
     .unwrap();
-    assert!(env.0.contains(&("GAH_GATEWAY_PROVIDER", "openai".into())));
+    assert!(env
+        .0
+        .contains(&("PARASAUR_GATEWAY_PROVIDER", "openai".into())));
     assert!(!env.0.iter().any(|(key, _)| key.ends_with("_API_KEY")));
 }
 
@@ -459,13 +467,13 @@ fn colocated_memory_forwards_a_generation_key_from_the_environment() {
     let host = ready_host()
         .with_path(path.join("src/gateway/server.ts"))
         .with_path(path.join("node_modules"))
-        .with_env("GAH_GATEWAY_LLM_API_KEY", "generation-canary")
-        .with_env("GAH_GATEWAY_PROVIDER", "openai")
-        .with_env("GAH_GATEWAY_ENDPOINT", "https://api.openai.com/v1")
-        .with_env("GAH_GATEWAY_LLM_MODEL", "gpt-4o")
-        .with_env("GAH_GATEWAY_EMBEDDING_MODEL", "text-embedding-3-small")
-        .with_env("GAH_GATEWAY_EMBEDDING_API_KEY", "embedding-canary")
-        .with_env("GAH_GATEWAY_EMBEDDING_DIMENSIONS", "");
+        .with_env("PARASAUR_GATEWAY_LLM_API_KEY", "generation-canary")
+        .with_env("PARASAUR_GATEWAY_PROVIDER", "openai")
+        .with_env("PARASAUR_GATEWAY_ENDPOINT", "https://api.openai.com/v1")
+        .with_env("PARASAUR_GATEWAY_LLM_MODEL", "gpt-4o")
+        .with_env("PARASAUR_GATEWAY_EMBEDDING_MODEL", "text-embedding-3-small")
+        .with_env("PARASAUR_GATEWAY_EMBEDDING_API_KEY", "embedding-canary")
+        .with_env("PARASAUR_GATEWAY_EMBEDDING_DIMENSIONS", "");
     let mut prompter = Script::default();
     let mut effects = Recorder::default();
     let mut setup = Setup {
@@ -483,7 +491,7 @@ fn colocated_memory_forwards_a_generation_key_from_the_environment() {
     assert!(prompter.asked.is_empty());
     assert!(env
         .0
-        .contains(&("GAH_GATEWAY_LLM_API_KEY", "generation-canary".into())));
+        .contains(&("PARASAUR_GATEWAY_LLM_API_KEY", "generation-canary".into())));
 }
 
 #[test]
@@ -510,8 +518,14 @@ fn installer_effects_are_disclosed_before_a_declined_confirmation() {
                     memory,
                 },
                 InstallEnv(vec![
-                    ("GAH_GATEWAY_MEMORYCORE_PATH", "/chosen/MemoryCore".into()),
-                    ("GAH_GATEWAY_LLM_API_KEY", "secret-must-not-appear".into()),
+                    (
+                        "PARASAUR_GATEWAY_MEMORYCORE_PATH",
+                        "/chosen/MemoryCore".into(),
+                    ),
+                    (
+                        "PARASAUR_GATEWAY_LLM_API_KEY",
+                        "secret-must-not-appear".into(),
+                    ),
                 ]),
             );
             assert!(result.is_err());
@@ -566,7 +580,7 @@ fn a_ready_central_machine_asks_three_questions_then_installs() {
     assert_eq!(effects.commands.len(), 1);
     let (command, env) = &effects.commands[0];
     assert_eq!(command, "scripts/install.sh");
-    assert!(env.contains(&("GAH_NODE_ROLE".into(), "central".into())));
+    assert!(env.contains(&("PARASAUR_NODE_ROLE".into(), "central".into())));
     assert_eq!(
         effects.chat_permissions,
         [ChatPermissions::Ask],
@@ -604,14 +618,14 @@ fn accepting_the_default_role_sets_up_standalone_so_networking_is_opt_in() {
     assert_eq!(effects.commands[0].0, "scripts/install.sh");
     assert!(effects.commands[0]
         .1
-        .contains(&("GAH_INSTALL_AGENT".into(), "claude".into())));
+        .contains(&("PARASAUR_INSTALL_AGENT".into(), "claude".into())));
     assert!(!prompter
         .said
         .iter()
         .any(|line| line.contains("opencode/agents") || line.contains("gah-quota-refresh")));
     assert!(effects.commands[0]
         .1
-        .contains(&("GAH_NODE_ROLE".into(), "standalone".into())));
+        .contains(&("PARASAUR_NODE_ROLE".into(), "standalone".into())));
     assert!(prompter
         .said
         .iter()
@@ -685,14 +699,14 @@ fn standalone_setup_installs_the_local_control_plane() {
     assert_eq!(effects.commands[0].0, "scripts/install.sh");
     assert!(effects.commands[0]
         .1
-        .contains(&("GAH_INSTALL_AGENT".into(), "claude".into())));
+        .contains(&("PARASAUR_INSTALL_AGENT".into(), "claude".into())));
     assert!(!prompter
         .said
         .iter()
         .any(|line| line.contains("opencode/agents") || line.contains("gah-quota-refresh")));
     assert!(effects.commands[0]
         .1
-        .contains(&("GAH_NODE_ROLE".into(), "standalone".into())));
+        .contains(&("PARASAUR_NODE_ROLE".into(), "standalone".into())));
     assert!(prompter
         .said
         .iter()
@@ -811,8 +825,11 @@ fn a_worker_checks_its_central_node_before_building() {
         )]
     );
     let env = &effects.commands[0].1;
-    assert!(env.contains(&("GAH_NODE_ROLE".into(), "worker".into())));
-    assert!(env.contains(&("GAH_CENTRAL_URL".into(), "https://central.example".into())));
+    assert!(env.contains(&("PARASAUR_NODE_ROLE".into(), "worker".into())));
+    assert!(env.contains(&(
+        "PARASAUR_CENTRAL_URL".into(),
+        "https://central.example".into()
+    )));
     assert!(env.contains(&("COORDINATOR_TOKEN".into(), "token-123".into())));
 
     let mut prompter = Script {

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { RunningWorker } from '@git-agent-harness/contracts';
-const mockUrl = `http://127.0.0.1:${process.env.GAH_MOCK_TEST_PORT ?? '3774'}`;
+const mockUrl = `http://127.0.0.1:${process.env.PARASAUR_MOCK_TEST_PORT ?? '3774'}`;
 test.afterEach(async ({ page, request }) => {
   await page.unrouteAll({ behavior: 'ignoreErrors' });
   await request.post(`${mockUrl}/api/mock/scenario`, { data: { name: 'normal' } });
@@ -23,7 +23,7 @@ test('all factory counters follow the roster despite conflicting claims, events 
   const activeWork = page.locator('.stat-tile').filter({ hasText: 'Active work' });
   await expect(activeWork.locator('.stat-tile-value')).toHaveText('2');
   await expect(page.getByRole('region', { name: 'Factory Agents Status' })).toContainText('2 busy');
-  const workingMenu = page.getByRole('button', { name: /Working on.*2 jobs running/ });
+  const workingMenu = page.getByRole('button', { name: /Working on.*1 stale: 1 job running/ });
   await expect(workingMenu).toBeVisible();
   await workingMenu.click();
   await expect(page.getByRole('dialog', { name: 'What the factory is doing now' }).getByRole('list').first().getByRole('listitem')).toHaveCount(2);

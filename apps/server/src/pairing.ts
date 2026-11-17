@@ -38,7 +38,7 @@ export function pairingRouter(access: DeviceAccess, identity: CoordinatorIdentit
       return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString('utf8');
     } catch { throw new Error('No access request is bound to this browser.'); }
   };
-  router.use('/handoff', sessionHandoffRouter());
+  router.use('/handoff', sessionHandoffRouter(access));
   router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   router.use(rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false,
     skip: req => req.method === 'GET' && ['/session', '/access/status', '/access/requests'].includes(req.path),
@@ -79,7 +79,7 @@ export function pairingRouter(access: DeviceAccess, identity: CoordinatorIdentit
     } catch (error) { res.status(400).json({ message: error instanceof Error ? error.message : 'Cannot claim device access.' }); }
   });
   router.post(['/inspect', '/redeem', '/logout'], (req, res) => {
-    if ((!req.secure && !isTrustedLocalRequest(req) && process.env.GAH_ALLOW_INSECURE_HTTP !== '1') || !sameOriginRequest(req)) {
+    if ((!req.secure && !isTrustedLocalRequest(req) && process.env.PARASAUR_ALLOW_INSECURE_HTTP !== '1') || !sameOriginRequest(req)) {
       return res.status(403).json({ message: 'Pairing requires the same server origin and TLS, unless trusted HTTP is explicitly enabled.' });
     }
     const cookieOptions = { httpOnly: true, sameSite: 'strict' as const, secure: req.secure, path: '/' };
@@ -133,8 +133,8 @@ export function pairingRouter(access: DeviceAccess, identity: CoordinatorIdentit
       if (!req.body || Object.keys(req.body).some(key => key !== 'origin') || typeof req.body.origin !== 'string') throw new Error('Enter the central server address.');
       const origin = new URL(req.body.origin);
       if (!['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) throw new Error('Use an HTTP(S) server address without credentials or a path.');
-      if (origin.protocol !== 'https:' && process.env.GAH_ALLOW_INSECURE_HTTP !== '1') throw new Error('Use HTTPS for pairing, or explicitly enable trusted HTTP on the server.');
-      if (!browserOriginAllowed({ headers: { host: origin.host, origin: origin.origin } }, origin.protocol.slice(0, -1))) throw new Error('Allow this named server origin in GAH_WS_ALLOWED_ORIGINS before pairing.');
+      if (origin.protocol !== 'https:' && process.env.PARASAUR_ALLOW_INSECURE_HTTP !== '1') throw new Error('Use HTTPS for pairing, or explicitly enable trusted HTTP on the server.');
+      if (!browserOriginAllowed({ headers: { host: origin.host, origin: origin.origin } }, origin.protocol.slice(0, -1))) throw new Error('Allow this named server origin in PARASAUR_WS_ALLOWED_ORIGINS before pairing.');
       res.json(access.create({ id: identity.node_id, name: identity.display_name, origin: origin.origin }));
     } catch (error) { res.status(400).json({ message: error instanceof Error ? error.message : 'Cannot create a pairing code.' }); }
   });

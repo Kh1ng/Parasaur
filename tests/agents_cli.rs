@@ -18,8 +18,8 @@ fn gah(dir: &Path) -> Command {
     }
     let mut command = Command::new(assert_cmd::cargo::cargo_bin!("gah"));
     command
-        .env("GAH_CONFIG", config)
-        .env("GAH_CLAIM_STATE_PATH", dir.join("claims.json"))
+        .env("PARASAUR_CONFIG", config)
+        .env("PARASAUR_CLAIM_STATE_PATH", dir.join("claims.json"))
         .env("PATH", dir)
         .env("HOME", dir)
         .env("XDG_STATE_HOME", dir.join("state"));
@@ -276,7 +276,7 @@ fn agents_dispatch_starting_during_lookup_prevents_installation() {
         "claimed_at":chrono::Utc::now().to_rfc3339()
     }]}});
     // Represents an already admitted dispatch becoming visible while metadata is in flight.
-    fake(dir.path(), "npm", &format!("echo '{claims}' > \"$GAH_CLAIM_STATE_PATH\"\necho '{{\"name\":\"@anthropic-ai/claude-code\",\"version\":\"2.0.0\"}}'"));
+    fake(dir.path(), "npm", &format!("echo '{claims}' > \"$PARASAUR_CLAIM_STATE_PATH\"\necho '{{\"name\":\"@anthropic-ai/claude-code\",\"version\":\"2.0.0\"}}'"));
     gah(dir.path())
         .args(["agents", "update", "claude", "--yes"])
         .assert()
@@ -288,7 +288,7 @@ fn agents_dispatch_starting_during_lookup_prevents_installation() {
 // Separate process keeps admission tests off the runner's environment and locks.
 #[test]
 fn agents_claim_admission_child() {
-    let Ok(expected) = std::env::var("GAH_TEST_CLAIM_ALLOWED") else {
+    let Ok(expected) = std::env::var("PARASAUR_TEST_CLAIM_ALLOWED") else {
         return;
     };
     let allowed = expected == "yes";
@@ -315,11 +315,11 @@ fn agents_installer_holds_dispatch_admission_until_exit() {
     use std::os::unix::process::CommandExt;
     let mut updater = support::ProcessGroupGuard::new(
         std::process::Command::new(assert_cmd::cargo::cargo_bin!("gah"))
-            .env("GAH_CONFIG", dir.path().join("config.toml"))
+            .env("PARASAUR_CONFIG", dir.path().join("config.toml"))
             .env("HOME", dir.path())
             .env("PATH", dir.path())
             .env("XDG_STATE_HOME", dir.path().join("state"))
-            .env("GAH_CLAIM_STATE_PATH", dir.path().join("claims.json"))
+            .env("PARASAUR_CLAIM_STATE_PATH", dir.path().join("claims.json"))
             .args(["agents", "update", "claude", "--yes"])
             .process_group(0)
             .spawn()
@@ -334,8 +334,8 @@ fn agents_installer_holds_dispatch_admission_until_exit() {
         Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "agents_claim_admission_child", "--nocapture"])
             .env("XDG_STATE_HOME", dir.path().join("state"))
-            .env("GAH_CLAIM_STATE_PATH", dir.path().join("claims.json"))
-            .env("GAH_TEST_CLAIM_ALLOWED", allowed)
+            .env("PARASAUR_CLAIM_STATE_PATH", dir.path().join("claims.json"))
+            .env("PARASAUR_TEST_CLAIM_ALLOWED", allowed)
             .assert()
             .success();
     };

@@ -90,11 +90,11 @@ pub fn install(args: &Args, home: &Path) -> Result<()> {
     let config_text = text(&config);
     let env = [
         ("COORDINATOR_TOKEN", settings.token.clone()),
-        ("GAH_ALLOW_INSECURE_HTTP", "1".to_string()),
-        ("GAH_COORDINATOR_IDENTITY_PATH", text(&identity_path)),
-        ("GAH_CONFIG_PATH", config_text.clone()),
-        ("GAH_CONFIG", config_text),
-        ("GAH_BINARY", text(&args.release.join("bin/gah"))),
+        ("PARASAUR_ALLOW_INSECURE_HTTP", "1".to_string()),
+        ("PARASAUR_COORDINATOR_IDENTITY_PATH", text(&identity_path)),
+        ("PARASAUR_CONFIG_PATH", config_text.clone()),
+        ("PARASAUR_CONFIG", config_text),
+        ("PARASAUR_BINARY", text(&args.release.join("bin/gah"))),
         ("HOST", "0.0.0.0".to_string()),
         ("PORT", "3774".to_string()),
     ];
@@ -131,7 +131,7 @@ pub fn install(args: &Args, home: &Path) -> Result<()> {
         0o700,
     )?;
     let register = format!(
-        "{header}for attempt in {{1..30}}; do\n  if curl -fsS http://127.0.0.1:3774/health >/dev/null; then break; fi\n  sleep 1\ndone\nprofiles=\"${{1:-}}\"\nif [ -z \"$profiles\" ]; then\n  profiles=\"$(\"$GAH_BINARY\" profile list --json | \"$GAH_BINARY\" installer json --each name --join ,)\"\nfi\nexec {node} apps/server/dist/registerNodeCli.js --central-url {} --self-url http://127.0.0.1:3774 --transport-mode trusted_lan --secret-ref env:COORDINATOR_TOKEN --labels windows,wsl --profiles \"$profiles\"\n",
+        "{header}for attempt in {{1..30}}; do\n  if curl -fsS http://127.0.0.1:3774/health >/dev/null; then break; fi\n  sleep 1\ndone\nprofiles=\"${{1:-}}\"\nif [ -z \"$profiles\" ]; then\n  profiles=\"$(\"$PARASAUR_BINARY\" profile list --json | \"$PARASAUR_BINARY\" installer json --each name --join ,)\"\nfi\nexec {node} apps/server/dist/registerNodeCli.js --central-url {} --self-url http://127.0.0.1:3774 --transport-mode trusted_lan --secret-ref env:COORDINATOR_TOKEN --labels windows,wsl --profiles \"$profiles\"\n",
         shell_quote(&settings.central_url)
     );
     replace(&args.root.join("register.sh"), register.as_bytes(), 0o700)?;
@@ -220,15 +220,15 @@ mod tests {
         };
         assert_eq!(read("COORDINATOR_TOKEN"), token);
         assert_eq!(
-            read("GAH_CONFIG_PATH"),
+            read("PARASAUR_CONFIG_PATH"),
             home.join(".config/gah/config.toml").to_string_lossy()
         );
         assert_eq!(
-            read("GAH_BINARY"),
+            read("PARASAUR_BINARY"),
             release.join("bin/gah").to_string_lossy()
         );
         assert_eq!(
-            read("GAH_NODE_ROLE"),
+            read("PARASAUR_NODE_ROLE"),
             "",
             "the role comes from config after a restart"
         );

@@ -271,7 +271,7 @@ impl ScenarioHarness {
         std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
         let output = self
             .gah_command()
-            .env("GAH_CONFIG", path)
+            .env("PARASAUR_CONFIG", path)
             .env("XDG_STATE_HOME", self._temp.path().join("central-state"))
             .args(["status", "--profile", &self.profile_name, "--json"])
             .output()

@@ -39,7 +39,8 @@ fn waypoint_projection_uses_effective_repo_scoped_ledger_history() {
     current.work_id = Some("#1077".into());
     current.dispatch_reason = Some("initial".into());
     current.validation_result = Some("passed".into());
-    let index = ledger::index_entries_by_work_id(&[old, clear, current.clone()]);
+    let index_history = [old, clear, current.clone()];
+    let index = ledger::index_entries_by_work_id(&index_history);
 
     let projected = project_work_waypoint_evidence(&index, &profile.repo_id);
     let evidence = &projected["#1077"];
@@ -121,7 +122,7 @@ default_target_branch = "main"
     .unwrap();
     let mut cfg = crate::config::load(Some(path.to_str().unwrap())).unwrap();
     // Keep every status test's ledger inside its own temp directory
-    // without mutating the process-global GAH_LEDGER_PATH override.
+    // without mutating the process-global PARASAUR_LEDGER_PATH override.
     cfg.defaults.artifact_root = tmp.path().to_string_lossy().into_owned();
     cfg
 }

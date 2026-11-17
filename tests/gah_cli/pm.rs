@@ -234,8 +234,8 @@ fn dispatch_pm_skips_unavailable_preferred_backend() {
             cfg.to_str().unwrap(),
         ])
         .env("PATH", prepend_path(&fake_bin))
-        .env("GAH_AVAILABILITY_PATH", &availability_path)
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &availability_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success()
         .stdout(predicate::str::contains(
@@ -302,8 +302,8 @@ fn dispatch_pm_claude_session_limit_marks_model_and_reroutes_once() {
             cfg.to_str().unwrap(),
         ])
         .env("PATH", path)
-        .env("GAH_AVAILABILITY_PATH", &availability_path)
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &availability_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success()
         .stdout(predicate::str::contains(

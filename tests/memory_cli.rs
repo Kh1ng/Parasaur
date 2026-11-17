@@ -114,8 +114,11 @@ default_target_branch="main"
         ])
         .arg(config)
         .env("HOME", tmp.path())
-        .env("GAH_CANONICAL_CONFIG", tmp.path().join("canonical.toml"))
-        .env("GAH_NODE_ROLE", role)
+        .env(
+            "PARASAUR_CANONICAL_CONFIG",
+            tmp.path().join("canonical.toml"),
+        )
+        .env("PARASAUR_NODE_ROLE", role)
         .env_remove("COORDINATOR_TOKEN")
         .env_remove("TDAI_GATEWAY_API_KEY")
         .env_remove("TDAI_GATEWAY_URL")

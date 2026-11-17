@@ -17,8 +17,8 @@ pub(crate) use reviewer_history::reviewer_outcome_metrics;
 #[allow(unused_imports)]
 pub use types::SkippedBackend;
 pub use types::{
-    CandidateIdentity, ReviewerOutcomeMetrics, RouteDecision, RouteError, RouteRequest,
-    RoutingRuntimeState, TaskRoutingContext,
+    CandidateIdentity, RemoteInstanceAvailability, ReviewerOutcomeMetrics, RouteDecision,
+    RouteError, RouteRequest, RoutingRuntimeState, TaskRoutingContext,
 };
 
 /// Preserve the stable facade path while reservation ownership lives in its

@@ -29,7 +29,7 @@ The central server needs these settings:
 
 - `COORDINATOR_TOKEN` for authenticated access.
 - `GH_TOKEN`, `GITHUB_TOKEN`, or a working `gh auth login` for private release downloads.
-- `GAH_ALLOW_INSECURE_HTTP=1` for the current worker enrollment transport on a trusted LAN or VPN.
+- `PARASAUR_ALLOW_INSECURE_HTTP=1` for the current worker enrollment transport on a trusted LAN or VPN.
 - Its Git checkout, including these committed installer changes.
 
 The command contains the central access token. Use it only on a trusted worker computer.

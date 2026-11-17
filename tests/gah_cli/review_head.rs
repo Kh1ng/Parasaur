@@ -62,7 +62,7 @@ fn review_unchanged_head_skips_locally_and_across_nodes_after_policy_check() {
                 cfg.to_str().unwrap(),
             ])
             .env("PATH", prepend_path(backend.bin_dir()))
-            .env("GAH_LEDGER_PATH", &ledger);
+            .env("PARASAUR_LEDGER_PATH", &ledger);
         command
     };
     run().assert().success();

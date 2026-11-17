@@ -1,4 +1,7 @@
+import { defaultProfile } from './defaultProfile.js';
 import { existsSync, readFileSync } from 'node:fs';
+import { requiresDispatchExecutionOptions } from './dispatchExecutionOptions.js';
+import { dispatchRequestFingerprint, assertDispatchRequestIdentity } from './dispatchRequestIdentity.js';
 import http from 'node:http';
 import https from 'node:https';
 import WebSocket from 'ws';
@@ -10,11 +13,12 @@ import type {
   ServerMessage,
   Session
 } from '@git-agent-harness/contracts';
-import { COORDINATOR_VERSION } from '@git-agent-harness/contracts';
+import { COORDINATOR_VERSION, isSessionTerminal as sessionIsTerminal, isSessionExecutionResult } from '@git-agent-harness/contracts';
 import { preserveCorruptFile, writeFileAtomic } from './atomicFile.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { getSessionManager, type SessionOptions } from './sessions/SessionManager.js';
-import { resolveSecret, type RegistryService } from './registryService.js';
+import type { RegistryService } from './registryService.js';
+import { linkTo } from './workerLink.js';
 
 type PushBusLike = {
   publish(message: ServerMessage): void;
@@ -38,7 +42,7 @@ type FleetDispatchDeps = {
   transportFactory?: (node: NodeSelection, context: {
     coordinatorNodeId: string;
     pushBus: PushBusLike;
-    onTerminal: (session: Session) => void;
+    onSessionUpdate: (session: Session) => void;
     localSessionManager: ReturnType<typeof getSessionManager>;
     profile?: string;
     session?: Session;
@@ -46,6 +50,7 @@ type FleetDispatchDeps = {
 };
 
 type LeaseRecord = {
+  requestFingerprint?: string;
   retainReceipt?: boolean;
   requestId: string;
   workKey: string;
@@ -91,8 +96,18 @@ function decorateSession(session: Session, nodeId: string, state: DispatchLeaseS
   };
 }
 
-function sessionIsTerminal(session: Session): boolean {
-  return session.status === 'stopped' || session.status === 'error';
+/** Only fresh execution observations require a receipt. Historical terminal
+ * records retain their original status; missing old exit details stay unknown. */
+function observedSession(session: Session, nodeId: string): Session {
+  if (sessionIsTerminal(session) && !isSessionExecutionResult(session.execution)) {
+    return decorateSession({ ...session, status: 'starting', endedAt: undefined, execution: undefined,
+      error: 'Worker exit result is unavailable; execution is unconfirmed' }, nodeId, 'uncertain_reconciling');
+  }
+  return decorateSession(session, nodeId, sessionLeaseState(session));
+}
+
+function sessionLeaseState(session: Session): DispatchLeaseState {
+  return session.leaseState === 'uncertain_reconciling' ? 'uncertain_reconciling' : sessionIsTerminal(session) ? 'terminal' : 'running';
 }
 
 // ws supplies createConnection, which bypasses Node's implicit global agent.
@@ -111,8 +126,8 @@ function openNodeSocket(advertisedUrl: string, headers: Record<string, string>):
 }
 
 function leaseStorePath(defaultPath: string): string {
-  if (process.env.GAH_DISPATCH_LEASES_PATH) {
-    return process.env.GAH_DISPATCH_LEASES_PATH;
+  if (process.env.PARASAUR_DISPATCH_LEASES_PATH) {
+    return process.env.PARASAUR_DISPATCH_LEASES_PATH;
   }
   return defaultPath;
 }
@@ -121,7 +136,7 @@ function encodeKeyPart(value: string): string {
   return encodeURIComponent(value);
 }
 
-function deriveDispatchWorkKey(options: Pick<RoutedSessionOptions, 'profile' | 'repo' | 'branch' | 'target' | 'mr' | 'mode' | 'backend' | 'model'>): string {
+function deriveDispatchWorkKey(options: Pick<RoutedSessionOptions, 'profile' | 'repo' | 'branch' | 'target' | 'mr' | 'mode' | 'backend' | 'backendInstance' | 'model' | 'nodeId'>): string {
   return [
     options.profile,
     options.repo,
@@ -130,7 +145,8 @@ function deriveDispatchWorkKey(options: Pick<RoutedSessionOptions, 'profile' | '
     options.mr ?? '',
     options.mode,
     options.backend ?? '',
-    options.model ?? ''
+    options.model ?? '',
+    ...(options.backendInstance ? [options.backendInstance, options.nodeId ?? ''] : [])
   ].map(encodeKeyPart).join('|');
 }
 
@@ -147,6 +163,8 @@ function deriveLeaseWorkKey(lease: Pick<LeaseRecord, 'profile' | 'session'>): st
     mr: session.mr,
     mode: session.mode,
     backend: session.backend,
+    backendInstance: session.backendInstance,
+    nodeId: session.nodeId,
     model: session.model
   });
 }
@@ -161,10 +179,11 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
-const WORK_KEY_SESSION_FIELDS = ['repo', 'branch', 'target', 'mr', 'mode', 'backend', 'model'] as const;
+const WORK_KEY_SESSION_FIELDS = ['repo', 'branch', 'target', 'mr', 'mode', 'backend', 'backendInstance', 'model', 'nodeId'] as const;
 
 /** Rebuilds a stored work key in today's format. Writers stored seven parts
- * before #1102 added mr as the fifth, and eight since. Anything else, a key for
+ * before #1102 added mr as the fifth, eight since, and ten for node-local
+ * account pins. Anything else, a key for
  * another profile, or one without repo and mode is not a key any writer made. */
 function normalizeStoredWorkKey(profile: string, workKey: unknown): string | null {
   if (!isNonEmptyString(workKey)) {
@@ -174,7 +193,7 @@ function normalizeStoredWorkKey(profile: string, workKey: unknown): string | nul
   if (parts.length === 7) {
     parts.splice(4, 0, '');
   }
-  if (parts.length !== 8) {
+  if (parts.length !== 8 && parts.length !== 10) {
     return null;
   }
   let decoded: string[];
@@ -183,11 +202,11 @@ function normalizeStoredWorkKey(profile: string, workKey: unknown): string | nul
   } catch {
     return null;
   }
-  const [keyProfile, repo, branch, target, mr, mode, backend, model] = decoded as [string, ...string[]];
+  const [keyProfile, repo, branch, target, mr, mode, backend, model, backendInstance, nodeId] = decoded as [string, ...string[]];
   if (keyProfile !== profile || !repo || !mode) {
     return null;
   }
-  const normalized = deriveDispatchWorkKey({ profile, repo, branch, target, mr, mode, backend, model });
+  const normalized = deriveDispatchWorkKey({ profile, repo, branch, target, mr, mode, backend, model, backendInstance, nodeId });
   // A writer encoded every part, so a differently encoded key did not come from one.
   return normalized === parts.join('|') ? normalized : null;
 }
@@ -205,6 +224,7 @@ function isCompleteLease(value: unknown): value is LeaseRecord {
   const lease = value as Partial<LeaseRecord> | null;
   if (!(typeof lease === 'object' && lease !== null
     && (lease.retainReceipt === undefined || typeof lease.retainReceipt === 'boolean')
+    && (lease.requestFingerprint === undefined || (typeof lease.requestFingerprint === 'string' && /^[a-f0-9]{64}$/.test(lease.requestFingerprint)))
     && isNonEmptyString(lease.requestId)
     && isNonEmptyString(lease.nodeId)
     && isNonEmptyString(lease.nodeUrl)
@@ -214,6 +234,8 @@ function isCompleteLease(value: unknown): value is LeaseRecord {
     return false;
   }
   const session = lease.session;
+  if (session.backendInstance !== undefined && (!/^[a-zA-Z0-9_-]{1,128}$/.test(session.backendInstance)
+    || session.nodeId !== lease.nodeId)) return false;
   if (!WORK_KEY_SESSION_FIELDS.every((field) => session[field] == null || typeof session[field] === 'string')) {
     return false;
   }
@@ -344,7 +366,7 @@ class LeaseStore {
       if (existing.session.id === record.session.id) {
         // Several request IDs can join one running job; all observe its outcome.
         this.leases.set(existing.requestId, { ...record, requestId: existing.requestId,
-          retainReceipt: existing.retainReceipt });
+          retainReceipt: existing.retainReceipt, requestFingerprint: existing.requestFingerprint });
       } else if (existing.workKey === record.workKey && !existing.retainReceipt
         && (existing.state === 'terminal' || existing.state === 'expired')) {
         this.leases.delete(existing.requestId);
@@ -421,8 +443,8 @@ class RemoteNodeTransport implements NodeDispatchTransport {
     private readonly node: NodeSelection,
     private readonly pushBus: PushBusLike,
     private readonly coordinatorNodeId: string,
-    private readonly onTerminal: (session: Session) => void,
-    initialProfile = 'gah',
+    private readonly onSessionUpdate: (session: Session) => void,
+    initialProfile = defaultProfile(),
     initialSession?: Session,
     private readonly headers: Record<string, string> = {}
   ) {
@@ -432,10 +454,13 @@ class RemoteNodeTransport implements NodeDispatchTransport {
     }
   }
 
+  private pendingRequestId?: string;
+
   async startSession(options: RoutedSessionOptions): Promise<Session> {
     if (this.startedSession) {
       return this.startedSession;
     }
+    this.pendingRequestId = options.requestId;
     const socket = await this.connect(options.profile);
     const session = await new Promise<Session>((resolve, reject) => {
       this.startResolver = { resolve, reject };
@@ -454,6 +479,7 @@ class RemoteNodeTransport implements NodeDispatchTransport {
           mr: options.mr,
           mode: options.mode,
           backend: options.backend,
+          backendInstance: options.backendInstance,
           model: options.model,
           budget: options.budget,
           dryRun: options.dryRun,
@@ -474,7 +500,7 @@ class RemoteNodeTransport implements NodeDispatchTransport {
         }
       }, RECONCILE_TIMEOUT_MS).unref?.();
     });
-    this.startedSession = decorateSession(session, this.node.nodeId, 'running');
+    this.startedSession = this.getSession(session.id) ?? observedSession(session, this.node.nodeId);
     return this.startedSession;
   }
 
@@ -501,7 +527,7 @@ class RemoteNodeTransport implements NodeDispatchTransport {
         }
       }, RECONCILE_TIMEOUT_MS).unref?.();
     });
-    this.startedSession = decorateSession(stopped, this.node.nodeId, 'terminal');
+    this.startedSession = observedSession(stopped, this.node.nodeId);
     return this.startedSession;
   }
 
@@ -567,22 +593,12 @@ class RemoteNodeTransport implements NodeDispatchTransport {
         this.handleMessage(data);
       });
       socket.on('close', () => {
-        if (!this.closed && this.startedSession && !sessionIsTerminal(this.startedSession)) {
-          const session = decorateSession(
-            {
-              ...this.startedSession,
-              status: 'error',
-              endedAt: nowIso(),
-              error: `Connection to node ${this.node.nodeId} closed`
-            },
-            this.node.nodeId,
-            'terminal'
-          );
-          this.pushBus.publish({
-            type: 'session.stopped',
-            session
-          });
-          this.onTerminal(session);
+        if (!this.closed && this.socket === socket && this.startedSession && !sessionIsTerminal(this.startedSession)) {
+          const session = decorateSession({ ...this.startedSession, status: 'starting', endedAt: undefined,
+            error: 'Worker connection lost; execution is unconfirmed' }, this.node.nodeId, 'uncertain_reconciling');
+          this.startedSession = session;
+          this.onSessionUpdate(session);
+          this.pushBus.publish({ type: 'session.status', session });
         }
       });
     });
@@ -598,24 +614,28 @@ class RemoteNodeTransport implements NodeDispatchTransport {
     }
 
     if (message.type === 'session.started') {
+      if (message.session.requestId && this.pendingRequestId && message.session.requestId !== this.pendingRequestId) return;
       if (this.startResolver) {
-        const session = decorateSession(message.session, this.node.nodeId, 'running');
+        const session = observedSession(message.session, this.node.nodeId);
         this.startedSession = session;
-        this.startResolver.resolve(session);
-        this.startResolver = undefined;
-      } else if (this.startedSession?.id === message.session.id) {
-        this.startedSession = decorateSession(message.session, this.node.nodeId, 'running');
+        this.startResolver.resolve(session); this.startResolver = undefined;
+      } else if (this.startedSession?.id === message.session.id || (this.pendingRequestId && message.session.requestId === this.pendingRequestId)) {
+        const session = observedSession(message.session, this.node.nodeId);
+        this.startedSession = session;
+        this.onSessionUpdate(session); this.pushBus.publish({ type: 'session.started', session });
       }
       return;
     }
 
     if (message.type === 'session.stopped') {
-      const session = decorateSession(message.session, this.node.nodeId, 'terminal');
+      if (this.startedSession ? message.session.id !== this.startedSession.id : message.session.requestId !== this.pendingRequestId || !this.pendingRequestId) return;
+      const session = observedSession(message.session, this.node.nodeId);
       this.startedSession = session;
-      this.onTerminal(session);
+      this.onSessionUpdate(session);
       if (this.stopResolver) {
         this.stopResolver.resolve(session);
         this.stopResolver = undefined;
+        if (!sessionIsTerminal(session)) this.suppressNextStopBroadcast = false;
         return;
       }
       if (this.suppressNextStopBroadcast) {
@@ -623,7 +643,7 @@ class RemoteNodeTransport implements NodeDispatchTransport {
         return;
       }
       this.pushBus.publish({
-        type: 'session.stopped',
+        type: sessionIsTerminal(session) ? 'session.stopped' : 'session.status',
         session
       });
       return;
@@ -638,17 +658,26 @@ class RemoteNodeTransport implements NodeDispatchTransport {
     }
 
     if (message.type === 'session.status' && this.startedSession?.id === message.session.id) {
-      this.startedSession = decorateSession(message.session, this.node.nodeId, this.startedSession.leaseState ?? 'running');
+      const session = observedSession(message.session, this.node.nodeId);
+      this.startedSession = session;
+      this.onSessionUpdate(session);
+      if (this.stopResolver && (session.error || sessionIsTerminal(session))) {
+        this.stopResolver.resolve(session); this.stopResolver = undefined;
+        this.suppressNextStopBroadcast = false;
+      } else { this.pushBus.publish({ type: 'session.status', session }); }
     }
   }
 }
 
 function nodeAuthHeaders(registry: RegistryService, nodeId: string, nodeUrl: string): Record<string, string> {
   const node = registry.getNode(nodeId);
-  if (node?.secret_ref && new URL(node.advertised_url).origin !== new URL(nodeUrl).origin) {
+  if (!node) return {};
+  const link = linkTo(node);
+  if (link.origin !== new URL(nodeUrl).origin) {
     throw new GAHError('The registered node endpoint changed. Refusing to send its credential to an old address.', 'NODE_ENDPOINT_CHANGED');
   }
-  return node?.secret_ref ? { Authorization: `Bearer ${resolveSecret(node.secret_ref)}` } : {};
+  const { Authorization } = link.headers();
+  return Authorization ? { Authorization } : {};
 }
 
 function defaultTransportFactory(
@@ -656,7 +685,7 @@ function defaultTransportFactory(
   context: {
     coordinatorNodeId: string;
     pushBus: PushBusLike;
-    onTerminal: (session: Session) => void;
+    onSessionUpdate: (session: Session) => void;
     localSessionManager: ReturnType<typeof getSessionManager>;
     profile?: string;
     session?: Session;
@@ -670,7 +699,7 @@ function defaultTransportFactory(
     node,
     context.pushBus,
     context.coordinatorNodeId,
-    context.onTerminal,
+    context.onSessionUpdate,
     context.profile,
     context.session,
     nodeAuthHeaders(registryService, node.nodeId, node.advertisedUrl)
@@ -684,8 +713,8 @@ export class FleetDispatchCoordinator {
   private readonly localSessionManager: ReturnType<typeof getSessionManager>;
   private readonly leaseStore: LeaseStore;
   private readonly remoteTransports = new Map<string, NodeDispatchTransport>();
-  private readonly pendingRequestStarts = new Map<string, Promise<Session>>();
-  private readonly pendingWorkStarts = new Map<string, Promise<Session>>();
+  private readonly pendingRequestStarts = new Map<string, { fingerprint: string; promise: Promise<Session> }>();
+  private readonly pendingWorkStarts = new Map<string, { fingerprint: string; promise: Promise<Session> }>();
   private readonly localTransport: LocalNodeTransport;
   private readonly transportFactory: NonNullable<FleetDispatchDeps['transportFactory']>;
 
@@ -702,25 +731,35 @@ export class FleetDispatchCoordinator {
   }
 
   async startSession(options: RoutedSessionOptions): Promise<Session> {
+    options = { ...options, gitlab: options.gitlab && { ...options.gitlab } };
+    if (options.backendInstance !== undefined && (typeof options.backendInstance !== 'string'
+      || !/^[a-zA-Z0-9_-]{1,128}$/.test(options.backendInstance)
+      || !options.backend || options.backend === 'auto' || !options.nodeId)) {
+      throw new GAHError('An exact account requires a valid account identifier, explicit backend and execution node.', 'INVALID_BACKEND_INSTANCE');
+    }
     const requestId = options.requestId ?? generateRequestId();
     const workKey = deriveDispatchWorkKey(options);
+    const fingerprint = dispatchRequestFingerprint(options);
     const pending = this.pendingRequestStarts.get(requestId) ?? this.pendingWorkStarts.get(workKey);
     if (pending) {
-      const session = await pending;
+      assertDispatchRequestIdentity(pending.fingerprint, fingerprint);
+      const session = await pending.promise;
+      this.assertAccountBinding(session, options);
       if (options.retainReceipt) this.pinReceipt(requestId, session.id);
       return session;
     }
 
     const startPromise = this.startSessionFresh(options, requestId, workKey);
-    this.pendingRequestStarts.set(requestId, startPromise);
-    this.pendingWorkStarts.set(workKey, startPromise);
+    const pendingStart = { fingerprint, promise: startPromise };
+    this.pendingRequestStarts.set(requestId, pendingStart);
+    this.pendingWorkStarts.set(workKey, pendingStart);
     try {
       return await startPromise;
     } finally {
-      if (this.pendingRequestStarts.get(requestId) === startPromise) {
+      if (this.pendingRequestStarts.get(requestId) === pendingStart) {
         this.pendingRequestStarts.delete(requestId);
       }
-      if (this.pendingWorkStarts.get(workKey) === startPromise) {
+      if (this.pendingWorkStarts.get(workKey) === pendingStart) {
         this.pendingWorkStarts.delete(workKey);
       }
     }
@@ -732,78 +771,77 @@ export class FleetDispatchCoordinator {
 
     const existingByRequest = this.leaseStore.getByRequestId(requestId);
     if (existingByRequest && existingByRequest.state !== 'expired') {
+      assertDispatchRequestIdentity(existingByRequest.requestFingerprint, dispatchRequestFingerprint(options));
+      this.assertAccountBinding(existingByRequest.session, options);
       if (options.retainReceipt) this.pinReceipt(requestId, existingByRequest.session.id);
       return existingByRequest.session;
     }
 
     const existingByWorkKey = this.leaseStore.getByWorkKey(workKey);
     if (existingByWorkKey) {
+      assertDispatchRequestIdentity(existingByWorkKey.requestFingerprint, dispatchRequestFingerprint(options));
+      this.assertAccountBinding(existingByWorkKey.session, options);
       if (options.retainReceipt) this.pinReceipt(requestId, existingByWorkKey.session.id);
       return existingByWorkKey.session;
     }
 
     const target = await this.selectNode(options);
-    if (target.nodeId === this.coordinatorIdentity.node_id) {
-      const transport = this.transportFactory(target, {
-        coordinatorNodeId: this.coordinatorIdentity.node_id,
-        pushBus: this.pushBus,
-        onTerminal: (session) => this.updateLeaseForSession(session),
-        localSessionManager: this.localSessionManager,
-        profile: options.profile
-      });
-      const session = await transport.startSession(options);
-      const routed = decorateSession(session, this.coordinatorIdentity.node_id, 'running');
-      this.remoteTransports.set(routed.id, transport);
-      this.recordLease({
-        requestId,
-        retainReceipt: options.retainReceipt,
-        workKey,
-        profile: options.profile,
-        nodeId: this.coordinatorIdentity.node_id,
-        nodeUrl: this.coordinatorIdentity.advertised_url,
-        session: routed,
-        state: 'running',
-        createdAt: nowIso(),
-        updatedAt: nowIso(),
-        coordinatorNodeId: options.coordinatorNodeId ?? this.coordinatorIdentity.node_id,
-        pinnedNodeId: options.nodeId
-      });
-      return routed;
-    }
-
     const transport = this.transportFactory(target, {
-      coordinatorNodeId: this.coordinatorIdentity.node_id,
-      pushBus: this.pushBus,
-      onTerminal: (session) => this.updateLeaseForSession(session),
-      localSessionManager: this.localSessionManager,
-      profile: options.profile
+      coordinatorNodeId: this.coordinatorIdentity.node_id, pushBus: this.pushBus,
+      onSessionUpdate: session => this.updateLeaseForSession(session),
+      localSessionManager: this.localSessionManager, profile: options.profile
     });
-    const session = await transport.startSession({
-      ...options,
-      nodeId: target.nodeId,
-      coordinatorNodeId: this.coordinatorIdentity.node_id
-    });
-    this.remoteTransports.set(session.id, transport);
-    const routed = decorateSession(session, target.nodeId, 'running');
-    this.recordLease({
-      requestId,
-      retainReceipt: options.retainReceipt,
-      workKey,
-      profile: options.profile,
-      nodeId: target.nodeId,
-      nodeUrl: target.advertisedUrl,
-      session: routed,
-      state: 'running',
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-      coordinatorNodeId: this.coordinatorIdentity.node_id,
-      pinnedNodeId: options.nodeId
-    });
-    this.pushBus.publish({
-      type: 'session.started',
-      session: routed
-    });
-    return routed;
+    const pending: Session = {
+      id: `offered:${requestId}`, requestId, status: 'starting', startedAt: nowIso(),
+      providerKind: options.providerKind, instanceId: options.instanceId, nodeId: target.nodeId,
+      repo: options.repo, branch: options.branch, target: options.target, mr: options.mr,
+      mode: options.mode, backend: options.backend, backendInstance: options.backendInstance,
+      model: options.model, budget: options.budget, gitlab: options.gitlab
+    };
+    const offered: LeaseRecord = { requestId, retainReceipt: options.retainReceipt, workKey,
+      requestFingerprint: dispatchRequestFingerprint(options),
+      profile: options.profile, nodeId: target.nodeId, nodeUrl: target.advertisedUrl,
+      session: decorateSession(pending, target.nodeId, 'offered'), state: 'offered',
+      createdAt: nowIso(), updatedAt: nowIso(), coordinatorNodeId: this.coordinatorIdentity.node_id,
+      pinnedNodeId: options.nodeId };
+    // Persist ownership before a worker can launch. A lost acknowledgement or
+    // coordinator restart must never turn an unknown start into new work.
+    this.recordLease(offered);
+    this.remoteTransports.set(pending.id, transport);
+    try {
+      const session = await transport.startSession({ ...options, requestId,
+        nodeId: target.nodeId, coordinatorNodeId: this.coordinatorIdentity.node_id });
+      await this.verifyStartedAccount(transport, observedSession(session, target.nodeId), options);
+      const latest = transport.getSession(session.id) ?? session;
+      const observed = observedSession(latest, target.nodeId);
+      this.assertAccountBinding(observed, options);
+      const routed = decorateSession({ ...observed, requestId }, target.nodeId, sessionLeaseState(observed));
+      this.remoteTransports.delete(pending.id); this.remoteTransports.set(routed.id, transport);
+      this.recordLease({ ...offered, session: routed, state: sessionLeaseState(routed), updatedAt: nowIso() });
+      if (target.nodeId !== this.coordinatorIdentity.node_id) this.pushBus.publish({ type: 'session.started', session: routed });
+      return routed;
+    } catch (error) {
+      const current = this.leaseStore.getByRequestId(requestId) ?? offered;
+      if (!sessionIsTerminal(current.session)) {
+        const session = decorateSession({ ...current.session, status: 'starting', endedAt: undefined,
+          error: 'Worker start was not confirmed; reconciling the existing request' }, target.nodeId, 'uncertain_reconciling');
+        this.recordLease({ ...current, session, state: 'uncertain_reconciling', updatedAt: nowIso() });
+        this.pushBus.publish({ type: 'session.status', session });
+      }
+      throw error;
+    }
+  }
+
+  private assertAccountBinding(session: Session, options: RoutedSessionOptions): void {
+    if (session.backendInstance !== options.backendInstance
+      || options.backendInstance && session.nodeId !== options.nodeId) {
+      throw new GAHError('Dispatch receipt does not match the requested account and execution node. Use a new request ID for a different selection.', 'DISPATCH_ACCOUNT_MISMATCH');
+    }
+  }
+
+  private async verifyStartedAccount(transport: NodeDispatchTransport, session: Session, options: RoutedSessionOptions): Promise<void> {
+    try { this.assertAccountBinding(session, options); }
+    catch (error) { await transport.stopSession(session.id).catch(() => {}); throw error; }
   }
 
   async stopSession(sessionId: string): Promise<Session> {
@@ -811,7 +849,7 @@ export class FleetDispatchCoordinator {
     if (local) {
       const session = await this.localTransport.stopSession(sessionId);
       this.updateLeaseForSession(session);
-      return decorateSession(session, this.coordinatorIdentity.node_id, 'terminal');
+      return observedSession(session, this.coordinatorIdentity.node_id);
     }
 
     const lease = this.leaseStore.getBySessionId(sessionId);
@@ -824,7 +862,7 @@ export class FleetDispatchCoordinator {
       {
         coordinatorNodeId: this.coordinatorIdentity.node_id,
         pushBus: this.pushBus,
-        onTerminal: (session) => this.updateLeaseForSession(session),
+        onSessionUpdate: (session) => this.updateLeaseForSession(session),
         localSessionManager: this.localSessionManager,
         profile: lease.profile,
         session: lease.session
@@ -832,15 +870,16 @@ export class FleetDispatchCoordinator {
     );
     const session = await transport.stopSession(sessionId);
     this.remoteTransports.set(sessionId, transport);
-    const routed = decorateSession(session, lease.nodeId, 'terminal');
+    const routed = observedSession(session, lease.nodeId);
+    const nextState = sessionLeaseState(routed);
     this.recordLease({
       ...lease,
       session: routed,
-      state: 'terminal',
+      state: nextState,
       updatedAt: nowIso()
     });
     this.pushBus.publish({
-      type: 'session.stopped',
+      type: sessionIsTerminal(routed) ? 'session.stopped' : 'session.status',
       session: routed
     });
     return routed;
@@ -862,7 +901,7 @@ export class FleetDispatchCoordinator {
       {
         coordinatorNodeId: this.coordinatorIdentity.node_id,
         pushBus: this.pushBus,
-        onTerminal: (session) => this.updateLeaseForSession(session),
+        onSessionUpdate: (session) => this.updateLeaseForSession(session),
         localSessionManager: this.localSessionManager,
         profile: lease.profile,
         session: lease.session
@@ -946,7 +985,7 @@ export class FleetDispatchCoordinator {
         finish(this.getSession(sessionId) ?? current, true);
       }, timeoutMs);
       unsubscribe = this.pushBus.subscribe!((message) => {
-        if (message.type === 'session.stopped' && message.session.id === sessionId) {
+        if (message.type === 'session.stopped' && message.session.id === sessionId && sessionIsTerminal(message.session)) {
           finish(message.session, false);
         }
       });
@@ -975,11 +1014,11 @@ export class FleetDispatchCoordinator {
         ? this.localTransport.getSession(lease.session.id)
         : undefined;
       if (local) {
-        const decorated = decorateSession(local, this.coordinatorIdentity.node_id, sessionIsTerminal(local) ? 'terminal' : 'running');
+        const decorated = observedSession(local, this.coordinatorIdentity.node_id);
         this.recordLease({
           ...lease,
           session: decorated,
-          state: sessionIsTerminal(local) ? 'terminal' : 'running',
+          state: sessionLeaseState(decorated),
           updatedAt: nowIso()
         });
         continue;
@@ -997,20 +1036,23 @@ export class FleetDispatchCoordinator {
         });
         continue;
       }
-      const matched = probe.sessions.find((session) => session.id === lease.session.id);
+      const matched = probe.sessions.find(session => session.id === lease.session.id
+        || (session.requestId === lease.requestId && deriveLeaseWorkKey({ profile: lease.profile,
+          session: decorateSession(session, lease.nodeId, 'running') }) === lease.workKey));
       if (!matched) {
         this.recordLease({
           ...lease,
-          session: decorateSession(lease.session, lease.nodeId, 'expired'),
-          state: 'expired',
+          session: decorateSession({ ...lease.session, status: 'starting', endedAt: undefined, error: 'Worker no longer reports this session; execution is unconfirmed' }, lease.nodeId, 'uncertain_reconciling'),
+          state: 'uncertain_reconciling',
           updatedAt: nowIso()
         });
         continue;
       }
-      const nextState: DispatchLeaseState = sessionIsTerminal(matched) ? 'terminal' : 'running';
+      const observed = observedSession(matched, lease.nodeId);
+      const nextState = sessionLeaseState(observed);
       this.recordLease({
         ...lease,
-        session: decorateSession(matched, lease.nodeId, nextState),
+        session: observed,
         state: nextState,
         updatedAt: nowIso()
       });
@@ -1024,11 +1066,18 @@ export class FleetDispatchCoordinator {
   }
 
   private updateLeaseForSession(session: Session): void {
-    const lease = this.leaseStore.getBySessionId(session.id);
-    if (!lease) {
+    const lease = this.leaseStore.getBySessionId(session.id)
+      ?? (session.requestId ? this.leaseStore.getByRequestId(session.requestId) : undefined);
+    if (!lease || (lease.session.id !== session.id && deriveLeaseWorkKey({ profile: lease.profile,
+      session: decorateSession(session, lease.nodeId, 'running') }) !== lease.workKey)) {
       return;
     }
-    const nextState: DispatchLeaseState = sessionIsTerminal(session) ? 'terminal' : 'running';
+    session = observedSession(session, lease.nodeId);
+    const nextState = sessionLeaseState(session);
+    if (lease.session.id !== session.id) {
+      const transport = this.remoteTransports.get(lease.session.id);
+      if (transport) { this.remoteTransports.delete(lease.session.id); this.remoteTransports.set(session.id, transport); }
+    }
     this.recordLease({
       ...lease,
       session: decorateSession(session, lease.nodeId, nextState),
@@ -1054,7 +1103,8 @@ export class FleetDispatchCoordinator {
       });
     }
 
-    if (!candidates.some((candidate) => candidate.nodeId === coordinatorId)) {
+    if (!candidates.some((candidate) => candidate.nodeId === coordinatorId)
+      && (!options.backendInstance || !nodes.some(snapshot => snapshot.node_id === coordinatorId))) {
       candidates.push({
         nodeId: coordinatorId,
         advertisedUrl: this.coordinatorIdentity.advertised_url,
@@ -1067,6 +1117,19 @@ export class FleetDispatchCoordinator {
     if (pin) {
       const pinned = candidates.find((candidate) => candidate.nodeId === pin);
       if (!pinned) {
+        const snapshot = nodes.find(node => node.node_id === pin);
+        if (snapshot && pin !== coordinatorId && requiresDispatchExecutionOptions(options) && snapshot.dispatch_execution_options !== true) {
+          throw new GAHError(`Update worker ${pin} before using dispatch execution options. It does not advertise support.`, 'DISPATCH_OPTIONS_UNSUPPORTED');
+        }
+        if (options.backendInstance && snapshot && pin !== coordinatorId && snapshot.dispatch_backend_instances !== true) {
+          throw new GAHError(`Update worker ${pin} before dispatching to a named account. It does not advertise exact account routing.`, 'BACKEND_INSTANCE_UNSUPPORTED');
+        }
+        if (snapshot && pin !== coordinatorId && snapshot.dispatch_execution_results !== true) {
+          throw new GAHError(`Update worker ${pin} before dispatching. Confirmed termination and execution results are required.`, 'DISPATCH_RESULTS_UNSUPPORTED');
+        }
+        if (options.backendInstance && snapshot) {
+          throw new GAHError(`Account ${options.backendInstance} on node ${pin} is unavailable for this dispatch. Check node health, login, model support and limits.`, 'NODE_PINNING_FAILED');
+        }
         throw new GAHError(`Pinned node ${pin} is not healthy or not registered for profile ${options.profile}`, 'NODE_PINNING_FAILED');
       }
       return pinned;
@@ -1111,6 +1174,12 @@ export class FleetDispatchCoordinator {
   }
 
   private isSnapshotEligible(snapshot: NodeObservationSnapshot, options: RoutedSessionOptions): boolean {
+    if (snapshot.node_id !== this.coordinatorIdentity.node_id && snapshot.dispatch_execution_results !== true) return false;
+    if (snapshot.node_id !== this.coordinatorIdentity.node_id && requiresDispatchExecutionOptions(options) && snapshot.dispatch_execution_options !== true) return false;
+    if (options.backendInstance && (
+      snapshot.node_id !== this.coordinatorIdentity.node_id && snapshot.dispatch_backend_instances !== true
+      || !this.relevantBackendInstances(snapshot, options).some(instance => instance.enabled
+        && (instance.executable_resolved ?? instance.executable_configured) && instance.auth_ready !== false))) return false;
     if (snapshot.state !== 'healthy') {
       return false;
     }
@@ -1155,7 +1224,9 @@ export class FleetDispatchCoordinator {
     if (!options.backend) {
       return true;
     }
-    const relevant = snapshot.availability.filter((scope) => scope.backend === options.backend);
+    const relevant = snapshot.availability.filter((scope) => scope.backend === options.backend
+      && (!options.backendInstance || (!scope.backend_instance || scope.backend_instance === options.backendInstance)
+        && (!scope.quota_pool || this.relevantBackendInstances(snapshot, options).some(instance => instance.quota_pool === scope.quota_pool))));
     if (relevant.length === 0) {
       return true;
     }
@@ -1189,6 +1260,7 @@ export class FleetDispatchCoordinator {
 
   private relevantBackendInstances(snapshot: NodeObservationSnapshot, options: RoutedSessionOptions): typeof snapshot.backend_instances {
     return snapshot.backend_instances.filter((instance) => {
+      if (options.backendInstance && instance.backend_instance !== options.backendInstance) return false;
       if (!options.backend) {
         return true;
       }
@@ -1197,7 +1269,7 @@ export class FleetDispatchCoordinator {
   }
 
   private getConfiguredConcurrencyCap(snapshot: NodeObservationSnapshot, options: RoutedSessionOptions): number | null {
-    const matchingInstances = this.relevantBackendInstances(snapshot, options).filter((instance) => {
+    const matchingInstances = this.relevantBackendInstances(snapshot, { ...options, backendInstance: undefined }).filter((instance) => {
       if (!(instance.executable_resolved ?? instance.executable_configured)) {
         return false;
       }

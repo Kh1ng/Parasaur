@@ -1,0 +1,397 @@
+//! Private native context preparation, verification and fixed job entry.
+//! Only execute consumes fresh start authority and may invoke a backend.
+use anyhow::{ensure, Result};
+use std::{io::Read, path::PathBuf};
+
+#[derive(clap::Args)]
+pub struct Args {
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(clap::Subcommand)]
+pub enum Command {
+    Plan {
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+    Prepare {
+        #[arg(long)]
+        request_file: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        node_id: String,
+        #[arg(long)]
+        central_url: String,
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+    Check {
+        #[arg(long)]
+        context_dir: PathBuf,
+        #[arg(long)]
+        expected_context: String,
+        #[arg(long)]
+        work_dir: PathBuf,
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+    #[cfg(target_os = "linux")]
+    Start {
+        #[arg(long)]
+        context_dir: PathBuf,
+        #[arg(long)]
+        expected_context: String,
+        #[arg(long)]
+        work_dir: PathBuf,
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+    #[cfg(target_os = "linux")]
+    Execute {
+        #[arg(long)]
+        context_dir: PathBuf,
+        #[arg(long)]
+        expected_context: String,
+        #[arg(long)]
+        work_dir: PathBuf,
+        #[arg(long)]
+        config_path: Option<String>,
+        #[arg(long)]
+        credential_socket: Option<PathBuf>,
+    },
+    #[cfg(target_os = "linux")]
+    ReleaseReservation {
+        #[arg(long)]
+        binding_file: PathBuf,
+        #[arg(long)]
+        work_dir: PathBuf,
+        #[arg(long)]
+        reservation_id: String,
+    },
+    #[cfg(target_os = "linux")]
+    ReleaseResult {
+        #[arg(long)]
+        context_dir: PathBuf,
+        #[arg(long)]
+        binding_file: PathBuf,
+        #[arg(long)]
+        work_dir: PathBuf,
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+    #[cfg(target_os = "linux")]
+    #[command(name = "result")]
+    CollectResult {
+        #[arg(long)]
+        context_dir: PathBuf,
+        #[arg(long)]
+        binding_file: PathBuf,
+        #[arg(long)]
+        work_dir: PathBuf,
+    },
+    #[cfg(target_os = "linux")]
+    WorkerStatus {
+        #[arg(long)]
+        work_dir: PathBuf,
+        #[arg(long)]
+        binding_file: PathBuf,
+    },
+    #[cfg(target_os = "linux")]
+    HostReserve {
+        #[arg(long)]
+        context_dir: PathBuf,
+        #[arg(long)]
+        expected_context: String,
+        #[arg(long)]
+        work_dir: PathBuf,
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+    CheckCurrentPolicy {
+        #[arg(long)]
+        worker_catalog_file: Option<PathBuf>,
+        #[arg(long, conflicts_with = "check_route")]
+        check_work: bool,
+        #[arg(long)]
+        check_route: bool,
+        #[arg(long)]
+        context_dir: PathBuf,
+        #[arg(long)]
+        expected_context: String,
+        #[arg(long)]
+        node_id: String,
+        #[arg(long)]
+        central_url: String,
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+}
+
+pub fn run(args: Args) -> Result<()> {
+    match args.command {
+        Command::Plan { config_path } => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Input {
+                request: crate::native_handoff::JobRequest,
+                catalog: crate::native_handoff::WorkerCatalog,
+            }
+            let mut bytes = Vec::new();
+            std::io::stdin()
+                .take(8 * 1024 * 1024 + 1)
+                .read_to_end(&mut bytes)?;
+            ensure!(
+                bytes.len() <= 8 * 1024 * 1024,
+                "Native planning input exceeds its limit"
+            );
+            let input: Input = serde_json::from_slice(&bytes)
+                .map_err(|_| anyhow::anyhow!("Invalid native planning input"))?;
+            let cfg = crate::config::load(config_path.as_deref())?;
+            println!(
+                "{}",
+                serde_json::to_string(&crate::dispatch::plan_native(
+                    &cfg,
+                    &input.request,
+                    &input.catalog
+                )?)?
+            );
+        }
+        #[cfg(target_os = "linux")]
+        Command::ReleaseReservation {
+            binding_file,
+            work_dir,
+            reservation_id,
+        } => {
+            let binding = crate::native_handoff::worker::read_binding(&binding_file)?;
+            ensure!(
+                binding.node_id == crate::central_claims::resolve_node_id()?,
+                "Native reservation belongs to a different worker"
+            );
+            let mut run = crate::native_handoff::worker::WorkerRun::open(&work_dir, &binding)?;
+            println!("{}", run.release_reservation(&reservation_id)?);
+        }
+        #[cfg(target_os = "linux")]
+        Command::ReleaseResult {
+            context_dir,
+            binding_file,
+            work_dir,
+            config_path,
+        } => {
+            let token = crate::native_handoff::wrapper::receive_owner()?;
+            let binding = crate::native_handoff::worker::read_binding(&binding_file)?;
+            ensure!(
+                binding.node_id == crate::central_claims::resolve_node_id()?,
+                "Native result belongs to a different worker"
+            );
+            let cfg = crate::config::load(config_path.as_deref())?;
+            let mut run = crate::native_handoff::worker::WorkerRun::open(&work_dir, &binding)?;
+            println!("{}", run.release_result(&context_dir, &cfg, &token)?);
+        }
+        #[cfg(target_os = "linux")]
+        Command::CollectResult {
+            context_dir,
+            binding_file,
+            work_dir,
+        } => {
+            let binding = crate::native_handoff::worker::read_binding(&binding_file)?;
+            ensure!(
+                binding.node_id == crate::central_claims::resolve_node_id()?,
+                "Native result belongs to a different worker"
+            );
+            let mut run = crate::native_handoff::worker::WorkerRun::open(&work_dir, &binding)?;
+            println!("{}", run.collect_result(&context_dir)?);
+        }
+        #[cfg(target_os = "linux")]
+        Command::Start {
+            context_dir,
+            expected_context,
+            work_dir,
+            config_path,
+        } => {
+            println!(
+                "{}",
+                crate::native_handoff::launch::run(
+                    &context_dir,
+                    &expected_context,
+                    &work_dir,
+                    config_path.as_deref()
+                )?
+            );
+        }
+        #[cfg(target_os = "linux")]
+        Command::Execute {
+            context_dir,
+            expected_context,
+            work_dir,
+            config_path,
+            credential_socket,
+        } => {
+            crate::native_handoff::wrapper::run(
+                &context_dir,
+                &expected_context,
+                &work_dir,
+                config_path.as_deref(),
+                credential_socket.as_deref(),
+            )?;
+        }
+        #[cfg(target_os = "linux")]
+        Command::WorkerStatus {
+            work_dir,
+            binding_file,
+        } => {
+            let binding = crate::native_handoff::worker::read_binding(&binding_file)?;
+            ensure!(
+                binding.node_id == crate::central_claims::resolve_node_id()?,
+                "Native journal belongs to a different worker"
+            );
+            let run = crate::native_handoff::worker::WorkerRun::open(&work_dir, &binding)?;
+            println!("{}", run.inspect()?);
+        }
+        #[cfg(target_os = "linux")]
+        Command::HostReserve {
+            context_dir,
+            expected_context,
+            work_dir,
+            config_path,
+        } => {
+            for key in [
+                "PARASAUR_LEDGER_PATH",
+                "PARASAUR_EVENTS_PATH",
+                "PARASAUR_RECONCILIATION_PATH",
+            ] {
+                std::env::remove_var(key);
+            }
+            let cfg = crate::config::load(config_path.as_deref())?;
+            let node_id = crate::central_claims::resolve_node_id()?;
+            let context = crate::native_handoff::load(
+                &cfg,
+                &context_dir,
+                &expected_context,
+                &node_id,
+                &work_dir,
+            )?;
+            println!(
+                "{}",
+                crate::native_handoff::host::reserve(&context, &work_dir)?
+            );
+        }
+        Command::CheckCurrentPolicy {
+            worker_catalog_file,
+            check_work,
+            check_route,
+            context_dir,
+            expected_context,
+            node_id,
+            central_url,
+            config_path,
+        } => {
+            let cfg = crate::config::load(config_path.as_deref())?;
+            let check = if check_work {
+                crate::native_handoff::check_current_work
+            } else if check_route {
+                crate::native_handoff::check_current_route
+            } else {
+                crate::native_handoff::check_current_policy
+            };
+            let binding = if let Some(path) = worker_catalog_file {
+                ensure!(
+                    check_work || check_route,
+                    "Worker catalog requires a work or route check"
+                );
+                let catalog = crate::native_handoff::WorkerCheckScope::read(&path)?;
+                ensure!(
+                    catalog.node_id() == node_id,
+                    "Worker catalog belongs to another node"
+                );
+                catalog.check_current(
+                    &cfg,
+                    &context_dir,
+                    &expected_context,
+                    &central_url,
+                    check_work,
+                )?
+            } else {
+                check(
+                    &cfg,
+                    &context_dir,
+                    &expected_context,
+                    &node_id,
+                    &central_url,
+                )?
+            };
+            println!(
+                "{}",
+                serde_json::json!({"binding":binding,"policy_current":true,"work_current":check_work.then_some(true),"route_current":(check_work || check_route).then_some(true),"execution_authorized":false})
+            );
+        }
+        Command::Prepare {
+            request_file,
+            output,
+            node_id,
+            central_url,
+            config_path,
+        } => {
+            let mut bytes = Vec::new();
+            std::fs::File::open(request_file)?
+                .take(8 * 1024 * 1024 + 1)
+                .read_to_end(&mut bytes)?;
+            ensure!(
+                bytes.len() <= 8 * 1024 * 1024,
+                "Native request exceeds its input limit"
+            );
+            let request = serde_json::from_slice(&bytes).map_err(|_| {
+                anyhow::anyhow!("Native request does not match the supported schema")
+            })?;
+            let cfg = crate::config::load(config_path.as_deref())?;
+            let binding =
+                crate::native_handoff::prepare(&cfg, &request, &node_id, &central_url, &output)?;
+            println!("{}", serde_json::to_string(&binding)?);
+        }
+        Command::Check {
+            context_dir,
+            expected_context,
+            work_dir,
+            config_path,
+        } => {
+            // This private child must read the verified job history, not an
+            // inherited worker or controller ledger/event path.
+            for key in [
+                "PARASAUR_LEDGER_PATH",
+                "PARASAUR_EVENTS_PATH",
+                "PARASAUR_RECONCILIATION_PATH",
+            ] {
+                std::env::remove_var(key);
+            }
+            let cfg = crate::config::load(config_path.as_deref())?;
+            let node_id = crate::central_claims::resolve_node_id()?;
+            let context = crate::native_handoff::load(
+                &cfg,
+                &context_dir,
+                &expected_context,
+                &node_id,
+                &work_dir,
+            )?;
+            let mut effective_entries = 0;
+            crate::ledger::visit_entries(&context.config, |entry| {
+                ensure!(
+                    entry.profile == context.binding.profile,
+                    "Effective native history has the wrong scope"
+                );
+                effective_entries += 1;
+                Ok(())
+            })?;
+            ensure!(
+                effective_entries == context.history_entries,
+                "Effective native history does not match the prepared context"
+            );
+            println!(
+                "{}",
+                serde_json::json!({ "binding": context.binding, "history_entries": context.history_entries, "effective_history_entries": effective_entries,
+                "execution_started": false, "authority_refresh_required": true })
+            );
+        }
+    }
+    Ok(())
+}
