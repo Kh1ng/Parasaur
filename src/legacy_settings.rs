@@ -30,24 +30,6 @@ pub fn legacy_name(current: &str) -> Option<String> {
         .map(|rest| format!("{LEGACY}{rest}"))
 }
 
-/// The settings of an env file that is read after startup, with each setting
-/// the file has only under its old name repeated under its current name. A
-/// file loaded into a running process replaces what that process inherited;
-/// without the repeat, an old name in the file would leave the current name
-/// at the inherited value, or unset.
-pub fn adopt_file(mut settings: Vec<(String, String)>) -> Vec<(String, String)> {
-    let repeated: Vec<(String, String)> = settings
-        .iter()
-        .filter_map(|(name, value)| {
-            let current = format!("{CURRENT}{}", name.strip_prefix(LEGACY)?);
-            let taken = settings.iter().any(|(other, _)| *other == current);
-            (!taken).then(|| (current, value.clone()))
-        })
-        .collect();
-    settings.extend(repeated);
-    settings
-}
-
 fn adopted(vars: impl IntoIterator<Item = (OsString, OsString)>) -> Vec<(String, OsString)> {
     let vars: Vec<(OsString, OsString)> = vars.into_iter().collect();
     vars.iter()
@@ -87,26 +69,6 @@ mod tests {
                 "PARASAUR_CONFIG".to_string(),
                 OsString::from("/old/config.toml")
             )]
-        );
-    }
-
-    #[test]
-    fn an_env_file_gives_its_old_names_their_current_names_too() {
-        let pair = |name: &str, value: &str| (name.to_string(), value.to_string());
-        assert_eq!(
-            adopt_file(vec![
-                pair("GAH_CONFIG", "/file.toml"),
-                pair("GAH_BINARY", "/old/gah"),
-                pair("PARASAUR_BINARY", "/new/parasaur"),
-                pair("GITHUB_TOKEN", "token"),
-            ]),
-            vec![
-                pair("GAH_CONFIG", "/file.toml"),
-                pair("GAH_BINARY", "/old/gah"),
-                pair("PARASAUR_BINARY", "/new/parasaur"),
-                pair("GITHUB_TOKEN", "token"),
-                pair("PARASAUR_CONFIG", "/file.toml"),
-            ]
         );
     }
 

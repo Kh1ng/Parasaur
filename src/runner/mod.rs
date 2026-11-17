@@ -53,11 +53,8 @@ pub fn load_env_file(path: &str) -> Vec<(String, String)> {
     parse_env_file(&text)
 }
 
-/// A setting the file names the old way is returned under its current name
-/// as well: these files are read after startup adoption has already run.
 pub(crate) fn parse_env_file(text: &str) -> Vec<(String, String)> {
-    let settings = text
-        .lines()
+    text.lines()
         .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
         .filter_map(|l| {
             let (k, v) = l.split_once('=')?;
@@ -66,8 +63,7 @@ pub(crate) fn parse_env_file(text: &str) -> Vec<(String, String)> {
                 v.trim().trim_matches('"').trim_matches('\'').to_string(),
             ))
         })
-        .collect();
-    crate::legacy_settings::adopt_file(settings)
+        .collect()
 }
 
 /// Replace the inherited child environment with a narrow runtime set.
