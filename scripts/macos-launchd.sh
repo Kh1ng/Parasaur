@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # Own the macOS control-plane/worker lifecycle from one deterministic place.
 # Settings were named GAH_* before the product became Parasaur. Accept the old
-# names: a GAH_X with no PARASAUR_X becomes PARASAUR_X.
-for legacy_setting in "${!GAH_@}"; do
-  current_setting="PARASAUR_${legacy_setting#GAH_}"
-  [ -n "${!current_setting+set}" ] || export "$current_setting=${!legacy_setting}"
-done
-unset legacy_setting current_setting
+# names: a GAH_X with no PARASAUR_X becomes PARASAUR_X. The names given this
+# way are remembered so that reading an env file later can redo them.
+adopted_settings=()
+adopt_old_setting_names() {
+  local legacy_setting current_setting
+  for legacy_setting in "${!GAH_@}"; do
+    current_setting="PARASAUR_${legacy_setting#GAH_}"
+    [ -n "${!current_setting+set}" ] && continue
+    export "$current_setting=${!legacy_setting}"
+    adopted_settings+=("$current_setting")
+  done
+}
+adopt_old_setting_names
 set -euo pipefail
 trap 'echo "ERROR: macOS LaunchAgent setup failed at line $LINENO." >&2' ERR
 
@@ -74,10 +81,18 @@ register_worker() {
   host="$(plist_value HOST)"
   port="$(plist_value PORT)"
   transport_mode="$(plist_value PARASAUR_REGISTRY_TRANSPORT_MODE)"
+  # The file may set a setting under its old name, and that must win over an
+  # old name this script inherited, as it does for the worker itself. A name
+  # adopted at startup would hide the file's value, so adopt again afterwards.
+  set +u
+  for adopted_setting in "${adopted_settings[@]}"; do unset "$adopted_setting"; done
+  adopted_settings=()
   set -a
   # shellcheck disable=SC1090
   [ ! -f "$HOME/.config/gah/gah-loop.env" ] || . "$HOME/.config/gah/gah-loop.env"
   set +a
+  adopt_old_setting_names
+  set -u
   # The token reaches curl on stdin (-H @-), never in its arguments, which
   # any local user can read while curl runs.
   curl_args=(-fsS -m 2)
