@@ -1,14 +1,14 @@
 /** Worker-only fixed native lifecycle. Context and executable paths are local
  * service configuration; remote requests cannot choose commands or paths. */
 import { spawn,execFileSync } from 'node:child_process';
-import { openSync, closeSync, realpathSync } from 'node:fs';
+import { openSync, closeSync, realpathSync, existsSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import type { ProfileSummary,ConfigShowFull,NativeWorkerCatalog } from '@git-agent-harness/contracts';
 import { requireOwner } from './authMiddleware.js';
-import { NativeWorkerContext, nativeBinding } from './nativeWorkerContext.js';
+import { NativeWorkerContext, nativeBinding, openNativeFile } from './nativeWorkerContext.js';
 import type { NativeDispatchBinding, NativeStartGrant, NativeWorkerObservation } from './nativeDispatchBroker.js';
 
 const MAX_OUTPUT=32*1024*1024;
@@ -33,7 +33,8 @@ function command(binary:string,args:string[],input?:unknown):Promise<unknown> {
 export class NativeWorker {
   readonly contexts:NativeWorkerContext;
   private readonly binary:string;
-  constructor(private readonly options:{root:string;nodeId:string;binary:string;config?:string;
+  /** `launcher` replaces systemd-run in tests; the service never sets it. */
+  constructor(private readonly options:{root:string;nodeId:string;binary:string;config?:string;launcher?:string;
     profiles:()=>Promise<ProfileSummary[]>;centralToken:()=>string|undefined}) {
     if(process.platform!=='linux') throw Error('Native workers require Linux');
     const executable=isAbsolute(options.binary)?options.binary:execFileSync('/usr/bin/which',[options.binary],{encoding:'utf8',timeout:2000}).trim();
@@ -68,9 +69,18 @@ export class NativeWorker {
   }
   async stage(binding:NativeDispatchBinding):Promise<NativeWorkerObservation> {
     await this.check(binding);
-    if(!this.contexts.offerStage(binding)) return this.observe(binding);
+    const offered=this.contexts.offerStage(binding);
+    // An earlier offer whose admission never created the job directory holds
+    // no capacity: this server stopped, or the launch failed, after the fence
+    // was written. Observation alone would leave that run unknown for good, so
+    // launch it again. That cannot admit the run twice: admission creates the
+    // job directory exclusively and systemd refuses a second unit of this name.
+    if(!offered && this.contexts.admissionBegan(binding)) return this.observe(binding);
     const {run}=this.contexts.paths(binding);
-    for(const name of ['admission.stdout','admission.stderr']) closeSync(openSync(join(run,name),'wx',0o600));
+    for(const name of ['admission.stdout','admission.stderr']) {
+      const path=join(run,name);
+      closeSync(offered || !existsSync(path)?openSync(path,'wx',0o600):openNativeFile(path));
+    }
     const args=['--user','--quiet','--no-ask-password','--no-block','--expand-environment=no',
       `--unit=gah-native-capacity-${binding.run_id}.service`];
     for(const value of ['Type=oneshot','RemainAfterExit=yes','FileDescriptorStoreMax=1','FileDescriptorStorePreserve=yes',
@@ -84,12 +94,15 @@ export class NativeWorker {
     }
     // systemd-run has no JSON output. A fixed wrapper-free invocation starts
     // the holder once; observation below, not exit zero, establishes readiness.
-    await new Promise<void>((resolve,reject)=>{
-      const child=spawn('/usr/bin/systemd-run',[...args,this.binary,...this.args(binding,'host-reserve',true)],{stdio:'ignore'});
+    const launched=new Promise<void>((resolve,reject)=>{
+      const child=spawn(this.options.launcher??'/usr/bin/systemd-run',[...args,this.binary,...this.args(binding,'host-reserve',true)],{stdio:'ignore'});
       const timer=setTimeout(()=>child.kill('SIGKILL'),5000);
       child.once('error',()=>{clearTimeout(timer);reject(Error('Native admission request unconfirmed'));});
       child.once('close',code=>{clearTimeout(timer);code===0?resolve():reject(Error('Native admission request unconfirmed'));});
     });
+    // A repeated launch is refused while the first unit is still loaded; what
+    // that unit did is then for observation to report.
+    await (offered?launched:launched.catch(()=>undefined));
     return this.observe(binding);
   }
   async observe(binding:NativeDispatchBinding):Promise<NativeWorkerObservation> {
@@ -113,7 +126,7 @@ export class NativeWorker {
     if(action==='prepare') return {files:this.contexts.begin(binding),stage_offered:this.contexts.stageOffered(binding)};
     this.contexts.paths(binding);
     if(action==='stage') return this.stage(binding);
-    if(action==='observe') return this.observe(binding);
+    if(action==='observe') return this.contexts.stageOffered(binding) && !this.contexts.admissionBegan(binding)?this.stage(binding):this.observe(binding);
     if(action==='start') {
       const grant=body.grant as NativeStartGrant|undefined;
       if(!grant || !isDeepStrictEqual([grant.run_id,grant.node_id,grant.context_sha256],[binding.run_id,binding.node_id,binding.context_sha256])

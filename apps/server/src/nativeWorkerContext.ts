@@ -118,6 +118,12 @@ export class NativeWorkerContext {
     writeFileAtomic(join(this.paths(binding).run,'stage-offered.json'),JSON.stringify(binding),0o600,process.platform!=='win32');
     return true;
   }
+  /** Whether admission got as far as creating the job directory. Admission
+   * creates it exclusively and before it takes capacity, so a staged run
+   * without it holds nothing and has never been admitted. */
+  admissionBegan(binding:NativeDispatchBinding):boolean {
+    return lstatSync(this.paths(binding).work,{throwIfNoEntry:false})!==undefined;
+  }
   private manifest(binding:NativeDispatchBinding,bytes?:Buffer):Manifest {
     const raw=bytes??readPrivate(join(this.paths(binding).context,'manifest.json'));
     return nativeContextManifest(binding,raw);
