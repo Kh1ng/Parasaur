@@ -594,6 +594,43 @@ fn arguments(agent: &Plist) -> Vec<String> {
     }
 }
 
+/// Runs a LaunchAgent's own shell wrapper with its plist environment and a
+/// stand-in for Node, with `lines` as the operator's env file, and returns
+/// what the server would read for `setting` once startup adoption has run:
+/// the current name if set, else the old one.
+fn launched_setting(agent: &Plist, env_file: &Path, lines: &str, setting: &str) -> String {
+    let saved = std::fs::read(env_file).ok();
+    std::fs::write(env_file, lines).unwrap();
+    let probe = env_file.with_file_name("print-environment");
+    executable(&probe, "env\n");
+    let mut args = arguments(agent);
+    args[3] = probe.to_string_lossy().into_owned();
+    let Some(Plist::Dict(environment)) = agent.get("EnvironmentVariables") else {
+        panic!("no EnvironmentVariables")
+    };
+    let mut command = Command::new(&args[0]);
+    command.args(&args[1..]).env_clear();
+    for (name, value) in environment {
+        command.env(name, value.as_str().unwrap());
+    }
+    let output = command.output().unwrap();
+    assert!(output.status.success(), "{}", text(&output));
+    match saved {
+        Some(bytes) => std::fs::write(env_file, bytes).unwrap(),
+        None => std::fs::remove_file(env_file).unwrap(),
+    }
+    let printed = String::from_utf8_lossy(&output.stdout).into_owned();
+    let read = |prefix: &str| {
+        let name = format!("{prefix}{setting}=");
+        printed
+            .lines()
+            .find_map(|line| line.strip_prefix(&name).map(str::to_owned))
+    };
+    read("PARASAUR_")
+        .or_else(|| read("GAH_"))
+        .unwrap_or_default()
+}
+
 #[test]
 fn macos_launch_agents_follow_role_transport_and_tunnel() {
     let temp = tempfile::tempdir().unwrap();
@@ -684,6 +721,24 @@ fn macos_launch_agents_follow_role_transport_and_tunnel() {
         checkout.join("apps/web/dist").to_string_lossy()
     );
     assert_eq!(env_of(&central, "PORT"), "4774");
+    // The operator's env file overrides the plist under either setting name;
+    // an install from before the rename still has the old one.
+    let server_env = home.join(".config/gah/server.env");
+    for (lines, expected) in [
+        ("", env_of(&central, "PARASAUR_CONFIG_PATH")),
+        ("GAH_CONFIG_PATH=/old.toml\n", "/old.toml".into()),
+        ("PARASAUR_CONFIG_PATH=/new.toml\n", "/new.toml".into()),
+        (
+            "GAH_CONFIG_PATH=/old.toml\nPARASAUR_CONFIG_PATH=/new.toml\n",
+            "/new.toml".into(),
+        ),
+    ] {
+        assert_eq!(
+            launched_setting(&central, &server_env, lines, "CONFIG_PATH"),
+            expected,
+            "{lines:?}"
+        );
+    }
     assert_eq!(
         (central.get("RunAtLoad"), central.get("KeepAlive")),
         (Some(&Plist::Bool(true)), Some(&Plist::Bool(true)))
@@ -728,6 +783,17 @@ fn macos_launch_agents_follow_role_transport_and_tunnel() {
     ] {
         assert_eq!(env_of(&worker, key), value, "{key}");
     }
+    let loop_env = home.join(".config/gah/gah-loop.env");
+    let old_names = "GAH_CONFIG=/old.toml\nGAH_COORDINATOR_IDENTITY_PATH=/elsewhere.json\n";
+    assert_eq!(
+        launched_setting(&worker, &loop_env, old_names, "CONFIG"),
+        "/old.toml"
+    );
+    assert_eq!(
+        launched_setting(&worker, &loop_env, old_names, "COORDINATOR_IDENTITY_PATH"),
+        identity_path.to_str().unwrap(),
+        "the worker's identity is fixed by its launcher"
+    );
     let identity: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&identity_path).unwrap()).unwrap();
     assert_eq!(identity["advertised_url"], "https://mac.test.ts.net:4774");
