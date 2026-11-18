@@ -153,6 +153,17 @@ fn pending_operation_survives_lost_reply_and_reopen_without_reissuing_http() {
 }
 
 #[test]
+fn a_grant_from_a_slightly_faster_central_waits_until_valid() {
+    let now = crate::clock::now_utc();
+    let issued = now + time::Duration::milliseconds(25);
+    let expires = issued + time::Duration::seconds(9);
+    require_current_window(issued, expires).unwrap();
+    assert!(crate::clock::now_utc() >= issued);
+    assert!(require_current_window(now - time::Duration::seconds(10), now).is_err());
+    assert!(require_current_window(expires, expires + time::Duration::seconds(1)).is_err());
+}
+
+#[test]
 fn permission_is_scoped_fresh_and_explicit_completion_advances_one_counter() {
     let (directory, binding, mut run) = running();
     let allowed = run
