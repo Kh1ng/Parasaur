@@ -623,21 +623,19 @@ pub(super) fn no_admission_diagnostics(
             "node capacity: {active_workers}/{worker_limit} workers active, no node deferral"
         ),
     });
-    if snapshot.merge_requests.is_empty() && snapshot.available_tickets.is_empty() {
-        if snapshot.open_managed_mr_count > 0 || snapshot.inflight_implementation_count > 0 {
-            parts.push(format!(
-                "queue: no selectable work ({} open managed MR(s), {} in-flight implementation(s))",
-                snapshot.open_managed_mr_count, snapshot.inflight_implementation_count
-            ));
-        } else {
-            parts.push("queue: empty (no open MRs or eligible tickets)".to_string());
-        }
-    } else {
+    if !snapshot.merge_requests.is_empty() || !snapshot.available_tickets.is_empty() {
         parts.push(format!(
             "queue: {} open MR(s), {} ticket(s) considered",
             snapshot.merge_requests.len(),
             snapshot.available_tickets.len()
         ));
+    } else if snapshot.open_managed_mr_count > 0 || snapshot.inflight_implementation_count > 0 {
+        parts.push(format!(
+            "queue: no selectable work ({} open managed MR(s), {} in-flight implementation(s))",
+            snapshot.open_managed_mr_count, snapshot.inflight_implementation_count
+        ));
+    } else {
+        parts.push("queue: empty (no open MRs or eligible tickets)".to_string());
     }
     format!("No work admitted -- {}", parts.join("; "))
 }
