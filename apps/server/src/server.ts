@@ -1939,6 +1939,9 @@ export function createServer(
     catch { return res.status(502).json({ error: 'profile_checks_unavailable', message: 'Cannot load workspace checks. Check the profile and update Parasaur on this node.' }); }
   });
   app.post('/api/profiles', requireOwner, async (req, res) => {
+    if (req.body?.validation_required !== undefined && typeof req.body.validation_required !== 'boolean') {
+      return res.status(400).json({ error: 'invalid_validation_required', message: 'validation_required must be true or false.' });
+    }
     if (!validCommandLists(req.body)) return res.status(400).json({ error: 'invalid_commands', message: 'Commands must be lists of up to 128 nonempty strings, each at most 16384 characters without NUL.' });
     // Issue #635 AC3: a missing required field must fail closed with 4xx
     // before ever reaching the CLI, not surface as an opaque 502 once
@@ -1985,6 +1988,9 @@ export function createServer(
   });
 
   app.patch('/api/profiles/:name', requireOwner, async (req, res) => {
+    if (req.body?.validation_required !== undefined && typeof req.body.validation_required !== 'boolean') {
+      return res.status(400).json({ error: 'invalid_validation_required', message: 'validation_required must be true or false.' });
+    }
     if (!validCommandLists(req.body)) return res.status(400).json({ error: 'invalid_commands', message: 'Commands must be lists of up to 128 nonempty strings, each at most 16384 characters without NUL.' });
     try {
       const options: ProfileSetOptions = {

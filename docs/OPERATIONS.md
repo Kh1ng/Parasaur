@@ -1238,6 +1238,17 @@ controller stops re-dispatching that ticket (including after a reboot) until
 an operator inspects it and explicitly releases the gate with
 `gah ledger clear-attempts --profile <profile> '<WORK_ID>'`.
 
+### Require passing checks before publication
+
+In the project's **Factory checks** editor, enable **Require passing validation
+before publishing changes**, or run `gah profile set NAME --validation-required true`.
+Configure at least one validation command. Fix and improve dispatches can also
+use verification commands from an operator-supplied job file. Failed checks can
+retry on an eligible route. A failed final check blocks publication even when
+`--allow-draft-fail` is supplied. Experiments that publish code also run the
+profile's checks. Existing profiles default to `validation_required = false`.
+
+
 ### Validation check — `$XDG_STATE_HOME/gah/validation_check.json`
 
 Records the self-verification of a profile's `validation_commands` against a

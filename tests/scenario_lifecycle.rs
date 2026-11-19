@@ -12,26 +12,23 @@ use support::{FakeBackend, Scenario};
 const FINDING: &str = "Reject an expired lease before publishing the worker result";
 
 fn harness() -> ScenarioHarness {
-    harness_with_config("", "")
+    harness_with_validation(
+        "validation_commands = [\"true\"]",
+        r#"[{ backend = "agy", model = "test-model", priority = 100, included_in_quota = true }]"#,
+    )
 }
 
-fn harness_with_config(settings: &str, fallback_route: &str) -> ScenarioHarness {
-    let config = format!(
-        r#"{settings}
-validation_commands = ["true"]
-[profiles.test.publishing]
-trusted_issue_human_authors = ["gah-bot"]
-[profiles.test.publishing.issue_claim]
-mode = "github_assignee"
-verify_seconds = 0
-[profiles.test.routing]
-pm_backend = "claude"
-routine_reviewer = {{ backend = "codex", model = "default" }}
-improve_candidates = [{{ backend = "agy", model = "test-model", priority = 100, included_in_quota = true }}{fallback_route}]
-review_candidates = [{{ backend = "codex", model = "default", priority = 100, included_in_quota = true }}]
-"#
-    );
-    let mut harness = ScenarioHarness::new("github").with_config_append(&config);
+fn harness_with_validation(checks: &str, candidates: &str) -> ScenarioHarness {
+    let mut harness = ScenarioHarness::new("github").with_config_append(&format!(
+        "{checks}\n\
+         [profiles.test.publishing]\ntrusted_issue_human_authors = [\"gah-bot\"]\n\
+         [profiles.test.publishing.issue_claim]\nmode = \"github_assignee\"\nverify_seconds = 0\n\
+         [profiles.test.routing]\n\
+         pm_backend = \"claude\"\n\
+         routine_reviewer = {{ backend = \"codex\", model = \"default\" }}\n\
+         improve_candidates = {candidates}\n\
+         review_candidates = [{{ backend = \"codex\", model = \"default\", priority = 100, included_in_quota = true }}]\n"
+    ));
     // Publication constructs a provider URL rather than pushing to origin.
     // Rewrite it in this repository only, so every push stays in the fixture.
     let remote = harness.local_repo_dir.parent().unwrap().join("remote.git");
@@ -437,9 +434,9 @@ fn pm_children_are_improved_reviewed_and_merged_in_one_loop() {
 
 #[test]
 fn hung_worker_releases_claim_and_is_redispatched_once() {
-    let mut harness = harness_with_config(
-        "agy_idle_timeout_seconds = 1",
-        r#", { backend = "claude", model = "retry-model", priority = 50, included_in_quota = true }"#,
+    let mut harness = harness_with_validation(
+        "validation_commands = [\"true\"]\nagy_idle_timeout_seconds = 1",
+        r#"[{ backend = "agy", model = "test-model", priority = 100, included_in_quota = true }, { backend = "claude", model = "retry-model", priority = 50, included_in_quota = true }]"#,
     );
     let marker = harness.artifacts_dir.join("worker-started");
     support::write_executable(&harness.bin_dir.join("agy"), &format!(
@@ -500,5 +497,66 @@ fn hung_worker_releases_claim_and_is_redispatched_once() {
             .unwrap()
             .len(),
         1
+    );
+}
+
+#[test]
+fn required_validation_escalates_after_a_failure_and_publishes_only_the_passing_tree() {
+    let mut harness = harness_with_validation(
+        r#"validation_required = true
+validation_commands = ["if test -e implementation.txt; then grep -qx ready implementation.txt || { echo expected-ready; exit 1; }; fi"]"#,
+        r#"[{ backend = "agy", model = "gemini-2.5-flash", priority = 100, included_in_quota = true }, { backend = "agy", model = "gemini-2.5-pro", priority = 100, included_in_quota = true }]"#,
+    );
+    let calls = harness.artifacts_dir.join("worker-calls");
+    support::write_executable(
+        &harness.bin_dir.join("agy"),
+        &format!(
+            r#"#!/bin/sh
+set -eu
+case "$1" in --version) echo 'test 1.0'; exit 0;; models|--help) exit 0;; esac
+if [ "$2" = /usage ]; then exit 0; fi
+if [ -f '{calls}' ]; then echo ready; else echo incomplete; fi > implementation.txt
+echo implementation >> '{calls}'
+echo work complete
+"#,
+            calls = calls.display()
+        ),
+    );
+    let result = harness.run_one_loop().unwrap();
+    assert_eq!(
+        result.exit_code,
+        Some(0),
+        "{}\n{}",
+        result.stdout,
+        result.stderr_tail
+    );
+    assert_eq!(result.ledger_entries.len(), 1);
+    let entry = latest(&result);
+    let attempts = entry["attempts"].as_array().unwrap();
+    assert_eq!(attempts.len(), 2, "{entry}");
+    assert_eq!(attempts[0]["validation_result"], "failed");
+    assert_eq!(attempts[0]["effective_model"], "gemini-2.5-flash");
+    assert_eq!(attempts[1]["validation_result"], "passed");
+    assert_eq!(attempts[1]["effective_model"], "gemini-2.5-pro");
+    assert_eq!(entry["mr_created"], true);
+    let log = fs::read_to_string(&harness.stateful_forge().log_path).unwrap();
+    assert_eq!(
+        log.lines()
+            .filter(|line| line.contains("pr create"))
+            .count(),
+        1
+    );
+    let sha = publish_head(&mut harness);
+    assert_eq!(
+        git(
+            &harness,
+            &[
+                "--git-dir",
+                "../remote.git",
+                "show",
+                &format!("{sha}:implementation.txt")
+            ]
+        ),
+        "ready"
     );
 }

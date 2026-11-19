@@ -940,6 +940,8 @@ export interface ProfileSummary {
 /** Owner-only workspace checks. Command text may contain private values and
  * must not be included in public profile/configuration projections. */
 export interface ProfileChecks {
+  /** Omitted by nodes that do not support the publication gate. */
+  validation_required?: boolean;
   profile: string;
   validation_commands: string[];
   auto_fix_commands: string[];

@@ -99,6 +99,9 @@ pub enum ProfileCommands {
         /// Validation commands
         #[arg(long, value_delimiter = ',')]
         validation_commands: Vec<String>,
+        /// Require passing validation before publishing changes.
+        #[arg(long)]
+        validation_required: Option<bool>,
         /// One complete validation command; repeat for multiple commands. Commas are preserved.
         #[arg(
             long,
@@ -189,6 +192,9 @@ pub enum ProfileCommands {
         env_file_prod: Option<String>,
         #[arg(long, value_delimiter = ',')]
         validation_commands: Vec<String>,
+        /// Require passing validation before publishing changes.
+        #[arg(long)]
+        validation_required: Option<bool>,
         /// One complete validation command; repeat for multiple commands. Commas are preserved.
         #[arg(
             long,

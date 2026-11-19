@@ -638,6 +638,12 @@ pub(super) fn add_request_schemas(manifest: &mut CapabilityManifest) {
             "Validation commands.",
         ),
         (
+            "validation_required",
+            "boolean",
+            false,
+            "Require passing checks before publication.",
+        ),
+        (
             "auto_fix_commands",
             "string",
             false,

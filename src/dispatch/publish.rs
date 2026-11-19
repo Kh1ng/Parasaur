@@ -156,6 +156,31 @@ pub(super) fn publishing_allows_publish(profile: &Profile) -> bool {
         && profile.publishing.allow_commit_message_generation
 }
 
+/// Whitespace-only commands run no checks. Detect missing evidence before
+/// spending an implementation attempt.
+pub(super) fn require_validation_commands(
+    profile: &Profile,
+    job_commands: &[String],
+    ledger: &mut LedgerEntry,
+) -> anyhow::Result<()> {
+    if profile.validation_required
+        && publishing_allows_publish(profile)
+        && !profile
+            .validation_commands
+            .iter()
+            .chain(job_commands)
+            .any(|cmd| !cmd.trim().is_empty())
+    {
+        ledger.validation_result = Some("not_run".into());
+        ledger.set_failure(
+            crate::ledger::FailureClass::ValidationGate,
+            crate::ledger::FailureStage::Preflight,
+        );
+        anyhow::bail!("Publication requires passing validation. Configure a validation command for this profile.");
+    }
+    Ok(())
+}
+
 /// Stage the complete candidate tree and fail closed when a newly tracked path
 /// matches the profile's generated-artifact policy. Staging is deliberate:
 /// it makes unstaged additions, force-added ignored files, backend commits,

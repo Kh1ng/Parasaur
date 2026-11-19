@@ -233,6 +233,7 @@ test('profile add args map required and optional fields without spawning gah', (
       local_path: '/srv/api-worker',
       artifact_root: '/srv/artifacts/api-worker',
       default_target_branch: 'trunk',
+      validation_required: true,
       validation_commands: ['cargo test', 'npm test'],
       max_parallel_workers: 2,
       validation_timeout_seconds: 900,
@@ -257,6 +258,8 @@ test('profile add args map required and optional fields without spawning gah', (
       '/srv/artifacts/api-worker',
       '--default-target-branch',
       'trunk',
+      '--validation-required',
+      'true',
       '--validation-command',
       'cargo test',
       '--validation-command',
@@ -310,6 +313,8 @@ test('profile set args map fields and emit each clear key once', () => {
 });
 
 test('profile checks preserve complete commands and empty arrays clear each list once', () => {
+  assert.deepEqual(buildProfileSetArgs({ name: 'workspace', validation_required: false }),
+    ['profile', 'set', 'workspace', '--validation-required', 'false']);
   const commands = ['node -e "console.log([1,2], \'a,b\')"', "printf 'a,b\\n'\nprintf done"];
   assert.deepEqual(buildProfileSetArgs({ name: 'workspace', validation_commands: commands, auto_fix_commands: [], clear: ['auto_fix_commands'] }),
     ['profile', 'set', 'workspace', '--validation-command', commands[0], '--validation-command', commands[1], '--clear', 'auto_fix_commands']);

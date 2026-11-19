@@ -2768,6 +2768,10 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
           },
           "type": "array"
         },
+        "validation_required": {
+          "description": "Require passing checks before publication.",
+          "type": "boolean"
+        },
         "validation_timeout_seconds": {
           "description": "Per-command validation timeout.",
           "type": "number"
@@ -2982,6 +2986,10 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
             "type": "string"
           },
           "type": "array"
+        },
+        "validation_required": {
+          "description": "Require passing checks before publication.",
+          "type": "boolean"
         },
         "validation_timeout_seconds": {
           "description": "Per-command validation timeout.",
