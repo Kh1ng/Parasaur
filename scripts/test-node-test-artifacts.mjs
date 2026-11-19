@@ -1,6 +1,6 @@
 // Exercise packaging with fake binaries; no native builds or personal repository writes.
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -45,5 +45,9 @@ try {
     assert.equal(readFileSync(join(root, 'central-kit/gah'), 'utf8'), bytes);
     assert.equal(manifest.files.gah, createHash('sha256').update(bytes).digest('hex'));
   }
+  const previous = readFileSync(join(root, 'central-kit/worker-artifact.json'), 'utf8');
+  assert.throws(() => run(process.execPath, [stageScript, 'worker', 'central-kit', 'missing-cli']));
+  assert.equal(readFileSync(join(root, 'central-kit/worker-artifact.json'), 'utf8'), previous);
+  assert.ok(!readdirSync(join(root, 'central-kit')).some(name => name.startsWith('.stage-')));
   console.log('Artifact staging passed: matching revisions, file checksums, tracked source only, ambiguous installers rejected.');
 } finally { rmSync(root, { recursive: true, force: true }); }

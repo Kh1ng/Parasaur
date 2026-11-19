@@ -20,5 +20,12 @@ tar -C apps/server/dist --exclude=./worker-artifacts --exclude=./node_modules --
 test -s "$dist/bin.js"
 node scripts/stage-release-runtime.mjs "$PWD" "$dist/.release-runtime"
 (cd "$dist/.release-runtime" && npm ci --omit=dev "$optional" --workspace=apps/server --include-workspace-root=false --ignore-scripts --no-audit --no-fund)
+# The locked Claude SDK declares both Linux x64 packages for the same OS and CPU.
+# Ubuntu WSL uses the glibc executable. Keep Codex's portable musl executable.
+sdk="$dist/.release-runtime/node_modules/@anthropic-ai"
+if [[ -x $sdk/claude-agent-sdk-linux-x64/claude && -d $sdk/claude-agent-sdk-linux-x64-musl ]] &&
+   "$node_bin" -e 'process.exit(process.report.getReport().header.glibcVersionRuntime ? 0 : 1)'; then
+  rm -r -- "$sdk/claude-agent-sdk-linux-x64-musl"
+fi
 node "$dist/.release-runtime/link.mjs"
 git rev-parse HEAD > "$payload/REVISION"
