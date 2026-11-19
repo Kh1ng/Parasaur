@@ -262,6 +262,7 @@ export interface StatusError {
 /** #[serde(rename_all = "SCREAMING_SNAKE_CASE")] on src/sync.rs's enum. */
 export type RecommendedAction =
   | 'REUSE_BRANCH'
+  | 'CHECK_RUNNER_AND_RETRY_JOB'
   | 'HUMAN_MERGE_DECISION'
   | 'RUN_REVIEW'
   | 'NONE'

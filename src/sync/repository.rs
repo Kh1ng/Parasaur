@@ -91,7 +91,7 @@ pub(super) fn fetch_active_github_mrs(
     let mut rows = Vec::new();
     for mut mr in active_github_mrs_without_ci(profile, filter_gah_branches)? {
         let checks = github_check_runs_rest(profile, mr.source_sha.as_deref())?;
-        mr.ci_failed = github_ci_failed(Some(&checks));
+        mr.ci_failure = github_ci_failed(Some(&checks)).then_some(super::CiFailure::Job);
         mr.ci_passed = github_ci_passed(Some(&checks));
         rows.push(mr);
     }
@@ -123,7 +123,7 @@ pub(super) fn active_github_mrs_without_ci(
             merged: false,
             updated_at: pr.updated_at,
             merged_at: None,
-            ci_failed: false,
+            ci_failure: None,
             ci_passed: false,
             ci_pending: false,
         })
@@ -175,7 +175,8 @@ pub(super) fn fetch_historical_github_mrs(
             merged: pr.merged_at.is_some(),
             updated_at: pr.updated_at,
             merged_at: pr.merged_at,
-            ci_failed: github_ci_failed(pr.status_check_rollup.as_deref()),
+            ci_failure: github_ci_failed(pr.status_check_rollup.as_deref())
+                .then_some(super::CiFailure::Job),
             ci_passed: github_ci_passed(pr.status_check_rollup.as_deref()),
             ci_pending: false,
         })
@@ -298,7 +299,7 @@ fn github_repository_prs_rest(profile: &config::Profile) -> Result<Vec<SyncMr>> 
             merged: false,
             updated_at: pr.updated_at,
             merged_at: None,
-            ci_failed: false,
+            ci_failure: None,
             ci_passed: false,
             ci_pending: false,
         })
@@ -324,7 +325,7 @@ fn github_repository_prs_rest(profile: &config::Profile) -> Result<Vec<SyncMr>> 
                 merged: true,
                 updated_at: pr.updated_at,
                 merged_at: pr.closed_at,
-                ci_failed: false,
+                ci_failure: None,
                 ci_passed: false,
                 ci_pending: false,
             }),

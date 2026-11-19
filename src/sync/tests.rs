@@ -177,7 +177,7 @@ fn base_mr() -> SyncMr {
         merged: false,
         updated_at: None,
         merged_at: None,
-        ci_failed: false,
+        ci_failure: None,
         ci_passed: false,
         ci_pending: false,
         work_id: None,
@@ -533,7 +533,7 @@ fn closed_unmerged_takes_precedence_over_labels_and_other_state() {
     mr.draft = true;
     mr.merge_status = Some("DIRTY".into());
     mr.labels = vec!["gah-ready-for-human".into(), "gah-human-review".into()];
-    mr.ci_failed = true;
+    mr.ci_failure = Some(super::CiFailure::Job);
 
     assert_eq!(classify(&mr), "CLOSED_UNMERGED");
     assert_eq!(recommended_action(classify(&mr)), "none");

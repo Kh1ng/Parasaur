@@ -168,7 +168,7 @@ fn sync_gitlab_classifies_open_mr() {
     fs::create_dir_all(&fake_bin).unwrap();
     make_fake_glab(
         &fake_bin,
-        r#"[{"title":"[GAH] fix","source_branch":"gah/test-1","web_url":"https://example/mr/1","labels":["gah-ready-for-human"],"state":"opened","merged_at":null,"updated_at":"2099-01-01T00:00:00Z","head_pipeline":{"status":"success"}}]"#,
+        r#"[{"title":"[GAH] fix","source_branch":"gah/test-1","web_url":"https://example/mr/1","labels":["gah-ready-for-human"],"state":"opened","merged_at":null,"updated_at":"2099-01-01T00:00:00Z","sha":"current","head_pipeline":{"sha":"current","status":"success"}}]"#,
     );
 
     bin()

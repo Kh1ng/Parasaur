@@ -21,6 +21,13 @@ test('a claim stays visible without intake and does not imply execution or permi
   expect(card.assignHeldBy).toContain('already has a claim');
 });
 
+test('a GitLab runner failure waits for CI without assigning a fixer', () => {
+  const failed = { work_id: '#7', branch: 'gah/7', classification: 'CI_RUNNER_FAILED', merged: false } as StatusSnapshot['merge_requests'][number];
+  const card = board(status({ merge_requests: [failed] })).cards[0];
+  expect(card).toMatchObject({ column: 'waiting', job: null, working: false });
+  expect(card.reason).toContain('retry the failed job');
+});
+
 test('worker runtime evidence governs running cards and stale observations preserve uncertainty', () => {
   const snapshot = status({ active_claims: [claim], running_workers: [worker] });
   expect(board(snapshot).cards[0]).toMatchObject({ working: true, column: 'fixing', agent: 'Codex · routed-model', agentRole: 'working', since: worker.started_at });

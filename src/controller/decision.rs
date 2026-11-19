@@ -233,11 +233,9 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
     let mut merge_candidates: Vec<&crate::sync::SyncMrJson> = Vec::new();
     // Track human-blocked MRs along with their specific reason code
     let mut human_blocked_mrs: Vec<(&crate::sync::SyncMrJson, HumanRequiredReason)> = Vec::new();
-    // Manager review holds are deliberately not human-required gates: an
-    // operator is already handling them and the hold self-expires. Keep them
-    // visible, though, so a held queue at the intake cap cannot collapse into
-    // an indefinite "nothing actionable" / backpressure NoOp loop.
-    let mut review_held_mrs: Vec<&crate::sync::SyncMrJson> = Vec::new();
+    // Manager holds and CI runner failures are rechecked after other eligible
+    // work. Neither should consume repair attempts or create a durable gate.
+    let mut deferred_mrs: Vec<&crate::sync::SyncMrJson> = Vec::new();
     // CI and current-head review vetoes are transient merge gates, not durable holds.
     let mut wait_and_recheck_mrs: Vec<&crate::sync::SyncMrJson> = Vec::new();
 
@@ -275,6 +273,7 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
         }
 
         match mr.classification.as_str() {
+            "CI_RUNNER_FAILED" => deferred_mrs.push(mr),
             "NEEDS_REVIEW" if crate::review_head::unchanged(mr) => {}
             "NEEDS_REVIEW" => review_candidates.push(mr),
             "CI_FAILED" | "NEEDS_FIX"
@@ -312,7 +311,7 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
                     // below. The manager clears it (`gah hold clear`) when
                     // done, or it self-expires after
                     // REVIEW_HOLD_STALE_AFTER_HOURS.
-                    review_held_mrs.push(mr);
+                    deferred_mrs.push(mr);
                     continue;
                 }
                 let merge_policy = snapshot.profile.merge_policy;
@@ -543,8 +542,8 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
         if let Some((mr, reason_code)) = human_blocked_mrs.first().copied() {
             return human_required_for_blocked_mr(snapshot, mr, reason_code);
         }
-        if let Some(mr) = review_held_mrs.first().copied() {
-            return wait_for_review_hold(mr);
+        if let Some(mr) = deferred_mrs.first().copied() {
+            return wait_for_deferred_mr(mr);
         }
         return NextAction::NoOp {
             reason: format!(
@@ -782,8 +781,8 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
     if let Some((mr, reason_code)) = human_blocked_mrs.first().copied() {
         return human_required_for_blocked_mr(snapshot, mr, reason_code);
     }
-    if let Some(mr) = review_held_mrs.first().copied() {
-        return wait_for_review_hold(mr);
+    if let Some(mr) = deferred_mrs.first().copied() {
+        return wait_for_deferred_mr(mr);
     }
 
     NextAction::NoOp {
@@ -791,13 +790,21 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
     }
 }
 
-fn wait_for_review_hold(mr: &crate::sync::SyncMrJson) -> NextAction {
-    NextAction::WaitUntil {
-        until: now_plus(Duration::from_secs(300)),
-        reason: format!(
+fn wait_for_deferred_mr(mr: &crate::sync::SyncMrJson) -> NextAction {
+    let reason = if mr.classification == "CI_RUNNER_FAILED" {
+        format!(
+            "GitLab reported a runner failure on '{}'. Check the runner and retry the failed job. Waiting to recheck CI.",
+            mr.branch
+        )
+    } else {
+        format!(
             "MR on branch '{}' is under an active manager review hold; waiting to re-check without merging it",
             mr.branch
-        ),
+        )
+    };
+    NextAction::WaitUntil {
+        until: now_plus(Duration::from_secs(300)),
+        reason,
     }
 }
 

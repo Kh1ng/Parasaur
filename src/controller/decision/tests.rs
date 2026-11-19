@@ -74,6 +74,24 @@ fn blocker_forces_human_required() {
 }
 
 #[test]
+fn runner_failure_rechecks_after_unrelated_work_and_respects_intake_limit() {
+    let mut snapshot = empty_snapshot();
+    let mut failed = mr("gah/runner", "CI_RUNNER_FAILED");
+    failed.review_verdict = Some("NEEDS_FIX".into());
+    failed.review_generation = Some("current".into());
+    snapshot.merge_requests.push(failed);
+    let action = decide_next_action(&snapshot);
+    assert_eq!(action.kind(), "wait_until");
+    assert!(action.reason().contains("retry the failed job"));
+    snapshot
+        .available_tickets
+        .push(ticket("12", Some("#12"), 0, None, false, false));
+    assert_eq!(decide_next_action(&snapshot).kind(), "dispatch_ticket");
+    snapshot.implementation_intake_paused = true;
+    assert_eq!(decide_next_action(&snapshot).kind(), "wait_until");
+}
+
+#[test]
 fn ci_failed_mr_retries_until_cap() {
     let mut snapshot = empty_snapshot();
     // Simulate 2 prior fix attempts (at the cap)

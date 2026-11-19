@@ -135,6 +135,80 @@ fn gitlab_profile() -> Profile {
     }
 }
 
+#[test]
+fn sync_distinguishes_runner_failure_from_code_failure_on_the_current_gitlab_head() {
+    use crate::sync::{classify, fetch_active_mrs};
+    use serde_json::json;
+    let _exec_guard = crate::test_support::ExecGuard::new();
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    make_fake_bin(
+        dir,
+        "glab",
+        r#"#!/bin/sh
+dir=${0%/*}
+case "$2" in
+  projects/42/merge_requests) echo '[{"iid":7,"title":"Example","source_branch":"gah/7","state":"opened","sha":"current","labels":["gah-ready-for-human"]}]' ;;
+  projects/42/merge_requests/7/pipelines) /bin/cat "$dir/pipelines" ;;
+  projects/42/pipelines/9/jobs) /bin/cat "$dir/jobs" ;;
+  projects/42/pipelines/9/bridges) /bin/cat "$dir/bridges" ;;
+  *) exit 1 ;;
+esac
+"#,
+    );
+    let _guard = PathOverride::set(dir.to_str().unwrap().to_owned());
+    let rows = || fetch_active_mrs(&gitlab_profile()).unwrap();
+    let failed = |reason, optional| json!({"status":"failed", "failure_reason":reason, "allow_failure":optional});
+    let runner = failed("runner_system_failure", false);
+    let script = failed("script_failure", false);
+    let pipelines = |first_sha, status| {
+        json!([
+            {"id":8,"sha":"old","status":"success"},
+            {"id":9,"sha":first_sha,"status":status}
+        ])
+    };
+    fs::write(
+        dir.join("pipelines"),
+        pipelines("current", "failed").to_string(),
+    )
+    .unwrap();
+    for (jobs, bridges, class) in [
+        (
+            json!([runner, failed("script_failure", true)]),
+            json!([]),
+            "CI_RUNNER_FAILED",
+        ),
+        (json!([runner, script]), json!([]), "CI_FAILED"),
+        (json!([runner]), json!([script]), "CI_FAILED"),
+        (
+            json!([failed("runner_system_failure", true)]),
+            json!([]),
+            "CI_FAILED",
+        ),
+        (json!([runner]), serde_json::Value::Null, "CI_FAILED"),
+    ] {
+        fs::write(dir.join("jobs"), jobs.to_string()).unwrap();
+        fs::write(dir.join("bridges"), bridges.to_string()).unwrap();
+        let mr = rows().pop().unwrap();
+        assert_eq!(classify(&mr), class);
+        assert!(!mr.ci_passed);
+    }
+    fs::write(
+        dir.join("pipelines"),
+        pipelines("old", "success").to_string(),
+    )
+    .unwrap();
+    assert!(!rows()[0].ci_passed);
+    fs::write(
+        dir.join("pipelines"),
+        pipelines("current", "success").to_string(),
+    )
+    .unwrap();
+    let mr = rows().pop().unwrap();
+    assert!(mr.ci_passed);
+    assert_eq!(classify(&mr), "READY_FOR_HUMAN");
+}
+
 fn provider_issue(id: &str, number: &str) -> ProviderIssue {
     ProviderIssue {
         id: id.to_string(),
