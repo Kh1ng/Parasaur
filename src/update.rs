@@ -62,6 +62,13 @@ pub fn run(args: UpdateArgs) -> Result<()> {
     if args.role == HostRole::Worker && args.restart_server {
         bail!("--restart-server requires --role central or standalone; a worker never runs gah-server.service");
     }
+    #[cfg(target_os = "linux")]
+    if args.from_release
+        && args.role == HostRole::Worker
+        && release::wsl_worker::update_if_installed(&args)?
+    {
+        return Ok(());
+    }
 
     let repo = resolve_repo(args.repo.as_deref())?;
     ownership::preflight(

@@ -3,9 +3,18 @@ import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { ChildProcess, spawn } from 'node:child_process';
-import { WorkerUpdateService } from './workerUpdate.js';
+import { WorkerUpdateService, workerServiceUnit } from './workerUpdate.js';
+
+test('a worker restart belongs to its own PID and invocation in the same allowed unit', () => {
+  const invocation = 'a'.repeat(32);
+  const properties = `MainPID=287\nId=gah-worker.service\nInvocationID=${'b'.repeat(32)}\n\nMainPID=300\nId=gah-worker@demo.service\nInvocationID=${invocation}\n`;
+  assert.equal(workerServiceUnit(properties, 300, invocation), 'gah-worker@demo.service');
+  assert.throws(() => workerServiceUnit(properties, 287, invocation));
+  assert.throws(() => workerServiceUnit(properties, 300, undefined));
+  assert.throws(() => workerServiceUnit(properties.replace('@demo', '-other'), 300, invocation));
+});
 
 function withStatePath(fn: (statePath: string) => void | Promise<void>): Promise<void> | void {
   const dir = mkdtempSync(join(tmpdir(), 'gah-worker-update-'));
@@ -123,6 +132,21 @@ test('a failed updater exit is recorded as failed', async () => {
   });
 });
 
+test('two concurrent update requests launch one installer', async () => {
+  await withStatePath(async () => {
+    let launches = 0;
+    const child = fakeChildProcess(process.pid);
+    const service = new WorkerUpdateService({
+      countActiveClaims: async () => 0,
+      spawnFn:(() => { launches++; return child; }) as unknown as typeof spawn
+    });
+    const results = await Promise.all([service.start(),service.start()]);
+    assert.deepEqual(results.map(result => result.started), [true,false]);
+    assert.equal(launches,1);
+    (child as unknown as EventEmitter).emit('close',0);
+  });
+});
+
 test('a second start is refused while the updater is alive, and cancel only disarms waiting', async () => {
   await withStatePath(async () => {
     const child = fakeChildProcess(process.pid);
@@ -176,6 +200,41 @@ test('a running record whose pid died is reconciled to failed', async () => {
     // Reconciled on disk, not just in memory.
     const onDisk = JSON.parse(readFileSync(statePath, 'utf8')) as { status: string };
     assert.equal(onDisk.status, 'failed');
+  });
+});
+
+test('a restarted worker confirms the selected release and reports a missed restart', async t => {
+  await withStatePath(statePath => {
+    const bundle = 'a'.repeat(64);
+    const previousInvocation = 'b'.repeat(32);
+    const now = Date.now();
+    t.mock.method(Date,'now',() => now);
+    const before = process.env.INVOCATION_ID, beforeRelease = process.env.PARASAUR_WORKER_RELEASE;
+    const release = dirname(dirname(process.execPath));
+    const service = new WorkerUpdateService({cwd:release});
+    const pending = (requestedAt:number) => writeFileSync(statePath,JSON.stringify({
+      status:'inferred_restart', restart:{previousInvocation,bundle,requestedAt}
+    }));
+    try {
+      process.env.INVOCATION_ID = previousInvocation;
+      process.env.PARASAUR_WORKER_RELEASE = bundle;
+      pending(now);
+      assert.equal(service.status().status,'inferred_restart');
+      pending(now - 61_000);
+      assert.equal(service.status().status,'failed');
+      process.env.INVOCATION_ID = 'c'.repeat(32);
+      pending(now);
+      process.env.PARASAUR_WORKER_RELEASE = 'd'.repeat(64);
+      assert.equal(service.status().status,'failed');
+      if (join(release,'bin/node') === process.execPath) {
+        process.env.PARASAUR_WORKER_RELEASE = bundle;
+        pending(now);
+        assert.equal(service.status().status,'success');
+      }
+    } finally {
+      if (before === undefined) delete process.env.INVOCATION_ID; else process.env.INVOCATION_ID = before;
+      if (beforeRelease === undefined) delete process.env.PARASAUR_WORKER_RELEASE; else process.env.PARASAUR_WORKER_RELEASE = beforeRelease;
+    }
   });
 });
 

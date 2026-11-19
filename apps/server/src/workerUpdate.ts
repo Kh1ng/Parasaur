@@ -10,9 +10,9 @@
  * update may end by restarting this very node server (macOS LaunchAgent),
  * which would wipe any in-memory tracking before central could observe it.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import type { WorkerUpdateStatus } from '@git-agent-harness/contracts';
 import { COORDINATOR_VERSION } from '@git-agent-harness/contracts';
@@ -21,8 +21,22 @@ import { findGahBinary, runClaimsList } from './gahCli.js';
 const MAX_OUTPUT_CHARS = 200_000;
 const DRAIN_POLL_MS = 15_000;
 
+/** systemctl show works on Ubuntu 22.04 and later. Only a matching main
+ * process in this exact service invocation may request its own restart. */
+export function workerServiceUnit(properties: string, pid: number, invocation: string | undefined): string {
+  if (invocation && /^[a-f0-9]{32}$/.test(invocation)) {
+    for (const block of properties.trim().split(/\n\s*\n/)) {
+      const lines = block.split('\n');
+      const unit = /^Id=(gah-worker(?:@[\w.-]+)?\.service)$/m.exec(block)?.[1];
+      if (unit && lines.includes(`MainPID=${pid}`) && lines.includes(`InvocationID=${invocation}`)) return unit;
+    }
+  }
+  throw Error('Worker is not the main process of its systemd user service');
+}
+
 interface WorkerUpdateRecord extends WorkerUpdateStatus {
   pid: number | null;
+  restart?: { previousInvocation:string; bundle:string; requestedAt:number };
 }
 
 /** Outside the Git checkout, same reasoning as adminUpdate.ts. */
@@ -65,7 +79,7 @@ function writeState(record: WorkerUpdateRecord): void {
 }
 
 function view(record: WorkerUpdateRecord): WorkerUpdateStatus {
-  const { pid: _pid, ...status } = record;
+  const { pid: _pid, restart: _restart, ...status } = record;
   return status;
 }
 
@@ -88,6 +102,7 @@ export interface WorkerUpdateDeps {
 
 export class WorkerUpdateService {
   private drainTimer: NodeJS.Timeout | null = null;
+  private starting?: Promise<{ started: boolean; status: WorkerUpdateStatus }>;
   private readonly spawnFn: typeof spawn;
   private readonly cwd: string;
 
@@ -108,7 +123,7 @@ export class WorkerUpdateService {
           || parsed.status === 'failed' || parsed.status === 'inferred_restart'
             ? parsed.status
             : 'idle',
-        current_version: typeof parsed.current_version === 'string' ? parsed.current_version : base.current_version,
+        current_version: base.current_version,
         target_version: typeof parsed.target_version === 'string' ? parsed.target_version : null,
         armed_at: typeof parsed.armed_at === 'string' ? parsed.armed_at : null,
         started_at: typeof parsed.started_at === 'string' ? parsed.started_at : null,
@@ -118,8 +133,21 @@ export class WorkerUpdateService {
             ? parsed.active_dispatches
             : null,
         output: typeof parsed.output === 'string' ? parsed.output : '',
-        pid: typeof parsed.pid === 'number' ? parsed.pid : null
+        pid: typeof parsed.pid === 'number' ? parsed.pid : null,
+        restart: parsed.restart
       };
+      if (record.status === 'inferred_restart' && record.restart) {
+        const newInvocation = !!process.env.INVOCATION_ID && process.env.INVOCATION_ID !== record.restart.previousInvocation;
+        if (newInvocation || Date.now() - record.restart.requestedAt > 60_000) {
+          const loaded = newInvocation && process.env.PARASAUR_WORKER_RELEASE === record.restart.bundle
+            && process.execPath === resolve(this.cwd,'bin/node');
+          record.status = loaded ? 'success' : 'failed';
+          if (!loaded) record.output += "\n[gah] The worker did not load the selected release after restart.";
+          record.finished_at = new Date().toISOString();
+          delete record.restart;
+          writeState(record);
+        }
+      }
       // A `running` record whose updater is gone recorded no exit code:
       // unlike central, a worker update never restarts this server as its
       // own final step (the macOS restart happens after success is
@@ -141,8 +169,18 @@ export class WorkerUpdateService {
   }
 
   async start(): Promise<{ started: boolean; status: WorkerUpdateStatus }> {
+    if (this.starting) {
+      const result = await this.starting;
+      return {started:false,status:result.status};
+    }
+    this.starting = this.startOnce();
+    try { return await this.starting; }
+    finally { this.starting = undefined; }
+  }
+
+  private async startOnce(): Promise<{ started: boolean; status: WorkerUpdateStatus }> {
     const existing = this.read();
-    if (existing.status === 'running' && existing.pid !== null && pidAlive(existing.pid)) {
+    if ((existing.status === 'inferred_restart' && existing.restart) || (existing.status === 'running' && existing.pid !== null && pidAlive(existing.pid))) {
       return { started: false, status: view(existing) };
     }
     if (existing.status === 'waiting') {
@@ -209,6 +247,8 @@ export class WorkerUpdateService {
       return;
     }
     const active = await this.countClaims();
+    const latest = this.read();
+    if (latest.status !== 'waiting' || latest.armed_at !== current.armed_at) return;
     if (active !== 0) {
       writeState({ ...current, active_dispatches: active });
       return;
@@ -220,7 +260,8 @@ export class WorkerUpdateService {
   private launch(): void {
     const child: ChildProcess = this.spawnFn(
       findGahBinary(),
-      ['update', '--from-release', '--role', 'worker', '--repo', this.cwd],
+      ['update', '--from-release', '--role', 'worker', '--repo', this.cwd,
+        ...(process.env.PARASAUR_RELEASE_MANIFEST ? ['--release-manifest', process.env.PARASAUR_RELEASE_MANIFEST] : [])],
       {
         cwd: this.cwd,
         env: process.env,
@@ -255,9 +296,23 @@ export class WorkerUpdateService {
         finished_at: new Date().toISOString(),
         active_dispatches: null
       };
-      writeState(record);
-      if (code === 0 && process.platform === 'darwin') {
-        this.restartWorker();
+      if (code === 0 && process.platform === 'linux' && this.isInstalledWslWorker()) {
+        try {
+          const selection = readFileSync(resolve(dirname(this.cwd),'release.env'),'utf8');
+          const bundle = /^export PARASAUR_WORKER_RELEASE=([a-f0-9]{64})$/m.exec(selection)?.[1];
+          const previousInvocation = process.env.INVOCATION_ID;
+          if (!bundle || !previousInvocation) throw Error('Cannot identify the installed release or service');
+          record = {...record,status:'inferred_restart',finished_at:null,restart:{previousInvocation,bundle,requestedAt:Date.now()}};
+          writeState(record);
+          if (this.deps.restartWorker) this.deps.restartWorker();
+          else this.restartWslWorker();
+        } catch {
+          record = {...record,status:'failed',finished_at:new Date().toISOString(),output:`${record.output}\n[gah] The release was installed, but systemd could not restart this worker's service.`.slice(-MAX_OUTPUT_CHARS)};
+          writeState(record);
+        }
+      } else {
+        writeState(record);
+        if (code === 0 && process.platform === 'darwin') this.restartWorker();
       }
     });
 
@@ -270,6 +325,25 @@ export class WorkerUpdateService {
       };
       writeState(record);
     });
+  }
+
+  private isInstalledWslWorker(): boolean {
+    const root = resolve(homedir(), '.local/share/gah/worker');
+    return dirname(this.cwd) === root && basename(this.cwd).startsWith('release.') && existsSync(resolve(root, 'release.env'));
+  }
+
+  /** Restart only the user service whose main process is this worker. A
+   * foreground process or another instance must not restart a sibling. */
+  private restartWslWorker(): void {
+    const systemctl = (...args: string[]) => execFileSync('/usr/bin/systemctl', ['--user', ...args], {
+      encoding:'utf8', stdio:['ignore','pipe','pipe'], timeout:5000
+    }).trim();
+    const properties = systemctl('show', '--property=Id,MainPID,InvocationID', '--', 'gah-worker*.service');
+    const unit = workerServiceUnit(properties, process.pid, process.env.INVOCATION_ID);
+    // The manager acknowledges this timer before it stops our cgroup.
+    // Otherwise it can kill the systemctl client that is returning success.
+    execFileSync('/usr/bin/systemd-run', ['--user','--quiet','--collect','--on-active=1s','--timer-property=AccuracySec=100ms',
+      '/usr/bin/systemctl','--user','restart',unit], {stdio:'ignore',timeout:5000});
   }
 
   /** Restart this worker's LaunchAgent so the node server runs the release

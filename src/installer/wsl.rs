@@ -95,6 +95,7 @@ pub fn install(args: &Args, home: &Path) -> Result<()> {
         ("PARASAUR_CONFIG_PATH", config_text.clone()),
         ("PARASAUR_CONFIG", config_text),
         ("PARASAUR_BINARY", text(&args.release.join("bin/gah"))),
+        ("PARASAUR_WORKER_NODE", text(&args.node)),
         ("HOST", "0.0.0.0".to_string()),
         ("PORT", "3774".to_string()),
     ];
@@ -118,27 +119,11 @@ pub fn install(args: &Args, home: &Path) -> Result<()> {
     let env_path = args.root.join("worker.env");
     replace(&env_path, env_file.as_bytes(), 0o600)?;
 
-    let header = format!(
-        "#!/usr/bin/env bash\nset -euo pipefail\nsource {}\ncd {}\n",
-        shell_quote(&text(&env_path)),
-        shell_quote(&text(&args.release))
-    );
-    let node = shell_quote(&text(&args.node));
-    let start = args.root.join("start.sh");
-    replace(
-        &start,
-        format!("{header}exec {node} apps/server/dist/bin.js\n").as_bytes(),
-        0o700,
-    )?;
-    let register = format!(
-        "{header}for attempt in {{1..30}}; do\n  if curl -fsS http://127.0.0.1:3774/health >/dev/null; then break; fi\n  sleep 1\ndone\nprofiles=\"${{1:-}}\"\nif [ -z \"$profiles\" ]; then\n  profiles=\"$(\"$PARASAUR_BINARY\" profile list --json | \"$PARASAUR_BINARY\" installer json --each name --join ,)\"\nfi\nexec {node} apps/server/dist/registerNodeCli.js --central-url {} --self-url http://127.0.0.1:3774 --transport-mode trusted_lan --secret-ref env:COORDINATOR_TOKEN --labels windows,wsl --profiles \"$profiles\"\n",
-        shell_quote(&settings.central_url)
-    );
-    replace(&args.root.join("register.sh"), register.as_bytes(), 0o700)?;
+    write_launchers(&args.root, &settings.central_url)?;
 
     let unit = format!(
         "[Unit]\nDescription=Parasaur headless WSL worker\nAfter=network-online.target\n\n[Service]\nExecStart=/bin/bash --login {}\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
-        systemd_quote(&start)
+        systemd_quote(&args.root.join("start.sh"))
     );
     replace(
         &home.join(".config/systemd/user/gah-worker.service"),
@@ -146,6 +131,26 @@ pub fn install(args: &Args, home: &Path) -> Result<()> {
         0o644,
     )?;
     Ok(())
+}
+
+/// Both entry points resolve their runtime from one snapshot of worker.env.
+/// Old jobs keep their original absolute release paths across an upgrade.
+pub(crate) fn write_launchers(root: &Path, central_url: &str) -> Result<()> {
+    let header = format!(
+        "#!/usr/bin/env bash\nset -euo pipefail\nsource {}\nexport PARASAUR_BINARY=\"${{PARASAUR_BINARY:-$GAH_BINARY}}\"\ncd \"${{PARASAUR_BINARY%/bin/gah}}\"\n",
+        shell_quote(&root.join("worker.env").to_string_lossy())
+    );
+    let node = "\"${PARASAUR_WORKER_NODE:-node}\"";
+    replace(
+        &root.join("start.sh"),
+        format!("{header}exec {node} apps/server/dist/bin.js\n").as_bytes(),
+        0o700,
+    )?;
+    let register = format!(
+        "{header}for attempt in {{1..30}}; do\n  if curl -fsS http://127.0.0.1:3774/health >/dev/null; then break; fi\n  sleep 1\ndone\nprofiles=\"${{1:-}}\"\nif [ -z \"$profiles\" ]; then\n  profiles=\"$(\"$PARASAUR_BINARY\" profile list --json | \"$PARASAUR_BINARY\" installer json --each name --join ,)\"\nfi\nexec {node} apps/server/dist/registerNodeCli.js --central-url {} --self-url http://127.0.0.1:3774 --transport-mode trusted_lan --secret-ref env:COORDINATOR_TOKEN --labels windows,wsl --profiles \"$profiles\"\n",
+        shell_quote(central_url)
+    );
+    replace(&root.join("register.sh"), register.as_bytes(), 0o700)
 }
 
 #[cfg(test)]
