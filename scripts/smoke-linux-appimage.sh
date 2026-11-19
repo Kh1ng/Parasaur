@@ -9,7 +9,8 @@
 # Runs under Xvfb with its own D-Bus session when DISPLAY is unset.
 # Needs xvfb, dbus, at-spi2-core, python3-pyatspi, xdotool and imagemagick.
 #
-# Usage: scripts/smoke-linux-appimage.sh path/to/GAH.AppImage [screenshot.png]
+# Usage: scripts/smoke-linux-appimage.sh path/to/GAH.AppImage [screenshot.png] [--install]
+# --install clicks through setup in a temporary account with its own user manager.
 # The screenshot and the app's output (screenshot path with .log) stay behind.
 # PARASAUR_SMOKE_SEED=dir copies dir into the profile first (for negative checks).
 set -euo pipefail
@@ -17,27 +18,83 @@ set -euo pipefail
 [ -f "${1:-}" ] || { echo "usage: $0 GAH.AppImage [screenshot.png]" >&2; exit 2; }
 appimage=$(realpath "$1")
 shot=$(realpath -m "${2:-appimage-smoke.png}")
+if [[ ${3:-} == --install ]]; then
+  mkdir -p "$(dirname "$shot")"
+  fixture=$(mktemp -d)
+  user="psaur-${fixture##*.}"
+  user=${user,,}
+  chmod 711 "$fixture"
+  sudo useradd --create-home --home-dir "$fixture/home" --shell /usr/sbin/nologin "$user"
+  uid=$(id -u "$user")
+  cleanup() {
+    sudo systemctl stop "user@$uid.service" || true
+    # Xvfb and the desktop launcher start outside the systemd user unit.
+    sudo pkill -KILL -u "$uid" || true
+    sudo userdel "$user" || true
+    sudo rm -rf -- "$fixture"
+  }
+  trap cleanup EXIT
+  sudo systemctl start "user@$uid.service"
+  install -m755 "$appimage" "$fixture/AppImage"
+  install -m755 "$0" "$fixture/check"
+  # Use the new account's real home and session bus so systemd and the GUI
+  # resolve the same config, unit files and network endpoint.
+  result=0
+  sudo -u "$user" env -i PATH=/usr/bin:/bin HOME="$fixture/home" USER="$user" LOGNAME="$user" \
+    XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+    PARASAUR_SMOKE_ACTIVATE=1 xvfb-run -a -s "-screen 0 1600x1000x24" \
+    "$fixture/check" "$fixture/AppImage" "$fixture/home/first-window.png" || result=$?
+  for item in accessibility.log first-window.png first-window.log setup-retry.png dashboard.png first-project.png; do
+    if sudo test -f "$fixture/home/$item"; then sudo cat "$fixture/home/$item" > "$(dirname "$shot")/$item"; fi
+  done
+  exit "$result"
+fi
 if [ -z "${DISPLAY:-}" ]; then
   exec dbus-run-session -- xvfb-run -a -s "-screen 0 1600x1000x24" "$0" "$appimage" "$shot"
+fi
+if [[ ${PARASAUR_SMOKE_ACTIVATE:-} == 1 ]]; then
+  # Start the accessibility bridge in the Xvfb session that owns DISPLAY and
+  # XAUTHORITY. The fixture's systemd manager started before either existed.
+  bus_log="$(dirname "$shot")/accessibility.log"
+  /usr/libexec/at-spi-bus-launcher --launch-immediately >"$bus_log" 2>&1 &
+  bus_pid=$!
+  if ! gdbus wait --session --timeout 15 org.a11y.Bus ||
+     ! gdbus call --session --timeout 10 --dest org.a11y.Bus --object-path /org/a11y/bus \
+         --method org.a11y.Bus.GetAddress; then
+    cat "$bus_log" >&2
+    echo 'FAIL: Xvfb accessibility bus did not start.' >&2
+    exit 1
+  fi
 fi
 mkdir -p "$(dirname "$shot")"
 log="${shot%.png}.log"
 profile=$(mktemp -d)
+app_home=$profile
+config=$profile/config
+data=$profile/data
+if [[ ${PARASAUR_SMOKE_ACTIVATE:-} == 1 ]]; then
+  app_home=$HOME
+  config=$HOME/.config
+  data=$HOME/.local/share
+fi
 [ -z "${PARASAUR_SMOKE_SEED:-}" ] || cp -R "$PARASAUR_SMOKE_SEED"/. "$profile"/
 
 # No config, server, CLI login or checkout: a fresh install must still show
 # actionable onboarding. Extract-and-run avoids a FUSE requirement; TMPDIR
 # keeps the extracted copy inside the profile so cleanup removes it.
-HOME="$profile" XDG_CONFIG_HOME="$profile/config" XDG_DATA_HOME="$profile/data" \
+HOME="$app_home" XDG_CONFIG_HOME="$config" XDG_DATA_HOME="$data" \
   XDG_CACHE_HOME="$profile/cache" XDG_STATE_HOME="$profile/state" TMPDIR="$profile" \
   APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" >"$log" 2>&1 &
 pid=$!
-trap 'pkill -P "$pid" || true; wait "$pid" 2>/dev/null || true; rm -rf "$profile"' EXIT
+trap 'pkill -P "$pid" || true; wait "$pid" 2>/dev/null || true; if [[ -n ${bus_pid:-} ]]; then kill "$bus_pid" 2>/dev/null || true; fi; rm -rf "$profile"' EXIT
 
 # Prints what it found; exits 0 only when onboarding is ready.
 onboarding() {
-  python3 -I - "$1" <<'PY'
+  timeout 15s python3 -I - "$1" "${2:-check}" <<'PY'
+import os
+import subprocess
 import sys
+import time
 import pyatspi
 
 ACTIONS = {"Set up standalone", "Install Parasaur in Terminal", "Finish setup in Terminal"}
@@ -63,9 +120,60 @@ pid = int(sys.argv[1])
 app = next((a for a in pyatspi.Registry.getDesktop(0)
             if a is not None and a.get_process_id() == pid), None)
 nodes = list(walk(app)) if app is not None else []
+mode = sys.argv[2]
+if mode in {'dashboard', 'open-checkout', 'add-checkout', 'project-ready'}:
+    dashboard = next((n for n in nodes if n.name == 'Parasaur' and n.getRoleName().startswith('document')), None)
+    if dashboard is None:
+        sys.exit(1)
+    inside = list(walk(dashboard))
+    buttons = [n for n in inside if n.getRoleName() == 'push button']
+    if mode == 'dashboard':
+        welcome = any(n.name == 'Add your first project' and n.childCount for n in inside)
+        actions = {n.name for n in buttons if n.getState().contains(pyatspi.STATE_ENABLED)}
+        errors = any('Failed to load data' in (n.name or text(n)) or 'dashboard is read-only' in (n.name or text(n)) for n in inside)
+        sys.exit(0 if welcome and {'Import from Git', 'Use a local checkout'} <= actions and not errors else 1)
+    if mode == 'project-ready':
+        switcher = next((n.name for n in inside if n.name.startswith('Project:')), '')
+        overview = any((n.name or text(n)) == 'Profile: First checkout' for n in inside)
+        sys.exit(0 if switcher == 'Project: First checkout' and overview else 1)
+    if mode == 'open-checkout':
+        button = next(n for n in buttons if n.name == 'Use a local checkout')
+        sys.exit(0 if button.queryAction().doAction(0) else 1)
+    fields = {'Display Name *': 'First checkout', 'Profile Name (ID) *': 'first-checkout',
+              'Repository *': 'fixture/first-checkout', 'Local Path *': os.path.expanduser('~/first-checkout'),
+              'Artifact Root *': os.path.expanduser('~/artifacts')}
+    entries = {n.name: n for n in inside if n.getState().contains(pyatspi.STATE_EDITABLE)}
+    if not fields.keys() <= entries.keys():
+        sys.exit(1)
+    for name, value in fields.items():
+        field = entries[name]
+        field.queryComponent().grabFocus()
+        deadline = time.monotonic() + 1
+        while not field.getState().contains(pyatspi.STATE_FOCUSED):
+            if time.monotonic() >= deadline:
+                sys.exit(1)
+            time.sleep(0.03)
+        subprocess.run(['xdotool', 'key', 'ctrl+a'], check=True)
+        subprocess.run(['xdotool', 'type', '--clearmodifiers', '--delay', '20', value], check=True)
+        deadline = time.monotonic() + 1
+        while text(field) != value:
+            if time.monotonic() >= deadline:
+                print(f'Form field did not receive its complete value: {name}', file=sys.stderr)
+                sys.exit(1)
+            time.sleep(0.03)
+    submit = next(n for n in reversed(buttons) if n.name == 'Add Profile')
+    sys.exit(0 if submit.queryAction().doAction(0) else 1)
 settings = any(n.name == "Parasaur — Settings" for n in nodes)
 section = next((n for n in nodes if n.name == "Set up this computer" and n.childCount), None)
 inside = list(walk(section)) if section is not None else []
+if sys.argv[2] == 'retry-ready':
+    retry = any(n.name == 'Retry standalone setup' and n.getRoleName() == 'push button' for n in inside)
+    reason = any('Another standalone installation is running' in text(n) for n in inside if n.getRoleName() == 'status bar')
+    sys.exit(0 if retry and reason else 1)
+if sys.argv[2] in {'install', 'retry'}:
+    label = 'Set up standalone' if sys.argv[2] == 'install' else 'Retry standalone setup'
+    button = next(n for n in inside if n.name == label and n.getRoleName() == 'push button')
+    sys.exit(0 if button.queryAction().doAction(0) else 1)
 status = next((text(n) for n in inside if n.getRoleName() == "status bar"), "")
 checked = bool(status) and not status.startswith("Checking what this computer has")
 action = any(n.getRoleName() == "push button" and n.name in ACTIONS
@@ -78,7 +186,8 @@ PY
 
 result="no Parasaur window yet"
 colors=0
-for _ in $(seq 90); do
+deadline=$((SECONDS + 90))
+while (( SECONDS < deadline )); do
   sleep 1
   if ! kill -0 "$pid" 2>/dev/null; then
     echo "FAIL: the AppImage exited during startup. Output:" >&2
@@ -89,12 +198,69 @@ for _ in $(seq 90); do
   window=$(xdotool search --onlyvisible --name '^Parasaur$' 2>/dev/null | head -n 1) || true
   [ -n "$app" ] && [ -n "$window" ] || continue
   ok=0
-  result=$(onboarding "$app" 2>/dev/null) && ok=1
+  result=$(onboarding "$app" 2>&1) && ok=1
   import -window "$window" "$shot" 2>/dev/null || continue
   # Look below the native menu bar so the menu's own text cannot pass.
   colors=$(convert "$shot" -gravity south -crop 100%x75%+0+0 +repage -format %k info:)
   if [ "$ok" = 1 ] && [ "$colors" -gt 16 ]; then
     echo "PASS: onboarding is shown ($result; $colors colours): $shot"
+    if [[ ${PARASAUR_SMOKE_ACTIVATE:-} == 1 ]]; then
+      # Exercise a real, recoverable installer error in this disposable account.
+      runtime="$HOME/.local/share/parasaur/standalone"
+      mkdir -p "$runtime"
+      exec {held}>"$runtime/install.lock"
+      flock -n "$held"
+      onboarding "$app" install
+      deadline=$((SECONDS + 30))
+      until onboarding "$app" retry-ready; do
+        (( SECONDS < deadline )) || { echo 'FAIL: setup did not show the lock error and retry action.' >&2; exit 1; }
+        sleep 1
+      done
+      import -window "$window" "$(dirname "$shot")/setup-retry.png"
+      flock -u "$held"
+      exec {held}>&-
+      onboarding "$app" retry
+      deadline=$((SECONDS + 90))
+      while (( SECONDS < deadline )); do
+        if systemctl --user is-active --quiet parasaur-standalone && onboarding "$app" dashboard; then
+          window=$(xdotool search --onlyvisible --name '^Parasaur$' | head -n 1)
+          import -window "$window" "$(dirname "$shot")/dashboard.png"
+          echo "PASS: standalone setup opened first-project onboarding."
+          git init -q -b main "$HOME/first-checkout"
+          git -C "$HOME/first-checkout" -c user.name=Fixture -c user.email=fixture@localhost commit --allow-empty -qm 'First commit'
+          onboarding "$app" open-checkout
+          deadline=$((SECONDS + 30))
+          until onboarding "$app" add-checkout; do
+            (( SECONDS < deadline )) || { echo 'FAIL: the first checkout form did not open.' >&2; exit 1; }
+            sleep 1
+          done
+          deadline=$((SECONDS + 30))
+          until onboarding "$app" project-ready; do
+            if (( SECONDS >= deadline )); then
+              import -window "$window" "$(dirname "$shot")/first-project.png"
+              echo 'FAIL: the new checkout was not selected.' >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          import -window "$window" "$(dirname "$shot")/first-project.png"
+          echo "PASS: the packaged dashboard created and selected its first checkout."
+          # Repeat the installed-package path with a real existing role configuration.
+          appdir=$(tr '\0' '\n' < "/proc/$app/environ" | sed -n 's/^APPDIR=//p')
+          mapfile -t installers < <(find "${appdir:?missing AppImage resource directory}" -type f -path '*/standalone/install.sh')
+          [[ ${#installers[@]} == 1 ]]
+          server_pid=$(systemctl --user show parasaur-standalone -p MainPID --value)
+          bash "${installers[0]}"
+          [[ $(systemctl --user show parasaur-standalone -p MainPID --value) == "$server_pid" ]]
+          echo "PASS: reapplying the package kept the dashboard running."
+          exit 0
+        fi
+        sleep 1
+      done
+      echo "FAIL: standalone setup did not open the dashboard." >&2
+      tail -n 40 "$log" >&2
+      exit 1
+    fi
     exit 0
   fi
 done

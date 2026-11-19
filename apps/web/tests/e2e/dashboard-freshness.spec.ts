@@ -3,6 +3,7 @@ import { openUsage } from './helpers/navigation.js';
 import { readFileSync } from 'node:fs';
 
 const quotaFixture = JSON.parse(readFileSync(new URL('../../../server/tests/fixtures/gah/responses/quota.json', import.meta.url), 'utf8'));
+const profilesFixture = JSON.parse(readFileSync(new URL('../../../server/tests/fixtures/gah/responses/profile-list.json', import.meta.url), 'utf8'));
 
 /**
  * Coverage for issue #750: every REST-backed page must show a visible
@@ -49,7 +50,7 @@ async function mockRestApi(page: Page) {
       case '/api/events':
         return route.fulfill({ json: [] });
       case '/api/profiles':
-        return route.fulfill({ json: [] });
+        return route.fulfill({ json: profilesFixture });
       case '/api/controller-activity':
         return route.fulfill({ json: [] });
       case '/api/loop/status':

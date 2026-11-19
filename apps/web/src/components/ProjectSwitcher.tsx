@@ -33,7 +33,7 @@ export function ProjectSwitcher({ onImport, onCreate, onConnection }: { onImport
   }, [open, fetchProfiles]);
 
   const configured = profiles.data ?? [];
-  const selectedName = profileOverride ?? wsProfile ?? '';
+  const selectedName = profiles.data?.length === 0 && !profiles.error ? '' : profileOverride ?? wsProfile ?? '';
   const selected = configured.find((candidate) => candidate.name === selectedName);
   const unavailable = !!profiles.error || (!isConnected && !!error);
   const label = selected?.display_name || selectedName || (unavailable ? 'unavailable' : profiles.loading || (serverVersion === null && isConnecting) ? 'loading…' : 'none');

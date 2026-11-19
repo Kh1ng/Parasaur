@@ -170,6 +170,28 @@ jobs:
           SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: echo "has_key=$([ -n "$SIGNING_KEY" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
+  linux-standalone:
+    needs: updater-key-gate
+    if: needs.updater-key-gate.outputs.has_key == 'false'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Select the green revision from main
+        env:
+          EDGE_REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          [[ "$EDGE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$EDGE_REVISION" HEAD
+          git checkout --detach "$EDGE_REVISION"
+      - uses: ./.github/actions/build-linux-appimage
+        with:
+          artifact_name: edge-linux-standalone
+
   desktop-updater:
     needs: updater-key-gate
     if: needs.updater-key-gate.outputs.has_key == 'true'
@@ -204,7 +226,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - name: Install Tauri Linux dependencies
         if: runner.os == 'Linux'
@@ -243,6 +265,10 @@ jobs:
           # createUpdaterArtifacts stays out of tauri.conf.json (it would
           # break every build without the signing key); merge it in here.
           echo '{"bundle":{"createUpdaterArtifacts":true}}' > updater.conf.json
+          if [ "$RUNNER_OS" = Linux ]; then
+            bash ../../scripts/build-linux-standalone.sh
+            node -e 'const fs=require("fs");const config=JSON.parse(fs.readFileSync("standalone.bundle.json"));config.bundle.createUpdaterArtifacts=true;fs.writeFileSync("updater.conf.json", JSON.stringify(config))'
+          fi
           npx vite build
           npx tauri build --config updater.conf.json
       - name: Stage updater fragment
@@ -279,10 +305,10 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [cli-linux, cli-macos, server-bundle, desktop-updater]
+    needs: [cli-linux, cli-macos, server-bundle, desktop-updater, linux-standalone]
     # desktop-updater is skipped when no signing key is configured; the
     # core artifacts still publish.
-    if: ${{ !cancelled() && needs.cli-linux.result == 'success' && needs.cli-macos.result == 'success' && needs.server-bundle.result == 'success' && (needs.desktop-updater.result == 'success' || needs.desktop-updater.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.cli-linux.result == 'success' && needs.cli-macos.result == 'success' && needs.server-bundle.result == 'success' && ((needs.desktop-updater.result == 'success' && needs.linux-standalone.result == 'skipped') || (needs.desktop-updater.result == 'skipped' && needs.linux-standalone.result == 'success')) }}
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -314,6 +340,13 @@ jobs:
         run: |
           cd edge
           assets=(gah-linux-x86_64 gah-macos-universal gah-mcp-server-linux-x86_64 gah-mcp-server-macos-universal gah-server-bundle.tar.gz edge-manifest.json)
+          # Without an updater key the verified AppImage is still available for
+          # manual installation. Only signed artifacts enter latest.json.
+          if [ -d apps/desktop ]; then
+            images=(apps/desktop/target/release/bundle/appimage/*.AppImage)
+            [[ ${#images[@]} == 1 && -f ${images[0]} ]]
+            assets+=("${images[0]}")
+          fi
           for fragment in fragment-*.json; do
             [ -e "$fragment" ] || continue
             name="$(node -e "console.log(JSON.parse(require('fs').readFileSync('$fragment','utf8')).asset_name)")"

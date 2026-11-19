@@ -29,6 +29,7 @@
             "allow-set-worker-running",
             "allow-repository-tools",
             "allow-setup-check",
+            "allow-install-standalone",
             "allow-open-setup-terminal",
             "allow-set-factory-enabled",
             "allow-set-notifications-enabled",

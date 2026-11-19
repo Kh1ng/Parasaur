@@ -31,7 +31,6 @@ async function serveHeldStatus(page: Page) {
   await page.route('**/api/quota**', (route) => route.fulfill({
     json: { candidates: [], usage: null },
   }));
-  await page.route('**/api/profiles**', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/controller-activity**', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/loop/status**', (route) => route.fulfill({
     json: { running: false },

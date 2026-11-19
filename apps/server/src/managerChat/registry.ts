@@ -129,10 +129,10 @@ function acpManagerAdapter(
  * takes effect on the next spawn, and the connection keeps the provenance of
  * the spawn that started it. */
 export function defaultClaudeSpawn(searchPath?: string): SpawnSpec & { bundledRuntime: boolean } {
-  const executable = findInstalledExecutable('claude', searchPath);
+  const executable = findInstalledExecutable('claude', searchPath) ?? process.env.CLAUDE_CODE_EXECUTABLE;
   return {
     ...claudeSpawnSpec(executable ? { executable, state_root: null } : undefined),
-    bundledRuntime: executable === null
+    bundledRuntime: !executable
   };
 }
 

@@ -23,6 +23,8 @@
       table { width: 100%; border-collapse: collapse; font-size: .875rem; font-variant-numeric: tabular-nums; } th, td { text-align: left; padding: .25rem .5rem; border-bottom: 1px solid #232936; }
       #error, #connection-timeout { color: #ffb4b4; } #status:empty, #error:empty { display: none; } [hidden] { display: none !important; }
       .actions { display: flex; gap: .75rem; flex-wrap: wrap; }
+      #standalone-actions { align-items: center; }
+      #connect-existing { color: #8ab4ff; }
       #repository-tools .actions { align-items: flex-end; }
       #repository-tool-guide { color: #8ab4ff; display: inline-flex; align-items: center; min-height: 2.75rem; }
       #repository-tool-guide:hover { color: #b6d0ff; }
@@ -36,9 +38,9 @@
   <body>
     <main>
       <button id="back" type="button">← Back to Settings</button>
-      <h1>Settings · This computer</h1>
-      <p>Change this computer’s connection, app presence, and worker. Pair devices and manage central from the dashboard’s Settings page.</p>
-      <section aria-labelledby="connection-heading">
+      <h1 id="page-title">Settings · This computer</h1>
+      <p id="page-intro">Change this computer’s connection, app presence, and worker. Pair devices and manage central from the dashboard’s Settings page.</p>
+      <section id="connection-section" aria-labelledby="connection-heading">
         <h2 id="connection-heading">Connection</h2>
         <p id="connection-timeout" role="alert" tabindex="-1" hidden>The dashboard did not open in time. Check the saved address and your connection, then try again.</p>
         <form id="connection">
@@ -115,6 +117,10 @@
       <section id="setup-section" aria-labelledby="setup-heading">
         <h2 id="setup-heading">Set up this computer</h2>
         <p id="setup-state" role="status">Checking what this computer has…</p>
+        <div class="actions" id="standalone-actions" hidden>
+          <button id="setup-standalone" type="button" aria-describedby="standalone-note">Set up standalone</button>
+          <a id="connect-existing" href="#central-url" hidden>Connect to a central node</a>
+        </div>
         <ul id="setup-list" class="checklist" hidden></ul>
         <label class="preference"><input id="factory-enabled" type="checkbox" />Enable factory automation</label>
         <p>Factory automation runs ticket dispatch loops and their watchdog. Dashboard, chats, agents, repository workflows, quota collection, and daily storage maintenance are available with this module off.</p>
@@ -127,7 +133,6 @@
         <p id="standalone-note" hidden>Standalone runs the dashboard and agents on this computer only. It accepts every setup default and connects this app when setup finishes.</p>
         <p id="setup-command" hidden>Run in a terminal: <code></code></p>
         <div class="actions">
-          <button id="setup-standalone" type="button" hidden aria-describedby="standalone-note">Set up standalone</button>
           <button id="setup-terminal" type="button" hidden>Finish setup in Terminal</button>
           <button id="setup-refresh" type="button">Check again</button>
         </div>

@@ -18,6 +18,7 @@ fn main() {
             "open_local_checkout",
             "repository_tools",
             "setup_check",
+            "install_standalone",
             "open_setup_terminal",
             "set_factory_enabled",
             "set_notifications_enabled",

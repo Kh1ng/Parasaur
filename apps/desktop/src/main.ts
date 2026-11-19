@@ -104,9 +104,11 @@ type SetupCheck = {
   error: string | null;
   command: string;
   terminal: boolean;
+  packaged_standalone: boolean;
 };
 let nodeRole: 'central' | 'worker' = 'central';
 let standaloneStarted = false;
+let packagedStandalone = false;
 let factoryLoaded = false;
 /** True once the checkbox reflects the host or the user; until then setup must not send a factory choice. */
 let factoryChosen = false;
@@ -132,9 +134,10 @@ function checkUnresolved(status: SetupStatus): boolean {
   return status.state === 'status_unknown' || status.state === 'status_failed';
 }
 
-/** `gah setup --check` as a checklist; the work itself happens in Terminal. Resolves to readiness. */
+/** Render the prerequisites and installation paths available on this computer. */
 async function refreshSetup(): Promise<boolean> {
   const result = await invoke<SetupCheck>('setup_check', { role: nodeRole === 'central' && !isMac && (!central.value || /^http:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(central.value)) ? 'standalone' : nodeRole });
+  packagedStandalone = result.packaged_standalone;
   const state = document.querySelector<HTMLElement>('#setup-state')!;
   const list = document.querySelector<HTMLElement>('#setup-list')!;
   const button = document.querySelector<HTMLButtonElement>('#setup-terminal')!;
@@ -157,8 +160,10 @@ async function refreshSetup(): Promise<boolean> {
       : 'Notifications off · nothing is sent and nothing asks for a token.';
   }
   if (!result.installed) {
-    state.textContent = 'Parasaur is not installed on this computer yet. Setup builds it, asks whether this computer is the central node, a worker, or command line only, and offers each missing tool before installing it.';
-    button.textContent = 'Install Parasaur in Terminal';
+    state.textContent = packagedStandalone
+      ? 'Set up standalone to open a private dashboard on this computer.'
+      : 'Parasaur is not installed on this computer yet. Setup builds it, asks whether this computer is the central node, a worker, or command line only, and offers each missing tool before installing it.';
+    button.textContent = packagedStandalone ? 'Install from source in Terminal' : 'Install Parasaur in Terminal';
   } else if (result.error || !result.report) {
     state.textContent = result.error ?? 'Setup could not check this computer.';
     button.textContent = 'Finish setup in Terminal';
@@ -195,8 +200,21 @@ async function refreshSetup(): Promise<boolean> {
   }
   list.hidden = list.childElementCount === 0;
   button.hidden = !pending || !result.terminal;
-  document.querySelector<HTMLElement>('#setup-standalone')!.hidden = button.hidden;
-  document.querySelector<HTMLElement>('#standalone-note')!.hidden = button.hidden;
+  const standalone = document.querySelector<HTMLButtonElement>('#setup-standalone')!;
+  const standaloneActions = document.querySelector<HTMLElement>('#standalone-actions')!;
+  standaloneActions.hidden = button.hidden && !packagedStandalone;
+  const firstRun = packagedStandalone && !central.value.trim();
+  document.querySelector<HTMLAnchorElement>('#connect-existing')!.hidden = !firstRun;
+  if (firstRun) {
+    const setup = document.querySelector<HTMLElement>('#setup-section')!;
+    document.querySelector<HTMLElement>('#connection-section')!.before(setup);
+    document.querySelector<HTMLElement>('#page-title')!.textContent = 'Set up Parasaur';
+    document.querySelector<HTMLElement>('#page-intro')!.textContent = 'Choose where to run your dashboard.';
+  }
+  standalone.textContent = packagedStandalone && result.installed ? 'Start or update standalone' : 'Set up standalone';
+  const note = document.querySelector<HTMLElement>('#standalone-note')!;
+  note.hidden = standaloneActions.hidden;
+  if (packagedStandalone) note.textContent = 'The AppImage includes the dashboard and local server. Setup installs them for your Linux account.';
   commandLine.hidden = !pending || result.terminal;
   commandLine.querySelector('code')!.textContent = result.command;
   return !pending;
@@ -309,6 +327,20 @@ document.querySelector('#setup-refresh')!.addEventListener('click', () => {
 });
 document.querySelector('#setup-standalone')!.addEventListener('click', () => {
   void perform(async () => {
+    if (packagedStandalone) {
+      const state = document.querySelector<HTMLElement>('#setup-state')!;
+      state.textContent = 'Installing the local runtime and starting your dashboard…';
+      try {
+        central.value = await invoke<string>('install_standalone', factoryChosen ? { factoryEnabled: factory.checked } : {});
+        state.textContent = 'Standalone is ready. Opening your dashboard…';
+        nodeRole = 'central';
+        await connect();
+      } catch (failure) {
+        state.textContent = String(failure);
+        document.querySelector<HTMLButtonElement>('#setup-standalone')!.textContent = 'Retry standalone setup';
+      }
+      return;
+    }
     // An unloaded checkbox is not a choice: omit it so the installer preserves an existing configuration.
     central.value = await invoke<string>('open_setup_terminal', factoryChosen ? { standalone: true, factoryEnabled: factory.checked } : { standalone: true });
     nodeRole = 'central';

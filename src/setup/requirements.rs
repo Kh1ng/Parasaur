@@ -342,6 +342,16 @@ pub fn requirements(selection: &Selection, host: &dyn Host) -> Vec<Requirement> 
     let server = wants(Feature::Dashboard) || wants(Feature::Worker);
     let os = host.os();
     let mut list = Vec::new();
+    // A standalone release carries the interpreter next to its CLI. Source
+    // installs and other roles still need their ordinary host prerequisites.
+    let bundled_node = std::env::current_exe()
+        .ok()
+        .filter(|exe| selection.role == Role::Standalone && exe.ends_with("bin/gah"))
+        .and_then(|exe| {
+            let bin = exe.parent()?;
+            let node = bin.join("node");
+            (node.is_file() && bin.parent()?.join("REVISION").is_file()).then_some(node)
+        });
 
     list.push(Requirement {
         id: "git",
@@ -361,20 +371,22 @@ pub fn requirements(selection: &Selection, host: &dyn Host) -> Vec<Requirement> 
         },
         help: Some("https://git-scm.com/downloads"),
     });
-    list.push(Requirement {
-        id: "rust",
-        label: "Rust toolchain (cargo)".into(),
-        why: "Builds gah itself, and rebuilds it on every `gah update`.",
-        feature: Feature::Core,
-        optional: false,
-        status: command_status(host, "cargo", &["--version"], None),
-        action: Some(Action {
-            kind: ActionKind::Install,
-            command: RUST_INSTALL.into(),
-            sudo: false,
-        }),
-        help: Some("https://rustup.rs"),
-    });
+    if bundled_node.is_none() {
+        list.push(Requirement {
+            id: "rust",
+            label: "Rust toolchain (cargo)".into(),
+            why: "Builds gah itself, and rebuilds it on every `gah update`.",
+            feature: Feature::Core,
+            optional: false,
+            status: command_status(host, "cargo", &["--version"], None),
+            action: Some(Action {
+                kind: ActionKind::Install,
+                command: RUST_INSTALL.into(),
+                sudo: false,
+            }),
+            help: Some("https://rustup.rs"),
+        });
+    }
     let agent = selection.agent;
     let min_node = match agent {
         Agent::Claude => 22,
@@ -386,7 +398,7 @@ pub fn requirements(selection: &Selection, host: &dyn Host) -> Vec<Requirement> 
         why: "Installs your agent CLI through npm, and runs the dashboard server and memory gateway.",
         feature: Feature::Core,
         optional: false,
-        status: command_status(host, "node", &["--version"], Some((min_node, 0))),
+        status: command_status(host, bundled_node.as_ref().and_then(|p| p.to_str()).unwrap_or("node"), &["--version"], Some((min_node, 0))),
         action: Some(Action { kind: ActionKind::Install, command: NODE_INSTALL.into(), sudo: false }),
         help: Some("https://nodejs.org/en/download"),
     });

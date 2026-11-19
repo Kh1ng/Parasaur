@@ -397,12 +397,13 @@ export function isUsageLimitError(error: unknown): boolean {
 }
 
 export function codexSpawnSpec(runtime?: { executable: string; state_root: string | null }): SpawnSpec {
+  const executable = runtime?.executable || process.env.CODEX_PATH;
   return {
     command: 'node',
     args: [resolveBinScript('@agentclientprotocol/codex-acp')],
-    ...(runtime ? { env: {
-      CODEX_PATH: runtime.executable,
-      ...(runtime.state_root ? { HOME: runtime.state_root, CODEX_HOME: path.join(runtime.state_root, '.codex') } : {})
+    ...(executable ? { env: {
+      CODEX_PATH: executable,
+      ...(runtime?.state_root ? { HOME: runtime.state_root, CODEX_HOME: path.join(runtime.state_root, '.codex') } : {})
     } } : {})
   };
 }

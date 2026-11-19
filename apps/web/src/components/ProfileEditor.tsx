@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Plus, Pencil, Trash2, Check, X, AlertCircle, Info } from 'lucide-react';
 import { useGahStore } from '../store/gahStore.js';
 import { useUiStore } from '../store/uiStore.js';
+import { updateNavigation } from '../lib/navigationState.js';
 import type { ProfileSummary } from '@git-agent-harness/contracts';
 import type { ProfileAddData, ProfileUpdateData } from '../api/client.js';
 
@@ -92,6 +93,10 @@ export function ProfileEditor() {
       } else {
         await addProfile({ ...submitted, name: formData.repo_id, default_target_branch: formData.default_target_branch || 'main' });
         if (useGahStore.getState().profileCrud.addError) return;
+        if (profiles.data?.length === 0) {
+          useUiStore.getState().setProfileOverride(formData.repo_id);
+          updateNavigation({ profile: formData.repo_id, chat: null, epic: null, map: null });
+        }
       }
       
       await fetchProfiles();

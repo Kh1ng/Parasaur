@@ -21,3 +21,14 @@ test('renders nothing in the default online state', async ({ mount }) => {
   await expect(component).not.toContainText('Offline');
   await expect(component).not.toContainText('Reload to update');
 });
+
+test('an offline computer can still reach its local dashboard', async ({ mount, page }) => {
+  await page.route('**/api/info', route => route.fulfill({ json: { name: 'Parasaur' } }));
+  const component = await mount(<PwaStatusBars connected />);
+  const response = page.waitForResponse('**/api/info');
+  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+  await response;
+  await expect(component).not.toContainText('read-only');
+  await component.update(<PwaStatusBars connected={false} />);
+  await expect(component).toContainText('read-only');
+});

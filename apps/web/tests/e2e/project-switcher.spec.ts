@@ -32,6 +32,46 @@ test('the switcher changes the project for every page and keeps it in the URL', 
   await expect(current.getByRole('combobox')).toHaveCount(0);
 });
 
+test('a fresh dashboard opens the first checkout and remembers the new project', async ({ page }) => {
+  const configured: object[] = [];
+  await page.route('**/api/profiles', async route => {
+    if (route.request().method() === 'POST') {
+      configured.push(route.request().postDataJSON());
+      return route.fulfill({ status: 201, json: { success: true } });
+    }
+    return route.fulfill({ json: configured });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Add your first project' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Project:/ })).toHaveText(/Project: none/);
+  await page.getByRole('button', { name: 'Use a local checkout' }).click();
+  const form = page.getByRole('complementary', { name: 'Profile' });
+  for (const [label, value] of [['Display Name *', 'First project'], ['Profile Name (ID) *', 'first'],
+    ['Repository *', 'owner/first'], ['Local Path *', '/srv/first'], ['Artifact Root *', '/srv/artifacts']]) {
+    await form.getByLabel(label, { exact: true }).fill(value);
+  }
+  await form.getByRole('button', { name: 'Add Profile', exact: true }).last().click();
+  await expect(page.getByRole('button', { name: /^Project:/ })).toHaveText(/Project: First project/);
+  await expect.poll(() => new URL(page.url()).searchParams.get('profile')).toBe('first');
+  await page.reload();
+  await expect(page.getByRole('button', { name: /^Project:/ })).toHaveText(/Project: First project/);
+  await expect(page.getByRole('heading', { name: 'Add your first project' })).toHaveCount(0);
+});
+
+test('a failed project listing can be retried into first-project setup', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  let healthy = false;
+  await page.route('**/api/profiles', route => route.fulfill(healthy
+    ? { json: [] } : { status: 503, json: { message: 'Project listing unavailable' } }));
+  await page.goto('/');
+  await expect(page.getByRole('alert').filter({ hasText: 'Project listing unavailable' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Add your first project' })).toHaveCount(0);
+  healthy = true;
+  await page.getByRole('alert').getByRole('button', { name: 'Retry', exact: true }).click();
+  await page.getByRole('button', { name: 'Import from Git', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Import repository' })).toBeVisible();
+});
+
 test('the GitHub dropdown opens the repository pages', async ({ page }) => {
   await page.goto('/?page=overview');
   // Navbar order: Project, then Overview … Fleet, then GitHub.
