@@ -996,3 +996,13 @@ fn preserved_publication_replays_same_sha_and_refuses_moved_branch() {
         initial
     );
 }
+
+#[test]
+fn missing_target_cannot_be_reported_as_an_empty_diff() {
+    let tmp = TempDir::new().unwrap();
+    init_bare_repo_with_main(tmp.path());
+    assert!(has_changes(tmp.path(), "missing").is_err());
+    assert!(changed_files(tmp.path(), "missing").is_err());
+    assert!(diff_stats(tmp.path(), "missing").is_err());
+    assert!(diff_patch(tmp.path(), "missing").is_err());
+}

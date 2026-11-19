@@ -306,6 +306,14 @@ pub fn state_snapshot(worktree: &Path) -> Result<WorktreeStateSnapshot> {
 }
 
 pub fn git(args: &[&str], cwd: &Path) -> Result<String> {
+    let bytes = git_stdout(args, cwd)?;
+    Ok(crate::redact::redact(&String::from_utf8_lossy(&bytes))
+        .trim()
+        .to_string())
+}
+
+/// Successful, unmodified output for callers parsing Git's data formats.
+fn git_stdout(args: &[&str], cwd: &Path) -> Result<Vec<u8>> {
     let out = git_raw(args, cwd)?;
     if !out.status.success() {
         anyhow::bail!(
@@ -314,9 +322,7 @@ pub fn git(args: &[&str], cwd: &Path) -> Result<String> {
             crate::redact::redact(&String::from_utf8_lossy(&out.stderr)).trim()
         );
     }
-    Ok(crate::redact::redact(&String::from_utf8_lossy(&out.stdout))
-        .trim()
-        .to_string())
+    Ok(out.stdout)
 }
 
 /// Run git and return raw Output. Does NOT error on non-zero exit.
@@ -673,8 +679,8 @@ pub fn has_changes(worktree: &Path, target_branch: &str) -> Result<bool> {
     }
     // ponytail: compare against origin/<target> — @{upstream} fails silently on new untracked branches
     let origin_ref = format!("origin/{}", target_branch);
-    let diff = git_raw(&["diff", "HEAD", &origin_ref], worktree)?;
-    Ok(!diff.stdout.is_empty())
+    let diff = git_stdout(&["diff", "HEAD", &origin_ref], worktree)?;
+    Ok(!diff.is_empty())
 }
 
 /// Some backends (e.g. vibe) commit their own work during the run instead of
@@ -683,29 +689,26 @@ pub fn has_changes(worktree: &Path, target_branch: &str) -> Result<bool> {
 /// branch -- callers must check this separately before staging, or
 /// `ensure_staged` fails loudly on a clean tree ("nothing to commit").
 pub fn has_uncommitted_changes(worktree: &Path) -> Result<bool> {
-    let status = git_raw(&["status", "--porcelain"], worktree)?;
-    Ok(!status.stdout.is_empty())
+    let status = git_stdout(&["status", "--porcelain"], worktree)?;
+    Ok(!status.is_empty())
 }
 
 pub fn diff_patch(worktree: &Path, target_branch: &str) -> Result<String> {
     let origin_ref = format!("origin/{}", target_branch);
-    Ok(
-        String::from_utf8_lossy(&git_raw(&["diff", &origin_ref, "HEAD"], worktree)?.stdout)
-            .to_string(),
-    )
+    Ok(String::from_utf8_lossy(&git_stdout(&["diff", &origin_ref, "HEAD"], worktree)?).to_string())
 }
 
 pub fn changed_files(worktree: &Path, target_branch: &str) -> Result<Vec<String>> {
     let origin_ref = format!("origin/{}", target_branch);
-    let out = git_raw(&["diff", "--name-only", &origin_ref, "HEAD"], worktree)?;
-    let tracked = String::from_utf8_lossy(&out.stdout).to_string();
+    let out = git_stdout(&["diff", "--name-only", &origin_ref, "HEAD"], worktree)?;
+    let tracked = String::from_utf8_lossy(&out).to_string();
     let mut files: Vec<String> = tracked
         .lines()
         .filter(|l| !l.is_empty())
         .map(|l| l.to_string())
         .collect();
-    let status = git_raw(&["status", "--porcelain"], worktree)?;
-    for line in String::from_utf8_lossy(&status.stdout).lines() {
+    let status = git_stdout(&["status", "--porcelain"], worktree)?;
+    for line in String::from_utf8_lossy(&status).lines() {
         if line.is_empty() {
             continue;
         }
@@ -772,8 +775,8 @@ pub fn contract_changed_files(worktree: &Path, target_branch: &str) -> Result<Ve
 
 pub fn diff_stats(worktree: &Path, target_branch: &str) -> Result<DiffStats> {
     let origin_ref = format!("origin/{}", target_branch);
-    let out = git_raw(&["diff", "--numstat", &origin_ref, "HEAD"], worktree)?;
-    let text = String::from_utf8_lossy(&out.stdout);
+    let out = git_stdout(&["diff", "--numstat", &origin_ref, "HEAD"], worktree)?;
+    let text = String::from_utf8_lossy(&out);
     let mut stats = DiffStats::default();
     for line in text.lines() {
         let mut parts = line.split_whitespace();

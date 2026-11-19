@@ -284,28 +284,26 @@ pub fn reconcile_already_satisfied(
 /// `worktree`. A test-only coverage regression is flagged conservatively: when
 /// every changed file is a test file and the diff deletes lines. The caller
 /// still owns the precise coverage-weakening signal.
-pub(crate) fn build_diff_summary(wt: &std::path::Path, target_branch: &str) -> DiffSummary {
-    let changed_files = crate::worktree::changed_files(wt, target_branch).unwrap_or_default();
+pub(crate) fn build_diff_summary(
+    wt: &std::path::Path,
+    target_branch: &str,
+) -> anyhow::Result<DiffSummary> {
+    let changed_files = crate::worktree::changed_files(wt, target_branch)?;
     let test_files = changed_files
         .iter()
         .filter(|f| is_test_path_public(f))
         .cloned()
         .collect::<Vec<_>>();
-    let stats =
-        crate::worktree::diff_stats(wt, target_branch).unwrap_or(crate::worktree::DiffStats {
-            files_changed: 0,
-            insertions: 0,
-            deletions: 0,
-        });
+    let stats = crate::worktree::diff_stats(wt, target_branch)?;
     let removes_or_weakens_coverage =
         !changed_files.is_empty() && test_files.len() == changed_files.len() && stats.deletions > 0;
-    DiffSummary {
+    Ok(DiffSummary {
         changed_files,
         test_files,
         insertions: stats.insertions,
         deletions: stats.deletions,
         removes_or_weakens_coverage,
-    }
+    })
 }
 
 /// Issue #584: emit a bounded, idempotent handoff for an already-satisfied
