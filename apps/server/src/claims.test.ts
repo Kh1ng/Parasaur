@@ -23,11 +23,12 @@ function tempPath(prefix: string): string {
 async function withClaimsServer(
   setup: (registry: RegistryService) => void,
   testFn: (url: string, localNodeId: string) => Promise<void>,
-  profiles?: () => Promise<ProfileSummary[]>
+  profiles?: () => Promise<ProfileSummary[]>,
+  now?: () => number
 ) {
   resetCachedCoordinatorIdentity();
   const registryService = new RegistryService(tempPath('gah-registry-'));
-  const claimsService = new ClaimsService(tempPath('gah-claims-'));
+  const claimsService = new ClaimsService(tempPath('gah-claims-'), now);
   setup(registryService);
 
   const app = createServer({ registryService, claimsService, ...(profiles ? { runProfileList: profiles } : {}) });
@@ -80,6 +81,30 @@ test('central claim membership comes from its local profiles, not registry decla
       assert.equal((await claim(url, 'acquire', central)).status, 200);
       assert.equal((await claim(url, 'release', central)).status, 200);
     }, localProfiles
+  );
+});
+
+test('two registered workers race one lease and the peer takes over only at expiry', async () => {
+  let now = Date.now();
+  const nodes = ['worker-a', 'worker-b'];
+  await withClaimsServer(
+    registry => nodes.forEach(id => registerTestNode(registry, id, ['gah'])),
+    async url => {
+      const responses = await Promise.all(nodes.map(id => claim(url, 'acquire', id)));
+      assert.deepEqual(responses.map(r => r.status).sort(), [200, 409]);
+      const won = responses.findIndex(r => r.status === 200);
+      const peer = nodes[1 - won];
+      const lease = await responses[won].json() as { node_id: string; expires_at: string };
+      assert.equal(lease.node_id, nodes[won]);
+      const expiry = Date.parse(lease.expires_at);
+      assert.ok(expiry > now);
+      now = expiry - 1;
+      assert.equal((await claim(url, 'acquire', peer)).status, 409);
+      now = expiry;
+      assert.equal((await claim(url, 'acquire', peer)).status, 200);
+      assert.equal((await claim(url, 'renew', nodes[won])).status, 409);
+      assert.equal((await claim(url, 'release', peer)).status, 200);
+    }, undefined, () => now
   );
 });
 

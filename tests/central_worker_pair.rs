@@ -16,9 +16,11 @@ fn resolution() -> Value {
 }
 
 fn worker(central: &FakeCentral) -> ScenarioHarness {
-    let mut harness = ScenarioHarness::new("github")
-        .github_scenario("empty")
-        .with_central(central);
+    configure_worker(ScenarioHarness::new("github"), central)
+}
+
+fn configure_worker(harness: ScenarioHarness, central: &FakeCentral) -> ScenarioHarness {
+    let mut harness = harness.github_scenario("empty").with_central(central);
     let root = harness.artifacts_dir.parent().unwrap();
     let availability = root.join("xdg-state/gah/availability.json");
     fs::create_dir_all(availability.parent().unwrap()).unwrap();
@@ -455,4 +457,144 @@ fn fleet_observation_is_recorded_and_central_lease_prevents_double_claim() {
     assert_eq!(acquire["body"]["work_id"], "#1516");
     assert_eq!(acquire["body"]["profile"], "test");
     assert_eq!(acquire["body"]["node_id"], "scenario-worker");
+}
+
+#[cfg(unix)]
+#[test]
+fn two_nodes_race_one_issue_and_killed_holder_expires() {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    let central = FakeCentral::new();
+    let mut first = worker(&central);
+    let mut second = configure_worker(first.peer(), &central);
+    for (harness, node) in [(&first, "worker-a"), (&second, "worker-b")] {
+        let identity = harness
+            .artifacts_dir
+            .parent()
+            .unwrap()
+            .join("identity.json");
+        let mut value: Value = serde_json::from_slice(&fs::read(&identity).unwrap()).unwrap();
+        value["node_id"] = json!(node);
+        fs::write(identity, value.to_string()).unwrap();
+        // The backend exits when the test removes its marker or drops the fixture.
+        let marker = harness.artifacts_dir.join("worker-argv");
+        support::write_executable(&harness.bin_dir.join("codex"), &format!(
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'test 1.0'; exit 0; fi\nmarker='{}'\n: > \"$marker\"\nwhile [ -f \"$marker\" ]; do sleep 0.1; done\n",
+            marker.display()
+        ));
+    }
+    let mut a = first.prepare_loop_command(true);
+    let mut b = second.prepare_loop_command(true);
+    let mut processes: Vec<_> = [&mut a, &mut b]
+        .into_iter()
+        .map(|command| {
+            support::ProcessGroupGuard::new(
+                command
+                    .process_group(0)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .unwrap(),
+            )
+        })
+        .collect();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let state = loop {
+        let state = central.state();
+        let acquisitions = state["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|call| call["target"] == "/api/claims/acquire")
+            .count();
+        let started = [&first, &second]
+            .iter()
+            .filter(|h| h.artifacts_dir.join("worker-argv").exists())
+            .count();
+        if acquisitions == 2 && started == 1 {
+            break state;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "workers did not arbitrate: {state}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(state["claims"].as_object().unwrap().len(), 1);
+    let acquires: Vec<_> = state["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|call| call["target"] == "/api/claims/acquire")
+        .collect();
+    assert_eq!(acquires.len(), 2);
+    assert_ne!(
+        acquires[0]["body"]["node_id"],
+        acquires[1]["body"]["node_id"]
+    );
+    for call in acquires {
+        assert_eq!(call["body"]["profile"], "test");
+        assert_eq!(call["body"]["work_id"], "#1516");
+    }
+    let winner = if first.artifacts_dir.join("worker-argv").exists() {
+        0
+    } else {
+        1
+    };
+    let loser = 1 - winner;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while processes[loser].try_wait().unwrap().is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "loser failed to skip in the same cycle"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let harnesses = [&first, &second];
+    let events = fs::read_to_string(&harnesses[loser].events_path).unwrap();
+    assert!(events.contains("held by node"), "{events}");
+    assert!(
+        support::fake_ledger::TestLedger::read_from(&harnesses[loser].ledger_path)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(!harnesses[loser].artifacts_dir.join("worker-argv").exists());
+
+    // Abruptly stop this worker before its claim guard can release the lease.
+    processes[winner].kill().unwrap();
+    processes[winner].wait().unwrap();
+    fs::remove_file(harnesses[winner].artifacts_dir.join("worker-argv")).unwrap();
+    assert!(!central.state()["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|call| call["target"] == "/api/claims/release"));
+    let survivor = if loser == 0 { &mut first } else { &mut second };
+    let refused = survivor.run_one_loop().unwrap();
+    assert!(
+        !survivor.artifacts_dir.join("worker-argv").exists(),
+        "{refused:?}"
+    );
+    central.update(|state| {
+        state["clock_utc"] = state["claims"]["test/#1516"]["expires_at"].clone();
+    });
+    support::write_executable(&survivor.bin_dir.join("codex"), &format!(
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'test 1.0'; exit 0; fi\ntouch '{}'\necho 'invalid model selection (--model test-model)'\nexit 1\n",
+        survivor.artifacts_dir.join("worker-argv").display()
+    ));
+    let recovered = survivor.run_one_loop().unwrap();
+    assert!(
+        survivor.artifacts_dir.join("worker-argv").exists(),
+        "{recovered:?}"
+    );
+    assert!(
+        recovered
+            .ledger_entries
+            .iter()
+            .any(|entry| entry["backend_exit_code"] == 1),
+        "{recovered:?}"
+    );
+    assert_eq!(central.state()["claims"], json!({}));
 }
