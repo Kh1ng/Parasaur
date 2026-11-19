@@ -121,6 +121,15 @@ gah update --from-release            # edge channel, manifest auto-discovered fr
 gah update --from-release --release-manifest /path/or/https://.../edge-manifest.json
 ```
 
+On Linux, a central or standalone server deployed from an archive can run the
+same command from its installed directory. Parasaur recognizes its root package,
+server entry point and dashboard. It verifies the release checksums and updates
+both the loop CLI and a separate `bin/gah` used by the server, when present.
+The service manager retains its unit files, account and configuration.
+The dashboard uses the official edge feed for this installation. Set
+`PARASAUR_RELEASE_MANIFEST` in the service environment to pin a fleet feed.
+The active-loop guard also applies to archive deployments using `--restart-server`.
+
 Every surface shows "Update available" against the same feed: the web
 dashboard's top banner and Settings page (which offer *Update and restart*),
 the desktop app's Settings row (signed updater, restarts into the new

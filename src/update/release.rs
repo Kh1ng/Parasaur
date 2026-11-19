@@ -14,6 +14,9 @@
 //! sanity-checked, and swapped in. Nothing overwrites the running binary
 //! before the replacement has passed `--version`.
 
+#[cfg(target_os = "linux")]
+pub(super) mod central_directory;
+
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::cmp::Ordering;
@@ -528,8 +531,8 @@ fn install_release_artifacts(
     locator: &AssetLocator,
     repo: &Path,
     role: HostRole,
+    cli_target: PathBuf,
 ) -> Result<Option<tempfile::TempDir>> {
-    let cli_target = super::installed_binary_path()?;
     let bin_dir = cli_target.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(bin_dir)
         .with_context(|| format!("creating CLI install directory {}", bin_dir.display()))?;
@@ -606,15 +609,8 @@ fn install_release_artifacts(
     Ok(Some(staging))
 }
 
-pub fn run_release(args: ReleaseArgs) -> Result<()> {
-    super::ownership::preflight(
-        &args.repo,
-        args.role,
-        &args.server_service,
-        args.repair_ownership,
-    )?;
-    let manifest_location = resolve_manifest_location(&args.repo, args.manifest.as_deref())?;
-    let manifest_bytes = read_manifest(&manifest_location)?;
+fn checked_manifest(location: &ManifestLocation) -> Result<ReleaseManifest> {
+    let manifest_bytes = read_manifest(location)?;
     let manifest: ReleaseManifest =
         serde_json::from_slice(&manifest_bytes).context("parsing the release manifest")?;
     if manifest.schema != 1 {
@@ -646,8 +642,26 @@ pub fn run_release(args: ReleaseArgs) -> Result<()> {
         ),
     }
 
+    Ok(manifest)
+}
+
+pub fn run_release(args: ReleaseArgs) -> Result<()> {
+    super::ownership::preflight(
+        &args.repo,
+        args.role,
+        &args.server_service,
+        args.repair_ownership,
+    )?;
+    let manifest_location = resolve_manifest_location(&args.repo, args.manifest.as_deref())?;
+    let manifest = checked_manifest(&manifest_location)?;
     let locator = AssetLocator::new(manifest_location);
-    let staging = install_release_artifacts(&manifest, &locator, &args.repo, args.role)?;
+    let staging = install_release_artifacts(
+        &manifest,
+        &locator,
+        &args.repo,
+        args.role,
+        super::installed_binary_path()?,
+    )?;
 
     // The bundle ships fresh OpenCode agent configs; the checkout's copies
     // are stale in release mode (there was no git pull), so prefer the
@@ -1244,8 +1258,14 @@ mod tests {
             serde_json::from_slice(&read_manifest(&location).unwrap()).unwrap();
         let locator = AssetLocator::new(location);
 
-        let staging =
-            install_release_artifacts(&manifest, &locator, &repo, HostRole::Central).unwrap();
+        let staging = install_release_artifacts(
+            &manifest,
+            &locator,
+            &repo,
+            HostRole::Central,
+            super::super::installed_binary_path().unwrap(),
+        )
+        .unwrap();
         assert!(staging.is_some());
         assert!(cargo_home.join("bin/gah").is_file());
         assert!(cargo_home.join("bin/gah-mcp-server").is_file());
@@ -1343,8 +1363,14 @@ mod tests {
             serde_json::from_slice(&read_manifest(&location).unwrap()).unwrap();
         let locator = AssetLocator::new(location);
 
-        let error =
-            install_release_artifacts(&manifest, &locator, &repo, HostRole::Central).unwrap_err();
+        let error = install_release_artifacts(
+            &manifest,
+            &locator,
+            &repo,
+            HostRole::Central,
+            super::super::installed_binary_path().unwrap(),
+        )
+        .unwrap_err();
         assert!(
             format!("{error:#}").contains(expected_error),
             "unexpected error: {error:#}"
