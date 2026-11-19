@@ -923,6 +923,7 @@ export interface ProfileAddOptions {
   env_file?: string;
   env_file_prod?: string;
   validation_commands?: string[];
+  validation_required?: boolean;
   auto_fix_commands?: string[];
   max_parallel_workers?: number;
   /** Validation command timeout in seconds. */
@@ -995,6 +996,7 @@ export function buildProfileAddArgs(options: ProfileAddOptions): string[] {
   if (options.env_file_prod) {
     args.push('--env-file-prod', options.env_file_prod);
   }
+  if (options.validation_required !== undefined) args.push('--validation-required', String(options.validation_required));
   if (options.validation_commands?.length) {
     for (const command of options.validation_commands) args.push('--validation-command', command);
   }
@@ -1070,6 +1072,7 @@ export interface ProfileSetOptions {
   env_file?: string | null;
   env_file_prod?: string | null;
   validation_commands?: string[];
+  validation_required?: boolean;
   auto_fix_commands?: string[];
   max_parallel_workers?: number | null;
   manager_wake_autonomy?: string | null;
@@ -1172,6 +1175,7 @@ export function buildProfileSetArgs(options: ProfileSetOptions): string[] {
   if (options.env_file_prod !== undefined && options.env_file_prod !== null) {
     args.push('--env-file-prod', options.env_file_prod);
   }
+  if (options.validation_required !== undefined) args.push('--validation-required', String(options.validation_required));
   if (options.validation_commands?.length) {
     for (const command of options.validation_commands) args.push('--validation-command', command);
   } else if (options.validation_commands !== undefined || options.clear?.includes('validation_commands')) {
@@ -1269,6 +1273,7 @@ export async function runProfileChecks(profile: string): Promise<ProfileChecks> 
   }
   // Keep the HTTP owner view narrow even if the CLI adds more workspace fields.
   return { profile: data.profile, validation_commands: data.validation_commands,
+    ...(typeof data.validation_required === 'boolean' ? { validation_required: data.validation_required } : {}),
     auto_fix_commands: data.auto_fix_commands, validation_timeout_seconds: data.validation_timeout_seconds };
 }
 

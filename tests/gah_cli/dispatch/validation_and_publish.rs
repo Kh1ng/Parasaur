@@ -1228,3 +1228,63 @@ fn restricted_profile_emits_deterministic_handoff_metadata() {
             "PR/MR creation or commit-message generation disabled by publishing policy",
         ));
 }
+
+#[test]
+fn required_validation_blocks_missing_and_failed_checks_even_for_drafts() {
+    for (commands, expected, failure) in [
+        ("[\"  \"]", "not_run", "Configure a validation command"),
+        (
+            "[\"if grep -q changed README.md; then echo deliberate-failure; exit 1; fi\"]",
+            "failed",
+            "deliberate-failure",
+        ),
+    ] {
+        let tmp = test_tempdir();
+        let (repo, home, cfg) = setup_fix_dispatch_repo(
+            &tmp,
+            &format!("validation_required = true\nvalidation_commands = {commands}\n"),
+        );
+        let fake_bin = tmp.path().join("bin");
+        fs::create_dir_all(&fake_bin).unwrap();
+        let ledger = tmp.path().join("ledger.jsonl");
+        make_fake_bin_with_body(&fake_bin, "codex", "#!/bin/sh\necho changed >> README.md\n");
+        make_fake_bin_with_body(&fake_bin, "gh", "#!/bin/sh\nexit 0\n");
+        bin()
+            .args([
+                "dispatch",
+                "--profile",
+                "real",
+                "--mode",
+                "fix",
+                "--config-path",
+                cfg.to_str().unwrap(),
+                "--target",
+                "implement the change",
+                "--backend",
+                "codex",
+                "--retries",
+                "0",
+                "--skip-validation-gate",
+                "--allow-draft-fail",
+            ])
+            .env("HOME", &home)
+            .env("GITHUB_TOKEN", "fixture")
+            .env("PATH", prepend_path(&fake_bin))
+            .env("PARASAUR_LEDGER_PATH", &ledger)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(failure));
+        let text = fs::read_to_string(ledger).unwrap();
+        let entry: Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+        assert_eq!(entry["validation_result"], expected, "{entry}");
+        assert_eq!(entry["push_attempted"], false);
+        assert_eq!(entry["mr_attempted"], false);
+        assert!(entry["error_summary"].as_str().unwrap().contains(failure));
+        let branches = ProcessCommand::new("git")
+            .args(["ls-remote", "--heads", "origin", "refs/heads/gah/*"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(branches.status.success() && branches.stdout.is_empty());
+    }
+}
