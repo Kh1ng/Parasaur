@@ -229,6 +229,7 @@ export interface ProfileAddData {
   env_file?: string;
   env_file_prod?: string;
   validation_commands?: string[];
+  validation_required?: boolean;
   auto_fix_commands?: string[];
   /** Max concurrent tickets `gah loop` may run for this profile. */
   max_parallel_workers?: number;
@@ -264,6 +265,7 @@ export interface ProfileUpdateData {
   env_file?: string | null;
   env_file_prod?: string | null;
   validation_commands?: string[];
+  validation_required?: boolean;
   auto_fix_commands?: string[];
   /** Validation command timeout in seconds. */
   validation_timeout_seconds?: number | null;

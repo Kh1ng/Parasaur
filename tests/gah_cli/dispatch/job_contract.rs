@@ -234,6 +234,28 @@ fn job_contract_without_profile_commands_still_enforced() {
 }
 
 #[test]
+fn required_validation_accepts_job_commands_but_rejects_a_scope_only_contract() {
+    let strict = "validation_required = true\nvalidation_commands = []\n";
+    let (pass, _, _) = run_job(
+        "## Verification commands\n- grep -q implementation README.md",
+        "echo implementation >> README.md",
+        false,
+        true,
+        strict,
+    );
+    assert_eq!(pass["validation_result"], "passed");
+    let (blocked, _, _) = run_job(
+        "## Allowed files\n- README.md",
+        "echo implementation >> README.md",
+        true,
+        false,
+        strict,
+    );
+    assert_eq!(blocked["validation_result"], "not_run");
+    assert!(blocked["attempts"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn job_contract_draft_cannot_bypass_commands() {
     let (entry, _, _) = run_job(
         "## Verification commands\n- false",

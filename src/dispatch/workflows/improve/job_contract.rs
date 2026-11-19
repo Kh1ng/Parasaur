@@ -11,7 +11,7 @@ pub(super) struct JobContract {
     file: String,
     text: String,
     allowed: Option<Vec<String>>,
-    commands: Vec<String>,
+    pub(super) commands: Vec<String>,
 }
 
 impl JobContract {

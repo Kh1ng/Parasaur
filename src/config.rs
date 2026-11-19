@@ -23,7 +23,7 @@ mod external_credential_scopes;
 pub use external_credential_scopes::ExternalCredentialScope;
 mod loading;
 mod orchestration;
-pub use loading::load;
+pub use loading::{check_profile_candidate_model_consistency, load};
 mod routing_policy;
 mod spend_budget;
 pub use spend_budget::{SpendBudget, SpendCostBasis};
@@ -329,6 +329,9 @@ pub struct Profile {
     /// Example: ["cargo test --quiet", "cargo clippy -- -D warnings"]
     #[serde(default)]
     pub validation_commands: Vec<String>,
+    /// Require passing validation before publishing changes from this profile.
+    #[serde(default)]
+    pub validation_required: bool,
     /// Best-effort mechanical fixups run before validation on every attempt.
     /// Example: ["cargo fmt"].
     #[serde(default)]
@@ -454,46 +457,6 @@ fn load_canonical_routing() -> Result<Option<RoutingPolicy>> {
     let canonical: CanonicalConfig =
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     Ok(Some(canonical.routing))
-}
-
-pub fn check_profile_candidate_model_consistency(
-    defaults: &Defaults,
-    profile: &Profile,
-) -> Result<(), Vec<String>> {
-    let routing = profile.effective_routing(defaults);
-    let candidates = routing.labeled_candidates();
-    let mut errors = routing.allowed_model_errors();
-    for (label, candidate) in candidates {
-        // An allow-list entry without a model admits any model on its backend.
-        if label == "allowed_model" && candidate.model.is_none() {
-            continue;
-        }
-        let args = match candidate.backend.as_str() {
-            "codex" => &profile.codex_args,
-            "opencode" => &profile.opencode_args,
-            "claude" => &profile.claude_args,
-            _ => continue,
-        };
-        if let Some(pinned) =
-            crate::runner::extract_model_from_backend_args(&candidate.backend, args)
-        {
-            if candidate.model.as_deref() != Some(&pinned) {
-                errors.push(format!(
-                    "candidate {} (backend '{}', label '{}') has mismatch with profile backend args model pin '{}'",
-                    label,
-                    candidate.backend,
-                    candidate.model.as_deref().unwrap_or("None"),
-                    pinned
-                ));
-            }
-        }
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors)
-    }
 }
 
 pub fn get_profile<'a>(config: &'a GahConfig, name: &str) -> Result<&'a Profile> {

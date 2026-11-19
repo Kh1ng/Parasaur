@@ -43,7 +43,7 @@ test('workspace checks are owner-only, private, and command lists are validated 
     const failed = await fetch(`${origin}/api/profiles/broken/checks`, { headers });
     assert.equal(failed.status, 502);
     assert.doesNotMatch(await failed.text(), /PRIVATE_CLI_ERROR/);
-    for (const body of [{ validation_commands: 'echo unsafe' }, { auto_fix_commands: [false] },
+    for (const body of [{ validation_required: 'false' }, { validation_required: null }, { validation_commands: 'echo unsafe' }, { auto_fix_commands: [false] },
       { validation_commands: [''] }, { validation_commands: ['echo \0bad'] },
       { auto_fix_commands: Array(129).fill('echo test') }, { validation_commands: ['x'.repeat(16_385)] }]) {
       for (const method of ['POST', 'PATCH']) {

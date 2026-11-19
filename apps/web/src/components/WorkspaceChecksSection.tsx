@@ -26,7 +26,7 @@ export function WorkspaceChecksSection({ profile }: { profile: string }) {
   const formId = useId();
   const request = useRef(0);
   useEffect(() => () => { request.current++; }, []);
-  const dirty = !!checks && !!baseline && LISTS.some(([key]) => !same(checks[key], baseline[key]));
+  const dirty = !!checks && !!baseline && (checks.validation_required !== baseline.validation_required || LISTS.some(([key]) => !same(checks[key], baseline[key])));
   const invalid = !!checks && LISTS.some(([key]) => checks[key].length > 128
     || checks[key].some(command => !command.trim() || command.length > 16_384 || command.includes('\0')));
   const close = () => { request.current++; setChecks(null); setBaseline(null); setPending(false); setError(''); setSaved(false); };
@@ -46,6 +46,7 @@ export function WorkspaceChecksSection({ profile }: { profile: string }) {
     if (!checks || !baseline || !dirty || invalid || pending) return;
     const id = ++request.current;
     const data: ProfileUpdateData = {};
+    if (checks.validation_required !== baseline.validation_required) data.validation_required = checks.validation_required;
     for (const [key] of LISTS) if (!same(checks[key], baseline[key])) data[key] = checks[key];
     setPending(true); setError(''); setSaved(false);
     let written = false;
@@ -56,7 +57,8 @@ export function WorkspaceChecksSection({ profile }: { profile: string }) {
       setBaseline(checks);
       const confirmed = checked(await gahApi.getProfileChecks(profile), profile);
       if (request.current !== id) return;
-      if (LISTS.some(([key]) => data[key] && !same(confirmed[key], data[key]!))) {
+      if ((data.validation_required !== undefined && confirmed.validation_required !== data.validation_required)
+        || LISTS.some(([key]) => data[key] && !same(confirmed[key], data[key]!))) {
         setBaseline(confirmed);
         setError('The node returned different checks. Your edits are kept; update Parasaur or resolve concurrent configuration changes before saving again.');
         return;
@@ -83,6 +85,11 @@ export function WorkspaceChecksSection({ profile }: { profile: string }) {
     {saved && <p role="status" className="mt-3 text-sm text-good">Checks saved and reloaded.</p>}
     {checks && <form className="mt-4 space-y-4" onSubmit={event => void save(event)}>
       <p className="text-xs text-muted">Validation timeout: {checks.validation_timeout_seconds}s per command. Change it in Dispatch settings.</p>
+      {typeof checks.validation_required === 'boolean' && <label className="flex items-center gap-2 text-sm text-primary">
+        <input type="checkbox" checked={checks.validation_required} disabled={pending}
+          onChange={event => { setChecks({ ...checks, validation_required: event.target.checked }); setSaved(false); }} />
+        Require passing validation before publishing changes
+      </label>}
       {LISTS.map(([key, title, singular]) => <fieldset key={key} disabled={pending} className="min-w-0 space-y-3">
         <legend className="mb-2 text-sm font-medium text-primary">{title} ({checks[key].length})</legend>
         {key === 'auto_fix_commands' && <p className="max-w-prose text-xs text-muted">Automatic fixes may change checkout files when the factory runs them.</p>}
