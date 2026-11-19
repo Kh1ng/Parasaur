@@ -3,9 +3,6 @@ name: Build and verify Linux desktop
 on:
   workflow_call:
     inputs:
-      revision:
-        type: string
-        required: true
       release_tag:
         type: string
         default: ''
@@ -23,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.revision }}
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
 
       - name: Check release version

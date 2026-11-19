@@ -175,7 +175,6 @@ jobs:
     if: needs.updater-key-gate.outputs.has_key == 'false'
     uses: ./.github/workflows/build-linux-appimage.yml
     with:
-      revision: ${{ github.event.workflow_run.head_sha || github.sha }}
       artifact_name: edge-linux-standalone
 
   desktop-updater:

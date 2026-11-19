@@ -119,8 +119,6 @@ jobs:
 
   linux:
     uses: ./.github/workflows/build-linux-appimage.yml
-    with:
-      revision: ${{ github.sha }}
 
   macos:
     name: macOS app

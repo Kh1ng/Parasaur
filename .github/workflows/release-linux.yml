@@ -18,7 +18,6 @@ jobs:
   build:
     uses: ./.github/workflows/build-linux-appimage.yml
     with:
-      revision: ${{ github.sha }}
       release_tag: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version || '' }}
 
   publish:
