@@ -673,6 +673,47 @@ test('/api/admin/update is 404 (not just unimplemented) without PARASAUR_ENABLE_
   });
 });
 
+test('a dashboard release request freezes the selected manifest and refuses a moved feed before launch', async () => {
+  await withAdminUpdateEnv('1', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gah-release-feed-'));
+    const previous = process.env.PARASAUR_RELEASE_MANIFEST;
+    const path = join(dir, 'manifest.json');
+    process.env.PARASAUR_RELEASE_MANIFEST = path;
+    const expected = 'a'.repeat(40);
+    const platform = process.platform === 'darwin' ? 'macos' : process.arch === 'arm64' ? 'linux-aarch64' : 'linux-x86_64';
+    const assets = [
+      { name: 'bundle.tgz', kind: 'server-bundle' },
+      { name: 'gah-' + platform, kind: 'cli' },
+      { name: 'gah-mcp-server-' + platform, kind: 'mcp-server' }
+    ].map(asset => ({ ...asset, sha256: 'b'.repeat(64) }));
+    const publish = (commit: string) => writeFileSync(path, JSON.stringify({ schema: 1, channel: 'edge', version: '0.3.0', commit, assets }));
+    const snapshots: string[] = [];
+    const app = createServer({ startAdminUpdate: options => {
+      snapshots.push(options?.selectedManifest ?? '');
+      return {started:true,state:{status:'running',mode:'release',startedAt:null,finishedAt:null,exitCode:null,pid:1,output:''}};
+    }});
+    const server = http.createServer(app);
+    await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
+    const {port} = server.address() as AddressInfo;
+    const start = () => fetch(`http://127.0.0.1:${port}/api/admin/update`, {method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'release',expected_commit:expected})});
+    try {
+      publish(expected);
+      assert.equal((await start()).status, 202);
+      assert.equal(JSON.parse(snapshots[0]).assets[0].url, join(dir, 'bundle.tgz'));
+      publish('c'.repeat(40));
+      assert.equal((await start()).status, 412);
+      assert.equal(snapshots.length, 1);
+      assert.equal(JSON.parse(snapshots[0]).commit, expected);
+    } finally {
+      await new Promise<void>(done => server.close(() => done()));
+      if (previous === undefined) delete process.env.PARASAUR_RELEASE_MANIFEST;
+      else process.env.PARASAUR_RELEASE_MANIFEST = previous;
+      rmSync(dir, {recursive:true,force:true});
+    }
+  });
+});
+
 test('GET /api/admin/update returns the injected pending-commits check when enabled', async () => {
   await withAdminUpdateEnv('1', async () => {
     const pending = {

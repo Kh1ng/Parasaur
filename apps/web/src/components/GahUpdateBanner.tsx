@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { RefreshCw, X } from 'lucide-react';
 import { gahApi, GahApiError } from '../api/client.js';
+import { formatReleaseBuild } from '../lib/format.js';
 import type { AdminUpdateState, ReleaseChannelStatus } from '@git-agent-harness/contracts';
 
 const RELEASE_POLL_MS = 15 * 60_000;
@@ -94,10 +95,14 @@ export function GahUpdateBanner() {
     setStarting(true);
     setError(null);
     try {
-      const state = await gahApi.startAdminUpdate('release');
+      const state = await gahApi.startAdminUpdate('release', release?.latest_commit);
       if (mounted.current) { setStatus(state); setStatusUnavailable(false); }
     } catch (err) {
       if (mounted.current) setError(err instanceof Error ? err.message : String(err));
+      if (err instanceof GahApiError && err.status === 412) {
+        const latest = await gahApi.getReleaseStatus().catch(() => null);
+        if (mounted.current && latest) setRelease(latest);
+      }
     } finally {
       startingRequest.current = false;
       if (mounted.current) setStarting(false);
@@ -107,8 +112,8 @@ export function GahUpdateBanner() {
   const failed = status?.status === 'failed';
   if (!enabled || dismissed || (!release?.update_available && !running && !failed)) return null;
 
-  const current = release?.current_version;
-  const latest = release?.latest_version ?? 'newer';
+  const current = release && formatReleaseBuild(release.current_version, release.current_commit);
+  const latest = release?.latest_version && formatReleaseBuild(release.latest_version, release.latest_commit);
 
   return (
     <div
@@ -116,14 +121,14 @@ export function GahUpdateBanner() {
       className="flex shrink-0 flex-wrap items-center gap-2 border-b border-accent/30 bg-accent/10 px-4 py-2 text-sm text-primary lg:col-span-2"
     >
       <RefreshCw size={14} aria-hidden="true" className="text-accent" />
-      <span className="font-medium break-words">{failed ? 'Server update failed' : release?.update_available ? `Server update available · v${current} → v${latest}` : 'Server update in progress'}</span>
+      <span className="font-medium break-words">{failed ? 'Server update failed' : release?.update_available && latest ? `Server update available · ${current} → ${latest}` : 'Server update in progress'}</span>
       {running && <span className="text-secondary">{statusUnavailable ? 'Server update status unavailable. Reconnecting…' : 'Installing release and restarting server…'}</span>}
       {failed && <span className="text-secondary">Review the update log in Settings before retrying.</span>}
       {!running && (
         <button
           type="button"
           onClick={() => void restartToUpdate()}
-          disabled={starting}
+          disabled={starting || !release || release.installable === false}
           className="inline-flex items-center gap-1.5 rounded bg-accent-fill px-2 py-1 text-xs font-medium text-on-fill hover:bg-accent-fill/90 disabled:opacity-50"
         >
           {starting ? 'Starting…' : failed ? 'Retry server update' : 'Update server'}

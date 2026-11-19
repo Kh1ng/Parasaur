@@ -14,10 +14,12 @@
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import type { AdminUpdateCommitInfo, AdminUpdatePendingInfo, AdminUpdateState } from '@git-agent-harness/contracts';
 import { findGahBinary } from './gahCli.js';
+import { serverReleaseManifest } from './releaseFeed.js';
 
 export type { AdminUpdateCommitInfo, AdminUpdatePendingInfo, AdminUpdateStatus, AdminUpdateState } from '@git-agent-harness/contracts';
 
@@ -123,6 +125,7 @@ function pidAlive(pid: number): boolean {
 }
 
 export interface StartAdminUpdateOptions {
+  selectedManifest?: string;
   spawnFn?: typeof spawn;
   /** Issue #1416: `release` runs `gah update --from-release` (download
    * published artifacts, no rebuild); `source` (the default) keeps the
@@ -168,7 +171,22 @@ export function startAdminUpdate(options: StartAdminUpdateOptions = {}): StartAd
   const mode = options.mode === 'release' ? 'release' : 'source';
   const args = ['update', '--repo', process.cwd(), '--role', 'central', '--restart-server'];
   // Source mode pulls and accepts the plan: nobody can answer a prompt here.
-  args.push(...(mode === 'release' ? ['--from-release'] : ['--pull', '--yes']));
+  if (mode === 'release') {
+    let manifest = serverReleaseManifest();
+    if (options.selectedManifest) {
+      // Keep the selected artifact checksums as a receipt. Concurrent or later
+      // requests cannot replace a different manifest underneath a running CLI.
+      const digest = createHash('sha256').update(options.selectedManifest).digest('hex');
+      manifest = statePath() + '.manifest-' + digest + '.json';
+      mkdirSync(dirname(manifest), { recursive: true });
+      const temporary = manifest + '.' + process.pid + '.tmp';
+      writeFileSync(temporary, options.selectedManifest, { mode: 0o600 });
+      renameSync(temporary, manifest);
+    }
+    args.push('--from-release', '--release-manifest', manifest);
+  } else {
+    args.push('--pull', '--yes');
+  }
   const uid = process.platform === 'linux' && typeof process.getuid === 'function' ? process.getuid() : undefined;
   const child: ChildProcess = spawnFn(findGahBinary(), args, {
     cwd: process.cwd(),

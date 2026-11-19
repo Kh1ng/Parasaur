@@ -10,6 +10,9 @@
  * the anonymous rate limit for nothing.
  */
 import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import {
   COORDINATOR_VERSION,
@@ -20,8 +23,8 @@ import {
 
 const exec = promisify(execFile);
 
-const RELEASE_REPO = process.env.PARASAUR_RELEASE_REPO || 'Kh1ng/git-agent-harness';
-const CHANNEL: ReleaseChannel = process.env.PARASAUR_RELEASE_CHANNEL === 'stable' ? 'stable' : 'edge';
+const configuredRepo = () => process.env.PARASAUR_RELEASE_REPO || 'Kh1ng/Parasaur';
+const configuredChannel = (): ReleaseChannel => process.env.PARASAUR_RELEASE_CHANNEL === 'stable' ? 'stable' : 'edge';
 const CACHE_TTL_MS = 5 * 60_000;
 const MAX_NOTES_CHARS = 8_000;
 const MANIFEST_ASSET_NAME = 'edge-manifest.json';
@@ -33,7 +36,28 @@ interface GithubRelease {
   html_url: string;
   published_at: string | null;
   body: string | null;
-  assets: { name: string; browser_download_url: string; state: string }[];
+  assets: { id?: number; name: string; browser_download_url: string; state: string }[];
+}
+
+function commit(value: unknown): string | null {
+  return typeof value === 'string' && /^[0-9a-f]{40}$/i.test(value) ? value.toLowerCase() : null;
+}
+
+// Capture the stamp once. The files on disk can be updated while this process
+// is still serving the previous build.
+const runningCommit = (() => {
+  try {
+    const stamp = readFileSync(new URL('./build-revision.json', import.meta.url), 'utf8');
+    return commit(JSON.parse(stamp).revision);
+  } catch {
+    return null;
+  }
+})();
+
+export function serverReleaseManifest(): string {
+  const releasePath = configuredChannel() === 'stable' ? 'latest/download' : 'download/edge';
+  return process.env.PARASAUR_RELEASE_MANIFEST ||
+    `https://github.com/${configuredRepo()}/releases/${releasePath}/${MANIFEST_ASSET_NAME}`;
 }
 
 export interface ReleaseFeedOptions {
@@ -43,9 +67,11 @@ export interface ReleaseFeedOptions {
   repo?: string;
   /** Overrides PARASAUR_RELEASE_CHANNEL for tests. */
   channel?: ReleaseChannel;
+  currentCommit?: string | null;
+  manifest?: string;
 }
 
-let cache: { at: number; status: ReleaseChannelStatus } | null = null;
+let cache: { key: string; at: number; status: ReleaseChannelStatus } | null = null;
 
 export function resetReleaseFeedCache(): void {
   cache = null;
@@ -65,58 +91,108 @@ async function githubToken(): Promise<string | null> {
   }
 }
 
-/** The channel's latest published release, or null when the channel has no
- * published release yet (legitimate: before the first edge build). */
-async function latestChannelRelease(
-  fetchFn: typeof fetch,
-  repo: string,
-  channel: ReleaseChannel
-): Promise<GithubRelease | null> {
+async function githubHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28'
   };
   const token = await githubToken();
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetchFn(`https://api.github.com/repos/${repo}/releases?per_page=30`, {
+  return headers;
+}
+
+async function latestChannelRelease(
+  fetchFn: typeof fetch, repo: string, channel: ReleaseChannel, headers: Record<string, string>
+): Promise<GithubRelease | null> {
+  const ref = channel === 'edge' ? 'tags/edge' : 'latest';
+  const response = await fetchFn(`https://api.github.com/repos/${repo}/releases/${ref}`, {
     headers,
     signal: AbortSignal.timeout(15_000)
   });
+  if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Cannot read releases for ${repo} (HTTP ${response.status}).`);
-  const releases = (await response.json()) as GithubRelease[];
-  const published = releases.filter(
-    (release) =>
-      !release.draft && (channel === 'edge' ? release.prerelease : !release.prerelease)
-  );
-  published.sort((a, b) => Date.parse(b.published_at ?? '') - Date.parse(a.published_at ?? ''));
-  return published[0] ?? null;
+  const release = await response.json() as GithubRelease;
+  if (release.draft || (channel === 'edge' ? release.tag_name !== 'edge' : release.prerelease)) return null;
+  return release;
 }
 
-/** Prefer the release's own manifest asset over the tag: the tag on the
- * edge channel is a moving "edge" label, the manifest carries the real
- * version. Falls back to stripping the leading v from the tag. */
-async function releaseVersion(
-  fetchFn: typeof fetch,
-  release: GithubRelease
-): Promise<string | null> {
-  const manifest = (release.assets ?? []).find(
-    (asset) => asset.name === MANIFEST_ASSET_NAME && asset.state === 'uploaded'
+interface ReleaseDocument {
+  schema: number;
+  channel: string;
+  version: string;
+  commit?: string;
+  assets: { name: string; kind: string; target?: string; sha256?: string; url?: string }[];
+}
+
+function hasServerKit(data: ReleaseDocument): boolean {
+  if (!Array.isArray(data.assets)) return false;
+  const platform = process.platform === 'darwin' ? 'macos' : process.arch === 'arm64' ? 'linux-aarch64' : 'linux-x86_64';
+  const assets = data.assets.filter(asset =>
+    typeof asset?.name === 'string' && typeof asset.sha256 === 'string' && /^[a-f0-9]{64}$/i.test(asset.sha256)
   );
-  if (manifest) {
-    try {
-      const response = await fetchFn(manifest.browser_download_url, {
-        signal: AbortSignal.timeout(10_000)
-      });
-      if (response.ok) {
-        const parsed = (await response.json()) as { version?: unknown };
-        if (typeof parsed.version === 'string' && parsed.version) return parsed.version;
-      }
-    } catch {
-      // Fall through to the tag below.
-    }
+  const binaries = assets.filter(asset =>
+    asset.name.includes(platform) || (typeof asset.target === 'string' && asset.target.includes(platform))
+  );
+  return assets.some(asset => asset.kind === 'server-bundle') &&
+    binaries.some(asset => asset.kind === 'cli') && binaries.some(asset => asset.kind === 'mcp-server');
+}
+
+async function readManifest(source: string, fetchFn: typeof fetch, headers?: Record<string, string>): Promise<ReleaseDocument> {
+  let contents: string;
+  if (/^https?:\/\//i.test(source)) {
+    const response = await fetchFn(source, { headers, signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) throw new Error(`Release manifest unavailable (HTTP ${response.status}).`);
+    contents = await response.text();
+  } else {
+    contents = await readFile(source, 'utf8');
   }
-  const tag = release.tag_name.replace(/^v/, '');
-  return tag || null;
+  const data: Partial<ReleaseDocument> | null = JSON.parse(contents);
+  if (data?.schema !== 1 || typeof data.version !== 'string' || !/^v?\d+(?:\.\d+){1,2}(?:[-+][\w.+-]+)?$/.test(data.version)) {
+    throw new Error('The release manifest has no supported product version.');
+  }
+  if (typeof data.channel !== 'string') throw new Error('The release manifest has no channel.');
+  return data as ReleaseDocument;
+}
+
+export class ReleaseChanged extends Error {}
+
+/** Preserve the selected manifest across the dashboard-to-CLI handoff. Resolve
+ * its relative asset URLs before moving the snapshot into the state directory. */
+export async function selectReleaseManifest(expected: string, source = serverReleaseManifest(), fetchFn = fetch): Promise<string> {
+  const data = await readManifest(source, fetchFn);
+  if (!commit(expected) || commit(data.commit) !== expected.toLowerCase()) {
+    resetReleaseFeedCache();
+    throw new ReleaseChanged('The published build changed. Refresh the release details before updating.');
+  }
+  if (!hasServerKit(data)) throw new Error('The selected release is missing a server installer for this platform.');
+  const assets = data.assets.map(asset => {
+    if (typeof asset?.name !== 'string' || !/^[\w.-]+$/.test(asset.name) || ['.', '..'].includes(asset.name)
+        || typeof asset.sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(asset.sha256)) {
+      throw new Error('The selected release has an invalid asset name or checksum.');
+    }
+    const reference = asset.url ?? asset.name;
+    const url = /^https?:\/\//i.test(source) ? new URL(reference, source).href
+      : /^https?:\/\//i.test(reference) ? reference : resolve(dirname(source), reference);
+    return { ...asset, url };
+  });
+  return JSON.stringify({ ...data, assets });
+}
+
+async function compareEdge(fetchFn: typeof fetch, repo: string, headers: Record<string, string> | null, current: string | null, latest: string | null) {
+  if (!current || !latest) return 'unknown';
+  if (current === latest) return 'identical';
+  // Git SHAs have no sort order. A newer local build or a downstream fork
+  // must not be offered an older or unrelated same-version release.
+  try {
+    const response = await fetchFn(`https://api.github.com/repos/${repo}/compare/${current}...${latest}?per_page=1`, {
+      headers: headers ?? await githubHeaders(), signal: AbortSignal.timeout(10_000)
+    });
+    if (response.ok) {
+      const { status } = await response.json() as { status?: unknown };
+      if (status === 'ahead' || status === 'behind' || status === 'diverged' || status === 'identical') return status;
+    }
+  } catch { /* A comparison outage still leaves both version identities available. */ }
+  return 'unknown';
 }
 
 /** The channel status for this server: what is running, what is published,
@@ -126,30 +202,56 @@ export async function getReleaseStatus(
   options: ReleaseFeedOptions = {}
 ): Promise<ReleaseChannelStatus> {
   const now = options.now ?? Date.now;
-  const repo = options.repo ?? RELEASE_REPO;
-  const channel = options.channel ?? CHANNEL;
+  const repo = options.repo ?? configuredRepo();
+  const channel = options.channel ?? configuredChannel();
+  const pin = options.manifest ?? process.env.PARASAUR_RELEASE_MANIFEST;
+  const current = options.currentCommit === undefined ? runningCommit : commit(options.currentCommit);
   const fetchFn = options.fetch ?? fetch;
-  if (cache && now() - cache.at < CACHE_TTL_MS) return cache.status;
+  const key = JSON.stringify([repo, channel, pin, current]);
+  if (cache?.key === key && now() - cache.at < CACHE_TTL_MS) return cache.status;
 
-  const release = await latestChannelRelease(fetchFn, repo, channel);
+  const headers = pin ? null : await githubHeaders();
+  const release = headers ? await latestChannelRelease(fetchFn, repo, channel, headers) : null;
   const status: ReleaseChannelStatus = {
     channel,
     current_version: COORDINATOR_VERSION,
     latest_version: null,
+    current_commit: current,
+    latest_commit: null,
+    pinned: Boolean(pin),
+    installable: false,
     update_available: false,
     release_url: null,
     published_at: null,
     notes: ''
   };
-  if (release) {
-    status.latest_version = await releaseVersion(fetchFn, release);
+  let target: ReleaseDocument | undefined;
+  if (pin) {
+    target = await readManifest(pin, fetchFn);
+  } else if (release) {
     status.release_url = release.html_url;
     status.published_at = release.published_at;
     status.notes = (release.body ?? '').slice(0, MAX_NOTES_CHARS);
-    status.update_available =
-      status.latest_version !== null &&
-      compareVersions(status.latest_version, COORDINATOR_VERSION) > 0;
+    const asset = release.assets?.find(asset => asset.name === MANIFEST_ASSET_NAME && asset.state === 'uploaded');
+    if (asset) {
+      // The moving tag can be replaced between the metadata and manifest reads.
+      target = asset.id
+        ? await readManifest(`https://api.github.com/repos/${repo}/releases/assets/${asset.id}`, fetchFn, { ...headers, Accept: 'application/octet-stream' })
+        : await readManifest(asset.browser_download_url, fetchFn);
+    } else if (/^v?\d+(\.\d+){1,2}$/.test(release.tag_name)) {
+      status.latest_version = release.tag_name.replace(/^v/, '');
+    }
   }
-  cache = { at: now(), status };
+  if (target) {
+    status.installable = hasServerKit(target);
+    status.latest_version = target.version;
+    status.latest_commit = commit(target.commit);
+    const order = compareVersions(target.version, COORDINATOR_VERSION);
+    if (order === 0 && (channel === 'edge' || pin)) {
+      status.revision_comparison = await compareEdge(fetchFn, repo, headers, current, status.latest_commit);
+    }
+    status.update_available = status.installable && (order > 0 || status.revision_comparison === 'ahead');
+  }
+  cache = { key, at: now(), status };
   return status;
 }

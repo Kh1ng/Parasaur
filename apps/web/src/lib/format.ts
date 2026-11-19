@@ -8,6 +8,10 @@ import type { ChatSessionSummary, Session } from '@git-agent-harness/contracts';
  * display 'No observation', not '0% remaining'".
  */
 
+export function formatReleaseBuild(version: string, commit?: string | null): string {
+  return commit ? `v${version} (${commit.slice(0, 8)})` : `v${version}`;
+}
+
 export function formatCost(usd: number | null | undefined): string {
   if (usd === null || usd === undefined) return 'Unknown';
   return `$${usd.toFixed(usd < 1 ? 4 : 2)}`;

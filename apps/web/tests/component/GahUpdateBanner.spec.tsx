@@ -4,6 +4,45 @@ import { GahUpdateBanner } from '../../src/components/GahUpdateBanner.js';
 const release = { channel: 'edge', current_version: '0.3.0', latest_version: '0.4.0', update_available: true, release_url: null, published_at: null, notes: '' };
 const state = (status: 'idle' | 'running' | 'failed' | 'success' | 'inferred_restart') => ({ status, startedAt: null, finishedAt: null, exitCode: null, pid: null, output: '' });
 
+test('an equal-version edge update displays both builds and submits the offered revision', async ({ mount, page }) => {
+  const selected = 'b'.repeat(40);
+  let request;
+  await page.route('**/api/admin/release/status', route => route.fulfill({json:{
+    ...release, latest_version:'0.3.0', current_commit:'a'.repeat(40), latest_commit:selected
+  }}));
+  await page.route('**/api/admin/update/status', route => route.fulfill({json:state('idle')}));
+  await page.route('**/api/admin/update', route => {
+    request = route.request().postDataJSON();
+    return route.fulfill({status:202,json:state('running')});
+  });
+  const banner = await mount(<GahUpdateBanner />);
+  await expect(banner).toContainText('v0.3.0 (aaaaaaaa) → v0.3.0 (bbbbbbbb)');
+  await page.setViewportSize({width:390,height:350});
+  expect(await banner.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await banner.getByRole('button',{name:'Update server',exact:true}).click();
+  await expect.poll(() => request).toEqual({mode:'release',expected_commit:selected});
+});
+
+test('when the feed moves the banner shows the replacement and waits for another click', async ({ mount, page }) => {
+  let revision = 'b'.repeat(40);
+  const attempts: string[] = [];
+  await page.route('**/api/admin/release/status', route => route.fulfill({
+    json: { ...release, current_commit: 'a'.repeat(40), latest_commit: revision }
+  }));
+  await page.route('**/api/admin/update/status', route => route.fulfill({ json: state('idle') }));
+  await page.route('**/api/admin/update', route => {
+    attempts.push(route.request().postDataJSON().expected_commit);
+    revision = 'c'.repeat(40);
+    return route.fulfill({ status: 412, json: { message: 'The published build changed.' } });
+  });
+  const banner = await mount(<GahUpdateBanner />);
+  await expect(banner).toContainText('bbbbbbbb');
+  await banner.getByRole('button', { name: 'Update server', exact: true }).click();
+  await expect(banner).toContainText('cccccccc');
+  await expect(banner).toContainText('The published build changed.');
+  expect(attempts).toEqual(['b'.repeat(40)]);
+});
+
 test('reopened dashboard resumes a running server update without another install', async ({ mount, page }, testInfo) => {
   let reads = 0;
   let installs = 0;

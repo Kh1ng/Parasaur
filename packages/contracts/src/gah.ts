@@ -2140,6 +2140,13 @@ export interface ReleaseChannelStatus {
   channel: ReleaseChannel;
   current_version: string;
   latest_version: string | null;
+  current_commit?: string | null;
+  latest_commit?: string | null;
+  /** How the published edge commit relates to the installed build at the same version. */
+  revision_comparison?: 'ahead' | 'behind' | 'identical' | 'diverged' | 'unknown';
+  /** A release can publish desktop assets without a server installer. */
+  installable?: boolean;
+  pinned?: boolean;
   update_available: boolean;
   release_url: string | null;
   published_at: string | null;

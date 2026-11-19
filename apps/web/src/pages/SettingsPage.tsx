@@ -13,7 +13,7 @@ import { SkillBankSettingsSection } from '../components/SkillBankSettingsSection
 import { StatusBadge } from '../components/ui/StatusBadge.js';
 import { ExternalAnchor } from '../components/ExternalAnchor.js';
 import { ThemePicker } from '../components/ThemePicker.js';
-import { oldestFetchedAt, formatAge, isStale } from '../lib/format.js';
+import { oldestFetchedAt, formatAge, formatReleaseBuild, isStale } from '../lib/format.js';
 import { gahApi, backendInstancesApi, diagnosticsApi, GahApiError } from '../api/client.js';
 import type { ConfigSetData, NotificationSettingsSummary, NodeCapacitySettings, NodeResources } from '@git-agent-harness/contracts';
 import { NODE_CAPACITY_MIN_MIB, NODE_CAPACITY_DEFAULTS, NODE_CAPACITY_CPU_LIMITS } from '@git-agent-harness/contracts';
@@ -1477,10 +1477,15 @@ export function AdminUpdateSection() {
   const [enabled, setEnabled] = useState(true);
   const [pending, setPending] = useState<AdminUpdatePendingInfo | null>(null);
   const [release, setRelease] = useState<ReleaseChannelStatus | null>(null);
+  const [releaseUnavailable, setReleaseUnavailable] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
   const [status, setStatus] = useState<AdminUpdateState | null>(null);
   const [polling, setPolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const refreshRelease = () => gahApi.getReleaseStatus()
+    .then(data => { setRelease(data); setReleaseUnavailable(false); })
+    .catch(() => { setRelease(null); setReleaseUnavailable(true); });
 
   const load = () => {
     gahApi
@@ -1493,10 +1498,7 @@ export function AdminUpdateSection() {
         }
         setError(err instanceof Error ? err.message : String(err));
       });
-    gahApi
-      .getReleaseStatus()
-      .then(data => setRelease(data))
-      .catch(() => { /* The banner shows channel errors; settings stays quiet. */ });
+    void refreshRelease();
     gahApi
       .getAdminUpdateStatus()
       .then((data) => {
@@ -1539,11 +1541,12 @@ export function AdminUpdateSection() {
   const runUpdate = async (mode: 'release' | 'source') => {
     setError(null);
     try {
-      const state = await gahApi.startAdminUpdate(mode);
+      const state = await gahApi.startAdminUpdate(mode, mode === 'release' ? release?.latest_commit : undefined);
       setStatus(state);
       if (state.status === 'running') setPolling(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      if (err instanceof GahApiError && err.status === 412) void refreshRelease();
     }
   };
 
@@ -1559,16 +1562,21 @@ export function AdminUpdateSection() {
           <button onClick={() => void runUpdate('source')} disabled={running} className="btn-secondary text-xs px-3 py-1.5 disabled:opacity-50">
             Rebuild from source
           </button>
-          <button onClick={() => void runUpdate('release')} disabled={running} className="btn-primary text-xs px-3 py-1.5 disabled:opacity-50">
-            {running ? 'Updating…' : release?.update_available ? `Update and restart (v${release.latest_version})` : 'Update and restart'}
+          <button onClick={() => void runUpdate('release')} disabled={running || !release || release.installable === false} className="btn-primary text-xs px-3 py-1.5 disabled:opacity-50">
+            {running ? 'Updating…' : release?.update_available && release.latest_version ? `Update and restart (${release.latest_commit?.slice(0, 8) || 'v' + release.latest_version})` : 'Update and restart'}
           </button>
         </div>
       </div>
+      {releaseUnavailable && <p className="text-xs text-secondary" role="status">Release details are unavailable. Check the connection to the release feed.</p>}
       {release && (
         <p className="text-xs text-secondary">
-          {release.channel} channel · this server runs v{release.current_version}
-          {release.latest_version ? ` · latest published is v${release.latest_version}` : ' · no published release yet'}
+          {release.pinned ? 'Pinned release' : `${release.channel} channel`} · this server runs {formatReleaseBuild(release.current_version, release.current_commit)}
+          {release.latest_version ? ` · ${release.pinned ? 'selected build' : 'latest published'} is ${formatReleaseBuild(release.latest_version, release.latest_commit)}` : release.release_url ? ' · server installer unavailable' : ' · no published release yet'}
           {release.update_available ? ' — an update is available.' : ''}
+          {release.revision_comparison === 'unknown' && ' · build order unverified'}
+          {release.revision_comparison === 'behind' && ' · this server is ahead of the published build'}
+          {release.revision_comparison === 'diverged' && ' · the builds have different histories'}
+          {release.latest_version && release.installable === false && ' · server installer unavailable'}
           {release.release_url && (
             <>
               {' '}

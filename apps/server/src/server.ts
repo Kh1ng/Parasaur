@@ -172,7 +172,7 @@ import {
   type AdminUpdateState,
   type StartAdminUpdateResult
 } from './adminUpdate.js';
-import { getReleaseStatus } from './releaseFeed.js';
+import { getReleaseStatus, ReleaseChanged, selectReleaseManifest } from './releaseFeed.js';
 import { AgentCliVersions } from './agentCliVersions.js';
 import { AgentCliFleet, agentCliRouter } from './agentCliRoutes.js';
 import { WorkerUpdateService } from './workerUpdate.js';
@@ -3026,12 +3026,30 @@ export function createServer(
     res.json(pending);
   });
 
-  app.post('/api/admin/update', requireOwner, (req, res) => {
+  app.post('/api/admin/update', requireOwner, async (req, res) => {
     // Issue #1416: `release` installs published artifacts (--from-release,
     // no rebuild); `source` (default) keeps the git pull + rebuild path.
     const mode = req.body?.mode === 'release' ? 'release' : 'source';
-    const result: StartAdminUpdateResult = startAdminUpdateFn({ mode });
-    res.status(result.started ? 202 : 409).json(result.state);
+    const expected = req.body?.expected_commit;
+    let selectedManifest: string | undefined;
+    if (expected !== undefined) {
+      if (mode !== 'release' || typeof expected !== 'string' || !/^[a-f0-9]{40}$/i.test(expected)) {
+        return res.status(400).json({ message: 'Expected a full release commit.' });
+      }
+      try {
+        selectedManifest = await selectReleaseManifest(expected);
+      } catch (error) {
+        return res.status(error instanceof ReleaseChanged ? 412 : 502).json({
+          message: error instanceof ReleaseChanged ? error.message : 'Could not verify the selected release manifest.'
+        });
+      }
+    }
+    try {
+      const result: StartAdminUpdateResult = startAdminUpdateFn(selectedManifest ? { mode, selectedManifest } : { mode });
+      res.status(result.started ? 202 : 409).json(result.state);
+    } catch {
+      res.status(500).json({ message: 'Could not start the server updater.' });
+    }
   });
 
   app.get('/api/admin/update/status', (req, res) => {
