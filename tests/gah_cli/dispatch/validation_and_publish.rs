@@ -1239,62 +1239,69 @@ fn required_validation_blocks_missing_and_failed_checks_even_for_drafts() {
             "deliberate-failure",
         ),
     ] {
-        let tmp = test_tempdir();
-        let (repo, home, cfg) = setup_fix_dispatch_repo(
-            &tmp,
-            &format!("validation_required = true\nvalidation_commands = {commands}\n"),
-        );
-        let fake_bin = tmp.path().join("bin");
-        fs::create_dir_all(&fake_bin).unwrap();
-        let ledger = tmp.path().join("ledger.jsonl");
-        make_fake_bin_with_body(&fake_bin, "codex", "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex 1.0'; exit 0; fi\necho changed >> README.md\n");
-        make_fake_bin_with_body(&fake_bin, "gh", "#!/bin/sh\nexit 0\n");
-        bin()
-            .args([
-                "dispatch",
-                "--profile",
-                "real",
-                "--mode",
-                "fix",
-                "--config-path",
-                cfg.to_str().unwrap(),
-                "--target",
-                "implement the change",
-                "--backend",
-                "codex",
-                "--retries",
-                "0",
-                "--skip-validation-gate",
-                "--allow-draft-fail",
-            ])
-            .env("HOME", &home)
-            .env("GITHUB_TOKEN", "fixture")
-            .env("PATH", prepend_path(&fake_bin))
-            .env("PARASAUR_LEDGER_PATH", &ledger)
-            .assert()
-            .failure()
-            .stderr(predicate::str::contains(failure));
-        let text = fs::read_to_string(ledger).unwrap();
-        let entry: Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
-        assert_eq!(entry["validation_result"], expected, "{entry}");
-        assert_eq!(entry["push_attempted"], false);
-        assert_eq!(entry["mr_attempted"], false);
-        assert!(entry["error_summary"].as_str().unwrap().contains(failure));
-        let branches = ProcessCommand::new("git")
-            .args(["ls-remote", "--heads", "origin", "refs/heads/gah/*"])
-            .env("HOME", &home)
-            .current_dir(repo)
-            .output()
-            .unwrap();
-        assert!(
-            branches.status.success(),
-            "{}",
-            String::from_utf8_lossy(&branches.stderr)
-        );
-        assert!(
-            branches.stdout.is_empty(),
-            "{}",
-            String::from_utf8_lossy(&branches.stdout)
-        );
+        for mode in ["fix", "experiment"] {
+            assert_validation_blocks_publish(mode, commands, expected, failure);
+        }
     }
+}
+
+fn assert_validation_blocks_publish(mode: &str, commands: &str, expected: &str, failure: &str) {
+    let tmp = test_tempdir();
+    let (repo, home, cfg) = setup_fix_dispatch_repo(
+        &tmp,
+        &format!("validation_required = true\nvalidation_commands = {commands}\n"),
+    );
+    let fake_bin = tmp.path().join("bin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    let ledger = tmp.path().join("ledger.jsonl");
+    make_fake_bin_with_body(&fake_bin, "codex", "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex 1.0'; exit 0; fi\necho changed >> README.md\n");
+    make_fake_bin_with_body(&fake_bin, "claude", "#!/bin/sh\necho YES\n");
+    make_fake_bin_with_body(&fake_bin, "gh", "#!/bin/sh\nexit 0\n");
+    bin()
+        .args([
+            "dispatch",
+            "--profile",
+            "real",
+            "--mode",
+            mode,
+            "--config-path",
+            cfg.to_str().unwrap(),
+            "--target",
+            "implement the change",
+            "--backend",
+            "codex",
+            "--retries",
+            "0",
+            "--skip-validation-gate",
+            "--allow-draft-fail",
+        ])
+        .env("HOME", &home)
+        .env("GITHUB_TOKEN", "fixture")
+        .env("PATH", prepend_path(&fake_bin))
+        .env("PARASAUR_LEDGER_PATH", &ledger)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(failure));
+    let text = fs::read_to_string(ledger).unwrap();
+    let entry: Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    assert_eq!(entry["validation_result"], expected, "{entry}");
+    assert_eq!(entry["push_attempted"], false);
+    assert_eq!(entry["mr_attempted"], false);
+    assert!(entry["error_summary"].as_str().unwrap().contains(failure));
+    let branches = ProcessCommand::new("git")
+        .args(["ls-remote", "--heads", "origin", "refs/heads/gah/*"])
+        .env("HOME", &home)
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    assert!(
+        branches.status.success(),
+        "{}",
+        String::from_utf8_lossy(&branches.stderr)
+    );
+    assert!(
+        branches.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&branches.stdout)
+    );
 }
