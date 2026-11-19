@@ -173,9 +173,15 @@ jobs:
   linux-standalone:
     needs: updater-key-gate
     if: needs.updater-key-gate.outputs.has_key == 'false'
-    uses: ./.github/workflows/build-linux-appimage.yml
-    with:
-      artifact_name: edge-linux-standalone
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/build-linux-appimage
+        with:
+          artifact_name: edge-linux-standalone
 
   desktop-updater:
     needs: updater-key-gate

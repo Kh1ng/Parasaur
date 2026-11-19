@@ -7,7 +7,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/desktop.yml'
-      - '.github/workflows/build-linux-appimage.yml'
+      - '.github/actions/build-linux-appimage/**'
       - '.github/workflows/release-linux.yml'
       - '.github/workflows/release-macos.yml'
       - 'scripts/build-signed-macos*'
@@ -118,7 +118,13 @@ jobs:
           if-no-files-found: error
 
   linux:
-    uses: ./.github/workflows/build-linux-appimage.yml
+    name: Linux AppImage (GUI smoke)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build-linux-appimage
 
   macos:
     name: macOS app

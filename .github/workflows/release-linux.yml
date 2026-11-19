@@ -16,9 +16,14 @@ permissions:
 
 jobs:
   build:
-    uses: ./.github/workflows/build-linux-appimage.yml
-    with:
-      release_tag: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version || '' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build-linux-appimage
+        with:
+          release_tag: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version || '' }}
 
   publish:
     needs: build

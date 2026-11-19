@@ -146,6 +146,14 @@ for _ in $(seq 90); do
           window=$(xdotool search --onlyvisible --name '^Parasaur$' | head -n 1)
           import -window "$window" "$(dirname "$shot")/dashboard.png"
           echo "PASS: standalone setup opened the running dashboard."
+          # Repeat the installed-package path with a real existing role configuration.
+          appdir=$(tr '\0' '\n' < "/proc/$app/environ" | sed -n 's/^APPDIR=//p')
+          mapfile -t installers < <(find "${appdir:?missing AppImage resource directory}" -type f -path '*/standalone/install.sh')
+          [[ ${#installers[@]} == 1 ]]
+          server_pid=$(systemctl --user show parasaur-standalone -p MainPID --value)
+          bash "${installers[0]}"
+          [[ $(systemctl --user show parasaur-standalone -p MainPID --value) == "$server_pid" ]]
+          echo "PASS: reapplying the package kept the dashboard running."
           exit 0
         fi
         sleep 1
