@@ -143,6 +143,50 @@ fn latest(result: &LoopResult) -> &Value {
     result.ledger_entries.last().unwrap()
 }
 
+#[cfg(unix)]
+#[test]
+fn standalone_issue_estimate_precedes_implementation_and_keeps_the_claim() {
+    for (reply, expected_model) in [
+        (r#"{"difficulty":"hard"}"#, "strong-model"),
+        ("invalid", "test-model"),
+    ] {
+        let mut harness = harness().with_config_append(
+            r#"
+estimate_issue_difficulty = true
+allowed_models.estimate = [{ backend = "codex", model = "estimator-model" }]
+[[profiles.test.routing.task_routing_rules]]
+modes = ["improve", "fix"]
+difficulties = ["hard"]
+candidates = [{ backend = "agy", model = "strong-model", included_in_quota = true }]
+"#,
+        );
+        let estimator = FakeBackend::new(&harness.artifacts_dir, "codex");
+        estimator.install(Scenario::success().with_stdout(reply));
+        harness.install_custom_worker("codex", &estimator);
+        let (_, result) = run(harness, "dispatch_ticket", 0);
+        let estimates: Vec<_> = result
+            .ledger_entries
+            .iter()
+            .filter(|row| row["mode"] == "estimate")
+            .collect();
+        assert_eq!(estimates.len(), 1, "{result:?}");
+        let estimate = estimates[0];
+        let implementation = latest(&result);
+        assert_eq!(estimate["work_id"], implementation["work_id"]);
+        assert_ne!(estimate["session_id"], implementation["session_id"]);
+        assert_eq!(
+            estimate["predicted_difficulty"].as_str(),
+            (expected_model == "strong-model").then_some("hard")
+        );
+        assert_eq!(
+            implementation["effective_model"], expected_model,
+            "{result:?}"
+        );
+        assert_eq!(implementation["validation_result"], "passed");
+        assert!(implementation["failure_class"].is_null());
+    }
+}
+
 // The fake forge models API state, not Git remote objects. Observe the real
 // bare remote after each push and expose that head to the next API snapshot.
 fn publish_head(harness: &mut ScenarioHarness, number: &str) -> String {

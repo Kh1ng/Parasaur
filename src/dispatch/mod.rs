@@ -20,6 +20,7 @@ mod error;
 pub(crate) mod external_approval_pause;
 mod identity;
 mod issue_claim;
+pub(crate) mod issue_estimate;
 mod issues;
 mod metrics;
 pub(crate) mod native_guard;
@@ -250,7 +251,7 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
     if let Err(err) = &append_result {
         eprintln!("warning: failed to append ledger entry: {:#}", err);
     }
-    if result.is_ok() && append_result.is_ok() {
+    if result.is_ok() && append_result.is_ok() && !issue_estimate::is_preliminary(&ledger) {
         if let Err(err) = crate::ledger::complete_external_approvals_for_work_item(
             cfg,
             &args.profile,
@@ -273,6 +274,7 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
         .err()
         .is_some_and(should_notify_dispatch_failure)
         && !policy_approval_gate
+        && !issue_estimate::is_preliminary(&ledger)
         && ledger.validation_result.as_deref() != Some("cancelled_operator")
     {
         terminal::notify_failure(cfg, profile, &ledger, &ts);

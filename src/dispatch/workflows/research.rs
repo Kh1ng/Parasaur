@@ -82,6 +82,10 @@ pub(crate) fn research(
 
     let issue_details =
         resolve_target_to_issue_or_string(profile, &args.target, args.issue_intake_override)?;
+    let preliminary = super::super::issue_estimate::is_preliminary(ledger);
+    if kind == JobKind::Estimate {
+        ledger.source_issue_number = issue_details.as_ref().map(|issue| issue.number.clone());
+    }
     let task = if kind == JobKind::Estimate {
         let (title, objective) = match issue_details.as_ref() {
             Some(issue) => (issue.title.clone(), issue.body.clone()),
@@ -136,7 +140,8 @@ pub(crate) fn research(
         &llm,
         env_path,
         ledger.work_id.clone().as_deref(),
-        None,
+        preliminary.then_some(120),
+        args.route_admission.as_ref(),
         crate::runner::WriteIntent::ReadOnly,
         Some(ledger),
     )
@@ -152,6 +157,8 @@ pub(crate) fn research(
         result.exit_code, result.duration_secs, result.log_path
     );
     ledger.backend_exit_code = Some(result.exit_code);
+    ledger.attempts_started = Some(1);
+    ledger.attempts_completed = Some(1);
     if super::super::attempts::record_operator_cancellation(ledger, &route, &llm.model, &result, 1)
     {
         anyhow::bail!(crate::dispatch_cancel::Cancelled);
@@ -176,8 +183,11 @@ pub(crate) fn research(
                 result.log_path
             );
         }
-        let log_text = fs::read_to_string(&result.log_path).unwrap_or_default();
-        let estimate = parse_estimate_response(&log_text)?;
+        let response = match &result.final_summary {
+            Some(summary) => std::borrow::Cow::Borrowed(summary.as_str()),
+            None => std::borrow::Cow::Owned(fs::read_to_string(&result.log_path)?),
+        };
+        let estimate = parse_estimate_response(&response)?;
         println!(
             "Predicted difficulty: {} (cost={} duration={})",
             estimate.difficulty,
@@ -190,6 +200,22 @@ pub(crate) fn research(
                 .map(|d| format!("{d:.0}s"))
                 .unwrap_or_else(|| "unknown".to_string()),
         );
+        if preliminary
+            && profile.publishing.allow_issue_comments
+            && profile.delivery_mode != crate::config::DeliveryMode::Handoff
+            && crate::policy::enforce_policy(profile, "edit-issue").is_ok()
+        {
+            if let Some(issue) = issue_details {
+                crate::provider::post_issue_comment(
+                    profile,
+                    &issue.number,
+                    &format!(
+                        "Parasaur estimated the implementation difficulty as **{}**.",
+                        estimate.difficulty
+                    ),
+                )?;
+            }
+        }
         ledger.predicted_difficulty = Some(estimate.difficulty);
         ledger.predicted_cost_usd = estimate.predicted_cost_usd;
         ledger.predicted_duration_seconds = estimate.predicted_duration_seconds;

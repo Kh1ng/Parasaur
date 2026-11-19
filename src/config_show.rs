@@ -238,6 +238,8 @@ pub struct ConfigProfileSummary {
     pub improve_candidates: Vec<RoutingCandidateSummary>,
     pub review_candidates: Vec<RoutingCandidateSummary>,
     pub task_routing_rules: Vec<TaskRoutingRuleSummary>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub estimate_issue_difficulty: bool,
     /// Strict allow-lists by job kind; a kind without an entry is open.
     pub allowed_models: BTreeMap<String, Vec<RoutingCandidateSummary>>,
     pub routine_reviewer: Option<RoutingCandidateSummary>,
@@ -463,6 +465,7 @@ fn build_profile_summary(
         improve_candidates,
         review_candidates,
         task_routing_rules,
+        estimate_issue_difficulty: routing.estimate_issue_difficulty.unwrap_or(false),
         allowed_models: routing
             .allowed_models
             .iter()

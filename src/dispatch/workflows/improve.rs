@@ -8,9 +8,8 @@ use super::super::attempts::{
 use super::super::claims::ensure_dispatch_capacity;
 use super::super::identity::timestamp;
 use super::super::issue_claim::IssueClaimSlot;
-use super::super::issues::{
-    parse_ticket_metadata, parse_ticket_metadata_from_issue, resolve_target_to_issue_or_string,
-};
+use super::super::issue_estimate;
+use super::super::issues::{parse_ticket_metadata, resolve_target_to_issue_or_string};
 use super::super::prior_attempts::build_redispatch_task;
 use super::super::prompts::enforce_context_budget;
 use super::super::repair_context;
@@ -114,7 +113,7 @@ pub(crate) fn improve(
         "Use --allow-draft-fail to push anyway."
     };
     let ticket_meta = if let Some(ref issue) = issue_details {
-        Some(parse_ticket_metadata_from_issue(issue))
+        Some(issue_estimate::metadata(cfg, profile, args, issue, ledger)?)
     } else {
         parse_ticket_metadata(Path::new(&target)).ok().flatten()
     };

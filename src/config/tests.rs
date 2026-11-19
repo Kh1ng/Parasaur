@@ -269,14 +269,17 @@ fn web_url_none_when_provider_unrecognized_or_gitlab_misconfigured() {
 fn merge_keeps_repo_value_when_both_set() {
     let canonical = RoutingPolicy {
         default_backend: Some("codex".into()),
+        estimate_issue_difficulty: Some(true),
         ..Default::default()
     };
     let repo = RoutingPolicy {
         default_backend: Some("claude".into()),
+        estimate_issue_difficulty: Some(false),
         ..Default::default()
     };
     let merged = merge_routing_policy(canonical, repo);
     assert_eq!(merged.default_backend.as_deref(), Some("claude"));
+    assert_eq!(merged.estimate_issue_difficulty, Some(false));
 }
 
 #[test]
@@ -284,12 +287,14 @@ fn merge_fills_gap_from_canonical_when_repo_unset() {
     let canonical = RoutingPolicy {
         default_backend: Some("codex".into()),
         review_backend: Some("claude".into()),
+        estimate_issue_difficulty: Some(true),
         ..Default::default()
     };
     let repo = RoutingPolicy::default();
     let merged = merge_routing_policy(canonical, repo);
     assert_eq!(merged.default_backend.as_deref(), Some("codex"));
     assert_eq!(merged.review_backend.as_deref(), Some("claude"));
+    assert_eq!(merged.estimate_issue_difficulty, Some(true));
 }
 
 #[test]

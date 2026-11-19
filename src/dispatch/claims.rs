@@ -105,7 +105,7 @@ fn has_active_claim<'a>(
 fn active_claim<'a>(entries: impl IntoIterator<Item = &'a LedgerEntry>) -> Option<&'a LedgerEntry> {
     let mut active = None;
     for entry in entries {
-        if crate::ledger::is_entry_stale(entry) {
+        if crate::ledger::is_entry_stale(entry) || super::issue_estimate::is_preliminary(entry) {
             continue;
         }
         match entry.mode.as_str() {
@@ -156,6 +156,7 @@ impl<'a> EndedClaimRuns<'a> {
                 .into_iter()
                 .filter(|entry| {
                     entry.mode != "claim"
+                        && !super::issue_estimate::is_preliminary(entry)
                         && !is_control_record(&entry.mode)
                         && !crate::ledger::is_entry_stale(entry)
                 })
@@ -772,7 +773,7 @@ fn ledger_lookup_with_setup_reason(
         // attempt outcome -- it doesn't count toward the retry cap, but it
         // does need to block re-selection until it either resolves (a real
         // completion entry follows) or goes stale (abandoned worker).
-        if e.mode == "claim" {
+        if e.mode == "claim" || super::issue_estimate::is_preliminary(e) {
             continue;
         }
         // Paid-route approvals are operator control records, not execution

@@ -14,8 +14,12 @@ import { pathToFileURL } from 'node:url';
 
 assert.equal(process.platform,'linux');
 const [runtime,binaryArgument,mode='normal']=process.argv.slice(2);
-assert.ok(['normal','planned-child','lost-reservation','lost-activation','provider-claims','provider-claims-paused','provider-claims-lost'].includes(mode));
+assert.ok(['normal','planned-child','estimated-issue','failed-estimate','classified-issue','lost-reservation','lost-activation','provider-claims','provider-claims-paused','provider-claims-lost'].includes(mode));
 const plannedChild = mode === 'planned-child';
+const runEstimate = mode === 'estimated-issue' || mode === 'failed-estimate';
+const estimateEnabled = runEstimate || mode === 'classified-issue';
+const implementationModel = ['estimated-issue', 'classified-issue'].includes(mode) ? 'fixture-strong' : 'fixture-model';
+const expectedInvocations = (runEstimate ? 'estimate\n' : '') + 'attempt\n';
 const providerClaims=mode.startsWith('provider-claims');
 const claimFault=mode==='provider-claims-paused'||mode==='provider-claims-lost';
 const binary=resolve(binaryArgument),modules=pathToFileURL(`${resolve(runtime)}/`);
@@ -53,6 +57,15 @@ const marker=join(base,'backend-invocations'),backend=join(bins,'codex');
 writeFileSync(backend,`#!/bin/sh
 if [ "$1" = login ]; then echo 'Logged in using ChatGPT'; exit 0; fi
 if [ "$1" != exec ]; then echo 'fixture codex'; exit 0; fi
+for arg in "$@"; do
+  if [ "$arg" = fixture-estimator ]; then
+    echo estimate >> '${marker}'
+    echo '${JSON.stringify({type:'item.completed',item:{type:'agent_message',text:mode === 'failed-estimate' ? 'unparseable estimate' : '{"difficulty":"hard"}'}})}'
+    echo '{"type":"turn.completed","usage":{"input_tokens":4,"output_tokens":2}}'
+    exit 0
+  fi
+done
+${estimateEnabled ? `case " $* " in *" --model ${implementationModel} "*|*" -m ${implementationModel} "*) ;; *) echo "unexpected implementation model" >&2; exit 1;; esac` : ''}
 printf 'attempt\\n' >> '${marker}'
 ${providerClaims?'sleep 23':''}
 printf 'worker edit\\n' >> README.md
@@ -68,7 +81,7 @@ writeFileSync(forgeState,JSON.stringify({now:new Date().toISOString(),login:'fix
   issues:{},pulls:{},branches:{},checks:{},pipelines:{},labels:['exec:autonomous'],next_number:1,next_id:1,calls:[],effects:[]}),{mode:0o600});
 writeFileSync(join(bins,'gh'),`#!/bin/sh\nexport PARASAUR_TEST_NOW="$(/usr/bin/date -u +%Y-%m-%dT%H:%M:%S.000Z)"\nexec /usr/bin/python3 '${join(forge,'main.py')}' '${forgeState}' '${join(forge,'commands.log')}' gh "$@"\n`,{mode:0o700});
 sync('gh',['api','repos/fixture/diagnostic/issues','--method','POST','--raw-field','title=Disposable native controller task',
-  '--raw-field','body=Update README.md. Acceptance criteria: README.md contains worker edit.', '--raw-field',plannedChild ? 'labels=planning' : 'labels=exec:autonomous']);
+  '--raw-field','body=Update README.md. Acceptance criteria: README.md contains worker edit.' + (mode === 'classified-issue' ? '\nDifficulty: hard' : ''), '--raw-field',plannedChild ? 'labels=planning' : 'labels=exec:autonomous']);
 const profile={name:'fixture',repo_id:'controller-http',repo:'fixture/diagnostic'};
 const config=join(base,'central.toml'),workerConfig=join(base,'worker.toml');
 Object.assign(process.env,{PARASAUR_CONFIG:config,PARASAUR_CONFIG_PATH:config});
@@ -107,12 +120,19 @@ allow_pull_request_creation = false
 ${providerClaims?'[profiles.fixture.publishing.issue_claim]\nmode = "github_assignee"\nttl_minutes = 1\nverify_seconds = 0\npriority_logins = ["other", "fixture"]':''}
 [profiles.fixture.routing]
 improve_candidates = [{backend="codex",instance="work",model="fixture-model"}]
+${estimateEnabled ? `estimate_issue_difficulty = true
+[profiles.fixture.routing.allowed_models]
+estimate = [{backend="codex",instance="work",model="fixture-estimator"}]
+[[profiles.fixture.routing.task_routing_rules]]
+modes = ["fix","improve"]
+difficulties = ["hard"]
+candidates = [{backend="codex",instance="work",model="fixture-strong"}]` : ''}
 [profiles.fixture.routing.backend_instances.work]
 runner_kind = "codex"
 logical_backend = "codex"
 account_label = "work"
 executable = ${JSON.stringify(role==='worker'?backend:join(base,'absent-central-codex'))}
-supported_models = ["fixture-model"]
+supported_models = ["fixture-model","fixture-estimator","fixture-strong"]
 `;
 }
 writeFileSync(config,configuration('central'),{mode:0o600});writeFileSync(workerConfig,configuration('worker'),{mode:0o600});
@@ -157,13 +177,43 @@ app.get('/api/skills/resolve',(_req,res)=>res.json({profile:'fixture',backend:'c
 app.post('/api/events',(_req,res)=>res.sendStatus(204));
 let binding;
 try {
+  if (runEstimate) {
+    const first = await execute(binary,['loop','--profile','fixture','--config-path',config,'--once'],{env:process.env,timeout:45_000});
+    const estimateId = producer.status('fixture', workId)?.run_id;
+    assert.ok(estimateId, `No estimator prepared at ${base}: ${first.stdout} ${first.stderr}`);
+    let estimate = broker.get(estimateId);
+    assert.equal(estimate.binding.mode, 'estimate');
+    assert.equal(estimate.binding.model, 'fixture-estimator');
+    assert.equal(broker.heldWork('fixture').find(hold=>hold.run_id === estimateId)?.reserves_intake, true);
+    const deadline = Date.now() + 60_000;
+    while (estimate.phase !== 'terminal' || estimate.worker_release?.phase !== 'released') {
+      assert.ok(estimate.phase !== 'cancelled' && Date.now() < deadline, `Estimate did not finish at ${base}: ${JSON.stringify(estimate)}`);
+      await new Promise(done=>setTimeout(done,200));
+      estimate = await broker.reconcile(estimateId);
+    }
+    const entries = readFileSync(process.env.PARASAUR_LEDGER_PATH,'utf8').trim().split('\n').map(JSON.parse);
+    const rows = entries.filter(entry=>entry.session_id === estimateId && entry.mode === 'estimate');
+    assert.equal(rows.length, 1);
+    const row = rows[0];
+    assert.equal(row.attempts_completed, 1);
+    assert.equal(row.source_issue_number, '1');
+    assert.equal(row.predicted_difficulty ?? null, mode === 'failed-estimate' ? null : 'hard');
+    assert.equal(Boolean(row.failure_class), mode === 'failed-estimate');
+    assert.equal(row.usage.input_tokens, 4);
+    assert.equal(row.remote_execution.receipt_sha256, estimate.acknowledgement.receipt_sha256);
+    const comments = JSON.parse(readFileSync(forgeState,'utf8')).issues['1'].comments;
+    assert.equal(comments.filter(comment=>comment.body.includes('implementation difficulty as **hard**')).length, mode === 'failed-estimate' ? 0 : 1);
+    assert.equal(readFileSync(marker,'utf8'), 'estimate\n');
+    assert.equal(claims.getLease('fixture',workId), undefined);
+    reload();
+  }
   const loop=await execute(binary,['loop','--profile','fixture','--config-path',config,'--once'],{env:process.env,timeout:45_000,maxBuffer:128*1024});
   writeFileSync(join(base,'controller.stdout'),loop.stdout,{mode:0o600});
   writeFileSync(join(base,'controller.stderr'),loop.stderr,{mode:0o600});
   const prepared=producer.status('fixture', workId);
   assert.ok(prepared,`Controller did not prepare work: ${loop.stdout} ${loop.stderr}`);
   binding=broker.get(prepared.run_id).binding;
-  assert.equal(binding.backend_instance,'work');assert.equal(binding.model,'fixture-model');
+  assert.equal(binding.backend_instance,'work');assert.equal(binding.model,implementationModel);
   assert.equal(binding.work_id,workId);
   assert.equal(binding.mode, plannedChild ? 'improve' : 'fix');
   if(mode==='lost-reservation') {
@@ -196,10 +246,11 @@ try {
   }
   assert.equal(claims.getLease('fixture',workId),undefined);
   assert.equal(view.worker_release.context_history_cleaned,true);
-  assert.equal(readFileSync(marker,'utf8'),'attempt\n');
+  assert.equal(readFileSync(marker,'utf8'),expectedInvocations);
   const rows=readFileSync(process.env.PARASAUR_LEDGER_PATH,'utf8').trim().split('\n').map(JSON.parse);
   const result=rows.filter(row=>row.session_id===binding.run_id && row.mode===binding.mode);
   assert.equal(result.length,1);assert.equal(result[0].attempts_started,1);
+  assert.equal(result[0].effective_model, implementationModel);
   if(claimFault) {
     assert.ok(faultApplied);assert.ok(result[0].failure_class);
     assert.notEqual(result[0].remote_execution.termination.exit_code,0);
@@ -235,11 +286,11 @@ try {
   }
   writeFileSync(join(base,'controller-completed.stdout'),completedCycle.stdout,{mode:0o600});
   assert.equal(readFileSync(process.env.PARASAUR_LEDGER_PATH,'utf8'),before);
-  assert.equal(readFileSync(marker,'utf8'),'attempt\n');
-  assert.equal(readdirSync(root).filter(name=>name!== 'preparations').length,1);
+  assert.equal(readFileSync(marker,'utf8'),expectedInvocations);
+  assert.equal(readdirSync(root).filter(name=>name!== 'preparations').length,runEstimate ? 2 : 1);
   const report={passed:true,fixtureRoot:base,actualControllerCycle:true,actualRustPlanning:true,centralExecutableAbsent:true,
     actualWorkerAccountCatalog:true,actualAuthenticatedHttp:true,actualFreshCentralAuthority:true,controlledManagedLoopObservation:true,
-    actualDefaultSystemdAdmission:true,actualBackendFixtureAttempts:1,actualCanonicalImport:true,actualAcknowledgedRelease:true,
+    actualDefaultSystemdAdmission:true,actualBackendFixtureAttempts:runEstimate ? 2 : 1,implementationModel,actualCanonicalImport:true,actualAcknowledgedRelease:true,
     reloadDoesNotRelaunchOrReimport:true,completedWorkNotRedispatched:!claimFault,stoppedWorkNotRedispatched:claimFault,realModelInvoked:false,productionServicesChanged:false,runId:binding.run_id,
     outcome:result[0].failure_class?'failed':result[0].validation_result,validationResult:result[0].validation_result,
     processExitCode:result[0].remote_execution.termination.exit_code,actualCostUsd:result[0].usage.actual_cost_usd,mode,

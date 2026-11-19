@@ -9,7 +9,7 @@ use anyhow::Result;
 #[cfg(target_os = "linux")]
 use serde::Deserialize;
 
-pub(super) fn enabled(cfg: &GahConfig) -> Result<bool> {
+pub(crate) fn enabled(cfg: &GahConfig) -> Result<bool> {
     Ok(
         crate::node_role::NodeRoleStatus::resolve(&cfg.defaults)?.role
             == crate::node_role::NodeRole::Central
