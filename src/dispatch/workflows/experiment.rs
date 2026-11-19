@@ -9,7 +9,8 @@ use super::super::metrics::apply_diff_stats;
 use super::super::prompts::{build_task, enforce_context_budget};
 use super::super::publish::{
     build_experiment_mr_body, emit_human_handoff, enforce_generated_artifact_policy,
-    handle_handoff_delivery, publishing_allows_publish, ExperimentMrRenderContext,
+    handle_handoff_delivery, publishing_allows_publish, require_validation_commands,
+    ExperimentMrRenderContext,
 };
 use super::super::text::{utf8_safe_prefix, utf8_safe_suffix};
 use super::super::DispatchArgs;
@@ -31,6 +32,7 @@ pub(crate) fn experiment(
     session_dir: &Path,
     ledger: &mut LedgerEntry,
 ) -> Result<()> {
+    require_validation_commands(profile, &[], ledger)?;
     let route = decide_route(
         cfg,
         profile,
@@ -243,6 +245,31 @@ pub(crate) fn experiment(
     } else {
         "partial".into()
     });
+    if profile.validation_required && publishing_allows_publish(profile) {
+        if let Err(error) = crate::validation_runner::validate(
+            &profile.validation_commands,
+            &wt,
+            &cargo_target.environment(),
+            std::time::Duration::from_secs(profile.validation_timeout_seconds()),
+        ) {
+            ledger.validation_result = Some("failed".into());
+            ledger.set_failure(
+                crate::ledger::FailureClass::ValidationFailure,
+                crate::ledger::FailureStage::PostValidation,
+            );
+            worktree::preserve_wip(
+                &wt,
+                &profile.default_target_branch,
+                "gah: experiment awaiting validation",
+            )?;
+            worktree::cleanup(&wt, repo);
+            anyhow::bail!(
+                "Experiment validation failed: {}",
+                utf8_safe_prefix(&format!("{error:#}"), 4000)
+            );
+        }
+        ledger.validation_result = Some("passed".into());
+    }
     enforce_generated_artifact_policy(profile, ledger, &wt)?;
     if profile.delivery_mode == crate::config::DeliveryMode::Handoff {
         let ticket_id = ledger
@@ -290,38 +317,6 @@ pub(crate) fn experiment(
         return Ok(());
     }
 
-    if profile.validation_required {
-        let validation = super::super::publish::require_validation_commands(profile, &[], ledger)
-            .and_then(|()| {
-                crate::validation_runner::validate(
-                    &profile.validation_commands,
-                    &wt,
-                    &cargo_target.environment(),
-                    std::time::Duration::from_secs(profile.validation_timeout_seconds()),
-                )
-                .map_err(|error| {
-                    ledger.validation_result = Some("failed".into());
-                    ledger.set_failure(
-                        crate::ledger::FailureClass::ValidationFailure,
-                        crate::ledger::FailureStage::PostValidation,
-                    );
-                    anyhow::anyhow!(
-                        "Experiment validation failed: {}",
-                        utf8_safe_prefix(&format!("{error:#}"), 4000)
-                    )
-                })
-            });
-        if let Err(error) = validation {
-            worktree::preserve_wip(
-                &wt,
-                &profile.default_target_branch,
-                "gah: experiment awaiting validation",
-            )?;
-            worktree::cleanup(&wt, repo);
-            return Err(error);
-        }
-        ledger.validation_result = Some("passed".into());
-    }
     println!("Changes detected. Committing and pushing...");
     let mut commit_msg = format!("gah: experiment for {}", profile.repo_id);
     if !backend_summary.is_empty() {

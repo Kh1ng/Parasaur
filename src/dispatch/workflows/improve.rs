@@ -1438,6 +1438,10 @@ pub(crate) fn improve(
                     )?;
                     break;
                 } else {
+                    ledger.set_failure(
+                        crate::ledger::FailureClass::ValidationFailure,
+                        crate::ledger::FailureStage::PostValidation,
+                    );
                     attempt_bookkeeping::record_failed_validation_attempt(
                         ledger,
                         cfg,

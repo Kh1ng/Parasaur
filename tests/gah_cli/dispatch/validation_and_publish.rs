@@ -1247,7 +1247,7 @@ fn required_validation_blocks_missing_and_failed_checks_even_for_drafts() {
         let fake_bin = tmp.path().join("bin");
         fs::create_dir_all(&fake_bin).unwrap();
         let ledger = tmp.path().join("ledger.jsonl");
-        make_fake_bin_with_body(&fake_bin, "codex", "#!/bin/sh\necho changed >> README.md\n");
+        make_fake_bin_with_body(&fake_bin, "codex", "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex 1.0'; exit 0; fi\necho changed >> README.md\n");
         make_fake_bin_with_body(&fake_bin, "gh", "#!/bin/sh\nexit 0\n");
         bin()
             .args([
@@ -1282,9 +1282,19 @@ fn required_validation_blocks_missing_and_failed_checks_even_for_drafts() {
         assert!(entry["error_summary"].as_str().unwrap().contains(failure));
         let branches = ProcessCommand::new("git")
             .args(["ls-remote", "--heads", "origin", "refs/heads/gah/*"])
+            .env("HOME", &home)
             .current_dir(repo)
             .output()
             .unwrap();
-        assert!(branches.status.success() && branches.stdout.is_empty());
+        assert!(
+            branches.status.success(),
+            "{}",
+            String::from_utf8_lossy(&branches.stderr)
+        );
+        assert!(
+            branches.stdout.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&branches.stdout)
+        );
     }
 }
