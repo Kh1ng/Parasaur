@@ -218,15 +218,22 @@ fn late_budget_refusal_is_a_cli_error_but_a_controller_pause() {
         reason: "fixture".into(),
     };
     let error =
-        crate::controller::execute_action(&cfg, "test", &action, None, true, None).unwrap_err();
+        crate::controller::execute_action(&cfg, "test", &action, Default::default(), true, None)
+            .unwrap_err();
     assert!(error.downcast_ref::<SpendBudgetHeld>().is_some());
     let admission = crate::controller::RouteNodeAdmission::single_worker(
         action.clone(),
         cfg.defaults.node_capacity,
     );
-    let outcome =
-        crate::controller::execute_action(&cfg, "test", &action, None, true, Some(admission))
-            .unwrap();
+    let outcome = crate::controller::execute_action(
+        &cfg,
+        "test",
+        &action,
+        Default::default(),
+        true,
+        Some(admission),
+    )
+    .unwrap();
     assert!(outcome.starts_with("Deferred "));
     assert!(outcome.contains("no backend launched"));
     assert!(ledger::read_entries(&cfg).unwrap().is_empty());

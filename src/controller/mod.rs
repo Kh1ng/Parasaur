@@ -34,7 +34,7 @@ pub use self::runtime::RouteNodeAdmission;
 pub(crate) use self::runtime::{
     acquire_native_capacity, acquire_node_capacity, NodeCapacityAdmission,
 };
-pub(crate) use self::runtime::{action_prior_context, execute_action};
+pub(crate) use self::runtime::{action_dispatch_context, execute_action};
 pub(crate) use self::runtime::{NodeAdmissionDeferred, WorkerNodeLease};
 #[cfg(unix)]
 pub(crate) use runtime::project_native_holds;
