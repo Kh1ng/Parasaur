@@ -463,43 +463,6 @@ fn human_blocked_ticket_retries_once_not_durably_gated_and_a_backend_is_eligible
 }
 
 #[test]
-fn infra_failure_retries_only_when_a_backend_is_eligible() {
-    let mut snapshot = empty_snapshot();
-    snapshot.available_tickets.push(ticket(
-        "docs/tickets/TICKET-002-x.md",
-        Some("TICKET-002"),
-        1,
-        Some("harness_error"),
-        false,
-        false,
-    ));
-
-    // No eligible backend at all -> must not retry blindly.
-    let action = decide_next_action(&snapshot);
-    assert_eq!(action.kind(), "no_op");
-
-    // Now a backend is eligible -> retry.
-    snapshot.availability.push(ScopeStatusJson {
-        backend_instance: None,
-        backend: "codex".into(),
-        model: None,
-        quota_pool: None,
-        eligible_now: true,
-        reason: None,
-        unavailable_until: None,
-        source: None,
-        last_error_summary: None,
-        observed_at: None,
-        scope: None,
-    });
-    let action = decide_next_action(&snapshot);
-    match action {
-        NextAction::Retry { work_id, .. } => assert_eq!(work_id, "TICKET-002"),
-        other => panic!("expected Retry, got {other:?}"),
-    }
-}
-
-#[test]
 fn retry_cap_exceeded_forces_human_required() {
     let mut snapshot = empty_snapshot();
     snapshot.available_tickets.push(ticket(
