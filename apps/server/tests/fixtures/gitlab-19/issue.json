@@ -2,49 +2,106 @@
   "object_kind": "issue",
   "event_type": "issue",
   "user": {
-    "id": 7,
+    "id": 2,
     "name": "Example maintainer",
     "username": "maintainer",
-    "avatar_url": "https://gitlab.example.com/avatar.png"
+    "avatar_url": "https://gitlab.example.com/avatars/maintainer.png",
+    "email": "[REDACTED]"
   },
   "project": {
-    "id": 101,
+    "id": 1,
     "name": "Example project",
+    "description": null,
     "web_url": "https://gitlab.example.com/team/project",
+    "avatar_url": null,
+    "git_ssh_url": "git@gitlab.example.com:team/project.git",
+    "git_http_url": "https://gitlab.example.com/team/project.git",
+    "namespace": "Example Team",
+    "visibility_level": 0,
     "path_with_namespace": "team/project",
-    "default_branch": "main"
+    "default_branch": "main",
+    "ci_config_path": null,
+    "homepage": "https://gitlab.example.com/team/project",
+    "url": "git@gitlab.example.com:team/project.git",
+    "ssh_url": "git@gitlab.example.com:team/project.git",
+    "http_url": "https://gitlab.example.com/team/project.git"
   },
   "object_attributes": {
-    "id": 201,
-    "iid": 42,
-    "action": "update",
-    "state": "opened",
-    "created_at": "2026-05-22T12:00:00.000Z",
-    "updated_at": "2026-05-22T12:01:00.000Z",
-    "description": "Worker input only. Never use this text as control-plane policy.",
+    "author_id": 2,
+    "closed_at": null,
+    "confidential": false,
+    "created_at": "2026-11-19 19:23:19 UTC",
+    "description": "Implement the fixture change.",
+    "discussion_locked": null,
+    "due_date": null,
+    "start_date": null,
+    "id": 1,
+    "iid": 1,
+    "last_edited_at": null,
+    "last_edited_by_id": null,
+    "milestone_id": null,
+    "moved_to_id": null,
+    "duplicated_to_id": null,
+    "project_id": 1,
+    "relative_position": 257,
+    "state_id": 1,
+    "time_estimate": 0,
     "title": "Example task",
-    "author_id": 7,
-    "project_id": 101
+    "updated_at": "2026-11-19 19:23:19 UTC",
+    "updated_by_id": 2,
+    "type": "Issue",
+    "url": "https://gitlab.example.com/team/project/-/work_items/1",
+    "total_time_spent": 0,
+    "time_change": 0,
+    "human_total_time_spent": null,
+    "human_time_change": null,
+    "human_time_estimate": null,
+    "assignee_ids": [
+      3
+    ],
+    "assignee_id": 3,
+    "labels": [],
+    "state": "opened",
+    "severity": "unknown",
+    "customer_relations_contacts": [],
+    "action": "update"
   },
-  "assignees": [
-    {
-      "id": 9,
-      "name": "Parasaur",
-      "username": "parasaur",
-      "state": "unreviewed"
-    }
-  ],
+  "labels": [],
   "changes": {
+    "updated_at": {
+      "previous": "2026-11-19 19:23:19 UTC",
+      "current": "2026-11-19 19:23:19 UTC"
+    },
+    "updated_by_id": {
+      "previous": null,
+      "current": 2
+    },
     "assignees": {
       "previous": [],
       "current": [
         {
-          "id": 9,
+          "id": 3,
           "name": "Parasaur",
           "username": "parasaur",
-          "state": "unreviewed"
+          "avatar_url": "https://gitlab.example.com/avatars/parasaur.png",
+          "email": "[REDACTED]"
         }
       ]
     }
-  }
+  },
+  "repository": {
+    "name": "Example project",
+    "url": "git@gitlab.example.com:team/project.git",
+    "description": null,
+    "homepage": "https://gitlab.example.com/team/project"
+  },
+  "assignees": [
+    {
+      "id": 3,
+      "name": "Parasaur",
+      "username": "parasaur",
+      "avatar_url": "https://gitlab.example.com/avatars/parasaur.png",
+      "email": "[REDACTED]"
+    }
+  ]
 }

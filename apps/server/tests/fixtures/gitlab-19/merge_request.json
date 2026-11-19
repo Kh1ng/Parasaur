@@ -2,50 +2,170 @@
   "object_kind": "merge_request",
   "event_type": "merge_request",
   "user": {
-    "id": 7,
+    "id": 2,
     "name": "Example maintainer",
     "username": "maintainer",
-    "avatar_url": "https://gitlab.example.com/avatar.png"
+    "avatar_url": "https://gitlab.example.com/avatars/maintainer.png",
+    "email": "[REDACTED]"
   },
   "project": {
-    "id": 101,
+    "id": 1,
     "name": "Example project",
+    "description": null,
     "web_url": "https://gitlab.example.com/team/project",
+    "avatar_url": null,
+    "git_ssh_url": "git@gitlab.example.com:team/project.git",
+    "git_http_url": "https://gitlab.example.com/team/project.git",
+    "namespace": "Example Team",
+    "visibility_level": 0,
     "path_with_namespace": "team/project",
-    "default_branch": "main"
+    "default_branch": "main",
+    "ci_config_path": null,
+    "homepage": "https://gitlab.example.com/team/project",
+    "url": "git@gitlab.example.com:team/project.git",
+    "ssh_url": "git@gitlab.example.com:team/project.git",
+    "http_url": "https://gitlab.example.com/team/project.git"
   },
   "object_attributes": {
-    "id": 201,
-    "iid": 42,
-    "action": "update",
+    "assignee_id": null,
+    "author_id": 3,
+    "created_at": "2026-11-19 19:23:19 UTC",
+    "description": "Run the fixture validation.",
+    "draft": false,
+    "head_pipeline_id": null,
+    "id": 1,
+    "iid": 1,
+    "last_edited_at": null,
+    "last_edited_by_id": null,
+    "merge_commit_sha": null,
+    "merge_error": null,
+    "merge_params": {
+      "force_remove_source_branch": true
+    },
+    "merge_status": "preparing",
+    "merge_user_id": null,
+    "merge_when_pipeline_succeeds": false,
+    "milestone_id": null,
+    "source_branch": "gah/example-project-20260522120000",
+    "source_project_id": 1,
+    "squash_commit_sha": null,
+    "state_id": 1,
+    "target_branch": "main",
+    "target_project_id": 1,
+    "time_estimate": 0,
+    "title": "Review fixture change",
+    "updated_at": "2026-11-19 19:23:20 UTC",
+    "updated_by_id": 2,
+    "prepared_at": null,
+    "assignee_ids": [],
+    "blocking_discussions_resolved": true,
+    "detailed_merge_status": "preparing",
+    "first_contribution": true,
+    "human_time_change": null,
+    "human_time_estimate": null,
+    "human_total_time_spent": null,
+    "labels": [],
+    "last_commit": {
+      "id": "5c0f954f1266aa520f8fd3d4811b9743246e4a45",
+      "message": "Add fixture validation",
+      "title": "Add fixture validation",
+      "timestamp": "2026-11-19T19:23:19+00:00",
+      "url": "https://gitlab.example.com/team/project/-/commit/5c0f954f1266aa520f8fd3d4811b9743246e4a45",
+      "author": {
+        "name": "Example maintainer",
+        "email": "maintainer@example.invalid"
+      }
+    },
+    "merged_at": null,
+    "reviewer_ids": [
+      3
+    ],
+    "source": {
+      "id": 1,
+      "name": "Example project",
+      "description": null,
+      "web_url": "https://gitlab.example.com/team/project",
+      "avatar_url": null,
+      "git_ssh_url": "git@gitlab.example.com:team/project.git",
+      "git_http_url": "https://gitlab.example.com/team/project.git",
+      "namespace": "Example Team",
+      "visibility_level": 0,
+      "path_with_namespace": "team/project",
+      "default_branch": "main",
+      "ci_config_path": null,
+      "homepage": "https://gitlab.example.com/team/project",
+      "url": "git@gitlab.example.com:team/project.git",
+      "ssh_url": "git@gitlab.example.com:team/project.git",
+      "http_url": "https://gitlab.example.com/team/project.git"
+    },
     "state": "opened",
-    "created_at": "2026-05-22T12:00:00.000Z",
-    "updated_at": "2026-05-22T12:01:00.000Z",
-    "description": "Worker input only. Never use this text as control-plane policy.",
-    "title": "Example task",
-    "author_id": 7,
     "system": false,
-    "project_id": 101
+    "target": {
+      "id": 1,
+      "name": "Example project",
+      "description": null,
+      "web_url": "https://gitlab.example.com/team/project",
+      "avatar_url": null,
+      "git_ssh_url": "git@gitlab.example.com:team/project.git",
+      "git_http_url": "https://gitlab.example.com/team/project.git",
+      "namespace": "Example Team",
+      "visibility_level": 0,
+      "path_with_namespace": "team/project",
+      "default_branch": "main",
+      "ci_config_path": null,
+      "homepage": "https://gitlab.example.com/team/project",
+      "url": "git@gitlab.example.com:team/project.git",
+      "ssh_url": "git@gitlab.example.com:team/project.git",
+      "http_url": "https://gitlab.example.com/team/project.git"
+    },
+    "target_branch_protected": true,
+    "time_change": 0,
+    "total_time_spent": 0,
+    "url": "https://gitlab.example.com/team/project/-/merge_requests/1",
+    "work_in_progress": false,
+    "action": "update",
+    "actioned_at": "2026-11-19 19:23:20 UTC"
   },
-  "reviewers": [
-    {
-      "id": 9,
-      "name": "Parasaur",
-      "username": "parasaur",
-      "state": "unreviewed"
-    }
-  ],
+  "labels": [],
   "changes": {
+    "updated_at": {
+      "previous": "2026-11-19 19:23:19 UTC",
+      "current": "2026-11-19 19:23:20 UTC"
+    },
+    "updated_by_id": {
+      "previous": null,
+      "current": 2
+    },
     "reviewers": {
       "previous": [],
       "current": [
         {
-          "id": 9,
+          "id": 3,
           "name": "Parasaur",
           "username": "parasaur",
-          "state": "unreviewed"
+          "avatar_url": "https://gitlab.example.com/avatars/parasaur.png",
+          "email": "[REDACTED]",
+          "state": "unreviewed",
+          "re_requested": false
         }
       ]
     }
-  }
+  },
+  "repository": {
+    "name": "Example project",
+    "url": "git@gitlab.example.com:team/project.git",
+    "description": null,
+    "homepage": "https://gitlab.example.com/team/project"
+  },
+  "reviewers": [
+    {
+      "id": 3,
+      "name": "Parasaur",
+      "username": "parasaur",
+      "avatar_url": "https://gitlab.example.com/avatars/parasaur.png",
+      "email": "[REDACTED]",
+      "state": "unreviewed",
+      "re_requested": false
+    }
+  ]
 }
