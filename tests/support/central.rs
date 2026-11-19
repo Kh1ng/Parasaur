@@ -218,8 +218,10 @@ fn respond(state: &mut Value, method: &str, url: &url::Url, body: Value) -> (u16
             );
             // Advance the central clock independently of worker clocks, so a
             // killed process's full lease can expire without a wall-clock wait.
-            let now = chrono::Utc::now()
-                + chrono::Duration::seconds(state["clock_offset_seconds"].as_i64().unwrap_or(0));
+            let now = state["clock_utc"]
+                .as_str()
+                .map(|value| value.parse::<chrono::DateTime<chrono::Utc>>().unwrap())
+                .unwrap_or_else(chrono::Utc::now);
             state["claims"].as_object_mut().unwrap().retain(|_, lease| {
                 lease["expires_at"]
                     .as_str()

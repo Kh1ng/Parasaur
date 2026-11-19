@@ -501,28 +501,27 @@ fn two_nodes_race_one_issue_and_killed_holder_expires() {
         })
         .collect();
     let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
+    let state = loop {
         let state = central.state();
-        let acquisitions: Vec<_> = state["calls"]
+        let acquisitions = state["calls"]
             .as_array()
             .unwrap()
             .iter()
             .filter(|call| call["target"] == "/api/claims/acquire")
-            .collect();
+            .count();
         let started = [&first, &second]
             .iter()
             .filter(|h| h.artifacts_dir.join("worker-argv").exists())
             .count();
-        if acquisitions.len() == 2 && started == 1 {
-            break;
+        if acquisitions == 2 && started == 1 {
+            break state;
         }
         assert!(
             Instant::now() < deadline,
             "workers did not arbitrate: {state}"
         );
         std::thread::sleep(Duration::from_millis(20));
-    }
-    let state = central.state();
+    };
     assert_eq!(state["claims"].as_object().unwrap().len(), 1);
     let acquires: Vec<_> = state["calls"]
         .as_array()
@@ -578,7 +577,9 @@ fn two_nodes_race_one_issue_and_killed_holder_expires() {
         !survivor.artifacts_dir.join("worker-argv").exists(),
         "{refused:?}"
     );
-    central.update(|state| state["clock_offset_seconds"] = json!(901));
+    central.update(|state| {
+        state["clock_utc"] = state["claims"]["test/#1516"]["expires_at"].clone();
+    });
     support::write_executable(&survivor.bin_dir.join("codex"), &format!(
         "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'test 1.0'; exit 0; fi\ntouch '{}'\necho 'invalid model selection (--model test-model)'\nexit 1\n",
         survivor.artifacts_dir.join("worker-argv").display()
