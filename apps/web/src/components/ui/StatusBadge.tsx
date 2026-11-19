@@ -38,6 +38,8 @@ export function classificationTone(classification: string): { tone: StatusTone; 
       return { tone: 'warning', label: 'Ready for human' };
     case 'CI_FAILED':
       return { tone: 'critical', label: 'CI failed' };
+    case 'CI_RUNNER_FAILED':
+      return { tone: 'warning', label: 'GitLab runner failed' };
     case 'NEEDS_FIX':
       return { tone: 'critical', label: 'Needs fix' };
     case 'NEEDS_REVIEW':

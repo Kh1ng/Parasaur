@@ -423,6 +423,12 @@ export function buildKanban(input: KanbanInput): KanbanBoard {
           tone = column === 'review' ? 'good' : 'warning';
           if (column !== 'review') blocks.push(reason);
           break;
+        case 'CI_RUNNER_FAILED':
+          column = 'waiting';
+          reason = 'GitLab runner failed. Check the runner and retry the failed job.';
+          tone = 'warning';
+          blocks.push(reason);
+          break;
         case 'NEEDS_FIX':
         case 'CI_FAILED':
           column = deferral && !runningRun ? 'waiting' : 'fixing';

@@ -8,6 +8,7 @@ use std::time::Duration;
 use url::Url;
 
 mod comments;
+pub(crate) mod gitlab_pipeline;
 pub(crate) mod gitlab_review;
 mod publication;
 mod relations;
@@ -1108,32 +1109,11 @@ fn gitlab_ci_status_for_merge_request(
         }
     }
 
-    gitlab_pipeline_status_for_sha(profile, project_id, iid, source_sha)?
-        .map_or(Ok(Some("missing".to_string())), |status| {
-            Ok(Some(normalize_gitlab_ci_status(&status)))
-        })
-}
-
-fn gitlab_pipeline_status_for_sha(
-    profile: &Profile,
-    project_id: &str,
-    iid: &str,
-    source_sha: &str,
-) -> Result<Option<String>> {
-    let endpoint = format!("projects/{project_id}/merge_requests/{iid}/pipelines");
-    let response = gitlab_api(profile, &endpoint, "GET", &[("per_page", "100")])?;
-    let pipelines = response.as_array().ok_or_else(|| {
-        anyhow::anyhow!(
-            "GitLab pipeline lookup returned a non-list response for MR !{}: {}",
-            iid,
-            crate::redact::redact(&response.to_string())
-        )
-    })?;
-    Ok(pipelines
-        .iter()
-        .find(|pipeline| pipeline["sha"].as_str() == Some(source_sha))
-        .and_then(|pipeline| pipeline.get("status").and_then(serde_json::Value::as_str))
-        .map(str::to_string))
+    let pipeline = gitlab_pipeline::pipeline_for_sha(profile, project_id, iid, source_sha)?;
+    Ok(Some(pipeline.and_then(|p| p.status).map_or_else(
+        || "missing".into(),
+        |status| normalize_gitlab_ci_status(&status),
+    )))
 }
 
 fn normalize_gitlab_ci_status(status: &str) -> String {

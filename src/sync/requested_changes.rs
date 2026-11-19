@@ -276,7 +276,7 @@ mod tests {
             merged: false,
             updated_at: None,
             merged_at: None,
-            ci_failed: false,
+            ci_failure: None,
             ci_passed: true,
             ci_pending: false,
             work_id: Some("#12".into()),

@@ -1,5 +1,6 @@
 use crate::config::{self, GahConfig};
 use crate::job_kind::JobKind;
+use crate::provider::gitlab_pipeline::{pipeline_for_sha, GitlabPipeline};
 use crate::provider::{gitlab_api, gitlab_project_id};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -61,6 +62,7 @@ pub fn run(cfg: &GahConfig, profile_name: &str, json: bool) -> Result<()> {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RecommendedAction {
     ReuseBranch,
+    CheckRunnerAndRetryJob,
     HumanMergeDecision,
     RunReview,
     None,
@@ -71,6 +73,7 @@ pub enum RecommendedAction {
 impl RecommendedAction {
     pub fn from_class(class: &str) -> Self {
         match class {
+            "CI_RUNNER_FAILED" => RecommendedAction::CheckRunnerAndRetryJob,
             "CI_FAILED" | "NEEDS_FIX" => RecommendedAction::ReuseBranch,
             "READY_FOR_HUMAN" => RecommendedAction::HumanMergeDecision,
             "NEEDS_REVIEW" => RecommendedAction::RunReview,
@@ -143,6 +146,12 @@ pub struct SyncMrJson {
     pub recommended_action: RecommendedAction,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum CiFailure {
+    Job,
+    Runner,
+}
+
 #[derive(Debug, Clone)]
 pub struct SyncMr {
     pub title: String,
@@ -163,12 +172,8 @@ pub struct SyncMr {
     /// TICKET-198: merge timestamp (RFC3339) for merged MRs, surfaced on the
     /// dashboard's Recently Merged panel. Empty for unmerged MRs.
     pub merged_at: Option<String>,
-    pub ci_failed: bool,
-    /// True only when CI has *conclusively* passed (every check/pipeline
-    /// terminal and green) -- distinct from `!ci_failed`, which is also
-    /// true while CI is still pending/running or absent entirely. Gates
-    /// auto-merge (TICKET-127): merging on "not failed yet" would merge
-    /// mid-pipeline.
+    pub ci_failure: Option<CiFailure>,
+    /// Automatic merge requires a conclusive passing result for the current head.
     pub ci_passed: bool,
     /// Issue #156: CI is non-terminal / unknown (running/pending/missing) --
     /// there is no conclusive pass or failure yet. Distinct from `!ci_passed`
@@ -248,8 +253,11 @@ pub fn classify(mr: &SyncMr) -> &'static str {
     if is_closed_unmerged(mr.state.as_deref(), mr.merged) {
         return "CLOSED_UNMERGED";
     }
-    if mr.ci_failed {
-        return "CI_FAILED";
+    if let Some(failure) = mr.ci_failure {
+        return match failure {
+            CiFailure::Job => "CI_FAILED",
+            CiFailure::Runner => "CI_RUNNER_FAILED",
+        };
     }
     if mr.labels.iter().any(|l| l == "gah-needs-fix") {
         return "NEEDS_FIX";
@@ -275,6 +283,7 @@ pub fn classify(mr: &SyncMr) -> &'static str {
 
 pub fn recommended_action(class: &str) -> &'static str {
     match class {
+        "CI_RUNNER_FAILED" => "check the GitLab runner and retry the failed job",
         "CI_FAILED" => "reuse same branch/MR for a fix run",
         "NEEDS_FIX" => "reuse same branch/MR for a fix run",
         "READY_FOR_HUMAN" => "human review and merge decision",
@@ -325,7 +334,10 @@ pub fn sync_mr_to_json(
             }
         })
     });
-    if !matches!(class, "MERGED" | "CLOSED_UNMERGED" | "CI_FAILED") {
+    if !matches!(
+        class,
+        "MERGED" | "CLOSED_UNMERGED" | "CI_FAILED" | "CI_RUNNER_FAILED"
+    ) {
         if let Some(latest) = latest_review {
             if !latest_review_is_current {
                 // The provider label reflects an opinion about older
@@ -505,12 +517,6 @@ struct GitlabMr {
     head_pipeline: Option<GitlabPipeline>,
 }
 
-#[derive(Debug, Deserialize)]
-struct GitlabPipeline {
-    #[serde(default)]
-    status: Option<String>,
-}
-
 fn gitlab_mrs(
     profile: &crate::config::Profile,
     scope: MrFetchScope,
@@ -546,15 +552,24 @@ fn gitlab_mrs(
                 .iid
                 .as_ref()
                 .map(|value| value.to_string().trim_matches('"').to_string());
-            let mut pipeline_status = mr.head_pipeline.and_then(|pipeline| pipeline.status);
-            let mut awaits_ci = true;
-            if pipeline_status.is_none() && mr.state.as_deref() == Some("opened") {
-                if let Some(iid) = iid.as_deref() {
-                    pipeline_status = gitlab_latest_pipeline_status(profile, iid)?;
+            let open = mr.state.as_deref() == Some("opened");
+            let sha = mr.sha.as_deref().filter(|sha| !sha.is_empty());
+            let mut pipeline = mr.head_pipeline.filter(|p| {
+                !open || (sha.is_some() && p.sha.as_deref() == sha && p.status.is_some())
+            });
+            if open && pipeline.is_none() {
+                if let (Some(iid), Some(sha)) = (iid.as_deref(), sha) {
+                    pipeline = pipeline_for_sha(profile, project_id, iid, sha)?;
                 }
-                awaits_ci = pipeline_status.is_some()
-                    || touched_within(mr.updated_at.as_deref(), NO_PIPELINE_GRACE);
             }
+            let pipeline_status = pipeline.as_ref().and_then(|p| p.status.as_deref());
+            let awaits_ci = pipeline_status.is_some()
+                || !open
+                || touched_within(mr.updated_at.as_deref(), NO_PIPELINE_GRACE);
+            let ci_failure = gitlab_ci_failed(pipeline_status).then(|| match &pipeline {
+                Some(p) if open && p.runner_failure(profile, project_id) => CiFailure::Runner,
+                _ => CiFailure::Job,
+            });
             synced.push(SyncMr {
                 work_id: extract_work_id_from_title(&mr.title),
                 title: mr.title,
@@ -571,9 +586,9 @@ fn gitlab_mrs(
                 merged: mr.merged_at.is_some(),
                 updated_at: mr.updated_at,
                 merged_at: mr.merged_at,
-                ci_failed: gitlab_ci_failed(pipeline_status.as_deref()),
-                ci_passed: gitlab_ci_passed(pipeline_status.as_deref()),
-                ci_pending: awaits_ci && gitlab_ci_pending(pipeline_status.as_deref()),
+                ci_failure,
+                ci_passed: gitlab_ci_passed(pipeline_status),
+                ci_pending: awaits_ci && gitlab_ci_pending(pipeline_status),
             });
         }
         if count < PAGE_SIZE {
@@ -582,27 +597,6 @@ fn gitlab_mrs(
         page += 1;
     }
     Ok(synced)
-}
-
-fn gitlab_latest_pipeline_status(
-    profile: &crate::config::Profile,
-    iid: &str,
-) -> Result<Option<String>> {
-    let project_id = gitlab_project_id(profile)?;
-    let endpoint = format!("projects/{project_id}/merge_requests/{iid}/pipelines");
-    let response = crate::provider::gitlab_api(profile, &endpoint, "GET", &[("per_page", "1")])?;
-    let pipelines = response.as_array().ok_or_else(|| {
-        anyhow::anyhow!(
-            "GitLab pipeline lookup returned a non-list response for MR !{}: {}",
-            iid,
-            crate::redact::redact(&response.to_string())
-        )
-    })?;
-    Ok(pipelines
-        .first()
-        .and_then(|pipeline| pipeline.get("status"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string))
 }
 
 /// How long an open MR with no pipeline is still taken to be waiting for

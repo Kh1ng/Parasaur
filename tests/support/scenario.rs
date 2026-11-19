@@ -902,7 +902,7 @@ pub struct GithubPrParams {
 /// deserialization.
 pub fn gitlab_mr_json(params: GitlabMrParams) -> serde_json::Value {
     let pipeline = match params.pipeline_status {
-        Some(ref status) => serde_json::json!({"status": status}),
+        Some(ref status) => serde_json::json!({"sha": "fixture-source-sha", "status": status}),
         None => serde_json::Value::Null,
     };
     serde_json::json!({
@@ -912,6 +912,7 @@ pub fn gitlab_mr_json(params: GitlabMrParams) -> serde_json::Value {
         "web_url": params.url.unwrap_or("https://gitlab.example.com/group/repo/-/merge_requests/1".into()),
         "labels": params.labels,
         "iid": params.iid.unwrap_or(1),
+        "sha": "fixture-source-sha",
         "state": params.state.as_deref().unwrap_or("opened"),
         "draft": params.draft.unwrap_or(true),
         "detailed_merge_status": "mergeable",
