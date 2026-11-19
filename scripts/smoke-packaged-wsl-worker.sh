@@ -39,7 +39,7 @@ echo 'The installed user service is healthy and running the bundled Node and Rus
 
 identity=$(sha256sum "$root/identity.json")
 update=http://127.0.0.1:3774/api/worker-update
-curl -fsS --json '{"action":"start"}' "$update" | jq -e '.started'
+curl -fsS -H 'Content-Type: application/json' -d '{"action":"start"}' "$update" | jq -e '.started'
 for _ in {1..120}; do
   new_pid=$(systemctl --user show gah-worker.service -p MainPID --value)
   [[ $new_pid != "$pid" && $(readlink -f "/proc/$new_pid/exe" || true) == "$root/release.$revision.$bundle_sha/bin/node" ]] && break
@@ -47,6 +47,6 @@ for _ in {1..120}; do
 done
 [[ $(readlink -f "/proc/$new_pid/exe") == "$root/release.$revision.$bundle_sha/bin/node" && $new_pid != "$pid" ]]
 curl -fsS --retry 20 --retry-delay 1 --retry-connrefused http://127.0.0.1:3774/health | jq -e '.status == "healthy" and .checks.rustBackend.ready == true'
-curl -fsS --json '{"action":"status"}' "$update" | jq -e '.status.status == "success"'
+curl -fsS -H 'Content-Type: application/json' -d '{"action":"status"}' "$update" | jq -e '.status.status == "success"'
 [[ $(sha256sum "$root/identity.json") == "$identity" ]]
 echo 'The dashboard updated the enrolled worker and systemd started the verified release with the same identity.'
