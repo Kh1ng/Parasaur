@@ -18,7 +18,39 @@ pub fn run(
     let profiles = selected_profiles(&cfg, profile_name)?;
 
     for (name, profile) in profiles {
-        prune_profile(&cfg, &name, profile, older_than_days, dry_run, true, None)?;
+        let scope = crate::work_claim::canonical_claim_scope(&name, &profile.repo_id);
+        let claimed: HashSet<_> = crate::work_claim::claim_details_for_profile(&scope)?
+            .into_iter()
+            .filter(|claim| !claim.is_stale)
+            .map(|claim| claim.work_id)
+            .collect();
+        let mrs = sync::fetch_mrs(profile).unwrap_or_default();
+        let mut observed = AutomaticWorktreeSets {
+            done: done_worktree_names_from_mrs(&mrs),
+            ..Default::default()
+        };
+        if !claimed.is_empty() {
+            crate::ledger::visit_entries(&cfg, |entry| {
+                if entry.profile == name && entry.repo_id == profile.repo_id {
+                    if let (Some(id), Some(branch)) = (entry.work_id, entry.branch) {
+                        if claimed.contains(&crate::work_claim::normalize_work_identity(&id)) {
+                            observed.protected.insert(worktree_name_for_branch(&branch));
+                        }
+                    }
+                }
+                Ok(())
+            })?;
+        }
+        prune_profile(
+            &cfg,
+            &name,
+            profile,
+            older_than_days,
+            dry_run,
+            true,
+            &observed,
+        )?;
+        prune_remote_gah_branches(profile, dry_run, &mrs, &observed.protected)?;
     }
     Ok(())
 }
@@ -61,15 +93,7 @@ pub fn run_automatic(
         active_mrs,
         active_claims,
     );
-    prune_profile(
-        cfg,
-        profile_name,
-        profile,
-        None,
-        false,
-        false,
-        Some(&observed),
-    )
+    prune_profile(cfg, profile_name, profile, None, false, false, &observed)
 }
 
 #[derive(Default)]
@@ -199,7 +223,7 @@ fn prune_profile(
     older_than_days: Option<u64>,
     dry_run: bool,
     announce: bool,
-    observed: Option<&AutomaticWorktreeSets>,
+    observed: &AutomaticWorktreeSets,
 ) -> Result<()> {
     // CLI --older-than overrides the per-profile retention window.
     let retention = older_than_days.unwrap_or_else(|| profile.effective_prune_older_than_days());
@@ -211,35 +235,15 @@ fn prune_profile(
     }
     prune_sessions(profile, cutoff, dry_run)?;
     crate::build_cache::prune_inactive(&profile.artifact_root, dry_run)?;
-    let provider_done;
-    let empty = HashSet::new();
-    let (done, abandoned_open, protected) = if let Some(observed) = observed {
-        (
-            &observed.done,
-            &observed.abandoned_open,
-            &observed.protected,
-        )
-    } else if announce {
-        provider_done = done_worktree_names(profile);
-        (&provider_done, &empty, &empty)
-    } else {
-        (&empty, &empty, &empty)
-    };
     prune_worktrees(
         cfg,
         profile,
         cutoff,
         dry_run,
-        done,
-        abandoned_open,
-        protected,
-    )?;
-    // Remote branch deletion still requires explicit full provider history;
-    // recurring maintenance only reuses the controller observation above.
-    if announce {
-        prune_remote_gah_branches(profile, dry_run)?;
-    }
-    Ok(())
+        &observed.done,
+        &observed.abandoned_open,
+        &observed.protected,
+    )
 }
 
 /// Deletes the remote branch for any MERGED/CLOSED_UNMERGED PR/MR whose
@@ -250,15 +254,22 @@ fn prune_profile(
 /// GitLab's own "delete branch on merge" doesn't always fire (e.g. `gh pr
 /// merge --admin` merges outside the normal UI flow), which is how ~280
 /// stale branches accumulated on this repo before this existed.
-fn prune_remote_gah_branches(profile: &Profile, dry_run: bool) -> Result<()> {
-    let mrs = match sync::fetch_mrs(profile) {
-        Ok(mrs) => mrs,
-        Err(_) => return Ok(()), // best-effort, matches done_worktree_names
-    };
+fn prune_remote_gah_branches(
+    profile: &Profile,
+    dry_run: bool,
+    mrs: &[SyncMr],
+    protected: &HashSet<String>,
+) -> Result<()> {
+    if mrs.is_empty() {
+        return Ok(());
+    }
     let push_url = profile.push_url()?;
     let pat = crate::provider::push_token(profile);
     let repo_path = Path::new(&profile.local_path);
-    for (branch, class) in remote_gah_branches_to_delete(&mrs) {
+    for (branch, class) in remote_gah_branches_to_delete(mrs) {
+        if protected.contains(&worktree_name_for_branch(branch)) {
+            continue;
+        }
         if dry_run {
             println!("  would delete remote branch {branch} ({class})");
             continue;
@@ -453,20 +464,7 @@ fn classify_worktree_ownership(
     }
 }
 
-/// Returns the set of worktree directory names that correspond to branches
-/// whose PR/MR is MERGED or CLOSED_UNMERGED. These worktrees are safe to prune
-/// immediately (they are already terminal upstream), regardless of the
-/// retention window. Best-effort: any fetch error yields an empty set so pruning
-/// never blocks on transient provider/network failure.
-fn done_worktree_names(profile: &Profile) -> HashSet<String> {
-    match sync::fetch_mrs(profile) {
-        Ok(mrs) => done_worktree_names_from_mrs(&mrs),
-        Err(_) => HashSet::new(),
-    }
-}
-
-/// Pure subset of `done_worktree_names`: maps a list of fetched PRs/MRs to the
-/// set of on-disk worktree names that are safe to prune immediately.
+/// Map terminal merge requests to local checkout names eligible for reclamation.
 pub(crate) fn done_worktree_names_from_mrs(mrs: &[SyncMr]) -> HashSet<String> {
     let mut done = HashSet::new();
     for mr in mrs {
