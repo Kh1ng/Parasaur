@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 #[derive(clap::Args)]
 pub struct UpdateArgs {
-    /// Repository checkout to update (defaults to the current checkout).
+    /// Deployment directory to update (defaults to the current directory).
     #[arg(long)]
     pub repo: Option<PathBuf>,
     /// Fetch and fast-forward the checkout before building (opt-in).
@@ -28,12 +28,12 @@ pub struct UpdateArgs {
     pub server_service: String,
     /// Install published release artifacts (issue #1416) instead of
     /// rebuilding from source: no git pull, no cargo, no npm build. The
-    /// checkout stays the deployment root; only the artifact source changes.
+    /// deployment root can also be an installed Linux control-plane directory.
     #[arg(long, default_value_t = false)]
     pub from_release: bool,
     /// URL or local path of the release manifest (edge-manifest.json).
     /// Defaults to the edge channel feed derived from the checkout's
-    /// origin remote.
+    /// origin remote, or the official edge feed for packaged installations.
     #[arg(long)]
     pub release_manifest: Option<String>,
     /// Refuse to change the service account when the installed

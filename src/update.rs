@@ -52,6 +52,13 @@ pub struct UpdateArgs {
 
 pub fn run(args: UpdateArgs) -> Result<()> {
     units::UnitValues::ensure_installing_account()?;
+    #[cfg(target_os = "linux")]
+    if args.from_release
+        && matches!(args.role, HostRole::Central | HostRole::Standalone)
+        && release::central_directory::update_if_installed(&args)?
+    {
+        return Ok(());
+    }
     if args.role == HostRole::Worker && args.restart_server {
         bail!("--restart-server requires --role central or standalone; a worker never runs gah-server.service");
     }
@@ -395,13 +402,16 @@ fn ensure_default_branch_checkout(repo: &Path) -> Result<()> {
 /// dependency state before any GAH profile exists.
 fn acquire_update_lock(repo: &Path) -> Result<File> {
     let git_dir = captured(repo, "git", &["rev-parse", "--absolute-git-dir"])?;
-    let lock_path = PathBuf::from(git_dir).join("gah-update.lock");
+    lock_update_path(repo, &PathBuf::from(git_dir).join("gah-update.lock"))
+}
+
+fn lock_update_path(repo: &Path, lock_path: &Path) -> Result<File> {
     let lock = OpenOptions::new()
         .create(true)
         .read(true)
         .write(true)
         .truncate(false)
-        .open(&lock_path)
+        .open(lock_path)
         .with_context(|| format!("opening update lock {}", lock_path.display()))?;
     lock.try_lock_exclusive().map_err(|_| {
         anyhow::anyhow!(
