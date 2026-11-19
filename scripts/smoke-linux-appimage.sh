@@ -42,7 +42,7 @@ if [[ ${3:-} == --install ]]; then
     XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
     PARASAUR_SMOKE_ACTIVATE=1 xvfb-run -a -s "-screen 0 1600x1000x24" \
     "$fixture/check" "$fixture/AppImage" "$fixture/home/first-window.png" || result=$?
-  for item in first-window.png first-window.log setup-retry.png dashboard.png; do
+  for item in first-window.png first-window.log setup-retry.png dashboard.png first-project.png; do
     if sudo test -f "$fixture/home/$item"; then sudo cat "$fixture/home/$item" > "$(dirname "$shot")/$item"; fi
   done
   exit "$result"
@@ -81,8 +81,11 @@ trap 'pkill -P "$pid" || true; wait "$pid" 2>/dev/null || true; rm -rf "$profile
 
 # Prints what it found; exits 0 only when onboarding is ready.
 onboarding() {
-  timeout 7s python3 -I - "$1" "${2:-check}" <<'PY'
+  timeout 15s python3 -I - "$1" "${2:-check}" <<'PY'
+import os
+import subprocess
 import sys
+import time
 import pyatspi
 
 ACTIONS = {"Set up standalone", "Install Parasaur in Terminal", "Finish setup in Terminal"}
@@ -108,9 +111,49 @@ pid = int(sys.argv[1])
 app = next((a for a in pyatspi.Registry.getDesktop(0)
             if a is not None and a.get_process_id() == pid), None)
 nodes = list(walk(app)) if app is not None else []
-if sys.argv[2] == 'dashboard':
+mode = sys.argv[2]
+if mode in {'dashboard', 'open-checkout', 'add-checkout', 'project-ready'}:
     dashboard = next((n for n in nodes if n.name == 'Parasaur' and n.getRoleName().startswith('document')), None)
-    sys.exit(0 if dashboard is not None and any(n.getRoleName() in {'push button', 'link'} for n in walk(dashboard)) else 1)
+    if dashboard is None:
+        sys.exit(1)
+    inside = list(walk(dashboard))
+    buttons = [n for n in inside if n.getRoleName() == 'push button']
+    if mode == 'dashboard':
+        welcome = any(n.name == 'Add your first project' and n.childCount for n in inside)
+        actions = {n.name for n in buttons if n.getState().contains(pyatspi.STATE_ENABLED)}
+        errors = any('Failed to load data' in (n.name or text(n)) or 'dashboard is read-only' in (n.name or text(n)) for n in inside)
+        sys.exit(0 if welcome and {'Import from Git', 'Use a local checkout'} <= actions and not errors else 1)
+    if mode == 'project-ready':
+        switcher = next((n.name for n in inside if n.name.startswith('Project:')), '')
+        overview = any((n.name or text(n)) == 'Profile: First checkout' for n in inside)
+        sys.exit(0 if switcher == 'Project: First checkout' and overview else 1)
+    if mode == 'open-checkout':
+        button = next(n for n in buttons if n.name == 'Use a local checkout')
+        sys.exit(0 if button.queryAction().doAction(0) else 1)
+    fields = {'Display Name *': 'First checkout', 'Profile Name (ID) *': 'first-checkout',
+              'Repository *': 'fixture/first-checkout', 'Local Path *': os.path.expanduser('~/first-checkout'),
+              'Artifact Root *': os.path.expanduser('~/artifacts')}
+    entries = {n.name: n for n in inside if n.getState().contains(pyatspi.STATE_EDITABLE)}
+    if not fields.keys() <= entries.keys():
+        sys.exit(1)
+    for name, value in fields.items():
+        field = entries[name]
+        field.queryComponent().grabFocus()
+        deadline = time.monotonic() + 1
+        while not field.getState().contains(pyatspi.STATE_FOCUSED):
+            if time.monotonic() >= deadline:
+                sys.exit(1)
+            time.sleep(0.03)
+        subprocess.run(['xdotool', 'key', 'ctrl+a'], check=True)
+        subprocess.run(['xdotool', 'type', '--clearmodifiers', '--delay', '20', value], check=True)
+        deadline = time.monotonic() + 1
+        while text(field) != value:
+            if time.monotonic() >= deadline:
+                print(f'Form field did not receive its complete value: {name}', file=sys.stderr)
+                sys.exit(1)
+            time.sleep(0.03)
+    submit = next(n for n in reversed(buttons) if n.name == 'Add Profile')
+    sys.exit(0 if submit.queryAction().doAction(0) else 1)
 settings = any(n.name == "Parasaur — Settings" for n in nodes)
 section = next((n for n in nodes if n.name == "Set up this computer" and n.childCount), None)
 inside = list(walk(section)) if section is not None else []
@@ -173,7 +216,26 @@ while (( SECONDS < deadline )); do
         if systemctl --user is-active --quiet parasaur-standalone && onboarding "$app" dashboard; then
           window=$(xdotool search --onlyvisible --name '^Parasaur$' | head -n 1)
           import -window "$window" "$(dirname "$shot")/dashboard.png"
-          echo "PASS: standalone setup opened the running dashboard."
+          echo "PASS: standalone setup opened first-project onboarding."
+          git init -q -b main "$HOME/first-checkout"
+          git -C "$HOME/first-checkout" -c user.name=Fixture -c user.email=fixture@localhost commit --allow-empty -qm 'First commit'
+          onboarding "$app" open-checkout
+          deadline=$((SECONDS + 30))
+          until onboarding "$app" add-checkout; do
+            (( SECONDS < deadline )) || { echo 'FAIL: the first checkout form did not open.' >&2; exit 1; }
+            sleep 1
+          done
+          deadline=$((SECONDS + 30))
+          until onboarding "$app" project-ready; do
+            if (( SECONDS >= deadline )); then
+              import -window "$window" "$(dirname "$shot")/first-project.png"
+              echo 'FAIL: the new checkout was not selected.' >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          import -window "$window" "$(dirname "$shot")/first-project.png"
+          echo "PASS: the packaged dashboard created and selected its first checkout."
           # Repeat the installed-package path with a real existing role configuration.
           appdir=$(tr '\0' '\n' < "/proc/$app/environ" | sed -n 's/^APPDIR=//p')
           mapfile -t installers < <(find "${appdir:?missing AppImage resource directory}" -type f -path '*/standalone/install.sh')

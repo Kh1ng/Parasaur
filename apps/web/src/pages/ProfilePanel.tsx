@@ -38,7 +38,8 @@ export function ProfilePanel() {
   const profileConfig = useGahStore((s) => s.profileConfig);
   const fetchProfileConfig = useGahStore((s) => s.fetchProfileConfig);
   const configuredProfiles = profiles.data ?? [];
-  const selectedName = profileOverride ?? profile ?? '';
+  const noProjects = profiles.data?.length === 0 && !profiles.error;
+  const selectedName = noProjects ? '' : profileOverride ?? profile ?? '';
   const selected = configuredProfiles.find((p) => p.name === selectedName);
 
   useEffect(() => { fetchProfiles(); }, [fetchProfiles]);
@@ -63,6 +64,8 @@ export function ProfilePanel() {
       sendMessage({ type: 'provider.refresh', requestId: `req_${Date.now()}`, instanceId });
     }
   };
+
+  if (noProjects) return <ProfileEditor />;
 
   return (
     <div className="space-y-6">

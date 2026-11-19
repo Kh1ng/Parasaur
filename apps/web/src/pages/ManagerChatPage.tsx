@@ -1466,6 +1466,8 @@ export function ManagerChatPage({ docked = false, onNavigate, onOpenWork, gitlab
 
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(false);
+  const pendingAction = useUiStore((state) => state.pendingAction);
+  useEffect(() => { if (pendingAction === 'import') setNavigationOpen(true); }, [pendingAction]);
   const [toolsOpen, setToolsOpen] = useState(false);
   const toolsRef = useRef<HTMLDivElement>(null);
 

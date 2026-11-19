@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import { LoadingState } from './components/ui/EmptyState.js';
+import { ErrorState, LoadingState } from './components/ui/EmptyState.js';
 import { useWebSocket } from './ws/WebSocketContext.js';
 import { OverviewPage } from './pages/OverviewPage.js';
 import { ActivityBar, Navbar, PageTabs } from './components/Navbar.js';
@@ -95,6 +95,9 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
   const quota = useGahStore((state) => state.quota);
   const fetchQuota = useGahStore((state) => state.fetchQuota);
   const activeProfile = profileOverride ?? profile ?? undefined;
+  const profiles = useGahStore((state) => state.profiles);
+  const fetchProfiles = useGahStore((state) => state.fetchProfiles);
+  const noProjects = profiles.data?.length === 0 && !profiles.error;
   useEffect(() => {
     fetchQuota({ profile: activeProfile, since: '7d' });
     const timer = window.setInterval(() => fetchQuota({ profile: activeProfile, since: '7d' }, { force: true }), QUOTA_REFRESH_MS);
@@ -106,8 +109,8 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
   const statusUnavailable = !statusSnapshot || Boolean(statusResource.error);
   const fetchStatus = useGahStore(state => state.fetchStatus);
   useEffect(() => {
-    void fetchStatus(activeProfile, { force: true });
-  }, [activeProfile, fetchStatus, reconnectSeq, activityRevision]);
+    if (profiles.data?.length) void fetchStatus(activeProfile, { force: true });
+  }, [activeProfile, profiles.data?.length, fetchStatus, reconnectSeq, activityRevision]);
 
   // The device's agent processes: what the factory is running right now, and what runs beside it.
   const [deviceAgents, setDeviceAgents] = useState<{ data: DeviceAgentsSnapshot | null; error: string | null }>({ data: null, error: null });
@@ -201,6 +204,20 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
         return <AgentsPage sessions={sessions} deviceAgents={deviceAgents} onNavigate={navigate} onWatchRun={watchRun} />;
       case 'overview':
       default:
+        if (profiles.error && !profiles.data?.length) {
+          return <ErrorState message={profiles.error} endpoint="/api/profiles" onRetry={() => void fetchProfiles({ force: true })} />;
+        }
+        if (!profiles.data) return <LoadingState label="Loading projects…" />;
+        if (noProjects) return (
+          <section className="card-padded mx-auto my-8 max-w-xl space-y-4" aria-labelledby="first-project">
+            <h1 id="first-project" className="text-2xl font-semibold text-primary">Add your first project</h1>
+            <p className="text-sm text-secondary">Import a Git repository or use a checkout already on this computer.</p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="btn-primary" onClick={openImportProject}>Import from Git</button>
+              <button type="button" className="btn-secondary" onClick={openCreateProject}>Use a local checkout</button>
+            </div>
+          </section>
+        );
         return (
           <OverviewPage
             sessions={sessions}
@@ -213,18 +230,21 @@ export function App({ standaloneEmbedContext = null }: { /** A standalone link (
     }
   };
 
+  function openImportProject() { requestAction('import'); expandChat(true); }
+  function openCreateProject() { requestAction('create'); setSideView('profile'); }
+
   const isChatPage = currentPage === 'chat';
 
   return (
     <div className="app-shell flex h-dvh flex-col overflow-hidden bg-page">
       <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 bg-card text-primary p-3 rounded-md">Skip to content</a>
-      <PwaStatusBars />
+      <PwaStatusBars connected={isConnected} />
       <SampleDataBanner />
       <GahUpdateBanner />
       <Navbar currentPage={currentPage} sideView={sideView} onPageChange={navigate} activityUnreadCount={activityUnreadCount}
         chatOpen={isChatPage || chatDocked} onChatToggle={toggleChat}
-        onImportProject={() => { requestAction('import'); expandChat(true); }} onCreateProject={() => { requestAction('create'); setSideView('profile'); }}
-        actions={<><WorkingNowMenu jobs={working.jobs} agents={working.agents} unavailable={statusUnavailable} onOpenBoard={() => navigate('kanban')} /><SubscriptionUsageMenu subscriptions={subscriptions} busy={busySubscriptions} unavailable={Boolean(quota.error)} onOpenQuota={() => navigate('quota')} /><NotificationsMenu liveActivity={liveActivity} muted={sideView === 'events'} unreadCount={activityUnreadCount} revision={activityRevision} autoPopup={notificationPopups} /></>} />
+        onImportProject={openImportProject} onCreateProject={openCreateProject}
+        actions={<>{!noProjects && <WorkingNowMenu jobs={working.jobs} agents={working.agents} unavailable={statusUnavailable} onOpenBoard={() => navigate('kanban')} />}<SubscriptionUsageMenu subscriptions={subscriptions} busy={busySubscriptions} unavailable={Boolean(quota.error)} onOpenQuota={() => navigate('quota')} /><NotificationsMenu liveActivity={liveActivity} muted={sideView === 'events'} unreadCount={activityUnreadCount} revision={activityRevision} autoPopup={notificationPopups} /></>} />
 
       {/* Left to right: icon strip, sidebar view, main panel, chat sidebar. */}
       <div className="flex min-h-0 flex-1">

@@ -5,8 +5,9 @@ import { isOffline, listenOfflineChange, registerServiceWorker } from '../pwa.js
 /** Issue #534: PWA plumbing UI — offline banner ("read-only, stale") and the
  * update prompt when a new deploy's service worker is waiting. Both render
  * only when relevant; neither blocks the dashboard. */
-export function PwaStatusBars() {
-  const [offline, setOffline] = useState(isOffline());
+export function PwaStatusBars({ connected = false }: { connected?: boolean }) {
+  const [networkOffline, setOffline] = useState(isOffline());
+  const offline = networkOffline && !connected;
   const [updateApply, setUpdateApply] = useState<(() => void) | null>(null);
 
   useEffect(() => {

@@ -5,6 +5,7 @@ import { formatChatName } from '../lib/format.js';
 import { BoundedCollection } from './BoundedCollection.js';
 import { projectKey } from '@git-agent-harness/contracts';
 import { useUiStore } from '../store/uiStore.js';
+import { useGahStore } from '../store/gahStore.js';
 import { gahApi, pairingApi } from '../api/client.js';
 
 /**
@@ -87,6 +88,7 @@ export function ProjectRail({
         ...(gitlab ? { provider: 'gitlab', providerProjectId: providerProjectId.trim(), ...(providerApiBase.trim() ? { providerApiBase: providerApiBase.trim() } : {}) } : {})
       });
       onProjectAdded(result.project);
+      void useGahStore.getState().fetchProfiles({ force: true });
       onSelect(result.project.chat_profile, result.project.node_id);
       setGitUrl('');
       setReclone(false);
