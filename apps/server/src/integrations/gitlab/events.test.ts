@@ -19,6 +19,7 @@ import { agentChildEnv } from '../../managerChat/childEnv.js';
 import { createSessionManager } from '../../sessions/SessionManager.js';
 
 const fixture = (name: string): Record<string, unknown> => JSON.parse(readFileSync(new URL(`../../../tests/fixtures/gitlab-19/${name}.json`, import.meta.url), 'utf8'));
+const pipelineSha = record(fixture('pipeline').object_attributes).sha;
 const event = (name: string): GitLabEvent => {
   const result = classifyEvent(fixture(name), 'parasaur', true);
   assert.ok(result);
@@ -55,10 +56,10 @@ function harness(overrides: Partial<GitLabDispatchDeps> = {}) {
       assert.equal(args[args.indexOf('--hostname') + 1], 'gitlab.example.com');
       calls.push(args);
       const path = args[1];
-      const response = path === 'users/7' ? { username: 'maintainer', bot: false }
-        : path === 'projects/team%2Fproject' ? { id: 101 }
-        : path.endsWith('/issues/42') ? { state: 'opened', author: { username: 'maintainer' } }
-        : path.includes('source_branch=') ? [{ iid: 42, author: { username: 'parasaur' }, source_project_id: 101, sha: 'a'.repeat(40) }]
+      const response = path === 'users/2' ? { username: 'maintainer', bot: false }
+        : path === 'projects/team%2Fproject' ? { id: 1 }
+        : path.endsWith('/issues/1') ? { state: 'opened', author: { username: 'maintainer' } }
+        : path.includes('source_branch=') ? [{ iid: 1, author: { username: 'parasaur' }, source_project_id: 1, sha: pipelineSha }]
         : { id: 99 };
       return { stdout: JSON.stringify(response) };
     },
@@ -98,12 +99,12 @@ test('assignment additions, numeric deltas, and GitLab 19 review re-requests onl
   record(issue.object_attributes).action = 'open';
   assert.equal(classifyEvent(issue, 'parasaur', false)?.kind, 'issue');
   record(issue.object_attributes).action = 'update';
-  issue.changes = { assignee_ids: { previous: [], current: [9] } };
+  issue.changes = { assignee_ids: { previous: [], current: [3] } };
   assert.ok(classifyEvent(issue, 'parasaur', false));
-  issue.changes = { assignee_ids: { previous: [9], current: [] } };
+  issue.changes = { assignee_ids: { previous: [3], current: [] } };
   assert.equal(classifyEvent(issue, 'parasaur', false), null);
   const mr = fixture('merge_request');
-  const reviewer = { id: 9, username: 'parasaur', re_requested: false };
+  const reviewer = { id: 3, username: 'parasaur', re_requested: false };
   mr.changes = { reviewers: [[reviewer], [{ ...reviewer, re_requested: true }]] };
   assert.ok(classifyEvent(mr, 'parasaur', false));
   mr.changes = { reviewers: [[reviewer], [{ ...reviewer, state: 'approved' }]] };
@@ -162,17 +163,17 @@ for (const name of ['issue', 'merge_request', 'note', 'note-mr', 'pipeline']) {
     assert.deepEqual(start.gitlab, {
       project: 'team/project',
       kind: name === 'merge_request' || name === 'note-mr' || name === 'pipeline' ? 'merge_request' : 'issue',
-      iid: 42,
+      iid: 1,
       webUrl: 'https://gitlab.example.com/team/project'
     });
     if (name === 'note' || name === 'note-mr') {
       assert.ok(start.target?.endsWith(String(record(fixture(name).object_attributes).note)));
       assert.ok(start.target?.startsWith('GitLab instruction for https://gitlab.example.com/'));
     }
-    if (name === 'issue') assert.equal(start.target, '#42');
-    if (['merge_request', 'note-mr', 'pipeline'].includes(name)) assert.equal(start.mr, '42');
+    if (name === 'issue') assert.equal(start.target, '#1');
+    if (['merge_request', 'note-mr', 'pipeline'].includes(name)) assert.equal(start.mr, '1');
     assert.ok(h.calls.every(args => !args.includes('POST')), 'only the policy-enforced CLI publishes');
-    if (name === 'issue' || name === 'note') assert.ok(h.managed.some(input => input.target === '#42'));
+    if (name === 'issue' || name === 'note') assert.ok(h.managed.some(input => input.target === '#1'));
   });
 }
 
@@ -191,16 +192,16 @@ test('untrusted actors, issue authors, unknown projects, and old CLIs fail close
   }
   const h = harness();
   const original = h.deps.cli;
-  h.deps.cli = async (cmd, args, cwd) => args[1].endsWith('/issues/42')
+  h.deps.cli = async (cmd, args, cwd) => args[1].endsWith('/issues/1')
     ? { stdout: JSON.stringify({ state: 'opened', author: { username: 'outsider' } }) } : original(cmd, args, cwd);
   await dispatchGitLabEvent(event('issue'), options, h.deps);
   assert.equal(h.starts.length, 0);
 });
 
 test('pipeline repairs require bot ownership, configured prefix, matching project and head SHA', async () => {
-  for (const mr of [[], [{ iid: 42, author: { username: 'other' }, source_project_id: 101, sha: 'a'.repeat(40) }],
-    [{ iid: 42, author: { username: 'parasaur' }, source_project_id: 999, sha: 'a'.repeat(40) }],
-    [{ iid: 42, author: { username: 'parasaur' }, source_project_id: 101, sha: 'b'.repeat(40) }]]) {
+  for (const mr of [[], [{ iid: 1, author: { username: 'other' }, source_project_id: 1, sha: pipelineSha }],
+    [{ iid: 1, author: { username: 'parasaur' }, source_project_id: 999, sha: pipelineSha }],
+    [{ iid: 1, author: { username: 'parasaur' }, source_project_id: 1, sha: 'b'.repeat(40) }]]) {
     const h = harness(); const original = h.deps.cli;
     h.deps.cli = async (cmd, args, cwd) => args[1].includes('source_branch=') ? { stdout: JSON.stringify(mr) } : original(cmd, args, cwd);
     await dispatchGitLabEvent(event('pipeline'), options, h.deps);
@@ -388,7 +389,7 @@ test('note text crosses the session boundary only as worker target input', async
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(dispatched.length, 1);
   assert.ok(dispatched[0].target?.endsWith(instruction));
-  assert.equal(dispatched[0].mr, '42');
+  assert.equal(dispatched[0].mr, '1');
   assert.equal(dispatched[0].manualWorker, undefined);
 });
 
@@ -402,7 +403,7 @@ test('a dispatched event is visible to origin-scoped feed queries through its re
   await new Promise(resolve => setImmediate(resolve));
   const session = manager.getAllSessions().find(candidate => candidate.status !== 'stopped');
   assert.ok(session, 'the dispatched run is live');
-  const scopedFeedContext = { project: 'team/project', kind: 'issue' as const, iid: 42, origin: 'https://gitlab.example.com', branch: null, limit: 20 };
+  const scopedFeedContext = { project: 'team/project', kind: 'issue' as const, iid: 1, origin: 'https://gitlab.example.com', branch: null, limit: 20 };
   // The recorded context proves the event's origin: the run shows up for an
   // origin-scoped query, which pre-context derivation could never do.
   assert.equal(sessionMatchesGitLabContext(session, scopedFeedContext), true);
@@ -417,15 +418,15 @@ test('a dispatched event is visible to origin-scoped feed queries through its re
 test('bot actors require the bot allowlist and bot mention notes never dispatch', async () => {
   for (const name of ['note', 'pipeline']) {
     const h = harness(); const original = h.deps.cli;
-    h.deps.cli = async (cmd, args, cwd) => args[1] === 'users/7'
+    h.deps.cli = async (cmd, args, cwd) => args[1] === 'users/2'
       ? { stdout: JSON.stringify({ username: 'parasaur', bot: true }) } : original(cmd, args, cwd);
     await dispatchGitLabEvent(event(name), options, h.deps);
     assert.equal(h.starts.length, name === 'pipeline' ? 1 : 0);
   }
   const h = harness({ config: async () => ({ ...config, event_policy: { ...policy, trusted_issue_bot_authors: null } }) });
   const original = h.deps.cli;
-  h.deps.cli = async (cmd, args, cwd) => args[1] === 'users/7'
-    ? { stdout: JSON.stringify({ username: 'project_101_bot_example' }) } : original(cmd, args, cwd);
+  h.deps.cli = async (cmd, args, cwd) => args[1] === 'users/2'
+    ? { stdout: JSON.stringify({ username: 'project_1_bot_example' }) } : original(cmd, args, cwd);
   await dispatchGitLabEvent(event('pipeline'), options, h.deps);
   assert.equal(h.starts.length, 0);
 });

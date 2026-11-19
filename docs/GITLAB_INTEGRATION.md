@@ -103,8 +103,7 @@ The payload and receipt are saved before `202`; replay uses the event ID for fle
 The durable worker retries unresolved work within its saved attempt budget.
 Use the owner recovery API described below to retry or discard dead letters.
 
-Fixtures under `apps/server/tests/fixtures/gitlab-19/` derive from GitLab 19.0 documentation examples.
-They are sanitized examples, not live captures. Validate the deployment with real file-hook deliveries before enabling unattended work.
+An isolated GitLab CE 19.5.3 installation emitted the assignment, review request, issue and MR mentions, and failed pipeline used by the integration tests. The companion file hook forwarded each delivery to a local receiver. [Fixture provenance and reproduction](../apps/server/tests/fixtures/gitlab-19/README.md)
 
 ## Context-scoped runs feed (#1595)
 
@@ -620,7 +619,4 @@ command group, so this change adds no `gah gitlab queue` command.
 Do not downgrade to a receipt-only server while this store contains queued
 work. Older servers cannot read the new format.
 
-This implements the durable-queue half of #1644. The GitLab 19 fixtures
-remain documented examples. Replacing them with redacted live captures of
-issue, merge-request, note, and pipeline deliveries still requires the
-owner's self-hosted GitLab instance and remains open under #1644.
+Restart tests exercise the durable queue with captured GitLab events and verify that replay starts each accepted dispatch once.
