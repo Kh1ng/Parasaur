@@ -357,7 +357,17 @@ fn history_storage_cannot_consume_the_dispatch_free_space_floor() {
 #[test]
 fn policy_and_complete_profile_history_survive_without_central_credentials_or_capacity_overrides() {
     let _guard = crate::test_support::ExecGuard::new();
-    let (tmp, central, worker, request) = fixture();
+    let (tmp, mut central, worker, request) = fixture();
+    let default_policy = super::policy::prepare(&central, "test").unwrap();
+    assert!(serde_json::to_value(default_policy)
+        .unwrap()
+        .get("validation_required")
+        .is_none());
+    central
+        .profiles
+        .get_mut("test")
+        .unwrap()
+        .validation_required = true;
     let mut row = crate::ledger::LedgerEntry::new(
         "test",
         &central.profiles["test"],
@@ -399,6 +409,7 @@ fn policy_and_complete_profile_history_survive_without_central_credentials_or_ca
         request.args.prior_attempt_context
     );
     let profile = &loaded.config.profiles["test"];
+    assert!(profile.validation_required);
     assert_eq!(profile.local_path, "/worker/repo");
     assert_eq!(profile.env_file.as_deref(), Some("/worker/private.env"));
     assert_eq!(profile.codex_args, ["--max-turns", "8"]);
