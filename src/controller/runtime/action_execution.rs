@@ -2,26 +2,44 @@ use super::{dispatch_policy, merge, pm, run_dispatch_and_record, RouteNodeAdmiss
 use crate::controller::NextAction;
 use anyhow::Result;
 
-/// Select the bounded retry evidence needed by this action before handing it
-/// to a worker. The full ledger snapshot need not survive action execution.
-pub(crate) fn action_prior_context(
+/// Only the selected action's inputs cross the worker boundary. The snapshot
+/// and the ledger can be released before an implementation starts.
+#[derive(Default)]
+pub(crate) struct ActionDispatchContext {
+    planned_child: bool,
+    prior_attempt: Option<String>,
+}
+
+pub(crate) fn action_dispatch_context(
     cfg: &crate::config::GahConfig,
     profile_name: &str,
     action: &NextAction,
     ledger_entries: &[crate::ledger::LedgerEntry],
-) -> Result<Option<String>> {
-    match action {
+    pm_parents: &[crate::status::PmParentStatus],
+) -> Result<ActionDispatchContext> {
+    let planned_child = super::action_creates_managed_mr(action)
+        && action
+            .work_id()
+            .and_then(|id| id.strip_prefix('#'))
+            .is_some_and(|number| {
+                pm_parents.iter().any(|parent| {
+                    parent
+                        .child_issue_numbers
+                        .iter()
+                        .any(|child| child == number)
+                })
+            });
+    let prior_attempt = match action {
         NextAction::Retry { work_id, .. } | NextAction::Escalate { work_id, .. } => {
             let profile = crate::config::get_profile(cfg, profile_name)?;
-            Ok(crate::dispatch::prior_attempt_context(
-                ledger_entries,
-                profile_name,
-                profile,
-                work_id,
-            ))
+            crate::dispatch::prior_attempt_context(ledger_entries, profile_name, profile, work_id)
         }
-        _ => Ok(None),
-    }
+        _ => None,
+    };
+    Ok(ActionDispatchContext {
+        planned_child,
+        prior_attempt,
+    })
 }
 
 /// Executes at most one action. `FixMr` reuses its branch (TICKET-118);
@@ -30,14 +48,19 @@ pub(crate) fn execute_action(
     cfg: &crate::config::GahConfig,
     profile_name: &str,
     action: &NextAction,
-    prior_attempt_context: Option<String>,
+    context: ActionDispatchContext,
     skip_validation_gate: bool,
     route_admission: Option<RouteNodeAdmission>,
 ) -> Result<String> {
     let profile = crate::config::get_profile(cfg, profile_name)?;
     let base_args = || crate::dispatch::DispatchArgs {
         profile: profile_name.to_string(),
-        mode: "fix".to_string(),
+        mode: if context.planned_child {
+            "improve"
+        } else {
+            "fix"
+        }
+        .into(),
         backend: "auto".to_string(),
         backend_instance: None,
         target: String::new(),
@@ -57,7 +80,7 @@ pub(crate) fn execute_action(
         expected_review_generation: None,
         skip_validation_gate,
         dispatch_reason: None,
-        prior_attempt_context: prior_attempt_context.clone(),
+        prior_attempt_context: context.prior_attempt.clone(),
         work_id: action.work_id().map(str::to_string),
         run_id: Some(uuid::Uuid::new_v4().to_string()),
         route_admission: route_admission.clone(),
@@ -233,8 +256,9 @@ mod tests {
             },
         ] {
             contexts.push(
-                action_prior_context(&cfg, "test", &action, &entries)
+                action_dispatch_context(&cfg, "test", &action, &entries, &[])
                     .unwrap()
+                    .prior_attempt
                     .unwrap(),
             );
         }
@@ -245,9 +269,12 @@ mod tests {
             recommended_model: None,
             reason: "initial".into(),
         };
-        assert!(action_prior_context(&cfg, "test", &initial, &entries)
-            .unwrap()
-            .is_none());
+        assert!(
+            action_dispatch_context(&cfg, "test", &initial, &entries, &[])
+                .unwrap()
+                .prior_attempt
+                .is_none()
+        );
         drop(entries);
         for context in contexts {
             assert!(context.len() <= 4_096);

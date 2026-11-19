@@ -24,6 +24,7 @@ fn harness_with_validation(checks: &str, candidates: &str) -> ScenarioHarness {
          [profiles.test.publishing]\ntrusted_issue_human_authors = [\"gah-bot\"]\n\
          [profiles.test.publishing.issue_claim]\nmode = \"github_assignee\"\nverify_seconds = 0\n\
          [profiles.test.routing]\n\
+         pm_backend = \"claude\"\n\
          routine_reviewer = {{ backend = \"codex\", model = \"default\" }}\n\
          improve_candidates = {candidates}\n\
          review_candidates = [{{ backend = \"codex\", model = \"default\", priority = 100, included_in_quota = true }}]\n"
@@ -98,16 +99,15 @@ fn reviewer(harness: &mut ScenarioHarness, kind: &str) {
     reviewer.install(Scenario::success().with_stdout(json!({
         "verdict":kind,"confidence":"high","human_required":false,
         "actionable_findings":findings,"blocking_findings":[],
-        "evidence":["file:implementation.txt", "diff:implementation.txt:lease validation inspected"],
+        "evidence":["file:implementation.txt", "diff:implementation.txt:lease validation inspected",
+            "ac:1:file:implementation.txt"],
         "non_blocking_findings":[],"risk_notes":[]
     }).to_string()));
     harness.install_custom_worker("codex", &reviewer);
 }
 
-// Carry actual ledger output into the next seed: setup_env rewrites the seed
-// on each call. No review, repair, merge, or retry entry is synthesized here.
 fn run(mut harness: ScenarioHarness, action: &str, exit: i32) -> (ScenarioHarness, LoopResult) {
-    let result = harness.run_one_loop().unwrap();
+    let result = harness.run_loops(1).unwrap().pop().unwrap();
     assert_eq!(
         result.exit_code,
         Some(exit),
@@ -128,12 +128,7 @@ fn run(mut harness: ScenarioHarness, action: &str, exit: i32) -> (ScenarioHarnes
         result.stdout,
         result.stderr_tail
     );
-    let ledger = result
-        .ledger_entries
-        .iter()
-        .cloned()
-        .fold(TestLedger::new(), |ledger, entry| ledger.with_entry(entry));
-    (harness.with_ledger(ledger), result)
+    (harness, result)
 }
 
 fn latest(result: &LoopResult) -> &Value {
@@ -142,8 +137,8 @@ fn latest(result: &LoopResult) -> &Value {
 
 // The fake forge models API state, not Git remote objects. Observe the real
 // bare remote after each push and expose that head to the next API snapshot.
-fn publish_head(harness: &mut ScenarioHarness) -> String {
-    let branch = harness.stateful_forge().state()["pulls"]["2"]["branch"]
+fn publish_head(harness: &mut ScenarioHarness, number: &str) -> String {
+    let branch = harness.stateful_forge().state()["pulls"][number]["branch"]
         .as_str()
         .unwrap()
         .to_string();
@@ -153,14 +148,14 @@ fn publish_head(harness: &mut ScenarioHarness) -> String {
     );
     assert_eq!(sha.len(), 40);
     harness.stateful_forge().update(|s| {
-        s["pulls"]["2"]["sha"] = json!(sha);
+        s["pulls"][number]["sha"] = json!(sha);
         s["branches"][&branch] = json!(sha);
     });
     sha
 }
 
-fn green(harness: &mut ScenarioHarness) {
-    let sha = harness.stateful_forge().state()["pulls"]["2"]["sha"]
+fn green(harness: &mut ScenarioHarness, number: &str) {
+    let sha = harness.stateful_forge().state()["pulls"][number]["sha"]
         .as_str()
         .unwrap()
         .to_string();
@@ -200,8 +195,8 @@ fn start() -> ScenarioHarness {
         assigned < claimed && claimed < worked && worked < published,
         "{log}"
     );
-    publish_head(&mut harness);
-    green(&mut harness);
+    publish_head(&mut harness, "2");
+    green(&mut harness, "2");
     harness
 }
 
@@ -239,10 +234,10 @@ fn approved() -> ScenarioHarness {
     .unwrap();
     assert!(prompt.contains(FINDING), "{prompt}");
     assert!(prompt.contains(&generation), "{prompt}");
-    let sha = publish_head(&mut harness);
+    let sha = publish_head(&mut harness, "2");
     assert_ne!(repair["review_source_sha"], sha);
     reviewer(&mut harness, "APPROVE");
-    green(&mut harness);
+    green(&mut harness, "2");
     let (mut harness, reviewed) = run(harness, "review_mr", 0);
     assert_eq!(reviewed.ledger_entries.len(), 4);
     let review = latest(&reviewed);
@@ -346,6 +341,171 @@ fn repair_retry_cap_requires_human() {
     );
 }
 
+/// Scenario 8: provider-native PM children traverse the same unattended
+/// controller as ordinary improve/review work, with no synthesized ledger rows.
+#[test]
+fn pm_children_are_improved_reviewed_and_merged_in_one_loop() {
+    let mut harness = harness();
+    reviewer(&mut harness, "APPROVE");
+    harness.stateful_forge().update(|state| {
+        state["issues"]["1"]["labels"] = json!(["planning"]);
+        state["labels"] = json!(["exec:autonomous"]);
+    });
+    let tickets: Vec<_> = ["first", "second"]
+        .iter()
+        .map(|key| {
+            json!({
+                "key":key,"title":format!("Implement {key}"),"summary":"Bounded implementation",
+                "objective":"Implement the requested behavior","task_class":"feature",
+                "difficulty":"easy","risk":"low","execution_disposition":"autonomous",
+                "recommended_routing":{"capability":"edit","min_tier":"standard"},
+                "affected_areas":[key],"affected_files":[format!("{key}.txt")],
+                "acceptance_criteria":["Requested behavior works"],"verification_commands":["true"],
+                "depends_on":[],"duplicate_evidence":["No matching issue"],
+                "uncovered_reason":"No existing work covers this change"
+            })
+        })
+        .collect();
+    let planner = FakeBackend::new(&harness.artifacts_dir, "claude");
+    planner.install(
+        Scenario::success().with_stdout(
+            json!({
+                "title":"Implementation plan","summary":"Two bounded children","tickets":tickets
+            })
+            .to_string(),
+        ),
+    );
+    harness.install_custom_worker("claude", &planner);
+    let planned = harness.run_loops(1).unwrap().pop().unwrap();
+    assert_eq!(planned.exit_code, Some(0), "{planned:?}");
+    let publication = planned
+        .ledger_entries
+        .iter()
+        .find(|e| {
+            e["pm_child_issue_numbers"]
+                .as_array()
+                .is_some_and(|a| a.len() == 2)
+        })
+        .expect("PM publication records both children");
+    let children = publication["pm_child_issue_numbers"]
+        .as_array()
+        .unwrap()
+        .clone();
+    for child in &children {
+        let dispatched = harness.run_loops(1).unwrap().pop().unwrap();
+        assert_eq!(dispatched.exit_code, Some(0), "{dispatched:?}");
+        let entry = latest(&dispatched);
+        assert_eq!(entry["mode"], "improve", "{entry}");
+        assert_eq!(entry["source_issue_number"], *child);
+        assert_eq!(entry["mr_created"], true);
+        let state = harness.stateful_forge().state();
+        let number = state["pulls"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .find(|(_, p)| p["state"] == "open")
+            .map(|(number, _)| number.as_str())
+            .expect("child pull request");
+        let sha = publish_head(&mut harness, number);
+        green(&mut harness, number);
+        let completed = harness.run_loops(3).unwrap();
+        for result in &completed {
+            assert_eq!(result.exit_code, Some(0), "{result:?}");
+        }
+        let entries = &completed.last().unwrap().ledger_entries;
+        assert!(
+            entries.iter().any(|e| e["mode"] == "review"
+                && e["review_source_sha"] == sha
+                && e["review_verdict"] == "APPROVE"
+                && e["human_required"] == false),
+            "{completed:?}"
+        );
+        let state = harness.stateful_forge().state();
+        assert_eq!(state["pulls"][number]["state"], "closed");
+        assert!(state["pulls"][number]["merged_at"].is_string());
+    }
+    let state = harness.stateful_forge().state();
+    assert_eq!(state["pulls"].as_object().unwrap().len(), 2);
+    assert_eq!(
+        state["issues"]["1"]["children"].as_array().unwrap().len(),
+        2
+    );
+}
+
+#[test]
+fn hung_worker_releases_claim_and_is_redispatched_once() {
+    let mut harness = harness_with_validation(
+        "validation_commands = [\"true\"]\nagy_idle_timeout_seconds = 1",
+        r#"[{ backend = "agy", model = "test-model", priority = 100, included_in_quota = true }, { backend = "claude", model = "retry-model", priority = 50, included_in_quota = true }]"#,
+    );
+    let marker = harness.artifacts_dir.join("worker-started");
+    support::write_executable(&harness.bin_dir.join("agy"), &format!(
+        "#!/bin/sh\nset -eu\ncase \"$1\" in --version) echo 'test 1.0'; exit 0;; models|--help) exit 0;; esac\nif [ \"$2\" = /usage ]; then exit 0; fi\n\
+         if [ ! -f '{}' ]; then touch '{}'; exec sleep 300; fi\n\
+         echo change >> implementation.txt\necho work complete\n",
+        marker.display(), marker.display()
+    ));
+    support::write_executable(
+        &harness.bin_dir.join("claude"),
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo \"test 1.0\"; exit 0; fi\necho change >> implementation.txt\necho work complete\n",
+    );
+    let failed = harness.run_loops(1).unwrap().pop().unwrap();
+    assert_eq!(failed.exit_code, Some(1), "{failed:?}");
+    assert_eq!(failed.ledger_entries.len(), 1);
+    let entry = latest(&failed);
+    assert_eq!(entry["failure_class"], "agent_no_progress", "{entry}");
+    assert_eq!(
+        entry["validation_result"], "not_run_backend_stalled",
+        "{entry}"
+    );
+    let failure = failed
+        .events
+        .iter()
+        .find(|event| event["event_type"] == "terminal_failure" && event["work_id"] == "#1")
+        .expect("watchdog failure event");
+    let details: Value = serde_json::from_str(failure["details"].as_str().unwrap()).unwrap();
+    assert_eq!(details["failure_class"], entry["failure_class"]);
+    assert_eq!(details["failure_stage"], "agent_run");
+    assert!(details["error_summary"]
+        .as_str()
+        .unwrap()
+        .contains("stalled before any changes"));
+    assert!(details["run_id"].is_string());
+    assert!(failed
+        .events
+        .iter()
+        .any(|event| event["event_type"] == "dispatch_finished"
+            && event["run_id"] == details["run_id"]
+            && event["work_id"] == "#1"));
+    assert_eq!(entry["mr_created"], false);
+    assert_eq!(
+        harness.run_status_json().unwrap()["active_claims"],
+        json!([])
+    );
+    let retried = harness.run_loops(1).unwrap().pop().unwrap();
+    assert_eq!(retried.exit_code, Some(0), "{retried:?}");
+    assert_eq!(retried.ledger_entries.len(), 2);
+    assert_eq!(latest(&retried)["work_id"], "#1");
+    assert_eq!(latest(&retried)["mode"], "fix");
+    assert_eq!(latest(&retried)["mr_created"], true, "{retried:?}");
+    assert!(latest(&retried)["failure_class"].is_null());
+    let next = harness.run_loops(1).unwrap().pop().unwrap();
+    assert_eq!(
+        next.ledger_entries
+            .iter()
+            .filter(|e| e["mode"] == "fix")
+            .count(),
+        2
+    );
+    assert_eq!(
+        harness.stateful_forge().state()["pulls"]
+            .as_object()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
 #[test]
 fn required_validation_escalates_after_a_failure_and_publishes_only_the_passing_tree() {
     let mut harness = harness_with_validation(
@@ -392,7 +552,7 @@ echo work complete
             .count(),
         1
     );
-    let sha = publish_head(&mut harness);
+    let sha = publish_head(&mut harness, "2");
     assert_eq!(
         git(
             &harness,

@@ -31,7 +31,7 @@ mod action_execution;
 mod dispatch_policy;
 #[path = "runtime/native_dispatch.rs"]
 mod native_dispatch;
-pub(crate) use action_execution::{action_prior_context, execute_action};
+pub(crate) use action_execution::{action_dispatch_context, execute_action};
 #[cfg(unix)]
 pub(crate) use native_dispatch::project_native_holds;
 #[path = "runtime/dispatch_state.rs"]
@@ -572,7 +572,13 @@ fn run_selected_action(
         original_review_generation.as_deref(),
     )?;
 
-    let prior_attempt_context = action_prior_context(cfg, profile_name, &action, &ledger_entries)?;
+    let dispatch_context = action_dispatch_context(
+        cfg,
+        profile_name,
+        &action,
+        &ledger_entries,
+        &snapshot.pm_parent_states,
+    )?;
     drop(ledger_entries);
     let outcome = if let Some(work_id) = action
         .work_id()
@@ -592,7 +598,7 @@ fn run_selected_action(
                 cfg,
                 profile_name,
                 &action,
-                prior_attempt_context,
+                dispatch_context,
                 skip_validation_gate,
                 Some(
                     RouteNodeAdmission::single_worker(action.clone(), cfg.defaults.node_capacity)
@@ -614,7 +620,7 @@ fn run_selected_action(
             cfg,
             profile_name,
             &action,
-            prior_attempt_context,
+            dispatch_context,
             skip_validation_gate,
             Some(
                 RouteNodeAdmission::single_worker(action.clone(), cfg.defaults.node_capacity)
@@ -968,8 +974,13 @@ fn run_parallel_once(
                             admission_coordinator.register_lifecycle_worker(sequence);
                         }
                         let done_tx = done_tx.clone();
-                        let prior_attempt_context =
-                            action_prior_context(cfg, profile_name, &action, &ledger_entries)?;
+                        let dispatch_context = action_dispatch_context(
+                            cfg,
+                            profile_name,
+                            &action,
+                            &ledger_entries,
+                            &fresh_snapshot.pm_parent_states,
+                        )?;
                         drop(ledger_entries);
                         active += 1;
                         scope.spawn(move || {
@@ -992,7 +1003,7 @@ fn run_parallel_once(
                                         cfg,
                                         &profile_for_thread,
                                         &action_for_thread,
-                                        prior_attempt_context,
+                                        dispatch_context,
                                         skip_validation_gate,
                                         route_admission,
                                     )
@@ -1052,7 +1063,7 @@ fn run_parallel_once(
                             cfg,
                             profile_name,
                             &action,
-                            None,
+                            Default::default(),
                             skip_validation_gate,
                             None,
                         )?;
