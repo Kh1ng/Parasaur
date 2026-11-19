@@ -125,14 +125,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: refs/heads/main
+          fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
+      - name: Select the green revision from main
+        env:
+          EDGE_REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          [[ "$EDGE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$EDGE_REVISION" HEAD
+          git checkout --detach "$EDGE_REVISION"
       - name: Check release version
         run: node scripts/check-release-version.mjs
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - name: Install dependencies and build workspace outputs
         run: |
@@ -146,7 +155,9 @@ jobs:
           name: edge-cli-linux
           path: worker-cli
       - name: Stage the Windows worker bundle from this revision
-        run: node scripts/stage-node-test-artifacts.mjs worker apps/server/dist/worker-artifacts worker-cli/gah-linux-x86_64
+        run: node scripts/stage-node-test-artifacts.mjs worker apps/server/dist/worker-artifacts worker-cli/gah-linux-x86_64 --bundle-runtime
+      - name: Install and probe the bundled WSL worker
+        run: bash scripts/smoke-packaged-wsl-worker.sh apps/server/dist/worker-artifacts
       - name: Archive the release bundle
         run: bash scripts/build-release-bundle.sh gah-server-bundle.tar.gz
       - uses: actions/upload-artifact@v4

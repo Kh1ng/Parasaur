@@ -38,25 +38,37 @@ if ! "$release_dir/bin/gah" config set --help | grep -q -- '--node-role' ||
   exit 1
 fi
 # role-cli-check:end
-# WSL inherits Windows PATH entries; select Node and npm from the same Linux installation.
-node="$(node -p 'process.platform === "linux" && Number(process.versions.node.split(".")[0]) >= 20 ? process.execPath : ""' 2>/dev/null || true)"
-if [ -z "$node" ] || [ ! -x "$(dirname "$node")/npm" ]; then
-  node_dir="$install_dir/node"
-  mkdir -p "$node_dir"
-  curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt -o "$release_dir/SHASUMS256.txt"
-  node_archive="$(awk '$2 ~ /^node-v22\.[0-9]+\.[0-9]+-linux-x64.tar.xz$/ { print $2; exit }' "$release_dir/SHASUMS256.txt")"
-  [ -n "$node_archive" ] || { echo 'Cannot locate a Node 22 Linux release.' >&2; exit 1; }
-  curl -fsSL "https://nodejs.org/dist/latest-v22.x/$node_archive" -o "$release_dir/$node_archive"
-  (cd "$release_dir"; awk -v archive="$node_archive" '$2 == archive' SHASUMS256.txt | sha256sum --check -)
-  tar -xJf "$release_dir/$node_archive" -C "$node_dir" --strip-components=1
-  node="$node_dir/bin/node"
+# Source-only kits from earlier central versions still need a build on the worker.
+select_build_node() {
+  # WSL inherits Windows PATH entries; select Node and npm from the same Linux installation.
+  node="$(node -p 'process.platform === "linux" && Number(process.versions.node.split(".")[0]) >= 20 ? process.execPath : ""' 2>/dev/null || true)"
+  if [ -z "$node" ] || [ ! -x "$(dirname "$node")/npm" ]; then
+    node_dir="$install_dir/node"
+    mkdir -p "$node_dir"
+    curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt -o "$release_dir/SHASUMS256.txt"
+    node_archive="$(awk '$2 ~ /^node-v22\.[0-9]+\.[0-9]+-linux-x64.tar.xz$/ { print $2; exit }' "$release_dir/SHASUMS256.txt")"
+    [ -n "$node_archive" ] || { echo 'Cannot locate a Node 22 Linux release.' >&2; exit 1; }
+    curl -fsSL "https://nodejs.org/dist/latest-v22.x/$node_archive" -o "$release_dir/$node_archive"
+    (cd "$release_dir"; awk -v archive="$node_archive" '$2 == archive' SHASUMS256.txt | sha256sum --check -)
+    tar -xJf "$release_dir/$node_archive" -C "$node_dir" --strip-components=1
+    node="$node_dir/bin/node"
+  fi
+  export PATH="$(dirname "$node"):$PATH"
+}
+
+if [[ -f "$release_dir/REVISION" ]]; then
+  node="$release_dir/bin/node"
+  # Validate the bundled executable and module links before replacing the service files.
+  (cd "$release_dir/apps/server/dist" && "$node" --check bin.js &&
+    "$node" --input-type=module -e "await import('express'); await import('@git-agent-harness/contracts')")
+else
+  select_build_node
+  cd "$release_dir"
+  npm ci --workspace=apps/server --workspace=packages/contracts --workspace=packages/shared --include-workspace-root --no-audit --no-fund
+  npm run build:contracts
+  npm run build:shared
+  npm run --workspace=apps/server build
 fi
-export PATH="$(dirname "$node"):$PATH"
-cd "$release_dir"
-npm ci --workspace=apps/server --workspace=packages/contracts --workspace=packages/shared --include-workspace-root --no-audit --no-fund
-npm run build:contracts
-npm run build:shared
-npm run --workspace=apps/server build
 
 # Store secrets in the WSL user's private directory, never in a task's command line.
 "$release_dir/bin/gah" installer wsl-worker --settings "$stage/settings.json" --root "$install_dir" --release "$release_dir" --node "$node"

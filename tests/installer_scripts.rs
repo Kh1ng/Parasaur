@@ -442,7 +442,7 @@ fn the_wsl_installer_asks_for_sudo_only_for_missing_packages() {
 #[test]
 fn the_wsl_installer_reuses_a_linux_node_and_npm_and_downloads_otherwise() {
     let source = script("install-wsl-worker.sh");
-    let runtime = between(&source, "# role-cli-check:end\n", "\ncd \"$release_dir\"");
+    let runtime = between(&source, "select_build_node() {\n", "\n}\n");
     let real_node = Command::new("sh")
         .args(["-c", "command -v node"])
         .output()

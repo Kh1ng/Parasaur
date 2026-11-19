@@ -180,6 +180,7 @@ pub fn run(args: UpdateArgs) -> Result<()> {
                 "worker",
                 "apps/server/dist/worker-artifacts",
                 binary.to_str().context("Invalid CLI path")?,
+                "--bundle-runtime",
             ],
         )?;
         // The MCP server is a Rust binary of this crate: `cargo install`
