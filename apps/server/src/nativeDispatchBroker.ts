@@ -1,7 +1,7 @@
 /** Central native dispatch orchestration. One service owns this root; completed
  * runs stay on disk rather than in an ever-growing in-memory receipt map. */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
+import { accessSync, closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { opendir } from 'node:fs/promises';
 import type { NativeClaimBinding, NativeResultAcknowledgement, NativeReservationRelease,NativeHeldWork } from '@git-agent-harness/contracts';
@@ -139,12 +139,21 @@ export class NativeDispatchBroker {
     this.root = resolve(deps.root); this.now = deps.now ?? Date.now;
     this.timeout = deps.observationTimeoutMs ?? 5000;
     if (!Number.isInteger(this.timeout) || this.timeout < 1 || this.timeout > 60_000) throw Error('Invalid native observation timeout');
-    if (!existsSync(this.root)) { mkdirSync(this.root, { recursive: true, mode: 0o700 }); syncDirectory(dirname(this.root)); }
+    mkdirSync(this.root, { recursive: true, mode: 0o700 });
     directory(this.root);
-    // The run journal must survive loss of its newly-created ancestor entries,
-    // not merely an fsync of the journal's immediate directory.
+    // Persist directory entries up to the first parent where this account
+    // cannot create entries. A managed home can have a search-only parent.
     if (process.platform !== 'win32') for (let parent = dirname(this.root);;) {
-      syncDirectory(parent); const next = dirname(parent); if (next === parent) break; parent = next;
+      try { accessSync(parent, constants.W_OK); }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'EACCES' || code === 'EROFS') break;
+        throw error;
+      }
+      syncDirectory(parent);
+      const next = dirname(parent);
+      if (next === parent) break;
+      parent = next;
     }
     if (process.platform !== 'win32' && (lstatSync(this.root).mode & 0o077) !== 0) throw Error('Native broker root must be private');
   }

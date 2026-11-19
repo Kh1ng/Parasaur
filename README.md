@@ -44,8 +44,7 @@ dashboard from its connection screen. Select **Set up standalone**. The app
 starts a user service on `127.0.0.1:3773` and opens the dashboard when it is
 healthy. Open the newer AppImage and select **Start or update standalone** to
 update it. Existing repositories, settings and server state stay in your
-account. Source installation is still available through **Install Parasaur in
-Terminal**.
+account. To build the app yourself, select **Install from source in Terminal**.
 
 Smoke test: GAH Worker appears in the system tray.
 

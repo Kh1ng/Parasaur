@@ -163,7 +163,7 @@ async function refreshSetup(): Promise<boolean> {
     state.textContent = packagedStandalone
       ? 'Set up standalone to open a private dashboard on this computer.'
       : 'Parasaur is not installed on this computer yet. Setup builds it, asks whether this computer is the central node, a worker, or command line only, and offers each missing tool before installing it.';
-    button.textContent = 'Install Parasaur in Terminal';
+    button.textContent = packagedStandalone ? 'Install from source in Terminal' : 'Install Parasaur in Terminal';
   } else if (result.error || !result.report) {
     state.textContent = result.error ?? 'Setup could not check this computer.';
     button.textContent = 'Finish setup in Terminal';

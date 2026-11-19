@@ -11,15 +11,22 @@ if [[ -f $assets ]]; then
   [[ ${#archives[@]} == 1 ]] || { echo 'Expected one standalone runtime in the AppImage.' >&2; exit 1; }
   assets=$(dirname "${archives[0]}")
 fi
-docker run --rm --network none --mount "type=bind,source=$assets,target=/bundle,readonly" -i "${2:-ubuntu:22.04}" bash -se <<'SMOKE'
+docker run --rm --network none --mount "type=bind,source=$assets,target=/bundle,readonly" -i "${2:-ubuntu:22.04}" bash -ec '
+  cd /bundle
+  sha256sum --check --strict SHA256SUMS
+  install -m644 runtime.tar.gz /tmp/runtime.tar.gz
+  mkdir -m711 /tmp/homes
+  export HOME=/tmp/homes/tester
+  install -d -m700 -o nobody -g nogroup "$HOME"
+  cd "$HOME"
+  exec setpriv --reuid=nobody --regid=nogroup --clear-groups bash -se
+' <<'SMOKE'
 set -euo pipefail
 for tool in git node npm cargo rustc cc; do
   if command -v "$tool"; then echo "Unexpected test-host tool: $tool" >&2; exit 1; fi
 done
-export HOME=/tmp/tester
-mkdir -p "$HOME" /tmp/runtime /tmp/state/config
-(cd /bundle && sha256sum --check --strict SHA256SUMS)
-tar -xzf /bundle/runtime.tar.gz -C /tmp/runtime
+mkdir -p /tmp/runtime /tmp/state/config
+tar -xzf /tmp/runtime.tar.gz -C /tmp/runtime
 bin=/tmp/runtime/bin
 "$bin/gah" config set --node-role standalone
 "$bin/gah" status --role --json | "$bin/node" -e 'process.exit(JSON.parse(require("fs").readFileSync(0)).role === "standalone" ? 0 : 1)'
