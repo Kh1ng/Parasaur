@@ -1131,6 +1131,9 @@ pub(in crate::dispatch) fn review(
                 signal
             );
             println!("Review bundle written to: {}", bundle.display());
+            if crate::dispatch_cancel::requested() {
+                return Err(anyhow::Error::new(crate::dispatch_cancel::Cancelled).context(summary));
+            }
             anyhow::bail!("{summary}")
         }
         runner::ReviewProcessOutcome::CleanupFailure(error) => {

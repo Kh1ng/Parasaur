@@ -10,6 +10,7 @@ test('empty, populated and stale roster preserve routing facts and narrow layout
   await expect(component).toContainText('No running workers reported.');
   await component.update(<RunningWorkersRoster workers={[worker, { ...worker, run_id: 'stale', state: 'stale', model: null, node_id: 'remote-' + 'x'.repeat(100) }]} />);
   await expect(component.getByTestId('worker-row')).toHaveCount(2);
+  await expect(component.getByRole('button', {name:'Cancel dispatch'})).toHaveCount(0);
   await expect(component).toContainText('Running workers (2)');
   await expect(component).toContainText('Runner: codex · Backend: codex-work · Model: routed');
   await expect(component).toContainText('attempt 2');
@@ -25,11 +26,20 @@ test('cancelling the selected dispatch keeps its sibling available', async ({ mo
     await route.fulfill({status:202,json:{run_id:'selected'}});
   });
   const component = await mount(<RunningWorkersRoster workers={[
-    {...worker, profile:'test', run_id:'selected'}, {...worker, profile:'test', run_id:'other', work_id:'#1432'},
+    {...worker, profile:'test', cancellable:true, run_id:'selected'}, {...worker, profile:'test', cancellable:true, run_id:'other', work_id:'#1432'},
   ]} />);
   const rows = component.getByTestId('worker-row');
   await rows.first().getByRole('button', {name:'Cancel dispatch'}).click();
   await expect(rows.first().getByRole('button', {name:'Cancellation requested'})).toBeDisabled();
   await expect(rows.last().getByRole('button', {name:'Cancel dispatch'})).toBeEnabled();
   expect(posts).toEqual([{work_id:'#1431', profile:'test', run_id:'selected', node_id:'node-a'}]);
+});
+test('the action disappears as soon as the supervisor stops accepting cancellation', async ({ mount }) => {
+  const row = {...worker, profile:'test', cancellable:true};
+  const component = await mount(<RunningWorkersRoster workers={[row]} />);
+  await expect(component.getByRole('button', {name:'Cancel dispatch'})).toBeEnabled();
+  await component.update(<RunningWorkersRoster workers={[{...row, cancellable:false}]} />);
+  await expect(component.getByRole('button', {name:'Cancel dispatch'})).toHaveCount(0);
+  await component.update(<RunningWorkersRoster workers={[{...row, cancellable:undefined}]} />);
+  await expect(component.getByRole('button', {name:'Cancel dispatch'})).toHaveCount(0);
 });

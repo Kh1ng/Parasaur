@@ -65,6 +65,28 @@ impl<'a> ShutdownContext<'a> {
         }
     }
 
+    pub(super) fn watch_validation(
+        &self,
+        identity: &crate::execution_identity::ExecutionIdentity,
+        validate: impl FnOnce() -> Result<(), (String, Option<i32>)>,
+    ) -> Result<(), (String, Option<i32>)> {
+        let cancellation = crate::dispatch_cancel::Invocation::arm();
+        let _observation = crate::running_workers::InvocationGuard::start(
+            self.attempt_session,
+            identity,
+            Some(self.dispatch_branch.to_string()),
+            self.work_id.as_deref(),
+            crate::central_claims::DEFAULT_LEASE_SECONDS,
+        );
+        let result = validate();
+        // A request accepted as the final command exited still precedes publication.
+        drop(cancellation);
+        if crate::dispatch_cancel::requested() {
+            return Err(("Operator cancelled validation".into(), None));
+        }
+        result
+    }
+
     pub(super) fn checkpoint_after_result(
         &self,
         ledger: &mut LedgerEntry,
@@ -219,7 +241,7 @@ pub(super) fn checkpoint_and_cleanup_after_shutdown(
     )?;
     worktree::cleanup(worktree_path, repo);
     if crate::dispatch_cancel::requested() {
-        anyhow::bail!("Dispatch cancelled by operator");
+        anyhow::bail!(crate::dispatch_cancel::Cancelled);
     }
     anyhow::bail!("{reason}");
 }

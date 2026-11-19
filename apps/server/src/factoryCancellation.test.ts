@@ -5,7 +5,7 @@ import type { RegisteredNode, RunningWorker } from '@git-agent-harness/contracts
 import { cancellationTarget, cancelFactoryDispatch } from './factoryCancellation.js';
 
 const worker = (run_id: string, node_id: string): RunningWorker =>
-  ({ work_id: 'TICKET-001', run_id, profile: 'project', node_id, state: 'running' } as RunningWorker);
+  ({ work_id: 'TICKET-001', run_id, profile: 'project', node_id, state: 'running', cancellable:true } as RunningWorker);
 const dependencies = {
   localId: 'central', central: true,
   local: async (work_id: string, profile = '', run_id = '') => ({ work_id, profile, run_id }),
@@ -18,6 +18,7 @@ test('work-only requests resolve ticket aliases and pin exactly one running job'
     {work_id:'TICKET-001',profile:'project',run_id:'one'});
   await assert.rejects(cancelFactoryDispatch({work_id:'1'}, {...dependencies,
     list: async () => [worker('one','central'),worker('two','worker')]}), /Several dispatches/);
+  await assert.rejects(cancelFactoryDispatch({work_id:'1'}, {...dependencies, list: async () => [{...worker('one','central'),cancellable:false}]}), /No matching/);
   await assert.rejects(cancelFactoryDispatch({work_id:'1',run_id:'absent'}, dependencies), /No matching/);
 });
 

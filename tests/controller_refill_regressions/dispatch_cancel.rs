@@ -12,10 +12,23 @@ fn entries(path: &Path) -> Vec<Value> {
 
 #[test]
 fn cancel_dispatch_preserves_only_the_selected_workers_changes_and_releases_its_claim() {
+    cancel_while_running(false);
+}
+
+#[test]
+fn cancel_during_validation_checkpoints_before_publication_and_preserves_the_sibling() {
+    cancel_while_running(true);
+}
+
+fn cancel_while_running(during_validation: bool) {
     let _serial = serial();
     let tmp = test_tempdir();
     let root = tmp.path();
-    let (repo, home, cfg) = setup_fix_dispatch_repo(&tmp, "validation_commands = [\"true\"]\n");
+    let check = root.join("bin/check");
+    let (repo, home, cfg) = setup_fix_dispatch_repo(
+        &tmp,
+        &format!("validation_commands = [\"{}\"]\n", check.display()),
+    );
     let tickets = repo.join("docs/tickets");
     let markers = root.join("markers");
     let bin = root.join("bin");
@@ -29,11 +42,8 @@ fn cancel_dispatch_preserves_only_the_selected_workers_changes_and_releases_its_
     }
 
     make_fake_bin_with_body(&bin, "gh", "#!/bin/sh\nif [ \"$1 $2\" = 'pr create' ]; then echo 'https://github.com/owner/real/pull/1'; else echo '[]'; fi\n");
-    make_fake_bin_with_body(
-        &bin,
-        "codex",
-        &r#"#!/bin/sh
-printf 'in progress\n' > work.txt
+    let blocking = r#"#!/bin/sh
+[ -f work.txt ] || exit 0
 sleep 300 &
 descendant=$!
 branch=$(git branch --show-current)
@@ -46,8 +56,30 @@ wait "$descendant" 2>/dev/null || :
 printf 'completed\n' > work.txt
 printf '%s\n' "$branch" >> "$FIXTURE/completed"
 "#
-        .replace("$FIXTURE", root.to_str().unwrap()),
-    );
+    .replace("$FIXTURE", root.to_str().unwrap());
+    let edit = "printf 'in progress\\n' > work.txt\n";
+    if during_validation {
+        make_fake_bin_with_body(&bin, "codex", &format!("#!/bin/sh\n{edit}"));
+        make_fake_bin_with_body(&bin, "check", &blocking);
+    } else {
+        make_fake_bin_with_body(
+            &bin,
+            "codex",
+            &blocking.replace("[ -f work.txt ] || exit 0", edit),
+        );
+        make_fake_bin_with_body(&bin, "check", "#!/bin/sh\nexit 0\n");
+    }
+
+    if during_validation {
+        make_fake_bin_with_body(&root.join("github-root/owner/real.git/hooks"), "pre-receive",
+            &r#"#!/bin/sh
+read old new reference
+if [ -f "$FIXTURE/watch-push" ] && [ "$reference" = "refs/heads/$(cat "$FIXTURE/watch-push")" ]; then
+  touch "$FIXTURE/publishing"
+  while [ -d "$FIXTURE" ] && [ ! -f "$FIXTURE/release-push" ]; do sleep 0.05; done
+fi
+"#.replace("$FIXTURE", root.to_str().unwrap()));
+    }
 
     let claims = root.join("claims.json");
     let ledger = root.join("ledger.jsonl");
@@ -91,7 +123,7 @@ printf '%s\n' "$branch" >> "$FIXTURE/completed"
         controller,
         &release,
         || {
-            workers().len() == 2
+            workers().iter().filter(|row| row.cancellable).count() == 2
                 && fs::read_dir(&markers)
                     .unwrap()
                     .flatten()
@@ -176,6 +208,14 @@ printf '%s\n' "$branch" >> "$FIXTURE/completed"
         terminal["attempts"][0]["validation_result"],
         "cancelled_operator"
     );
+    assert_eq!(
+        terminal["failure_stage"],
+        if during_validation {
+            "post_validation"
+        } else {
+            "agent_run"
+        }
+    );
     let sha = terminal["resumable_checkpoint_sha"].as_str().unwrap();
     let saved = ProcessCommand::new("git")
         .args(["show", &format!("{sha}:work.txt")])
@@ -191,8 +231,63 @@ printf '%s\n' "$branch" >> "$FIXTURE/completed"
     );
     assert!(workers().iter().any(|w| w.run_id == sibling.run_id));
 
+    fs::write(root.join("watch-push"), sibling.branch.as_deref().unwrap()).unwrap();
     fs::write(&release, "finish").unwrap();
+    let controller = if during_validation {
+        let release_push = root.join("release-push");
+        let controller = wait_for_worker_event(
+            controller,
+            &release_push,
+            || root.join("publishing").exists(),
+            "sibling entered git publication",
+        );
+        assert!(!workers()
+            .iter()
+            .any(|row| row.run_id == sibling.run_id && row.cancellable));
+        let too_late = command()
+            .args([
+                "cancel",
+                "602",
+                "--profile",
+                "real",
+                "--run-id",
+                &sibling.run_id,
+                "--config-path",
+                config,
+            ])
+            .output()
+            .unwrap();
+        assert!(!too_late.status.success());
+        assert!(
+            String::from_utf8_lossy(&too_late.stderr).contains("No cancellable running dispatch")
+        );
+        fs::write(release_push, "finish").unwrap();
+        controller
+    } else {
+        controller
+    };
     let output = watchdog::wait_with_output(controller);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let branch = selected.branch.as_ref().unwrap();
+    let published = ProcessCommand::new("git")
+        .arg("--git-dir")
+        .arg(root.join("github-root/owner/real.git"))
+        .args([
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ])
+        .status()
+        .unwrap();
+    assert!(
+        !published.success(),
+        "cancelled dispatch branch was published"
+    );
     let completed = fs::read_to_string(root.join("completed")).unwrap();
     assert_eq!(
         completed.trim(),

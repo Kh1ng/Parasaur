@@ -182,7 +182,7 @@ pub(crate) fn experiment(
             "gah: cancelled experiment",
         )?;
         worktree::cleanup(&wt, repo);
-        anyhow::bail!("Dispatch cancelled by operator");
+        anyhow::bail!(crate::dispatch_cancel::Cancelled);
     }
     record_external_approval_consumption_for_last_attempt(cfg, profile_name, profile, ledger);
 

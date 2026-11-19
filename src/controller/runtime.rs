@@ -1343,6 +1343,18 @@ pub(crate) fn run_dispatch_and_record(
             )?;
             Ok(None)
         }
+        Err(e) if e.is::<crate::dispatch_cancel::Cancelled>() => {
+            crate::events::record_with_run_id_and_reason_code(
+                cfg,
+                crate::events::EventType::DispatchFinished,
+                Some(&args.profile),
+                work_id,
+                args.run_id.as_deref(),
+                format!("{label}: {e}"),
+                Some("cancelled_operator"),
+            )?;
+            Ok(Some(format!("{label}: {e}")))
+        }
         Err(e) if crate::dispatch::capacity_deferred_error(&e) => {
             record_capacity_deferral(cfg, args, label, work_id, &e)
         }

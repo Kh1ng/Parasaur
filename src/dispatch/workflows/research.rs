@@ -154,7 +154,7 @@ pub(crate) fn research(
     ledger.backend_exit_code = Some(result.exit_code);
     if super::super::attempts::record_operator_cancellation(ledger, &route, &llm.model, &result, 1)
     {
-        anyhow::bail!("Dispatch cancelled by operator");
+        anyhow::bail!(crate::dispatch_cancel::Cancelled);
     }
     record_external_approval_consumption_for_last_attempt(cfg, profile_name, profile, ledger);
 

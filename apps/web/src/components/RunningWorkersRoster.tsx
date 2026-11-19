@@ -8,7 +8,7 @@ function CancelDispatch({worker}: {worker: RunningWorker}) {
   const [state,setState] = useState<'ready' | 'sending' | 'requested'>('ready');
   const [error,setError] = useState('');
   const { work_id, profile } = worker;
-  if (!work_id || !profile || worker.state !== 'running') return null;
+  if (!work_id || !profile || !worker.cancellable || worker.state !== 'running') return null;
   const cancel = async () => {
     setState('sending'); setError('');
     try {

@@ -270,12 +270,13 @@ of the prebuild gate issue.
   `enable` only auto-starts a unit at boot when the user's systemd manager
   lingers (`loginctl enable-linger <user>`); without linger the unit starts
   at the next interactive login instead.
-  To cancel one active dispatch, choose **Cancel dispatch** on its worker row
-  or run `gah cancel <work-id>`. Use `--profile <name> --run-id <uuid>` when
-  more than one dispatch matches. The receipt identifies the selected run. Its
+  To cancel one backend run or implementation validation, choose **Cancel
+  dispatch** on its worker row or run `gah cancel <work-id>`. Use
+  `--profile <name> --run-id <uuid>` when multiple dispatches match. The
   terminal ledger entry records `cancelled_operator` and any implementation
-  checkpoint. Other workers continue. For a central server on a custom address,
-  set `PARASAUR_SERVER_URL`. Use `--local` to select a dispatch on this host.
+  checkpoint. The cancellation window closes before publication. For a central
+  server on a custom address, set `PARASAUR_SERVER_URL`. Use `--local` to select
+  a dispatch on this host.
 - **`gah-watchdog`** (`.service` + `.timer`) — an **alert-only** health check
   for `gah-loop@<profile>.service` units (issue #726). Every profile
   configured in `gah`'s config gets checked (`--profile` scopes it to one).

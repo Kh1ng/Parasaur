@@ -35,7 +35,7 @@ export async function cancelFactoryDispatch(target: Target, nodes: DispatchNodes
   if (!target.node_id && nodes.central) {
     const workId = canonicalWorkId(target.work_id);
     const matches = (await nodes.list(target.profile)).filter(row =>
-      row.work_id && canonicalWorkId(row.work_id) === workId
+      row.state === 'running' && row.cancellable && row.work_id && canonicalWorkId(row.work_id) === workId
       && (!target.run_id || row.run_id === target.run_id)
       && (!target.profile || row.profile === target.profile));
     if (matches.length > 1) throw Error('Several dispatches match. Select the run to cancel.');

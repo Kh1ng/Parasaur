@@ -217,7 +217,7 @@ pub(crate) fn pm(
             &result,
             attempt_index as u32,
         ) {
-            anyhow::bail!("Dispatch cancelled by operator");
+            anyhow::bail!(crate::dispatch_cancel::Cancelled);
         }
         ledger.validation_result = Some("not_run".into());
         record_external_approval_consumption_for_last_attempt(cfg, profile_name, profile, ledger);

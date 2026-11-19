@@ -31,6 +31,28 @@ pub(crate) fn requested() -> bool {
     })
 }
 
+#[derive(Debug)]
+pub(crate) struct Cancelled;
+impl std::fmt::Display for Cancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Dispatch cancelled by operator")
+    }
+}
+impl std::error::Error for Cancelled {}
+
+pub(crate) fn available(session: &Path) -> bool {
+    let Ok(lease) = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(session.join(READY))
+    else {
+        return false;
+    };
+    lease
+        .try_lock_exclusive()
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::WouldBlock)
+}
+
 pub(crate) fn terminal_state() -> &'static str {
     if requested() {
         "cancelled_operator"
@@ -116,7 +138,8 @@ pub(crate) fn request(
         }
         let root = Path::new(&project.artifact_root);
         for row in crate::running_workers::observe(root, crate::clock::now_utc()) {
-            if &row.profile != name
+            if !row.cancellable
+                || &row.profile != name
                 || run_id.is_some_and(|id| id != row.run_id)
                 || row
                     .work_id
@@ -129,17 +152,6 @@ pub(crate) fn request(
                 continue;
             }
             let session = root.join("sessions").join(&row.run_id);
-            let ready = session.join(READY);
-            let Ok(lease) = OpenOptions::new().read(true).write(true).open(&ready) else {
-                continue;
-            };
-            match lease.try_lock_exclusive() {
-                Ok(()) => continue, // stale observation left by a dead process
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(error) => {
-                    return Err(error).context("checking the dispatch cancellation lease")
-                }
-            }
             matches.push((
                 session,
                 Receipt {
@@ -177,16 +189,14 @@ fn request_central(
             && url.fragment().is_none(),
         "Invalid central origin"
     );
-    ensure!(
-        url.scheme() == "https"
-            || (url.scheme() == "http"
-                && url.host().is_some_and(|host| match host {
-                    url::Host::Domain(name) => name == "localhost",
-                    url::Host::Ipv4(ip) => ip.is_loopback(),
-                    url::Host::Ipv6(ip) => ip.is_loopback(),
-                })),
-        "Central cancellation requires an HTTPS or loopback origin"
-    );
+    let loopback = url.host().is_some_and(|host| match host {
+        url::Host::Domain(name) => name == "localhost",
+        url::Host::Ipv4(ip) => ip.is_loopback(),
+        url::Host::Ipv6(ip) => ip.is_loopback(),
+    });
+    ensure!(url.scheme() == "https" || (url.scheme() == "http" &&
+        (loopback || std::env::var("PARASAUR_ALLOW_INSECURE_HTTP").as_deref() == Ok("1"))),
+        "Use an HTTPS central origin or set PARASAUR_ALLOW_INSECURE_HTTP=1 for a trusted HTTP connection");
     url.set_path("/api/dispatch/cancel");
     let token = std::env::var("PARASAUR_SERVER_TOKEN")
         .or_else(|_| std::env::var("COORDINATOR_TOKEN"))
