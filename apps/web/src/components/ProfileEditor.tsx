@@ -394,7 +394,7 @@ function ProfileListComponent({ profileList, isLoading, onEdit, onDelete }: Prof
               <div className="w-2 h-2 bg-accent rounded-full" />
               <div>
                 <p className="text-sm font-medium text-primary">{profile.display_name}</p>
-                <p className="text-xs text-muted">{profile.name} Ã‚Â· {profile.provider} Ã‚Â· {profile.repo}</p>
+                <p className="text-xs text-muted">{profile.name} · {profile.provider} · {profile.repo}</p>
               </div>
             </div>
           </div>
