@@ -12,6 +12,7 @@ use time::OffsetDateTime;
 
 mod pm;
 mod waypoints;
+pub(crate) use self::pm::is_planned_issue_child;
 pub use self::pm::PmParentStatus;
 pub use waypoints::WorkWaypointEvidence;
 

@@ -18,7 +18,7 @@ pub(crate) fn plan_native(
     );
     let args = &request.args;
     ensure!(
-        matches!(args.mode.as_str(), "fix" | "review")
+        matches!(args.mode.as_str(), "improve" | "fix" | "review")
             && !args.dry_run
             && !args.prod
             && !args.current_branch
@@ -28,7 +28,7 @@ pub(crate) fn plan_native(
             && args.mr.is_none()
             && args.oh_profile.is_none()
             && args.retries == 2,
-        "Native planning requires an ordinary fix/review controller request"
+        "Native planning requires an ordinary implementation or review controller request"
     );
     let profile = config::get_profile(cfg, &args.profile)?;
     let work_id = args
@@ -60,7 +60,7 @@ pub(crate) fn plan_native(
             return Ok(planned);
         }
     }
-    let metadata = if args.mode == "fix" {
+    let metadata = if matches!(args.mode.as_str(), "improve" | "fix") {
         let target = if args.existing_branch.is_some() {
             work_id
         } else {

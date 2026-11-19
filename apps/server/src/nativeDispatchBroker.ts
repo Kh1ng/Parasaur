@@ -243,7 +243,8 @@ export class NativeDispatchBroker {
     return leases.map(lease=>{
       const hold=lease.native_handoff!;let reserves_intake=true;
       try {const binding=this.get(hold.run_id).binding;
-        reserves_intake=binding.mode==='fix' && binding.branch===null && ['initial','retry','escalate','recover_publication'].includes(binding.dispatch_reason??'');
+        reserves_intake = (binding.mode === 'fix' || binding.mode === 'improve') && binding.branch === null
+          && ['initial', 'retry', 'escalate', 'recover_publication'].includes(binding.dispatch_reason ?? '');
       }catch{/* Unknown native work still reserves intake conservatively. */}
       return {profile,work_id:lease.work_id,run_id:hold.run_id,node_id:hold.node_id,context_sha256:hold.context_sha256,reserves_intake};
     });

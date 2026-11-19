@@ -263,7 +263,7 @@ pub(crate) fn try_acquire_native(
     settings: crate::config::NodeCapacitySettings,
 ) -> std::io::Result<LiveAdmission> {
     let kind = match mode {
-        "fix" => WorkerKind::Implementation,
+        "fix" | "improve" => WorkerKind::Implementation,
         "pm" => WorkerKind::Decomposition,
         "review" => WorkerKind::Review,
         _ => {
