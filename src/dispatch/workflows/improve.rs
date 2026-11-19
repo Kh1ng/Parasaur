@@ -16,7 +16,7 @@ use super::super::prompts::enforce_context_budget;
 use super::super::repair_context;
 use super::super::text::utf8_safe_prefix;
 use super::super::validation::{
-    classify_validation_failure_progress, run_auto_fix_commands, should_skip_per_dispatch_baseline,
+    classify_validation_failure_progress, dispatch_baseline_failure, run_auto_fix_commands,
     validation_failure_no_progress_reason,
 };
 use super::super::DispatchArgs;
@@ -28,7 +28,7 @@ use crate::ledger::LedgerEntry;
 use crate::notifications::{notify_event, NotifyEvent};
 use crate::policy::enforce_policy;
 use crate::usage_attribution::UsageAttribution;
-use crate::validation_runner::{validate_with_exit_code, VALIDATION_COMMAND_TIMEOUT_EXIT_CODE};
+use crate::validation_runner::VALIDATION_COMMAND_TIMEOUT_EXIT_CODE;
 use crate::{runner, worktree};
 use anyhow::{Context, Result};
 use std::fs;
@@ -276,28 +276,14 @@ pub(crate) fn improve(
     }
     conflict_session.append_prompt(&mut base_task);
     let timeout = std::time::Duration::from_secs(profile.validation_timeout_seconds());
-    let (baseline_failure, baseline_exit_code) = if conflict_session.is_active()
-        || should_skip_per_dispatch_baseline(
-            profile.validation_commands.is_empty(),
-            manual_fix.existing_branch.is_some(),
-            args.skip_validation_gate,
-        ) {
-        (None, None)
-    } else {
-        println!("Baseline validation on pristine worktree...");
-        match validate_with_exit_code(
-            &profile.validation_commands,
-            &wt,
-            &validation_environment,
-            timeout,
-        ) {
-            Ok(()) => {
-                println!("Baseline validation passed.");
-                (None, None)
-            }
-            Err((text, code)) => (Some(text), code),
-        }
-    };
+    let (baseline_failure, baseline_exit_code) = dispatch_baseline_failure(
+        profile,
+        &wt,
+        &validation_environment,
+        manual_fix.existing_branch.is_some(),
+        args.skip_validation_gate,
+        conflict_session.is_active(),
+    );
     // Classify baseline failures before applying the deterministic dispatch policy.
     let baseline_disposition = crate::baseline::classify_baseline(
         baseline_failure.as_deref().unwrap_or(""),

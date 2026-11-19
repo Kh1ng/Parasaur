@@ -268,6 +268,41 @@ pub(super) fn should_skip_per_dispatch_baseline(
     validation_commands_empty || (!has_existing_branch && !skip_validation_gate)
 }
 
+/// Record the state of the untouched checkout so a worker is judged against
+/// the failures it introduced. A checkout with an unresolved merge has no
+/// pristine baseline to measure.
+pub(super) fn dispatch_baseline_failure(
+    profile: &Profile,
+    worktree: &Path,
+    environment: &[(String, String)],
+    has_existing_branch: bool,
+    skip_validation_gate: bool,
+    merge_in_progress: bool,
+) -> (Option<String>, Option<i32>) {
+    if merge_in_progress
+        || should_skip_per_dispatch_baseline(
+            profile.validation_commands.is_empty(),
+            has_existing_branch,
+            skip_validation_gate,
+        )
+    {
+        return (None, None);
+    }
+    println!("Baseline validation on pristine worktree...");
+    match crate::validation_runner::validate_with_exit_code(
+        &profile.validation_commands,
+        worktree,
+        environment,
+        std::time::Duration::from_secs(profile.validation_timeout_seconds()),
+    ) {
+        Ok(()) => {
+            println!("Baseline validation passed.");
+            (None, None)
+        }
+        Err((message, code)) => (Some(message), code),
+    }
+}
+
 /// Extracts a stable fingerprint from raw validation failure output (combined
 /// stdout+stderr from `validate()`) for `classify_validation_failure_progress`
 /// to compare instead of the raw text.
