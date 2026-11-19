@@ -252,6 +252,9 @@ jobs:
           # Run each Rust suite once. Bash glob matching does not distinguish
           # src/foo.rs from src/foo/bar.rs, and --tests also reruns lib tests.
           git diff --name-only -z "$base" "$head" | bash scripts/ci-test-scope.sh >> "$GITHUB_OUTPUT"
+          if ! git diff --quiet "$base" "$head" -- tests/fake_backend_harness.rs tests/support/forge; then
+            echo 'stress_forge=true' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Check CI test selection
         run: bash scripts/test-ci-test-scope.sh
@@ -317,6 +320,16 @@ jobs:
           review_candidates = [{ backend = "codex", model = "default", priority = 100, included_in_quota = true }]
           TOML
           env -u PARASAUR_CANONICAL_CONFIG cargo nextest run
+
+      # nextest runs one process per test. This fixture must also survive
+      # sibling forks on libtest's default parallel threads in one process.
+      - name: Run the fake backend and forge together 20 times
+        if: steps.rust-test-scope.outputs.stress_forge == 'true'
+        run: |
+          for round in {1..20}; do
+            echo "Parallel forge run $round/20"
+            cargo test --locked --quiet --test fake_backend_harness
+          done
 
       - name: cargo clippy
         if: steps.rust-test-scope.outputs.has_rust_changes == 'true'

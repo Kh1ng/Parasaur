@@ -42,17 +42,28 @@ impl FakeForge {
         fs::write(&forge.log_path, "").unwrap();
         let quote =
             |path: &Path| format!("'{}'", path.display().to_string().replace('\'', "'\\''"));
-        for cli in ["gh", "glab"] {
-            super::write_executable(
-                &bin_dir.join(cli),
-                &format!(
-                    "#!/bin/sh\nexec python3 {} {} {} {cli} \"$@\"\n",
-                    quote(&root.join("main.py")),
-                    quote(&forge.state_path),
-                    quote(&forge.log_path),
-                ),
-            );
-        }
+        let launcher = format!(
+            "#!/bin/sh\nexec python3 {} {} {} \"${{0##*/}}\" \"$@\"\n",
+            quote(&root.join("main.py")),
+            quote(&forge.state_path),
+            quote(&forge.log_path),
+        );
+        // Only the installer child opens gh/glab for writing. A sibling test
+        // that forks while we install cannot inherit a writer and block exec.
+        let installed = Command::new("sh")
+            .current_dir(bin_dir)
+            .args([
+                "-ec",
+                r#"for cli in gh glab; do printf '%s' "$1" > "$cli"; chmod 755 "$cli"; done"#,
+                "sh",
+            ])
+            .arg(launcher)
+            .status()
+            .unwrap();
+        assert!(
+            installed.success(),
+            "installing fake forge CLIs: {installed}"
+        );
         forge
     }
 
