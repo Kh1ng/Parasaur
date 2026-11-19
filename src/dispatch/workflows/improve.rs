@@ -206,6 +206,7 @@ pub(crate) fn improve(
         )?;
         (branch, wt)
     };
+    let _activity = worktree::lock_activity(&wt, true)?;
     // The initial remote tip fences repair retries against concurrent pushes.
     let repair_base_sha: Option<String> = if manual_fix.existing_branch.is_some() {
         Some(worktree::git(&["rev-parse", "HEAD"], &wt)?)

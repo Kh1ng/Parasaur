@@ -567,16 +567,24 @@ fn prune_worktrees(
         // worktree -- this profile's retention and the remove_dir_all
         // fallback must not touch it. Orphaned directories keep today's
         // handling below.
-        if matches!(
-            classify_worktree_ownership(&path, profile_common_dir.as_deref()),
-            WorktreeOwnership::Foreign
-        ) {
-            println!(
-                "  retained worktree {} (owned by another repository)",
-                path.display()
-            );
-            continue;
-        }
+        let ownership = classify_worktree_ownership(&path, profile_common_dir.as_deref());
+        let _activity = match ownership {
+            WorktreeOwnership::Foreign => {
+                println!(
+                    "  retained worktree {} (owned by another repository)",
+                    path.display()
+                );
+                continue;
+            }
+            WorktreeOwnership::Owned => match crate::worktree::lock_activity(&path, !dry_run) {
+                Ok(guard) => guard,
+                Err(error) => {
+                    println!("  retained worktree {}: {error}", path.display());
+                    continue;
+                }
+            },
+            WorktreeOwnership::Orphan => None,
+        };
         // Never force-remove a dirty worktree. A terminal PR can still have
         // local, unpublished recovery work, and a failed worker can leave a
         // useful patch behind. This is intentionally fail-closed: if Git
@@ -597,32 +605,20 @@ fn prune_worktrees(
                 }
             );
         } else {
-            let git_result = crate::worktree::git(
-                &["worktree", "remove", "-f", path.to_str().unwrap_or("")],
-                Path::new(&profile.local_path),
-            );
-            // `git worktree remove` fails outright ("is not a working tree")
-            // once git's own admin metadata for this worktree is already
-            // gone -- e.g. left behind by a prior interrupted/partial
-            // removal. Previously that failure was silently discarded and
-            // "removed" printed anyway, so the directory (and its disk
-            // usage) never actually went away despite being logged as
-            // pruned on every run. Fall back to a direct removal whenever
-            // the directory is still there, since `worktree_is_clean`
-            // already confirmed above it's safe to delete.
-            if path.exists() {
-                if let Err(err) = fs::remove_dir_all(&path) {
-                    println!(
-                        "  failed to remove worktree {}: {}{}",
-                        path.display(),
-                        err,
-                        git_result
-                            .err()
-                            .map(|e| format!(" (git worktree remove also failed: {e})"))
-                            .unwrap_or_default()
-                    );
-                    continue;
-                }
+            // Let Git recheck cleanliness and its own worktree lock at removal
+            // time. Only a confirmed orphan has no Git registration to remove.
+            let removed = match ownership {
+                WorktreeOwnership::Owned => crate::worktree::git(
+                    &["worktree", "remove", path.to_str().unwrap_or("")],
+                    Path::new(&profile.local_path),
+                )
+                .map(|_| ()),
+                WorktreeOwnership::Orphan => fs::remove_dir_all(&path).map_err(Into::into),
+                WorktreeOwnership::Foreign => unreachable!(),
+            };
+            if let Err(error) = removed {
+                println!("  retained worktree {}: {error}", path.display());
+                continue;
             }
             println!(
                 "  removed worktree {}",
@@ -802,6 +798,49 @@ mod tests {
             !stale.exists(),
             "orphaned worktree directory should be removed even when `git worktree remove` fails"
         );
+    }
+
+    #[test]
+    fn prune_honors_a_git_lock_on_an_old_clean_checkout() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        init_repo_with_commit(repo.path());
+        let checkout = root.path().join(format!("gah-repo-{TEST_DISPATCH_TS}"));
+        add_linked_worktree(repo.path(), &checkout);
+        git(
+            repo.path(),
+            &["worktree", "lock", checkout.to_str().unwrap()],
+        );
+        touch_old(&checkout);
+        let cfg = config_with_worktree_base(root.path());
+        let profile = profile_on_repo("repo", repo.path());
+        let empty = HashSet::new();
+        prune_worktrees(
+            &cfg,
+            &profile,
+            day_ago_cutoff(),
+            false,
+            &empty,
+            &empty,
+            &empty,
+        )
+        .unwrap();
+        assert!(checkout.join(".git").is_file());
+        git(
+            repo.path(),
+            &["worktree", "unlock", checkout.to_str().unwrap()],
+        );
+        prune_worktrees(
+            &cfg,
+            &profile,
+            day_ago_cutoff(),
+            false,
+            &empty,
+            &empty,
+            &empty,
+        )
+        .unwrap();
+        assert!(!checkout.exists());
     }
 
     #[test]

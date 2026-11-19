@@ -5,8 +5,8 @@
 
 use super::watchdog::wait_with_output;
 use super::{
-    make_fake_bin_with_body, read_u32_file, serial, setup_fix_dispatch_repo, spawn_bin,
-    test_tempdir, ProcessGroupGuard,
+    make_fake_bin_with_body, serial, setup_fix_dispatch_repo, spawn_bin, test_tempdir,
+    ProcessGroupGuard,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -66,6 +66,7 @@ fn sibling_worktrees_never_see_each_others_uncommitted_edits() {
     );
     let calls = tmp.path().join("codex-calls");
     let cwds = tmp.path().join("worker-cwds");
+    let start_edits = tmp.path().join("start-edits");
     let release = tmp.path().join("release");
     let lock = tmp.path().join("count.lock");
     // Each worker writes one uncommitted file named after its call number,
@@ -77,13 +78,15 @@ fn sibling_worktrees_never_see_each_others_uncommitted_edits() {
         &format!(
             "#!/bin/sh\nwhile ! mkdir '{lock}' 2>/dev/null; do sleep 0.01; done\n\
              n=$( [ -f '{calls}.count' ] && cat '{calls}.count' || echo 0 )\nn=$((n + 1))\necho \"$n\" > '{calls}.count'\nrmdir '{lock}'\n\
+             printf '%s %s\\n' \"$n\" \"$PWD\" >> '{cwds}'\n\
+             while [ ! -f '{start_edits}' ]; do sleep 0.05; done\n\
              printf 'sibling edit %s\\n' \"$n\" > \"sibling-$n.txt\"\n\
              if [ \"$n\" = 2 ]; then : > fail-marker; fi\n\
-             printf '%s %s\\n' \"$n\" \"$PWD\" >> '{cwds}'\n\
              while [ ! -f '{release}' ]; do sleep 0.05; done\nexit 0\n",
             lock = lock.display(),
             calls = calls.display(),
             cwds = cwds.display(),
+            start_edits = start_edits.display(),
             release = release.display(),
         ),
     );
@@ -113,14 +116,14 @@ fn sibling_worktrees_never_see_each_others_uncommitted_edits() {
             .unwrap(),
     );
     let deadline = Instant::now() + Duration::from_secs(30);
-    while read_u32_file(&calls.with_extension("count")) < 2 {
+    let recorded = loop {
+        let recorded = fs::read_to_string(&cwds).unwrap_or_default();
+        if recorded.lines().count() == 2 {
+            break recorded;
+        }
         assert!(Instant::now() < deadline, "both workers did not start");
         thread::sleep(Duration::from_millis(20));
-    }
-    thread::sleep(Duration::from_millis(300));
-
-    // Both workers are blocked in their own worktrees now.
-    let recorded = fs::read_to_string(&cwds).unwrap();
+    };
     let mut dirs: Vec<(u32, PathBuf)> = recorded
         .lines()
         .map(|line| {
@@ -134,6 +137,62 @@ fn sibling_worktrees_never_see_each_others_uncommitted_edits() {
         dirs[0].1, dirs[1].1,
         "both workers ran in the same worktree"
     );
+    // Both real dispatches hold claims and are still clean, with no completed
+    // ledger record. Age alone must not make their checkouts disposable.
+    let finished = tmp
+        .path()
+        .join("worktrees/gah-real-1730000000-11111111111111111111111111111111");
+    assert!(ProcessCommand::new("git")
+        .current_dir(&repo)
+        .args(["worktree", "add", "--detach"])
+        .arg(&finished)
+        .status()
+        .unwrap()
+        .success());
+    for path in [&finished, &dirs[0].1, &dirs[1].1] {
+        assert!(ProcessCommand::new("touch")
+            .args(["-t", "202401010000"])
+            .arg(path)
+            .status()
+            .unwrap()
+            .success());
+    }
+    let pruned = spawn_bin(tmp.path())
+        .args([
+            "prune",
+            "--profile",
+            "real",
+            "--older-than",
+            "1",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .env(
+            "PATH",
+            format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap()),
+        )
+        .env("GITHUB_TOKEN", "token")
+        .output()
+        .unwrap();
+    assert!(
+        pruned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&pruned.stderr)
+    );
+    assert!(!finished.exists(), "idle checkout was not reclaimed");
+    assert!(
+        dirs.iter().all(|(_, dir)| dir.join(".git").is_file()),
+        "prune removed an active clean checkout"
+    );
+    fs::write(start_edits, "go").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !dirs[0].1.join("sibling-1.txt").is_file() || !dirs[1].1.join("fail-marker").is_file() {
+        assert!(
+            Instant::now() < deadline,
+            "workers could not write after prune"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
     for (n, dir) in &dirs {
         let other = if *n == 1 { 2 } else { 1 };
         assert!(dir.join(format!("sibling-{n}.txt")).exists(), "{dir:?}");

@@ -338,6 +338,30 @@ pub fn git_raw(args: &[&str], cwd: &Path) -> Result<std::process::Output> {
     wait_with_timeout(child, &context)
 }
 
+/// A running dispatch and prune both take this nonblocking lock before using a
+/// linked checkout. The OS releases it if the owner dies, and Git removes the
+/// marker with the checkout's private administrative directory.
+pub(crate) fn lock_activity(worktree: &Path, create_marker: bool) -> Result<Option<fs::File>> {
+    let git_dir = PathBuf::from(git(&["rev-parse", "--absolute-git-dir"], worktree)?);
+    anyhow::ensure!(
+        !git_dir.join("locked").try_exists()?,
+        "Git worktree is locked"
+    );
+    let file = match fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(create_marker)
+        .truncate(false)
+        .open(git_dir.join("parasaur-activity.lock"))
+    {
+        Ok(file) => file,
+        Err(e) if !create_marker && e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    FileExt::try_lock_exclusive(&file).context("checkout is in use or cannot be locked")?;
+    Ok(Some(file))
+}
+
 pub fn create(
     repo: &Path,
     target_branch: &str,
