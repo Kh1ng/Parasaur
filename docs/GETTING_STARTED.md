@@ -10,7 +10,15 @@ alias for existing commands, scripts, and services.
 
 ## Install
 
-### Paste one line (Linux, macOS)
+### Linux standalone desktop
+
+Download the x86-64 Linux AppImage from a release that includes the standalone
+runtime. Mark it executable, open it and select **Set up standalone**. The
+dashboard opens when the local service is ready. To update it, open the new
+AppImage and select **Start or update standalone** in Settings. Setup verifies
+the bundled runtime and keeps your projects and settings across updates.
+
+### Install from source with one command (Linux, macOS)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Kh1ng/Parasaur/main/scripts/bootstrap.sh | bash

@@ -32,7 +32,8 @@ if [[ ! -d $release ]]; then
 fi
 previous=$(readlink "$root/current" || true)
 if [[ -f $config ]]; then
-  role=$("$release/bin/gah" status --role --json --config "$config" | "$release/bin/node" -pe 'JSON.parse(require("fs").readFileSync(0)).role')
+  status=$("$release/bin/gah" status --role --json --config-path "$config")
+  role=$("$release/bin/node" -pe 'JSON.parse(require("fs").readFileSync(0)).role' <<<"$status")
   [[ $role == standalone ]] || fail "This account is configured as a $role node. Connect to that node or use a separate account for standalone."
 else
   factory=${factory:-false}

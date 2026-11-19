@@ -170,6 +170,14 @@ jobs:
           SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: echo "has_key=$([ -n "$SIGNING_KEY" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
+  linux-standalone:
+    needs: updater-key-gate
+    if: needs.updater-key-gate.outputs.has_key == 'false'
+    uses: ./.github/workflows/build-linux-appimage.yml
+    with:
+      revision: ${{ github.event.workflow_run.head_sha || github.sha }}
+      artifact_name: edge-linux-standalone
+
   desktop-updater:
     needs: updater-key-gate
     if: needs.updater-key-gate.outputs.has_key == 'true'
@@ -283,10 +291,10 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [cli-linux, cli-macos, server-bundle, desktop-updater]
+    needs: [cli-linux, cli-macos, server-bundle, desktop-updater, linux-standalone]
     # desktop-updater is skipped when no signing key is configured; the
     # core artifacts still publish.
-    if: ${{ !cancelled() && needs.cli-linux.result == 'success' && needs.cli-macos.result == 'success' && needs.server-bundle.result == 'success' && (needs.desktop-updater.result == 'success' || needs.desktop-updater.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.cli-linux.result == 'success' && needs.cli-macos.result == 'success' && needs.server-bundle.result == 'success' && ((needs.desktop-updater.result == 'success' && needs.linux-standalone.result == 'skipped') || (needs.desktop-updater.result == 'skipped' && needs.linux-standalone.result == 'success')) }}
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -318,6 +326,13 @@ jobs:
         run: |
           cd edge
           assets=(gah-linux-x86_64 gah-macos-universal gah-mcp-server-linux-x86_64 gah-mcp-server-macos-universal gah-server-bundle.tar.gz edge-manifest.json)
+          # Without an updater key the verified AppImage is still available for
+          # manual installation. Only signed artifacts enter latest.json.
+          if [ -d apps/desktop ]; then
+            images=(apps/desktop/target/release/bundle/appimage/*.AppImage)
+            [[ ${#images[@]} == 1 && -f ${images[0]} ]]
+            assets+=("${images[0]}")
+          fi
           for fragment in fragment-*.json; do
             [ -e "$fragment" ] || continue
             name="$(node -e "console.log(JSON.parse(require('fs').readFileSync('$fragment','utf8')).asset_name)")"

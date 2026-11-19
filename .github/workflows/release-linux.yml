@@ -12,98 +12,31 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
-    name: Linux AppImage
-    runs-on: ubuntu-22.04
+    uses: ./.github/workflows/build-linux-appimage.yml
+    with:
+      revision: ${{ github.sha }}
+      release_tag: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version || '' }}
 
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/download-artifact@v4
         with:
-          node-version: 22
-          cache: npm
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: stable
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          workspaces: apps/desktop
-
-      - name: Install Tauri Linux system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            xvfb \
-            xdotool \
-            imagemagick \
-            at-spi2-core \
-            python3-pyatspi
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Check release version
-        env:
-          PARASAUR_RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
-        run: node scripts/check-release-version.mjs "$PARASAUR_RELEASE_TAG"
-
-      - name: Build shared packages
-        run: npm run build:contracts && npm run build:shared
-
-      - name: Build frontendDist stub
-        working-directory: apps/desktop
-        run: npx vite build
-
-      - name: Generate icons
-        working-directory: apps/desktop
-        run: npx tauri icon icons/icon.png
-
-      - name: Build AppImage
-        working-directory: apps/desktop
-        run: |
-          bash ../../scripts/build-linux-standalone.sh
-          npx tauri build --config standalone.bundle.json --bundles appimage
-
-      - name: Verify the packaged standalone runtime
-        run: bash scripts/smoke-standalone-runtime.sh apps/desktop/target/release/bundle/appimage/*.AppImage
-
-      # Issue #1326: never publish an AppImage whose first window is blank.
-      - name: Smoke-test the AppImage's first window
-        run: scripts/smoke-linux-appimage.sh apps/desktop/target/release/bundle/appimage/*.AppImage appimage-smoke/first-window.png
-
-      - name: Upload smoke screenshot
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: appimage-smoke
-          path: appimage-smoke/*
-          if-no-files-found: warn
-
+          name: gah-desktop-linux-appimage
+          path: verified
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           INPUTS_VERSION: ${{ inputs.version }}
         run: |
-          appimages=(apps/desktop/target/release/bundle/appimage/*.AppImage)
+          appimages=(verified/apps/desktop/target/release/bundle/appimage/*.AppImage)
           appimage=${appimages[0]}
           [ -e "$appimage" ] || { echo "no AppImage bundle matched" >&2; exit 1; }
           tag="${INPUTS_VERSION}"
@@ -113,7 +46,7 @@ jobs:
           if [ -z "$tag" ]; then
             tag="release-$(date -u +%Y%m%d-%H%M)-linux"
           fi
-          gh release create "$tag" "$appimage" \
+          gh release create "$tag" "$appimage" --target "$GITHUB_SHA" \
             --title "GAH Worker — $tag" \
             --notes "Linux AppImage (portable, no install needed — chmod +x and run). Built from ${GITHUB_REF}." \
             --repo "${{ github.repository }}" || \

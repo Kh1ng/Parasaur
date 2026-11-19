@@ -6,9 +6,8 @@ Run the CLI as `parasaur` or `gah`. Both names invoke the same program.
 
 `parasaur` is a CLI that runs coding agents against real repositories with guardrails around git worktrees, validation, pushing, draft MR/PR creation, PM ticket decomposition, session logging, and cleanup.
 
-**New here? Start with [Getting started](docs/GETTING_STARTED.md).** One pasted
-line builds Parasaur and runs `parasaur setup`, which asks what the machine is for and
-installs only what that needs.
+**New here? Start with [Getting started](docs/GETTING_STARTED.md).** It covers
+the desktop download, worker installation, and building from source.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for coding and review standards.
 
