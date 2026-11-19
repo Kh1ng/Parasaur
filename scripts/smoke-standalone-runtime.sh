@@ -31,10 +31,25 @@ bin=/tmp/runtime/bin
 "$bin/gah" config set --node-role standalone
 "$bin/gah" status --role --json | "$bin/node" -e 'process.exit(JSON.parse(require("fs").readFileSync(0)).role === "standalone" ? 0 : 1)'
 "$bin/gah-mcp-server" --version
+# The package leaves coding-agent CLIs to the user. Exercise the bundled ACP
+# bridge against a selected CLI, with no credentials or model call.
+mkdir -p "$HOME/.local/bin"
+printf '#!/bin/sh\nprintf "selected-codex\\n"\n' > "$HOME/.local/bin/codex"
+chmod +x "$HOME/.local/bin/codex"
 cd /tmp/state
 "$bin/serve" > /tmp/server.log 2>&1 &
 pid=$!
 trap 'kill "$pid" 2>/dev/null || true' EXIT
+export CODEX_PATH=codex PATH="$bin:$HOME/.local/bin:$PATH"
+"$bin/node" --input-type=module <<'JS'
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {codexSpawnSpec} from '/tmp/runtime/apps/server/dist/managerChat/acpAdapter.js';
+import {agentChildEnv} from '/tmp/runtime/apps/server/dist/managerChat/childEnv.js';
+const spec = codexSpawnSpec();
+const output = execFileSync(spec.command, [...spec.args, 'cli', 'status'], {env: agentChildEnv(spec.env), encoding: 'utf8'});
+assert.equal(output.trim(), 'selected-codex');
+JS
 if ! "$bin/node" --input-type=module <<'JS'
 import assert from 'node:assert/strict';
 import {setTimeout as wait} from 'node:timers/promises';

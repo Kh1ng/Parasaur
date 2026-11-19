@@ -5,4 +5,5 @@ export HOST=127.0.0.1 PORT=3773 NODE_ENV=production
 export PARASAUR_BINARY="$bin/gah" PARASAUR_WEB_ROOT="$bin/../apps/web/dist"
 export PATH="$bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 export CLAUDE_CODE_EXECUTABLE="${CLAUDE_CODE_EXECUTABLE:-claude}"
+export CODEX_PATH="${CODEX_PATH:-codex}"
 exec "$bin/node" "$bin/../apps/server/dist/bin.js"
