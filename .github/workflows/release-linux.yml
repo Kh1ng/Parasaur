@@ -79,7 +79,9 @@ jobs:
 
       - name: Build AppImage
         working-directory: apps/desktop
-        run: npx tauri build --bundles appimage
+        run: |
+          bash ../../scripts/build-linux-standalone.sh
+          npx tauri build --config standalone.bundle.json --bundles appimage
 
       # Issue #1326: never publish an AppImage whose first window is blank.
       - name: Smoke-test the AppImage's first window

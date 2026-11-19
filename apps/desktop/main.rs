@@ -494,6 +494,11 @@ fn first_profile() -> Option<String> {
 }
 
 fn installed_gah() -> Result<PathBuf, String> {
+    #[cfg(target_os = "linux")]
+    if let Some(path) = std::env::var_os("HOME").map(PathBuf::from)
+        .map(|home| home.join(".local/share/parasaur/standalone/current/bin/gah")).filter(|p| p.is_file()) {
+        return Ok(path);
+    }
     config_dir()
         .parent()
         .and_then(|path| path.parent())
@@ -1040,6 +1045,7 @@ fn main() {
             open_project::open_local_checkout,
             repository_tools::repository_tools,
             setup_check::setup_check,
+            setup_check::install_standalone,
             setup_check::open_setup_terminal,
             setup_check::set_factory_enabled,
             setup_check::set_notifications_enabled,

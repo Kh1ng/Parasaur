@@ -10,6 +10,8 @@ on:
       - '.github/workflows/release-macos.yml'
       - 'scripts/build-signed-macos*'
       - 'scripts/smoke-linux-appimage.sh'
+      - 'scripts/build-linux-standalone.sh'
+      - 'packaging/standalone/**'
       - 'scripts/setup-windows.ps1'
       - 'scripts/test-windows-setup.ps1'
       - 'apps/desktop/**'
@@ -157,7 +159,9 @@ jobs:
 
       - name: Build the AppImage
         working-directory: apps/desktop
-        run: npx tauri build --bundles appimage
+        run: |
+          bash ../../scripts/build-linux-standalone.sh
+          npx tauri build --config standalone.bundle.json --bundles appimage
 
       # Issue #1326: the artifact itself must show the Settings page, not a blank view.
       - name: Smoke-test the AppImage's first window

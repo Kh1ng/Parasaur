@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "resources": {
+      "target/standalone/runtime.tar.gz": "standalone/runtime.tar.gz",
+      "target/standalone/SHA256SUMS": "standalone/SHA256SUMS",
+      "target/standalone/install.sh": "standalone/install.sh"
+    }
+  }
+}

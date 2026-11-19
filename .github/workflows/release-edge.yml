@@ -243,6 +243,10 @@ jobs:
           # createUpdaterArtifacts stays out of tauri.conf.json (it would
           # break every build without the signing key); merge it in here.
           echo '{"bundle":{"createUpdaterArtifacts":true}}' > updater.conf.json
+          if [ "$RUNNER_OS" = Linux ]; then
+            bash ../../scripts/build-linux-standalone.sh
+            node -e 'const fs=require("fs");const config=JSON.parse(fs.readFileSync("standalone.bundle.json"));config.bundle.createUpdaterArtifacts=true;fs.writeFileSync("updater.conf.json", JSON.stringify(config))'
+          fi
           npx vite build
           npx tauri build --config updater.conf.json
       - name: Stage updater fragment

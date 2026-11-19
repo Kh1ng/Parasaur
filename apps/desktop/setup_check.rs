@@ -12,7 +12,7 @@ use super::{command, local_only, read_settings, write_settings};
 
 /// The paste-line install. `gh auth token` lets it fetch while the
 /// repository is private; without a GitHub login it fetches anonymously.
-const BOOTSTRAP: &str = "t=\"$(gh auth token 2>/dev/null || true)\"; curl -fsSL ${t:+-H \"Authorization: Bearer $t\"} https://raw.githubusercontent.com/Kh1ng/git-agent-harness/main/scripts/bootstrap.sh | GITHUB_TOKEN=\"$t\" bash";
+const BOOTSTRAP: &str = "t=\"$(gh auth token 2>/dev/null || true)\"; curl -fsSL ${t:+-H \"Authorization: Bearer $t\"} https://raw.githubusercontent.com/Kh1ng/Parasaur/main/scripts/bootstrap.sh | GITHUB_TOKEN=\"$t\" bash";
 
 /// Standalone: a central node only this computer can reach, every setup
 /// default accepted. bootstrap.sh turns PARASAUR_NODE_ROLE/PARASAUR_YES into
@@ -38,6 +38,37 @@ pub struct SetupCheck {
     command: String,
     /// Whether this platform can open Terminal for it.
     terminal: bool,
+    packaged_standalone: bool,
+}
+
+fn packaged_installer(window: &tauri::WebviewWindow) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    if !cfg!(target_os = "linux") { return None; }
+    window.path().resolve("standalone/install.sh", tauri::path::BaseDirectory::Resource)
+        .ok().filter(|path| path.is_file())
+}
+
+/// The AppImage contains the same runtime on first install and update. Only
+/// the trusted local settings view can start its fixed user-service installer.
+#[tauri::command]
+pub async fn install_standalone(window: tauri::WebviewWindow, factory_enabled: Option<bool>) -> Result<String, String> {
+    local_only(&window)?;
+    let installer = packaged_installer(&window).ok_or("Download the Linux x86-64 AppImage with the standalone runtime.")?;
+    let output = tauri::async_runtime::spawn_blocking(move || {
+        let mut setup = Command::new("bash");
+        setup.arg(installer);
+        if let Some(enabled) = factory_enabled { setup.arg(enabled.to_string()); }
+        setup.output()
+    }).await.map_err(|e| e.to_string())?.map_err(|e| format!("Could not start standalone setup: {e}"))?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr);
+        return Err(message.lines().rev().find(|line| !line.trim().is_empty())
+            .unwrap_or("Standalone setup failed. Retry with a fresh copy of the AppImage.").to_owned());
+    }
+    let mut settings = read_settings();
+    settings.central_url = standalone_url();
+    write_settings(&settings)?;
+    Ok(settings.central_url)
 }
 
 /// A shell where setup installs gah: this computer, or WSL on Windows.
@@ -104,8 +135,9 @@ pub async fn setup_check(window: tauri::WebviewWindow, role: Option<String>) -> 
     let gah = installed_gah();
     let command_text = setup_command(gah.as_deref(), false);
     let terminal = true;
+    let packaged_standalone = packaged_installer(&window).is_some();
     let Some(gah) = gah else {
-        return Ok(SetupCheck { installed: false, report: None, error: None, command: command_text, terminal });
+        return Ok(SetupCheck { installed: false, report: None, error: None, command: command_text, terminal, packaged_standalone });
     };
     let role = match role.as_deref() {
         Some("worker") => "worker",
@@ -124,7 +156,7 @@ pub async fn setup_check(window: tauri::WebviewWindow, role: Option<String>) -> 
     } else {
         (None, Some(String::from_utf8_lossy(&output.stderr).trim().to_string()))
     };
-    Ok(SetupCheck { installed: true, report, error, command: command_text, terminal })
+    Ok(SetupCheck { installed: true, report, error, command: command_text, terminal, packaged_standalone })
 }
 
 #[tauri::command]
