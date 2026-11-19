@@ -5,7 +5,16 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ChildProcess, spawn } from 'node:child_process';
-import { WorkerUpdateService } from './workerUpdate.js';
+import { WorkerUpdateService, workerServiceUnit } from './workerUpdate.js';
+
+test('a worker restart belongs to its own PID and invocation in the same allowed unit', () => {
+  const invocation = 'a'.repeat(32);
+  const properties = `MainPID=287\nId=gah-worker.service\nInvocationID=${'b'.repeat(32)}\n\nMainPID=300\nId=gah-worker@demo.service\nInvocationID=${invocation}\n`;
+  assert.equal(workerServiceUnit(properties, 300, invocation), 'gah-worker@demo.service');
+  assert.throws(() => workerServiceUnit(properties, 287, invocation));
+  assert.throws(() => workerServiceUnit(properties, 300, undefined));
+  assert.throws(() => workerServiceUnit(properties.replace('@demo', '-other'), 300, invocation));
+});
 
 function withStatePath(fn: (statePath: string) => void | Promise<void>): Promise<void> | void {
   const dir = mkdtempSync(join(tmpdir(), 'gah-worker-update-'));

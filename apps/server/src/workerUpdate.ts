@@ -21,6 +21,19 @@ import { findGahBinary, runClaimsList } from './gahCli.js';
 const MAX_OUTPUT_CHARS = 200_000;
 const DRAIN_POLL_MS = 15_000;
 
+/** systemctl show works on Ubuntu 22.04 and later. Only a matching main
+ * process in this exact service invocation may request its own restart. */
+export function workerServiceUnit(properties: string, pid: number, invocation: string | undefined): string {
+  if (invocation && /^[a-f0-9]{32}$/.test(invocation)) {
+    for (const block of properties.trim().split(/\n\s*\n/)) {
+      const lines = block.split('\n');
+      const unit = /^Id=(gah-worker(?:@[\w.-]+)?\.service)$/m.exec(block)?.[1];
+      if (unit && lines.includes(`MainPID=${pid}`) && lines.includes(`InvocationID=${invocation}`)) return unit;
+    }
+  }
+  throw Error('Worker is not the main process of its systemd user service');
+}
+
 interface WorkerUpdateRecord extends WorkerUpdateStatus {
   pid: number | null;
   restart?: { previousInvocation:string; bundle:string; requestedAt:number };
@@ -325,11 +338,8 @@ export class WorkerUpdateService {
     const systemctl = (...args: string[]) => execFileSync('/usr/bin/systemctl', ['--user', ...args], {
       encoding:'utf8', stdio:['ignore','pipe','pipe'], timeout:5000
     }).trim();
-    const unit = systemctl('whoami', String(process.pid));
-    if (!/^gah-worker(?:@[\w.-]+)?\.service$/.test(unit)
-      || systemctl('show', unit, '--property=MainPID', '--value') !== String(process.pid)) {
-      throw Error('Worker is not the main process of its systemd user service');
-    }
+    const properties = systemctl('show', '--property=Id,MainPID,InvocationID', '--', 'gah-worker*.service');
+    const unit = workerServiceUnit(properties, process.pid, process.env.INVOCATION_ID);
     // The manager acknowledges this timer before it stops our cgroup.
     // Otherwise it can kill the systemctl client that is returning success.
     execFileSync('/usr/bin/systemd-run', ['--user','--quiet','--collect','--on-active=1s','--timer-property=AccuracySec=100ms',

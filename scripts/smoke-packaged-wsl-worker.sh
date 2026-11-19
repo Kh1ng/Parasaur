@@ -40,13 +40,23 @@ echo 'The installed user service is healthy and running the bundled Node and Rus
 identity=$(sha256sum "$root/identity.json")
 update=http://127.0.0.1:3774/api/worker-update
 curl -fsS -H 'Content-Type: application/json' -d '{"action":"start"}' "$update" | jq -e '.started'
+update_status() {
+  curl -fsS -H 'Content-Type: application/json' -d '{"action":"status"}' "$update"
+}
 for _ in {1..120}; do
   new_pid=$(systemctl --user show gah-worker.service -p MainPID --value)
   [[ $new_pid != "$pid" && $(readlink -f "/proc/$new_pid/exe" || true) == "$root/release.$revision.$bundle_sha/bin/node" ]] && break
+  if status=$(update_status 2>/dev/null) && jq -e '.status.status == "failed"' <<< "$status" >/dev/null; then
+    jq '.status | {status, exit_code, output: .output[-1600:]}' <<< "$status" >&2
+    exit 1
+  fi
   sleep 1
 done
-[[ $(readlink -f "/proc/$new_pid/exe") == "$root/release.$revision.$bundle_sha/bin/node" && $new_pid != "$pid" ]]
+if [[ $(readlink -f "/proc/$new_pid/exe" || true) != "$root/release.$revision.$bundle_sha/bin/node" || $new_pid == "$pid" ]]; then
+  update_status | jq '.status | {status, active_dispatches, exit_code, output: .output[-1600:]}' >&2
+  exit 1
+fi
 curl -fsS --retry 20 --retry-delay 1 --retry-connrefused http://127.0.0.1:3774/health | jq -e '.status == "healthy" and .checks.rustBackend.ready == true'
-curl -fsS -H 'Content-Type: application/json' -d '{"action":"status"}' "$update" | jq -e '.status.status == "success"'
+update_status | jq -e '.status.status == "success"'
 [[ $(sha256sum "$root/identity.json") == "$identity" ]]
 echo 'The dashboard updated the enrolled worker and systemd started the verified release with the same identity.'
