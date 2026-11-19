@@ -197,7 +197,7 @@ fn native_claim_command_reaps_descendants_and_bounds_capture() {
 }
 
 pub fn shutdown_requested() -> bool {
-    SHUTDOWN_REQUESTED.load(Ordering::SeqCst)
+    SHUTDOWN_REQUESTED.load(Ordering::SeqCst) || crate::dispatch_cancel::requested()
 }
 
 #[cfg(unix)]
@@ -784,7 +784,8 @@ fn spawn_with_idle_watch_with_shutdown(
         match crate::runner::exited_without_reaping(&child) {
             Ok(true) => break None,
             Ok(false) => {
-                if shutdown_requested.load(Ordering::SeqCst) {
+                if shutdown_requested.load(Ordering::SeqCst) || crate::dispatch_cancel::requested()
+                {
                     cleanup_error = kill_process_group(&mut child);
                     killed_for_shutdown = true;
                     break Some(-2);
@@ -864,7 +865,7 @@ fn spawn_with_idle_watch_with_shutdown(
                     break Some(-1);
                 }
                 let _ = crate::clock::wait_for(poll_interval, || {
-                    shutdown_requested.load(Ordering::SeqCst)
+                    shutdown_requested.load(Ordering::SeqCst) || crate::dispatch_cancel::requested()
                 });
             }
             Err(error) => {

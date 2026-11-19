@@ -234,6 +234,7 @@ fn counted_review_entries<'a>(
                             | "skipped_duplicate_review"
                             | "deferred_capacity"
                             | "cancelled_shutdown"
+                            | "cancelled_operator"
                     )
                 )
         })
@@ -471,7 +472,7 @@ pub(in crate::dispatch) fn next_review_candidate(
                 && super::head::same_head(entry, review_generation)
                 && entry.review_source_sha.is_some()
                 && entry.validation_result.as_deref() != Some("skipped_duplicate_review")
-                && entry.validation_result.as_deref() != Some("cancelled_shutdown")
+                && !matches!(entry.validation_result.as_deref(), Some("cancelled_shutdown" | "cancelled_operator"))
                 // A deferred_capacity entry is a routing-decision failure: no
                 // backend ever launched and no verdict was produced. Treating
                 // it as a spent attempt strands the escalation chain on the
@@ -530,7 +531,7 @@ pub(in crate::dispatch) fn next_escalatory_reviewer(
                 && entry.validation_result.as_deref() != Some("skipped_duplicate_review")
                 // An operator-requested shutdown is not a reviewer opinion
                 // and must remain retryable after the daemon restarts.
-                && entry.validation_result.as_deref() != Some("cancelled_shutdown")
+                && !matches!(entry.validation_result.as_deref(), Some("cancelled_shutdown" | "cancelled_operator"))
                 // A deferred_capacity entry is a routing-decision failure: no
                 // backend ever launched and no verdict was produced. Treating
                 // it as a spent attempt strands the escalation chain on the

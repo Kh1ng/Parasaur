@@ -11,6 +11,7 @@ type Operation =
   | 'agents.update'
   | 'loop.start'
   | 'loop.stop'
+  | 'dispatch.cancel'
   | 'hold.set'
   | 'hold.clear'
   | 'availability.clear'

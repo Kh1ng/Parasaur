@@ -36,6 +36,32 @@ pub(super) fn append_ledger_entry(
     crate::ledger::append_unless_repeated_refusal(cfg, ledger).map(|_| false)
 }
 
+pub(super) fn notify_failure(
+    cfg: &GahConfig,
+    profile: &crate::config::Profile,
+    ledger: &LedgerEntry,
+    run_id: &str,
+) {
+    crate::notifications::notify_terminal_failure(
+        cfg,
+        profile,
+        crate::notifications::TerminalFailurePayload {
+            profile: &ledger.profile,
+            work_id: ledger
+                .work_id
+                .as_deref()
+                .or(ledger.branch.as_deref())
+                .unwrap_or("unknown"),
+            run_id,
+            failure_class: ledger.failure_class.as_deref().unwrap_or("unknown"),
+            failure_stage: ledger.failure_stage.as_deref(),
+            attempt_count: ledger.attempts_started,
+            error_summary: ledger.error_summary.as_deref(),
+            mr_url: ledger.mr_url.as_deref().or(ledger.branch.as_deref()),
+        },
+    );
+}
+
 pub(super) fn should_notify_dispatch_failure(error: &anyhow::Error) -> bool {
     if super::review_budget_exhausted_error(error).is_some()
         || super::capacity_deferred_error(error)

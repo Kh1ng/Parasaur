@@ -2,7 +2,6 @@ use self::terminal::should_notify_dispatch_failure;
 use crate::config::{self, GahConfig};
 use crate::job_kind::{JobFamily, JobKind};
 use crate::ledger::LedgerEntry;
-use crate::notifications::notify_terminal_failure;
 use crate::usage_attribution::{aggregate_attempt_usage, usage_has_observation};
 use anyhow::Result;
 use std::fs;
@@ -218,6 +217,7 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
     let started = Instant::now();
     fs::create_dir_all(&session_dir)?;
     crate::running_workers::initialize_dispatch(&session_dir, args, &ts);
+    let _cancel_scope = crate::dispatch_cancel::Scope::enter(&session_dir);
     println!("Session: {}", session_dir.display());
 
     let result = match JobKind::parse(&args.mode) {
@@ -273,25 +273,9 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
         .err()
         .is_some_and(should_notify_dispatch_failure)
         && !policy_approval_gate
+        && ledger.validation_result.as_deref() != Some("cancelled_operator")
     {
-        notify_terminal_failure(
-            cfg,
-            profile,
-            crate::notifications::TerminalFailurePayload {
-                profile: &args.profile,
-                work_id: ledger
-                    .work_id
-                    .as_deref()
-                    .or(ledger.branch.as_deref())
-                    .unwrap_or("unknown"),
-                run_id: &ts,
-                failure_class: ledger.failure_class.as_deref().unwrap_or("unknown"),
-                failure_stage: ledger.failure_stage.as_deref(),
-                attempt_count: ledger.attempts_started,
-                error_summary: ledger.error_summary.as_deref(),
-                mr_url: ledger.mr_url.as_deref().or(ledger.branch.as_deref()),
-            },
-        );
+        terminal::notify_failure(cfg, profile, &ledger, &ts);
     }
     result
 }

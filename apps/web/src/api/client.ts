@@ -365,6 +365,7 @@ export interface GahDataSource {
   getLoopStatus(profile?: string): Promise<LoopStatus>;
   startLoop(profile: string): Promise<StartLoopResult>;
   stopLoop(profile: string): Promise<StopLoopResult>;
+  cancelDispatch(target: {work_id:string; profile:string; run_id:string; node_id?:string}): Promise<{run_id:string}>;
   getConfig(): Promise<ConfigSummary>;
   getProfileConfig(profile: string): Promise<SettingsConfigProfileSummary>;
   setConfig(data: ConfigSetData): Promise<{ success: boolean; message: string }>;
@@ -676,6 +677,9 @@ export const gahApi: GahDataSource = {
     const result = await res.json();
     if (!res.ok && !(res.status === 409 && typeof result.started === 'boolean')) throw new GahApiError(result.message ?? 'Failed to start loop', res.status, '/api/loop/start');
     return result as StartLoopResult;
+  },
+  cancelDispatch(target) {
+    return postJson<{run_id:string}, typeof target>('/api/dispatch/cancel', target);
   },
   async stopLoop(profile) {
     const url = apiUrl('/api/loop/stop');

@@ -641,7 +641,7 @@ const TRANSIENT_DISPATCH_REFUSALS: [&str; 4] = [
 fn ignored_by_repeated_setup(entry: &LedgerEntry) -> bool {
     matches!(
         entry.validation_result.as_deref(),
-        Some("cancelled_shutdown" | "not_run_abandoned")
+        Some("cancelled_shutdown" | "cancelled_operator" | "not_run_abandoned")
     ) || entry.error_summary.as_deref().is_some_and(|summary| {
         TRANSIENT_DISPATCH_REFUSALS
             .iter()

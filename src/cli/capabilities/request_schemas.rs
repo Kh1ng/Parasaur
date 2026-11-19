@@ -228,6 +228,20 @@ pub(super) fn add_request_schemas(manifest: &mut CapabilityManifest) {
     dispatch_schema["properties"]["waitTimeoutSeconds"]["default"] = json!(3600);
     set("dispatch.run", dispatch_schema);
     set(
+        "dispatch.cancel",
+        object(&[
+            ("profile", "string", false, PROFILE),
+            ("work_id", "string", true, "Work item being executed."),
+            ("run_id", "string", false, "Exact invocation to cancel."),
+            (
+                "node_id",
+                "string",
+                false,
+                "Registered node executing this run.",
+            ),
+        ]),
+    );
+    set(
         "telemetry.aggregate",
         object(&[
             (

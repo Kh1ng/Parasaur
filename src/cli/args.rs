@@ -114,6 +114,21 @@ pub enum Commands {
     /// Private-descriptor host admission and lifetime supervision for isolated jobs.
     #[command(hide = true)]
     IsolationHost(crate::cli::commands::isolation_host::Args),
+    /// Cancel a running factory dispatch by its work ID.
+    Cancel {
+        work_id: String,
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        run_id: Option<String>,
+        /// Check only dispatches running on this computer.
+        #[arg(long)]
+        local: bool,
+        #[arg(long, name = "config")]
+        config_path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Project memory retrieval, flush, deletion and migration.
     Memory(crate::cli::commands::memory::MemoryArgs),
     /// Export a diagnostics bundle (memory timeline, host details) to send when debugging.

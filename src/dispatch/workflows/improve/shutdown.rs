@@ -1,4 +1,5 @@
-use crate::ledger::{AttemptRecord, FailureClass, FailureStage, LedgerEntry, LedgerUsage};
+pub(super) use super::super::super::attempts::record_cancelled_attempt;
+use crate::ledger::{FailureStage, LedgerEntry, LedgerUsage};
 use crate::worktree;
 use anyhow::Result;
 use std::fs;
@@ -149,38 +150,6 @@ impl<'a> ShutdownContext<'a> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn record_cancelled_attempt(
-    ledger: &mut LedgerEntry,
-    attempt_number: u32,
-    backend: &str,
-    model: &str,
-    exit_code: i32,
-    stage: FailureStage,
-    duration_seconds: f64,
-    usage: LedgerUsage,
-    cli_version: Option<String>,
-    resources: crate::ledger::AttemptResourceUsage,
-) {
-    super::super::super::attempts::mark_shutdown_cancelled(ledger, stage, Some(exit_code));
-    ledger.attempts.push(AttemptRecord {
-        attempt_number,
-        backend: backend.to_string(),
-        effective_model: Some(model.to_string()),
-        exit_code: Some(exit_code),
-        validation_result: Some("cancelled_shutdown".into()),
-        failure_class: Some(FailureClass::HarnessError.as_str().into()),
-        failure_stage: Some(stage.as_str().into()),
-        duration_seconds: Some(duration_seconds),
-        diff_path: None,
-        checkpoint_branch: None,
-        checkpoint_sha: None,
-        usage,
-        cli_version,
-        resources: Some(resources),
-    });
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(super) fn checkpoint_and_cleanup_after_shutdown(
     ledger: &mut LedgerEntry,
     worktree_path: &Path,
@@ -249,6 +218,9 @@ pub(super) fn checkpoint_and_cleanup_after_shutdown(
         serde_json::to_vec_pretty(&recovery_artifact)?,
     )?;
     worktree::cleanup(worktree_path, repo);
+    if crate::dispatch_cancel::requested() {
+        anyhow::bail!("Dispatch cancelled by operator");
+    }
     anyhow::bail!("{reason}");
 }
 
@@ -302,23 +274,18 @@ pub(super) fn record_cancelled_attempt_and_cleanup(
     run_id: Option<&str>,
     work_id: Option<&str>,
 ) -> Result<()> {
-    super::super::super::attempts::mark_shutdown_cancelled(ledger, stage, Some(exit_code));
-    ledger.attempts.push(AttemptRecord {
+    record_cancelled_attempt(
+        ledger,
         attempt_number,
-        backend: backend.to_string(),
-        effective_model: Some(model.to_string()),
-        exit_code: Some(exit_code),
-        validation_result: Some("cancelled_shutdown".into()),
-        failure_class: Some(FailureClass::HarnessError.as_str().into()),
-        failure_stage: Some(stage.as_str().into()),
-        duration_seconds: Some(duration_seconds),
-        diff_path: None,
-        checkpoint_branch: None,
-        checkpoint_sha: None,
+        backend,
+        model,
+        exit_code,
+        stage,
+        duration_seconds,
         usage,
         cli_version,
-        resources: Some(resources),
-    });
+        resources,
+    );
     checkpoint_and_cleanup_after_shutdown(
         ledger,
         worktree_path,

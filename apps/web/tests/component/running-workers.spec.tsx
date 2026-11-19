@@ -17,3 +17,19 @@ test('empty, populated and stale roster preserve routing facts and narrow layout
   await expect(component).toContainText('Model: Unknown');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
+
+test('cancelling the selected dispatch keeps its sibling available', async ({ mount, page }) => {
+  const posts: unknown[] = [];
+  await page.route('**/api/dispatch/cancel', async route => {
+    posts.push(route.request().postDataJSON());
+    await route.fulfill({status:202,json:{run_id:'selected'}});
+  });
+  const component = await mount(<RunningWorkersRoster workers={[
+    {...worker, profile:'test', run_id:'selected'}, {...worker, profile:'test', run_id:'other', work_id:'#1432'},
+  ]} />);
+  const rows = component.getByTestId('worker-row');
+  await rows.first().getByRole('button', {name:'Cancel dispatch'}).click();
+  await expect(rows.first().getByRole('button', {name:'Cancellation requested'})).toBeDisabled();
+  await expect(rows.last().getByRole('button', {name:'Cancel dispatch'})).toBeEnabled();
+  expect(posts).toEqual([{work_id:'#1431', profile:'test', run_id:'selected', node_id:'node-a'}]);
+});

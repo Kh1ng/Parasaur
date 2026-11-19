@@ -590,7 +590,8 @@ pub(in crate::dispatch) fn review(
                 &attempt_session,
                 &prompt,
             )?;
-            let attempt = crate::dispatch::native_guard::review(&route.identity, || {
+            let cancellation = crate::dispatch_cancel::Invocation::arm();
+            let mut attempt = crate::dispatch::native_guard::review(&route.identity, || {
                 ledger.attempts_started = Some(ledger.attempts_started.unwrap_or(0) + 1);
                 apply_route_to_ledger(ledger, &route)?;
                 record_route_attempt(ledger, &route)?;
@@ -606,7 +607,15 @@ pub(in crate::dispatch) fn review(
             // The slot covers the backend invocation itself. Release it before
             // parsing/rerouting so another worker can use the reviewer as soon as
             // capacity is genuinely free.
-            drop((worker_observation, review_slot));
+            drop((cancellation, worker_observation, review_slot));
+            if crate::dispatch_cancel::requested()
+                && !matches!(
+                    attempt.outcome,
+                    runner::ReviewProcessOutcome::CleanupFailure(_)
+                )
+            {
+                attempt.outcome = runner::ReviewProcessOutcome::SignalTermination(15);
+            }
             super::super::attempts::record_review_outcome(cfg, profile, &route.identity, &attempt)?;
             if !matches!(
                 &attempt.outcome,
@@ -673,7 +682,7 @@ pub(in crate::dispatch) fn review(
                     ),
                     runner::ReviewProcessOutcome::SignalTermination(signal) => (
                         Some(-*signal),
-                        Some("cancelled_shutdown".to_string()),
+                        Some(crate::dispatch_cancel::terminal_state().to_string()),
                         Some(
                             crate::ledger::FailureClass::HarnessError
                                 .as_str()
@@ -1103,10 +1112,15 @@ pub(in crate::dispatch) fn review(
             anyhow::bail!("{summary}")
         }
         runner::ReviewProcessOutcome::SignalTermination(signal) => {
+            let reason = if crate::dispatch_cancel::requested() {
+                "operator cancelled dispatch"
+            } else {
+                "shutdown requested"
+            };
             let summary = review_terminal_failure_summary(
                 ledger,
                 &format!(
-                    "shutdown requested while {} was running (signal {signal})",
+                    "{reason} while {} was running (signal {signal})",
                     route.effective_backend
                 ),
             );

@@ -1,3 +1,6 @@
+#[cfg(target_os = "linux")]
+#[path = "controller_refill_regressions/dispatch_cancel.rs"]
+mod dispatch_cancel;
 #[path = "controller_refill_regressions/ledger_retention.rs"]
 #[cfg(target_os = "linux")]
 mod ledger_retention;

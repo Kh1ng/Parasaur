@@ -407,6 +407,13 @@ export async function runLedgerSummary(
   return runJsonCommand<LedgerSummary>(args, options.config);
 }
 
+export function runCancelDispatch(workId: string, profile?: string, runId?: string) {
+  return runJsonCommand<{profile: string; work_id: string; run_id: string}>([
+    'cancel', '--local', '--json', ...(profile ? ['--profile', profile] : []),
+    ...(runId ? ['--run-id', runId] : []), '--', workId,
+  ]);
+}
+
 /**
  * Run `gah ledger clear-attempts --profile <profile> <workId>`: appends a
  * tombstone ledger entry so the work_id becomes dispatchable again. No JSON

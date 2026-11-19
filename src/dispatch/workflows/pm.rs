@@ -210,6 +210,15 @@ pub(crate) fn pm(
             result.exit_code, result.duration_secs, result.log_path
         );
         ledger.backend_exit_code = Some(result.exit_code);
+        if super::super::attempts::record_operator_cancellation(
+            ledger,
+            &plan_route,
+            &llm.model,
+            &result,
+            attempt_index as u32,
+        ) {
+            anyhow::bail!("Dispatch cancelled by operator");
+        }
         ledger.validation_result = Some("not_run".into());
         record_external_approval_consumption_for_last_attempt(cfg, profile_name, profile, ledger);
         let log_text = fs::read_to_string(&result.log_path).unwrap_or_default();

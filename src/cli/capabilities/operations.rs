@@ -811,6 +811,22 @@ pub(super) fn add_sync_operations(manifest: &mut CapabilityManifest) {
 
 pub(super) fn add_dispatch_operations(manifest: &mut CapabilityManifest) {
     manifest.add_operation(OperationDefinition {
+        operation_id: "dispatch.cancel".into(),
+        display_name: "Cancel a running dispatch".into(),
+        class: OperationClass::Mutation,
+        profile_scope: ProfileScope::ProfileOptional,
+        request_schema: None,
+        response_schema: None,
+        streaming: StreamingBehavior::None,
+        idempotency: Idempotency::NonIdempotent,
+        secret_fields: vec![],
+        remote_disposition: RemoteDisposition::RemoteAvailable,
+        local_only_reason: None,
+        documentation: Some("Request cancellation of one live factory dispatch.".into()),
+        cli_command_path: "gah cancel".into(),
+        is_stable: true,
+    });
+    manifest.add_operation(OperationDefinition {
         operation_id: "dispatch.run".to_string(),
         display_name: "Dispatch Job".to_string(),
         class: OperationClass::Mutation,
