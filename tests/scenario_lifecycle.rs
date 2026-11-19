@@ -458,19 +458,25 @@ fn hung_worker_releases_claim_and_is_redispatched_once() {
         entry["validation_result"], "not_run_backend_stalled",
         "{entry}"
     );
-    assert!(
-        failed
-            .events
-            .iter()
-            .any(|event| event["event_type"] == "dispatch_finished"
-                && event["work_id"] == "#1"
-                && event["run_id"] == entry["run_id"]
-                && event["details"]
-                    .as_str()
-                    .is_some_and(|message| message.contains("stalled before any changes"))),
-        "watchdog failure event missing from {:?}",
-        failed.events
-    );
+    let failure = failed
+        .events
+        .iter()
+        .find(|event| event["event_type"] == "terminal_failure" && event["work_id"] == "#1")
+        .expect("watchdog failure event");
+    let details: Value = serde_json::from_str(failure["details"].as_str().unwrap()).unwrap();
+    assert_eq!(details["failure_class"], entry["failure_class"]);
+    assert_eq!(details["failure_stage"], "agent_run");
+    assert!(details["error_summary"]
+        .as_str()
+        .unwrap()
+        .contains("stalled before any changes"));
+    assert!(details["run_id"].is_string());
+    assert!(failed
+        .events
+        .iter()
+        .any(|event| event["event_type"] == "dispatch_finished"
+            && event["run_id"] == details["run_id"]
+            && event["work_id"] == "#1"));
     assert_eq!(entry["mr_created"], false);
     assert_eq!(
         harness.run_status_json().unwrap()["active_claims"],
@@ -546,7 +552,7 @@ echo work complete
             .count(),
         1
     );
-    let sha = publish_head(&mut harness);
+    let sha = publish_head(&mut harness, "2");
     assert_eq!(
         git(
             &harness,
