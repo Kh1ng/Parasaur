@@ -6,23 +6,14 @@ what that choice needs. A command-line-only machine never gets a server; a
 worker never gets the dashboard; shared memory is off unless you turn it on.
 
 The CLI is `parasaur`. `gah` is the same program and stays a compatible
-alias, so commands, scripts, and services that use `gah` keep working. The
-repository is still named `git-agent-harness`.
+alias for existing commands, scripts, and services.
 
 ## Install
 
 ### Paste one line (Linux, macOS)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Kh1ng/git-agent-harness/main/scripts/bootstrap.sh | bash
-```
-
-While the repository is private, use a GitHub token with read access:
-
-```bash
-curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
-  https://raw.githubusercontent.com/Kh1ng/git-agent-harness/main/scripts/bootstrap.sh \
-  | GITHUB_TOKEN="$GITHUB_TOKEN" bash
+curl -fsSL https://raw.githubusercontent.com/Kh1ng/Parasaur/main/scripts/bootstrap.sh | bash
 ```
 
 The script needs git and curl. It asks before installing Rust, clones the
@@ -51,8 +42,8 @@ missing, so it also resumes a setup that stopped.
 ### Build from source
 
 ```bash
-git clone https://github.com/Kh1ng/git-agent-harness.git
-cd git-agent-harness
+git clone https://github.com/Kh1ng/Parasaur.git
+cd Parasaur
 cargo build --release --bin gah
 target/release/gah setup
 ```

@@ -114,6 +114,9 @@ export class NativeWorker {
         return {...binding,state:'ready',reservation:{...binding,id:status.holder_invocation,expires_at:new Date(Date.now()+20_000).toISOString()}};
       }
       if(status.state==='running') return {...binding,state:'running'};
+      if(status.state==='exited_before_dispatch' && status.capacity_held===true) {
+        return {...binding,state:'exited_before_dispatch',reservation_id:status.holder_invocation};
+      }
       const result=await command(this.binary,this.args(binding,'result',true)) as {state:string;receipt_json:string};
       if(result.state==='terminal' && typeof result.receipt_json==='string' && Buffer.byteLength(result.receipt_json)<=8*1024*1024) {
         return {...binding,state:'terminal',receipt_json:result.receipt_json};

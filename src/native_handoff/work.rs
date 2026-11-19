@@ -121,6 +121,14 @@ pub(super) fn check_current(
             .catalog()
             .apply(&args.profile, profile, node_id, &mut runtime)?;
     }
+    if args.dispatch_reason.as_deref() == Some(crate::dispatch::publication_recovery::REASON) {
+        crate::dispatch::publication_recovery::verify(&request, &entries, profile, node_id)?;
+        return Ok(bound);
+    }
+    ensure!(
+        request.publication_source.is_none(),
+        "Unexpected native publication source"
+    );
     let route = crate::routing::decide_with_state(
         &cfg.defaults,
         profile,
@@ -213,7 +221,10 @@ fn matches_action(
                 _ => ("escalate", true),
             };
             args.mode == "fix"
-                && args.dispatch_reason.as_deref() == Some(reason)
+                && (args.dispatch_reason.as_deref() == Some(reason)
+                    || (reason == "retry"
+                        && args.dispatch_reason.as_deref()
+                            == Some(crate::dispatch::publication_recovery::REASON)))
                 && args.escalate == escalate
                 && !args.allow_unknown_red_baseline
                 && args.branch.is_none()

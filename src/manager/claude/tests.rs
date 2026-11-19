@@ -840,7 +840,7 @@ fn explicit_send_after_observed_failure_starts_a_new_working_lifecycle() {
     ));
 
     adapter.send(&id, "recovered").unwrap();
-    assert_eq!(adapter.terminal_status(&id).unwrap(), None);
+    // The reply may already be complete by the time send returns.
     let (updates, status) = wait_for_turn(&mut adapter, &id);
     assert_eq!(status, TerminalStatus::Completed);
     assert!(updates.contains(&SessionUpdate::MessageChunk("reply: recovered".into())));

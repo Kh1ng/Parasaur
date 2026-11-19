@@ -161,14 +161,16 @@ pub(in crate::native_handoff) fn released_capacity(
 }
 
 /// The caller holds the worker writer lock and has durably fenced out every
-/// start. Absence of a job is mandatory; an exited job is still inconsistent.
+/// start. A recorded wrapper that exited before dispatch must match its
+/// original identity if the unit is still loaded.
 pub(in crate::native_handoff) fn release_unused_capacity(
     binding: &DispatchBinding,
     holder: &str,
+    identity: Option<&JobIdentity>,
     work: &Path,
     stop: bool,
 ) -> Result<Option<File>> {
-    capacity_state(binding, holder, None, work, stop)
+    capacity_state(binding, holder, identity, work, stop)
 }
 
 fn capacity_state(

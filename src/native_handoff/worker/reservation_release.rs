@@ -104,17 +104,25 @@ impl WorkerRun {
         }
     }
 
-    fn require_unstarted(&self) -> Result<()> {
+    /// An offered launch can retire only after its exact process has exited
+    /// without entering dispatch. The caller verifies termination before
+    /// persisting stop intent and rechecks the cgroup when releasing capacity.
+    pub(super) fn unused_launch(&self) -> Result<Option<&super::super::host::JobIdentity>> {
         ensure!(
-            self.journal.phase == Phase::Ready
-                && self.journal.start.is_none()
-                && self.journal.launch.is_none()
-                && self.journal.execution.is_none()
+            self.journal.execution.is_none()
                 && self.journal.operation.is_none()
-                && !self.journal.consumption_offered,
-            "Native start may have been offered; retain capacity for result reconciliation"
+                && self.journal.claim_operation.is_none(),
+            "Native execution requires result reconciliation"
         );
-        Ok(())
+        match (
+            &self.journal.phase,
+            &self.journal.start,
+            &self.journal.launch,
+        ) {
+            (Phase::Ready, None, None) if !self.journal.consumption_offered => Ok(None),
+            (Phase::StartIntent, Some(_), Some(job)) => Ok(Some(job)),
+            _ => anyhow::bail!("Native launch identity is uncertain; retain capacity"),
+        }
     }
 
     fn read_reservation_release(&self) -> Result<Release> {
@@ -130,7 +138,7 @@ impl WorkerRun {
                 && release.holder_invocation == self.journal.holder_invocation,
             "Native reservation release identity changed"
         );
-        self.require_unstarted()?;
+        self.unused_launch()?;
         Ok(release)
     }
 
@@ -161,6 +169,7 @@ impl WorkerRun {
             && super::super::host::release_unused_capacity(
                 &self.journal.binding,
                 &self.journal.holder_invocation,
+                self.unused_launch()?,
                 &self.directory,
                 false,
             )
@@ -171,22 +180,27 @@ impl WorkerRun {
     }
 
     /// A service credential is unnecessary: this local-only operation cannot
-    /// start work, acknowledge a result or stop any possible job. It requires
-    /// the exact private binding, original holder and locked unstarted journal.
+    /// start work, acknowledge a result or stop a job. It requires the exact
+    /// binding, original holder and proof that dispatch never began.
     pub fn release_reservation(&mut self, reservation_id: &str) -> Result<serde_json::Value> {
         ensure!(
             !self.persistence_uncertain && reservation_id == self.journal.holder_invocation,
             "Native reservation release does not match its original holder"
         );
-        self.require_unstarted()?;
+        self.unused_launch()?;
         let mut release =
             match fs::symlink_metadata(self.directory.join("reservation-release.json")) {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Release {
-                    version: 1,
-                    binding: self.journal.binding.clone(),
-                    holder_invocation: self.journal.holder_invocation.clone(),
-                    phase: ReleasePhase::StopIntent,
-                },
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    if let Some(job) = self.unused_launch()? {
+                        super::super::host::terminal_job(&self.journal.binding.run_id, job)?;
+                    }
+                    Release {
+                        version: 1,
+                        binding: self.journal.binding.clone(),
+                        holder_invocation: self.journal.holder_invocation.clone(),
+                        phase: ReleasePhase::StopIntent,
+                    }
+                }
                 Err(_) => anyhow::bail!("Native reservation release journal is unavailable"),
                 Ok(_) => self.read_reservation_release()?,
             };
@@ -196,6 +210,7 @@ impl WorkerRun {
         let verifier = super::super::host::release_unused_capacity(
             &self.journal.binding,
             &self.journal.holder_invocation,
+            self.unused_launch()?,
             &self.directory,
             release.phase != ReleasePhase::Released,
         )?;

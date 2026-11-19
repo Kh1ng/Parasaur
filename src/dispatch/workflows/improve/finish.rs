@@ -200,7 +200,16 @@ pub(super) fn finish_improve_workflow(
     // real changes are still uncommitted working-tree modifications) always
     // reported "0 file(s) changed, +0, -0" in the MR body.
     apply_diff_stats(ledger, wt, &profile.default_target_branch);
-    crate::dispatch::native_guard::publication(profile, || {
+    let checkpoint = if crate::dispatch::native_guard::active()
+        && !existing_branch
+        && !validation_failed
+        && issue_details.is_some()
+    {
+        Some(worktree::git(&["rev-parse", "HEAD"], wt)?)
+    } else {
+        None
+    };
+    let result = crate::dispatch::native_guard::publication(profile, || {
         ledger.push_attempted = true;
         classify_git_operation_result(
             ledger,
@@ -244,5 +253,12 @@ pub(super) fn finish_improve_workflow(
         clear_wip_checkpoints(repo, wip_checkpoints);
         worktree::cleanup(wt, repo);
         Ok(())
-    })
+    });
+    if result.is_err() {
+        if let Some(sha) = checkpoint {
+            ledger.resumable_checkpoint_sha = Some(sha);
+            ledger.resumable_checkpoint_branch = Some(branch.to_string());
+        }
+    }
+    result
 }

@@ -9,7 +9,7 @@ import { linkEnabled } from './workerLink.js';
 
 const exec = promisify(execFile);
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
-const repo = 'Kh1ng/git-agent-harness';
+const repo = 'Kh1ng/Parasaur';
 
 function psQuote(value: string): string { return `'${value.replaceAll("'", "''")}'`; }
 
@@ -98,13 +98,12 @@ export function isSupportedWindowsInstaller(name: string): boolean {
 
 async function githubHeaders(): Promise<Record<string, string>> {
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN ||
-    (await exec('gh', ['auth', 'token'], { timeout: 5000, maxBuffer: 4096 })).stdout.trim();
-  if (!token) throw new Error('The central server needs GitHub release read access (GH_TOKEN or gh auth login).');
-  return { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+    (await exec('gh', ['auth', 'token'], { timeout: 5000, maxBuffer: 4096 }).catch(() => ({ stdout: '' }))).stdout.trim();
+  return { ...(token ? { Authorization: `Bearer ${token}` } : {}), Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
 }
 
 // Mounted below /api/settings so the existing transport and bearer auth gate applies.
-export function nodeSetupRouter(): Router {
+export function nodeSetupRouter(kit = fileURLToPath(new URL('./worker-artifacts/', import.meta.url))): Router {
   const router = Router();
   router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
   // Enrollment serves archives and release assets; bound work even for authenticated clients.
@@ -124,35 +123,40 @@ export function nodeSetupRouter(): Router {
       return res.status(400).json({ message: err instanceof Error ? err.message : 'Invalid setup request.' });
     }
   });
-  for (const [route, file] of [['install.ps1', 'install-windows.ps1'], ['install-wsl.sh', 'install-wsl-worker.sh']]) {
-    router.get(`/${route}`, async (_req, res) => {
-      try { res.type('text/plain').send(await readFile(resolve(repoRoot, 'scripts', file), 'utf8')); }
-      catch { res.status(503).json({ message: 'Installer is missing from this server checkout.' }); }
+  router.get('/install.ps1', async (_req, res) => {
+    try {
+      const script = await readFile(resolve(kit, 'install-windows.ps1'), 'utf8').catch((err: NodeJS.ErrnoException) => {
+        if (err.code !== 'ENOENT') throw err;
+        return readFile(resolve(repoRoot, 'scripts/install-windows.ps1'), 'utf8');
+      });
+      res.type('text/plain').send(script);
+    } catch { res.status(503).json({ message: 'The Windows installer is missing from the central release.' }); }
+  });
+  const workerFiles = { '/release/linux-cli': 'gah', '/install-wsl.sh': 'install-wsl.sh',
+    '/source.tar.gz': 'source.tar.gz', '/worker-artifact.json': 'worker-artifact.json' };
+  for (const [route, file] of Object.entries(workerFiles)) {
+    router.get(route, (_req, res) => {
+      res.sendFile(file, { root: kit, cacheControl: false }, err => {
+        if (err && !res.headersSent) res.status(503).json({ message: 'This central installation has no complete Windows worker bundle. Update the central from a release containing worker artifacts.' });
+      });
     });
   }
-  router.get('/source.tar.gz', async (_req, res) => {
-    try {
-      // Export tracked source only: never local credentials, config, or caches.
-      const { stdout } = await exec('git', ['archive', '--format=tar.gz', 'HEAD'], { cwd: repoRoot, encoding: 'buffer', maxBuffer: 128 * 1024 * 1024, timeout: 60_000 });
-      res.type('application/gzip').send(stdout);
-    } catch { res.status(503).json({ message: 'Cannot export the installed source revision. This server needs its Git checkout.' }); }
-  });
   router.get('/release/:kind', async (req, res) => {
     const kind = req.params.kind;
-    if (!['desktop', 'linux-cli'].includes(kind)) return res.sendStatus(404);
+    if (kind !== 'desktop') return res.sendStatus(404);
     try {
       const headers = await githubHeaders();
       const releases = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=30`, { headers, signal: AbortSignal.timeout(15_000) });
       if (!releases.ok) throw new Error('Cannot read releases');
       const data = await releases.json() as { draft: boolean; prerelease: boolean; assets: { id: number; name: string; size: number }[] }[];
       const asset = data.filter((release) => !release.draft && !release.prerelease).flatMap((release) => release.assets)
-        .find((asset) => kind === 'desktop' ? isSupportedWindowsInstaller(asset.name) : asset.name === 'gah-linux-x86_64');
+        .find((asset) => isSupportedWindowsInstaller(asset.name));
       if (!asset || asset.size > 128 * 1024 * 1024) throw new Error('Missing or oversized asset');
       const download = await fetch(`https://api.github.com/repos/${repo}/releases/assets/${asset.id}`, { headers: { ...headers, Accept: 'application/octet-stream' }, signal: AbortSignal.timeout(120_000) });
       if (!download.ok) throw new Error('Asset download failed');
       res.type('application/octet-stream').send(Buffer.from(await download.arrayBuffer()));
     } catch {
-      res.status(503).json({ message: 'Cannot download the release. Check the central server’s GitHub access and published desktop 0.1.1+ and Linux x64 CLI assets.' });
+      res.status(503).json({ message: 'Cannot download the release. Check the central server’s GitHub access and the published Windows desktop installer.' });
     }
   });
   return router;

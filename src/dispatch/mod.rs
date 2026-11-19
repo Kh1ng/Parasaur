@@ -9,10 +9,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
-pub mod checkpoints;
-
 mod already_satisfied;
 mod attempts;
+pub mod checkpoints;
 mod claims;
 mod command;
 pub(crate) mod dependencies;
@@ -29,6 +28,7 @@ mod native_plan;
 pub(crate) use native_plan::plan_native;
 mod prior_attempts;
 mod prompts;
+pub(crate) mod publication_recovery;
 mod publish;
 mod repair_context;
 mod repo_inspection;

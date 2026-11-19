@@ -62,6 +62,10 @@ pub(crate) fn improve(
     session_dir: &Path,
     ledger: &mut LedgerEntry,
 ) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    if args.dispatch_reason.as_deref() == Some(crate::dispatch::publication_recovery::REASON) {
+        return crate::dispatch::publication_recovery::run(cfg, profile, args, session_dir, ledger);
+    }
     // Path used by the optional live /usage probe.
     let claude_path = profile
         .claude_path
