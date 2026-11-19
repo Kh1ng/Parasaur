@@ -28,6 +28,8 @@ if [[ ${3:-} == --install ]]; then
   uid=$(id -u "$user")
   cleanup() {
     sudo systemctl stop "user@$uid.service" || true
+    # Xvfb and the desktop launcher start outside the systemd user unit.
+    sudo pkill -KILL -u "$uid" || true
     sudo userdel "$user" || true
     sudo rm -rf -- "$fixture"
   }
@@ -42,7 +44,7 @@ if [[ ${3:-} == --install ]]; then
     XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
     PARASAUR_SMOKE_ACTIVATE=1 xvfb-run -a -s "-screen 0 1600x1000x24" \
     "$fixture/check" "$fixture/AppImage" "$fixture/home/first-window.png" || result=$?
-  for item in first-window.png first-window.log setup-retry.png dashboard.png first-project.png; do
+  for item in accessibility.log first-window.png first-window.log setup-retry.png dashboard.png first-project.png; do
     if sudo test -f "$fixture/home/$item"; then sudo cat "$fixture/home/$item" > "$(dirname "$shot")/$item"; fi
   done
   exit "$result"
@@ -51,11 +53,18 @@ if [ -z "${DISPLAY:-}" ]; then
   exec dbus-run-session -- xvfb-run -a -s "-screen 0 1600x1000x24" "$0" "$appimage" "$shot"
 fi
 if [[ ${PARASAUR_SMOKE_ACTIVATE:-} == 1 ]]; then
-  # Xvfb sets these only in this shell. The separately started systemd user
-  # manager and D-Bus activator must pass them to the accessibility services.
-  dbus-update-activation-environment --systemd DISPLAY XAUTHORITY
-  gdbus call --session --timeout 10 --dest org.a11y.Bus --object-path /org/a11y/bus \
-    --method org.a11y.Bus.GetAddress
+  # Start the accessibility bridge in the Xvfb session that owns DISPLAY and
+  # XAUTHORITY. The fixture's systemd manager started before either existed.
+  bus_log="$(dirname "$shot")/accessibility.log"
+  /usr/libexec/at-spi-bus-launcher --launch-immediately >"$bus_log" 2>&1 &
+  bus_pid=$!
+  if ! gdbus wait --session --timeout 15 org.a11y.Bus ||
+     ! gdbus call --session --timeout 10 --dest org.a11y.Bus --object-path /org/a11y/bus \
+         --method org.a11y.Bus.GetAddress; then
+    cat "$bus_log" >&2
+    echo 'FAIL: Xvfb accessibility bus did not start.' >&2
+    exit 1
+  fi
 fi
 mkdir -p "$(dirname "$shot")"
 log="${shot%.png}.log"
@@ -77,7 +86,7 @@ HOME="$app_home" XDG_CONFIG_HOME="$config" XDG_DATA_HOME="$data" \
   XDG_CACHE_HOME="$profile/cache" XDG_STATE_HOME="$profile/state" TMPDIR="$profile" \
   APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" >"$log" 2>&1 &
 pid=$!
-trap 'pkill -P "$pid" || true; wait "$pid" 2>/dev/null || true; rm -rf "$profile"' EXIT
+trap 'pkill -P "$pid" || true; wait "$pid" 2>/dev/null || true; if [[ -n ${bus_pid:-} ]]; then kill "$bus_pid" 2>/dev/null || true; fi; rm -rf "$profile"' EXIT
 
 # Prints what it found; exits 0 only when onboarding is ready.
 onboarding() {
