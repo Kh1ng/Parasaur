@@ -272,25 +272,33 @@ fn gitlab_mr(profile: &Profile, branch: &str, title: &str, body: &str) -> Result
     // Use the same host-scoped provider CLI session that `gah doctor`
     // validates. Requiring a second GITLAB_PAT environment variable here made
     // a doctor-clean, authenticated profile fail publication with HTTP 401.
-    let out = provider_command("glab")
-        .args([
-            "api",
-            &endpoint,
-            "--hostname",
-            hostname,
-            "--method",
-            "POST",
-            "--raw-field",
-            &source_branch,
-            "--raw-field",
-            &target_branch,
-            "--raw-field",
-            &title,
-            "--raw-field",
-            &description,
-        ])
-        .output()
-        .context("glab api gitlab create mr")?;
+    let mut command = provider_command("glab");
+    command.args([
+        "api",
+        &endpoint,
+        "--hostname",
+        hostname,
+        "--method",
+        "POST",
+        "--raw-field",
+        &source_branch,
+        "--raw-field",
+        &target_branch,
+        "--raw-field",
+        &title,
+        "--raw-field",
+        &description,
+    ]);
+    let mut out = command.output().context("glab api gitlab create mr")?;
+    // The GitLab API can lag behind a push. Only this structured refusal
+    // confirms the POST did not create an MR. Leave lost replies to recovery.
+    for _ in 1..PROVIDER_NETWORK_ATTEMPTS {
+        if out.status.success() || !missing_gitlab_source(&out.stdout) {
+            break;
+        }
+        thread::sleep(provider_network_retry_backoff());
+        out = command.output().context("glab api gitlab create mr")?;
+    }
 
     if !out.status.success() {
         anyhow::bail!(
@@ -302,6 +310,12 @@ fn gitlab_mr(profile: &Profile, branch: &str, title: &str, body: &str) -> Result
     let resp: serde_json::Value =
         serde_json::from_slice(&out.stdout).context("parsing gitlab MR response")?;
     gitlab_mr_result_from_value(&resp)
+}
+
+fn missing_gitlab_source(response: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(response).is_ok_and(|error| {
+        error["message"] == serde_json::json!({"source_branch": ["does not exist"]})
+    })
 }
 
 fn github_mr(profile: &Profile, branch: &str, title: &str, body: &str) -> Result<MrResult> {
