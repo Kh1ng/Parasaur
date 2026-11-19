@@ -30,14 +30,19 @@ interface DispatchNodes {
   local: (work: string, profile?: string, run?: string) => Promise<Receipt>;
 }
 
+export function matchingCancellableWorkers(workers: RunningWorker[], target: Target): RunningWorker[] {
+  const work = canonicalWorkId(target.work_id);
+  return workers.filter(row => row.state === 'running' && row.cancellable
+    && row.work_id && canonicalWorkId(row.work_id) === work
+    && (!target.run_id || row.run_id === target.run_id)
+    && (!target.profile || row.profile === target.profile)
+    && (!target.node_id || row.node_id === target.node_id));
+}
+
 /** Pin a work-only request before relaying it. The executing node checks the live invocation. */
 export async function cancelFactoryDispatch(target: Target, nodes: DispatchNodes): Promise<Receipt> {
   if (!target.node_id && nodes.central) {
-    const workId = canonicalWorkId(target.work_id);
-    const matches = (await nodes.list(target.profile)).filter(row =>
-      row.state === 'running' && row.cancellable && row.work_id && canonicalWorkId(row.work_id) === workId
-      && (!target.run_id || row.run_id === target.run_id)
-      && (!target.profile || row.profile === target.profile));
+    const matches = matchingCancellableWorkers(await nodes.list(target.profile), target);
     if (matches.length > 1) throw Error('Several dispatches match. Select the run to cancel.');
     const [row] = matches;
     if (!row?.work_id) throw Error('No matching dispatch is visible.');

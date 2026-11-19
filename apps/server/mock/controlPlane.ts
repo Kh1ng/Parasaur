@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import cors from 'cors';
 import express, { type Response } from 'express';
+import { cancellationTarget, matchingCancellableWorkers } from '../src/factoryCancellation.js';
 import { WebSocket, WebSocketServer } from 'ws';
 import { DEFAULT_ACTIVITY_NOTIFICATION_PREFERENCES } from '@git-agent-harness/contracts';
 import type {
@@ -221,6 +222,7 @@ interface MockState {
   skillObservations: Record<string, { id: string; version: string }[]>;
   loopRunning: boolean;
   workerSessions: Session[];
+  runningWorkers: RunningWorker[];
   adminUpdate: AdminUpdateState;
   agentVersions: AgentVersionsSnapshot;
   workerUpdates: Map<string, WorkerUpdateStatus>;
@@ -664,6 +666,16 @@ function createState(scenario: MockScenarioName, reset: number, previewOrigin?: 
     skillObservations: { ['fixture\0codex']: [{ id: 'gah-manager', version: '1.0.0' }] },
     loopRunning: true,
     workerSessions: [],
+    runningWorkers: scenario === 'running-workers' ? ['codex', 'claude'].map((backend, index): RunningWorker => ({
+      profile: STATUS_FIXTURE.profile.profile, cancellable: index === 0,
+      run_id: String(1431 + index), work_id: `#${1431 + index}`, mode: 'improve',
+      backend, runner: backend, backend_instance: `${backend}-account`,
+      requested_model: 'requested', model: `routed-${backend}`, actual_model: null,
+      node_id: 'fixture-node', branch: `gah/${1431 + index}`, attempt: 2,
+      started_at: new Date(Date.now() - 60_000).toISOString(),
+      last_activity_at: new Date(Date.now() - (index ? 901_000 : 30_000)).toISOString(),
+      stale_after_seconds: 900, state: index ? 'stale' : 'running'
+    })) : [],
     adminUpdate: structuredClone(MOCK_ADMIN_IDLE),
     agentVersions: { can_update: true, nodes: [{ node_id: 'mock-central', display_name: 'Mock central', auto_update: false,
       updates_enabled: true, error: null, updates: [], versions: [{ backend: 'codex', installed: '0.110.0', latest: '0.120.0',
@@ -1722,16 +1734,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       dispatch_backend_instances: true, backend_instances: MOCK_FACTORY_ACCOUNTS,
       backend_configured: { ...STATUS_FIXTURE.backend_configured, codex: true } };
     if (state.scenario !== 'running-workers') return res.json(status);
-    const workers: RunningWorker[] = ['codex', 'claude'].map((backend, index) => ({
-      run_id: String(1431 + index), work_id: `#${1431 + index}`, mode: 'improve',
-      backend, runner: backend, backend_instance: `${backend}-account`,
-      requested_model: 'requested', model: `routed-${backend}`, actual_model: null,
-      node_id: 'fixture-node', branch: `gah/${1431 + index}`, attempt: 2,
-      started_at: new Date(Date.now() - 60_000).toISOString(),
-      last_activity_at: new Date(Date.now() - (index ? 901_000 : 30_000)).toISOString(),
-      stale_after_seconds: 900, state: index ? 'stale' : 'running'
-    }));
-    return res.json({ ...status, running_workers: workers });
+    return res.json({ ...status, running_workers: state.runningWorkers });
   });
   app.get('/api/quota', (_req, res) => res.json(QUOTA_FIXTURE));
   app.get('/api/registry/quota', (req, res) => res.json({
@@ -1867,6 +1870,15 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     } } satisfies SettingsConfigProfileSummary);
   });
   app.get('/api/loop/status', (_req, res) => res.json({ running: state.loopRunning, ...(state.loopRunning ? { pid: 998 } : {}) }));
+  app.post('/api/dispatch/cancel', (req, res) => {
+    const target = cancellationTarget(req.body);
+    if (!target) return jsonError(res, 400, 'Invalid cancellation', 'Provide a work ID and a complete node selector.');
+    const matches = matchingCancellableWorkers(state.runningWorkers, target);
+    if (matches.length !== 1) return jsonError(res, 409, 'Cancellation unavailable', 'Select one cancellable dispatch.');
+    const [worker] = matches;
+    state.runningWorkers = state.runningWorkers.filter(row => row !== worker);
+    return res.status(202).json({ profile: worker.profile, work_id: worker.work_id, run_id: worker.run_id });
+  });
   app.post('/api/dispatch', (req, res) => {
     const profile = state.profiles.find((profile) => profile.name === bodyString(req.body?.profile));
     if (!profile || !bodyString(req.body?.mode)) return jsonError(res, 400, 'Invalid dispatch', 'Profile and mode are required');
