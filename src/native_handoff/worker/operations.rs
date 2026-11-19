@@ -346,8 +346,11 @@ impl WorkerRun {
         let endpoint = self.central_endpoint(context, "consume")?;
         self.journal.consumption_offered = true;
         self.persist()?;
-        let response =
-            crate::curl_http::request_control(&endpoint, &serde_json::to_string(grant)?, token)?;
+        let response = crate::curl_http::request_start_grant(
+            &endpoint,
+            &serde_json::to_string(grant)?,
+            token,
+        )?;
         let consumed = read_json(&response_body(response)?)?;
         self.enter(&consumed)
     }

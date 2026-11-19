@@ -108,14 +108,15 @@ export class NativeWorker {
   async observe(binding:NativeDispatchBinding):Promise<NativeWorkerObservation> {
     const unknown:NativeWorkerObservation={...binding,state:'unknown'};
     try {
-      const status=await command(this.binary,this.args(binding,'worker-status')) as {binding:NativeDispatchBinding;state:string;holder_invocation:string;capacity_held:boolean};
+      const status=await command(this.binary,this.args(binding,'worker-status')) as {binding:NativeDispatchBinding;state:string;holder_invocation:string;capacity_held:boolean;exited_job_invocation?:string};
       if(!isDeepStrictEqual(status.binding,binding)) return unknown;
       if(status.state==='ready' && status.capacity_held===true && /^[a-f0-9]{32}$/.test(status.holder_invocation)) {
         return {...binding,state:'ready',reservation:{...binding,id:status.holder_invocation,expires_at:new Date(Date.now()+20_000).toISOString()}};
       }
       if(status.state==='running') return {...binding,state:'running'};
       if(status.state==='exited_before_dispatch' && status.capacity_held===true) {
-        return {...binding,state:'exited_before_dispatch',reservation_id:status.holder_invocation};
+        return {...binding,state:'exited_before_dispatch',reservation_id:status.holder_invocation,
+          exited_job_invocation:status.exited_job_invocation};
       }
       const result=await command(this.binary,this.args(binding,'result',true)) as {state:string;receipt_json:string};
       if(result.state==='terminal' && typeof result.receipt_json==='string' && Buffer.byteLength(result.receipt_json)<=8*1024*1024) {
@@ -143,7 +144,8 @@ export class NativeWorker {
       if(typeof body.reservation_id!=='string' || !/^[a-f0-9]{32}$/.test(body.reservation_id)) throw Error('Invalid native reservation');
       const result=await command(this.binary,[...this.args(binding,'release-reservation'),'--reservation-id',body.reservation_id]) as Record<string,unknown>;
       if(!isDeepStrictEqual(result.binding,binding)) throw Error('Native release identity changed');
-      return {...binding,reservation_id:result.reservation_id,capacity_released:result.capacity_released,dispatch_started:result.dispatch_started};
+      return {...binding,reservation_id:result.reservation_id,capacity_released:result.capacity_released,
+        dispatch_started:result.dispatch_started,exited_job_invocation:result.exited_job_invocation};
     }
     if(action==='release-result') {
       const token=this.options.centralToken();if(!token) throw Error('Central credential unavailable');

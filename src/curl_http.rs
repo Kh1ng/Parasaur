@@ -7,9 +7,7 @@ const STATUS_MARKER: &str = "__GAH_HTTP_STATUS__:";
 #[cfg(target_os = "linux")]
 mod control;
 #[cfg(target_os = "linux")]
-pub(crate) use control::request_control;
-#[cfg(target_os = "linux")]
-pub(crate) use control::request_controller;
+pub(crate) use control::{request_control, request_controller, request_start_grant};
 
 pub struct CurlResponse {
     pub status: u16,

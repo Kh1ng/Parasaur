@@ -367,15 +367,20 @@ impl WorkerRun {
         } else {
             serde_json::Value::Null
         };
+        let exited_job = if held && !running {
+            self.unused_launch()
+                .ok()
+                .flatten()
+                .filter(|job| super::host::terminal_job(&self.journal.binding.run_id, job).is_ok())
+        } else {
+            None
+        };
         value["state"] = if held && running {
             "running"
         } else if held && self.journal.phase == Phase::Ready && self.require_uncancelled().is_ok() {
             "ready"
-        } else if held
-            && self.unused_launch().ok().flatten().is_some_and(|job| {
-                super::host::terminal_job(&self.journal.binding.run_id, job).is_ok()
-            })
-        {
+        } else if let Some(job) = exited_job {
+            value["exited_job_invocation"] = job.invocation.as_str().into();
             "exited_before_dispatch"
         } else {
             "unknown"

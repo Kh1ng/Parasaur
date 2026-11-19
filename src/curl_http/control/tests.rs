@@ -91,6 +91,21 @@ fn unknown_length_response_cannot_grow_capture_or_echo_remote_secrets() {
 }
 
 #[test]
+fn slow_start_authorization_can_arrive_within_the_grant_window() {
+    let _guard = crate::test_support::ExecGuard::new();
+    let (url, received, handle) = server(|stream| {
+        thread::sleep(Duration::from_secs(6));
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+            .unwrap();
+    });
+    let response = request_start_grant(&url, "{}", "fixture").unwrap();
+    assert_eq!(response.status, 200);
+    received.recv_timeout(Duration::from_secs(2)).unwrap();
+    handle.join().unwrap();
+}
+
+#[test]
 fn unresponsive_control_peer_has_a_hard_deadline() {
     let _guard = crate::test_support::ExecGuard::new();
     let (stop_tx, stop_rx) = mpsc::channel();

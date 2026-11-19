@@ -31,12 +31,13 @@ export interface NativeClaimBinding {
   context_sha256: string;
 }
 
-/** Worker proof for retiring a reservation that never received a start.
- * It cannot acknowledge a dispatch result or release possible execution. */
+/** Worker proof that capacity was released before dispatch began. When a
+ * wrapper launched, its verified systemd invocation identifies the exit. */
 export interface NativeReservationRelease extends NativeClaimBinding {
   reservation_id: string;
   capacity_released: boolean;
   dispatch_started: boolean;
+  exited_job_invocation?: string;
 }
 
 /** Authenticated worker metadata; no credentials or local executable paths. */

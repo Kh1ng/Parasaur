@@ -217,8 +217,12 @@ impl WorkerRun {
         release.phase = ReleasePhase::Released;
         self.persist_reservation_release(&release)?;
         drop(verifier);
-        Ok(serde_json::json!({"binding":self.journal.binding,
+        let mut proof = serde_json::json!({"binding":self.journal.binding,
             "reservation_id":self.journal.holder_invocation,"capacity_released":true,
-            "execution_authorized":false,"dispatch_started":false}))
+            "execution_authorized":false,"dispatch_started":false});
+        if let Some(job) = self.unused_launch()? {
+            proof["exited_job_invocation"] = job.invocation.as_str().into();
+        }
+        Ok(proof)
     }
 }
