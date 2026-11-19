@@ -49,6 +49,17 @@ pub(crate) fn plan_native(
     let mut runtime = attempts::routing_runtime_state(cfg, &current)?;
     catalog.apply(&args.profile, profile, &catalog.node_id, &mut runtime)?;
     let mut planned = request.clone();
+    ensure!(
+        request.publication_source.is_none(),
+        "Controller cannot supply its own publication source"
+    );
+    if args.dispatch_reason.as_deref() == Some("retry") {
+        let entries = publication_recovery::history(cfg, profile, args)?;
+        if let Some(source) = publication_recovery::source(&entries, args, profile) {
+            publication_recovery::plan(&mut planned, source, &catalog.node_id)?;
+            return Ok(planned);
+        }
+    }
     let metadata = if args.mode == "fix" {
         let target = if args.existing_branch.is_some() {
             work_id

@@ -14,17 +14,17 @@ import { ClaimsService, ClaimConflictError } from './claimsService.js';
 import { NativeDispatchBroker, type NativeAuthorization, type NativeDispatchBinding, type NativeHostReservation, type NativeWorkerObservation, type NativeStartGrant, type NativeOperationRequest, type NativeWorkerRelease } from './nativeDispatchBroker.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-function fixture() {
+function fixture(dispatch_reason: string | null = null) {
   let now = Date.parse('2026-11-06T19:00:00Z');
   const root = mkdtempSync(join(tmpdir(), 'gah-native-broker-')); chmodSync(root, 0o700);
   const run = randomUUID(); const runPath = join(root, run); mkdirSync(runPath, { mode: 0o700 });
   const context = join(runPath, 'context'); mkdirSync(context, { mode: 0o700 });
-  const request = { args: { run_id: run, profile: 'gah', work_id: '#1525', mode: 'fix', backend: 'opencode', model: 'fixture-model' } };
+  const request = { args: { run_id: run, profile: 'gah', work_id: '#1525', mode: 'fix', dispatch_reason, backend: 'opencode', model: 'fixture-model' } };
   const content: Record<string,string> = { 'request.json': JSON.stringify(request), 'policy.json': JSON.stringify({ fields: { repo_id: 'fixture', repo: 'fixture/repo' } }), 'history-0000.jsonl': '' };
   const files = Object.fromEntries(Object.entries(content).map(([name, bytes]) => { writeFileSync(join(context, name), bytes, { mode: 0o600 }); return [name, { sha256: hash(bytes), bytes: Buffer.byteLength(bytes) }]; }));
   const manifest = JSON.stringify({ version: 2, node_id: 'worker', run_id: run, profile: 'gah', central_url: 'https://central.invalid', history_chunks: 1, files });
   writeFileSync(join(context, 'manifest.json'), manifest, { mode: 0o600 });
-  const binding: NativeDispatchBinding = { run_id: run, node_id: 'worker', context_sha256: hash(manifest), profile: 'gah', repo_id: 'fixture', repo: 'fixture/repo', work_id: '#1525', mode: 'fix', backend: 'opencode', model: 'fixture-model', backend_instance: null, branch: null, review_generation: null, dispatch_reason: null };
+  const binding: NativeDispatchBinding = { run_id: run, node_id: 'worker', context_sha256: hash(manifest), profile: 'gah', repo_id: 'fixture', repo: 'fixture/repo', work_id: '#1525', mode: 'fix', backend: 'opencode', model: 'fixture-model', backend_instance: null, branch: null, review_generation: null, dispatch_reason };
   writeFileSync(join(context, 'binding.json'), JSON.stringify(binding), { mode: 0o600 });
   const claimsPath = join(root, 'claims.json'); let claims = new ClaimsService(claimsPath, () => now);
   let stages = 0; let starts = 0; let releases = 0; let imports = 0; let resultReleases = 0;
@@ -319,6 +319,16 @@ test('prepared-offer HTTP and run observation remain owner-only and never return
 
 const operation=(f:ReturnType<typeof fixture>,sequence=1,purpose:NativeOperationRequest['purpose']='attempt'):NativeOperationRequest=>({
   run_id:f.run,node_id:f.binding.node_id,context_sha256:f.binding.context_sha256,reservation_id:'reservation',sequence,purpose,
+});
+
+test('publication recovery reserves issue intake and cannot acquire a backend or claim operation', async () => {
+  const f = fixture('recover_publication');
+  await f.broker.offerPrepared(f.run, f.binding.context_sha256);
+  assert.equal(f.broker.heldWork('gah')[0]?.reserves_intake, true);
+  for (const purpose of ['attempt','claim'] as const) {
+    assert.deepEqual(await f.broker.authorizeOperation(operation(f,1,purpose)), {allowed:false,reason:'invalid_operation'});
+  }
+  assert.equal((await f.broker.authorizeOperation(operation(f,1,'publish'))).allowed, true);
 });
 
 test('provider claim writes advance an independent durable sequence during a backend attempt',async()=>{

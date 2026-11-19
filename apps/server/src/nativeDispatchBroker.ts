@@ -220,7 +220,7 @@ export class NativeDispatchBroker {
     return leases.map(lease=>{
       const hold=lease.native_handoff!;let reserves_intake=true;
       try {const binding=this.get(hold.run_id).binding;
-        reserves_intake=binding.mode==='fix' && binding.branch===null && ['initial','retry','escalate'].includes(binding.dispatch_reason??'');
+        reserves_intake=binding.mode==='fix' && binding.branch===null && ['initial','retry','escalate','recover_publication'].includes(binding.dispatch_reason??'');
       }catch{/* Unknown native work still reserves intake conservatively. */}
       return {profile,work_id:lease.work_id,run_id:hold.run_id,node_id:hold.node_id,context_sha256:hold.context_sha256,reserves_intake};
     });
@@ -350,7 +350,8 @@ export class NativeDispatchBroker {
 
   private operationMatches(journal: Journal, request: NativeOperationRequest): boolean {
     const previous=request.purpose==='claim'?journal.last_claim_operation:journal.last_operation;
-    return journal.start_offered && !!journal.start_grant?.consumed_at && !journal.terminal_observed
+    return (journal.binding.dispatch_reason !== 'recover_publication' || request.purpose === 'publish')
+      && journal.start_offered && !!journal.start_grant?.consumed_at && !journal.terminal_observed
       && journal.phase!=='terminal' && same(journal.binding,request)
       && journal.start_grant.reservation.id===request.reservation_id
       && this.now()>=Date.parse(journal.start_grant.consumed_at)

@@ -974,3 +974,25 @@ fn push_probe_accepts_a_reachable_remote_and_reports_why_another_refuses() {
         "{refusal:#}"
     );
 }
+
+#[test]
+fn preserved_publication_replays_same_sha_and_refuses_moved_branch() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("repo");
+    fs::create_dir(&repo).unwrap();
+    init_bare_repo_with_main(&repo);
+    let origin = add_bare_origin(&repo);
+    let url = origin.to_str().unwrap();
+    let initial = git(&["rev-parse", "HEAD"], &repo).unwrap();
+    let branch = "gah/preserved";
+    let publish = |sha| publish_preserved_commit(&repo, branch, "main", sha, url, "");
+    publish(&initial).unwrap();
+    publish(&initial).unwrap();
+    git(&["commit", "--allow-empty", "-m", "different"], &repo).unwrap();
+    let newer = git(&["rev-parse", "HEAD"], &repo).unwrap();
+    assert!(publish(&newer).is_err());
+    assert_eq!(
+        git(&["rev-parse", "refs/heads/gah/preserved"], &origin).unwrap(),
+        initial
+    );
+}

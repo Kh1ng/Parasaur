@@ -239,7 +239,7 @@ pub(crate) fn with_repo_git_lock<T>(
     operation()
 }
 
-fn fetch_origin(repo: &Path) -> Result<()> {
+pub(crate) fn fetch_origin(repo: &Path) -> Result<()> {
     let lock = lock_repo_git_state(repo)?;
     fetch_origin_locked(&lock, repo)
 }
@@ -957,6 +957,40 @@ pub fn push_branch(
     // resolve to a branch the guard above did not see.
     let refspec = format!("refs/heads/{name}:refs/heads/{name}");
     push_branch_with_executable(Path::new("git"), worktree, &refspec, push_url, pat)
+}
+
+/// Publish this exact object only to an absent branch. An identical remote
+/// ref is an idempotent success, including after a lost push response.
+pub(crate) fn publish_preserved_commit(
+    repo: &Path,
+    branch: &str,
+    target: &str,
+    sha: &str,
+    url: &str,
+    pat: &str,
+) -> Result<()> {
+    let name = ensure_publishable_branch(branch, target)?;
+    anyhow::ensure!(
+        sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit()),
+        "Invalid preserved commit"
+    );
+    let reference = format!("refs/heads/{name}");
+    let askpass = write_askpass()?;
+    retry_transient_git_network("push", || {
+        let mut cmd = push_command(Path::new("git"), repo, url, pat, &askpass);
+        cmd.args([
+            format!("--force-with-lease={reference}:"),
+            format!("{sha}:{reference}"),
+        ]);
+        let child = spawn_git(&mut cmd, "git push preserved commit")?;
+        let out = wait_with_timeout(child, "git push preserved commit")?;
+        anyhow::ensure!(
+            out.status.success(),
+            "Preserved commit push refused: {}",
+            crate::redact::redact(&String::from_utf8_lossy(&out.stderr)).trim()
+        );
+        Ok(())
+    })
 }
 
 /// `git push -q <push_url>`, authenticating with `token` through `askpass`.

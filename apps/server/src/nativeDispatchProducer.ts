@@ -101,7 +101,7 @@ export class NativeDispatchProducer {
       try {
         const catalog=await this.deps.transport.catalog({node_id:node.node_id,profile:scope.profile,repo_id:profile.repo_id,repo:profile.repo},AbortSignal.timeout(5000));
         const planned=await (this.deps.plan??runPlanNativeJob)(request,catalog);
-        if(identity(planned).run!==scope.run || planned.args.profile!==scope.profile || planned.args.work_id!==scope.work) throw Error('Native route planner changed work identity');
+        if(identity({args:planned.args}).run!==scope.run || planned.args.profile!==scope.profile || planned.args.work_id!==scope.work) throw Error('Native route planner changed work identity');
         selected={node,request:planned};break;
       } catch (error) {
         // Only a compatible worker with a canonical route may receive context.

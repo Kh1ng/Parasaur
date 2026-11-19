@@ -29,6 +29,7 @@ mod native_plan;
 pub(crate) use native_plan::plan_native;
 mod prior_attempts;
 mod prompts;
+pub(crate) mod publication_recovery;
 mod publish;
 mod repair_context;
 mod repo_inspection;
@@ -221,6 +222,12 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
     println!("Session: {}", session_dir.display());
 
     let result = match JobKind::parse(&args.mode) {
+        #[cfg(target_os = "linux")]
+        Ok(JobKind::Fix)
+            if args.dispatch_reason.as_deref() == Some(publication_recovery::REASON) =>
+        {
+            publication_recovery::run(cfg, profile, args, &session_dir, &mut ledger)
+        }
         Ok(JobKind::Improve | JobKind::Fix) => {
             workflows::run_improve(cfg, profile, args, &session_dir, &mut ledger)
         }
