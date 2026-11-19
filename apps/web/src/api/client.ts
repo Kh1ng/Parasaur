@@ -440,7 +440,7 @@ export interface GahDataSource {
   startPlanningChat(request: PlanningChatRequest): Promise<ChatSessionSummary>;
   getAdminUpdatePending(): Promise<AdminUpdatePendingInfo>;
   getAdminUpdateStatus(): Promise<AdminUpdateState>;
-  startAdminUpdate(mode?: 'release' | 'source'): Promise<AdminUpdateState>;
+  startAdminUpdate(mode?: 'release' | 'source', expectedCommit?: string | null): Promise<AdminUpdateState>;
   getReleaseStatus(): Promise<ReleaseChannelStatus>;
   getNodeUpdateStatus(nodeId: string): Promise<WorkerUpdateStatus>;
   startNodeUpdate(nodeId: string): Promise<WorkerUpdateStatus>;
@@ -970,7 +970,7 @@ export const gahApi: GahDataSource = {
       { enabled }
     );
   },
-  async startAdminUpdate(mode: 'release' | 'source' = 'source') {
+  async startAdminUpdate(mode: 'release' | 'source' = 'source', expectedCommit?: string | null) {
     // Like startLoop: 202 (started) and 409 (already running) both carry
     // the current state as their body, not just an error to throw. Any
     // other non-ok status (404 disabled, 403 unauthenticated, 500) is a
@@ -980,7 +980,7 @@ export const gahApi: GahDataSource = {
     const res = await fetch(url.toString(), {
       method: 'POST',
       headers: { ...mutationHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode })
+      body: JSON.stringify({ mode, expected_commit: expectedCommit ?? undefined })
     });
     if (res.status === 202 || res.status === 409) {
       return (await res.json()) as AdminUpdateState;

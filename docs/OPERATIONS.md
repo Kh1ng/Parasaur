@@ -89,6 +89,15 @@ config file. With no config file, `PARASAUR_DESKTOP_UPDATER_PUBKEY` and optional
 Provisioning the key, publishing signed platform artifacts and completing a
 download/install/restart check are separate release steps.
 
+Settings shows the running server's build revision next to the published
+revision. When two edge builds share a version, Parasaur offers the update if
+the published commit descends from the running build. A build from modified or
+unversioned sources shows an unverified comparison. `PARASAUR_RELEASE_MANIFEST`
+can pin a local file or URL for both the dashboard check and installation.
+Selecting a build saves its manifest and artifact checksums alongside the
+admin update state. If the feed moves before the install starts, the dashboard
+refreshes the offer for the operator.
+
 The server bundle embeds compiled `contracts` and `shared` workspace packages
 inside `apps/server/dist/node_modules`, so installation does not depend on
 ignored workspace build outputs. The bundle builder stages service-readable

@@ -138,7 +138,8 @@ test('startAdminUpdate pulls and confirms the update with ignored stdin, pins th
     // Written via temp-file + rename (not truncated in place), so the file
     // on disk is always valid, complete JSON, and mode 0600 (not world/group
     // readable -- build output can include repo paths/command args).
-    assert.equal(statSync(statePath).mode & 0o777, 0o600);
+    // Windows inherits the user's directory ACL. Its stat mode only exposes the read-only bit.
+    if (process.platform !== 'win32') assert.equal(statSync(statePath).mode & 0o777, 0o600);
     assert.deepEqual(JSON.parse(readFileSync(statePath, 'utf8')), finalState);
   });
 });
@@ -205,7 +206,9 @@ test('startAdminUpdate release mode appends --from-release and records the mode 
       '--role',
       'central',
       '--restart-server',
-      '--from-release'
+      '--from-release',
+      '--release-manifest',
+      'https://github.com/Kh1ng/Parasaur/releases/download/edge/edge-manifest.json'
     ]);
     assert.equal(result.state.mode, 'release');
 
@@ -213,6 +216,31 @@ test('startAdminUpdate release mode appends --from-release and records the mode 
     const finalState = readAdminUpdateState();
     assert.equal(finalState.status, 'success');
     assert.equal(finalState.mode, 'release');
+  });
+});
+
+test('each selected release reaches the CLI with its own manifest and checksums', () => {
+  withStatePath(() => {
+    const receipts: string[] = [];
+    const child = fakeChildProcess(process.pid);
+    const spawnFn = ((_bin: string, args: string[]) => {
+      const option = args.indexOf('--release-manifest');
+      assert.ok(args.includes('--from-release') && option > 0);
+      receipts.push(args[option + 1]);
+      return child;
+    }) as unknown as typeof spawn;
+    const manifests = ['a', 'b'].map(letter => JSON.stringify({
+      commit: letter.repeat(40), assets: [{ name: 'gah', sha256: letter.repeat(64) }]
+    }));
+    for (const selectedManifest of manifests) {
+      assert.ok(startAdminUpdate({ mode: 'release', selectedManifest, spawnFn }).started);
+      child.emit('close', 0);
+    }
+    assert.notEqual(receipts[0], receipts[1]);
+    assert.deepEqual(receipts.map(path => readFileSync(path, 'utf8')), manifests);
+    if (process.platform !== 'win32') {
+      for (const path of receipts) assert.equal(statSync(path).mode & 0o777, 0o600);
+    }
   });
 });
 
