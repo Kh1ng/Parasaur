@@ -364,7 +364,7 @@ jobs:
             --title "Parasaur edge — ${version} ($(echo "$HEAD_SHA" | cut -c1-10))" \
             --notes "Automatic edge-channel build of main at $HEAD_SHA.
 
-          - edge-manifest.json lists every artifact with its SHA-256; this is what \`gah update --from-release\` installs from.
+          - edge-manifest.json provides the CLI, MCP server and server bundle checksums for \`gah update --from-release\`.
           - latest.json is the signed Tauri updater feed for the desktop app (present when the signing key is configured).
           - Install with: gah update --from-release" \
             --repo "$GITHUB_REPOSITORY"

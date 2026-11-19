@@ -33,13 +33,14 @@ Provider CLIs use separate authentication inside WSL. See the [Windows tester gu
 
 ### Linux desktop and standalone dashboard (AppImage)
 
+The x86-64 AppImage on the [edge release](https://github.com/Kh1ng/Parasaur/releases/tag/edge) includes the local dashboard and server. Download the `.AppImage` in your browser or use the GitHub CLI.
+
 ```bash
-gh release download --repo Kh1ng/Parasaur --pattern '*.AppImage' --output GAH-Worker.AppImage
+gh release download edge --repo Kh1ng/Parasaur --pattern '*.AppImage' --output GAH-Worker.AppImage
 chmod +x GAH-Worker.AppImage && ./GAH-Worker.AppImage
 ```
 
-On x86-64 Linux, an AppImage containing the standalone runtime can install the
-dashboard from its connection screen. Select **Set up standalone**. The app
+Select **Set up standalone** on the connection screen. The app
 starts a user service on `127.0.0.1:3773` and opens the dashboard when it is
 healthy. Open the newer AppImage and select **Start or update standalone** to
 update it. Existing repositories, settings and server state stay in your
