@@ -86,3 +86,42 @@ test('new profiles use the explicitly entered ID and retain input on failure', a
   await expect(page.getByRole('alert')).toContainText('Create unavailable');
   await expect(page.getByLabel('Profile Name (ID) *', { exact: true })).toHaveValue('explicit-id');
 });
+
+test('GitLab local checkouts save the project ID and self-hosted API URL', async ({ page }) => {
+  let created: Record<string, string> | undefined;
+  let updated: unknown;
+  await page.route('**/api/profiles', async route => {
+    if (route.request().method() === 'POST') {
+      created = route.request().postDataJSON();
+      return route.fulfill({ status: 201, json: { success: true } });
+    }
+    return route.fulfill({ json: created ? [created] : [] });
+  });
+  await page.route('**/api/profiles/lab', async route => {
+    if (route.request().method() !== 'PATCH') return route.fallback();
+    updated = route.request().postDataJSON();
+    return route.fulfill({ json: { success: true } });
+  });
+  await page.goto('/?page=profile');
+  await page.getByRole('button', { name: 'Add Profile', exact: true }).click();
+  await page.getByLabel('Provider *', { exact: true }).selectOption('gitlab');
+  for (const [label, value] of [['Display Name *', 'Lab checkout'], ['Profile Name (ID) *', 'lab'], ['Repository *', 'team/lab'],
+    ['Local Path *', '/srv/lab'], ['Artifact Root *', '/srv/artifacts'], ['GitLab project ID', '10']]) {
+    await page.getByLabel(label, { exact: true }).fill(value);
+  }
+  const api = page.getByLabel('GitLab API URL', { exact: true });
+  const add = page.getByRole('button', { name: 'Add Profile', exact: true }).last();
+  await api.fill('http://operator:example@forge.test/api/v4');
+  await add.click();
+  expect(await api.evaluate(el => (el as HTMLInputElement).validity.patternMismatch)).toBe(true);
+  expect(created).toBeUndefined();
+  await api.fill('http://forge.test:8080/api/v4');
+  await add.click();
+  await expect.poll(() => created).toMatchObject({ provider: 'gitlab', provider_api_base: 'http://forge.test:8080/api/v4', provider_project_id: '10' });
+  await page.getByRole('button', { name: 'Edit profile', exact: true }).click();
+  await expect(api).toHaveValue('http://forge.test:8080/api/v4');
+  await expect(page.getByLabel('GitLab project ID', { exact: true })).toHaveValue('10');
+  await page.getByLabel('GitLab project ID', { exact: true }).fill('11');
+  await page.getByRole('button', { name: 'Update Profile' }).click();
+  await expect.poll(() => updated).toEqual({ provider_project_id: '11' });
+});

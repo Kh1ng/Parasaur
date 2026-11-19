@@ -526,8 +526,14 @@ impl Profile {
     pub fn push_url(&self) -> Result<String> {
         match self.provider_kind() {
             Ok(ProviderKind::Gitlab) => {
-                let base = self.gitlab_push_base()?;
-                Ok(format!("{}/{}", base, normalize_repo_path(&self.repo)))
+                let mut base = self.gitlab_web_base()?;
+                base.set_username("oauth2")
+                    .map_err(|_| anyhow::anyhow!("invalid GitLab host"))?;
+                Ok(format!(
+                    "{}/{}",
+                    base.as_str().trim_end_matches('/'),
+                    normalize_repo_path(&self.repo)
+                ))
             }
             Ok(ProviderKind::Github) => Ok(format!(
                 "https://github.com/{}",
@@ -545,34 +551,44 @@ impl Profile {
                 self.repo.trim_matches('/')
             )),
             Ok(ProviderKind::Gitlab) => {
-                let base = self.gitlab_push_base().ok()?;
-                let host = base.split_once('@').map(|(_, host)| host).unwrap_or(&base);
-                Some(format!("https://{}/{}", host, self.repo.trim_matches('/')))
+                let base = self.gitlab_web_base().ok()?;
+                Some(format!(
+                    "{}/{}",
+                    base.as_str().trim_end_matches('/'),
+                    self.repo.trim_matches('/')
+                ))
             }
             Err(_) => None,
         }
     }
 
-    fn gitlab_push_base(&self) -> Result<String> {
-        let base = self
-            .provider_api_base
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("profile missing provider_api_base for gitlab"))?
-            .trim();
-        if base.is_empty() {
-            anyhow::bail!("profile missing provider_api_base for gitlab");
-        }
+    /// Credential-free endpoint suitable for the public profile listing and repository links.
+    pub(crate) fn gitlab_api_url(&self) -> Result<url::Url> {
+        let base = self.provider_api_base.as_deref().unwrap_or("").trim();
+        let (scheme, address) = base.split_once("://").unwrap_or(("https", base));
+        anyhow::ensure!(
+            !address.is_empty() && !address.starts_with('/'),
+            "invalid or missing GitLab API URL"
+        );
+        let url = url::Url::parse(&format!("{scheme}://{address}"))?;
+        anyhow::ensure!(
+            matches!(url.scheme(), "http" | "https")
+                && url.has_host()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none(),
+            "GitLab API URL must contain a host and no credentials, query or fragment"
+        );
+        Ok(url)
+    }
 
-        let trimmed = base.trim_end_matches('/');
-        let without_api = trimmed.strip_suffix("/api/v4").unwrap_or(trimmed);
-        let (scheme, rest) = without_api
-            .split_once("://")
-            .unwrap_or(("https", without_api));
-        let host = rest.split('/').next().unwrap_or("").trim_matches('/');
-        if host.is_empty() {
-            anyhow::bail!("invalid provider_api_base for gitlab: {}", base);
-        }
-        Ok(format!("{}://oauth2@{}", scheme, host))
+    fn gitlab_web_base(&self) -> Result<url::Url> {
+        let mut url = self.gitlab_api_url()?;
+        let path = url.path().trim_end_matches('/');
+        let root = path.strip_suffix("/api/v4").unwrap_or(path).to_owned();
+        url.set_path(&root);
+        Ok(url)
     }
 }
 

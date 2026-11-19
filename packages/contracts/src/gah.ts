@@ -909,6 +909,9 @@ export interface ProfileSummary {
    * the provider isn't recognized or a self-hosted gitlab is missing
    * provider_api_base. */
   web_url: string | null;
+  /** Absent on older nodes. API URLs containing credentials are omitted from the listing. */
+  provider_api_base?: string | null;
+  provider_project_id?: string | null;
   /** Max concurrent tickets `gah loop` may run for this profile (null =
    * unset, which the harness treats as 1). */
   max_parallel_workers: number | null;

@@ -233,6 +233,31 @@ fn web_url_gitlab_uses_self_hosted_domain_without_credentials_or_git_suffix() {
 }
 
 #[test]
+fn gitlab_links_preserve_the_configured_http_origin_and_installation_path() {
+    let profile = gitlab_profile(Some("http://forge.test:8080/gitlab/api/v4/"));
+    assert_eq!(
+        profile.web_url().as_deref(),
+        Some("http://forge.test:8080/gitlab/group/repo")
+    );
+    assert_eq!(
+        profile.push_url().unwrap(),
+        "http://oauth2@forge.test:8080/gitlab/group/repo.git"
+    );
+}
+
+#[test]
+fn gitlab_profile_listing_omits_credentialed_endpoints() {
+    for base in [
+        "https://user:example@forge.test/api/v4",
+        "https://forge.test/api/v4?token=example",
+    ] {
+        let profile = gitlab_profile(Some(base));
+        assert!(profile.gitlab_api_url().is_err());
+        assert!(profile.web_url().is_none());
+    }
+}
+
+#[test]
 fn web_url_none_when_provider_unrecognized_or_gitlab_misconfigured() {
     let mut profile = gitlab_profile(None);
     assert!(profile.web_url().is_none());
