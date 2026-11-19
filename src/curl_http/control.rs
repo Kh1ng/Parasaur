@@ -14,6 +14,13 @@ pub(crate) fn request_control(url: &str, body: &str, token: &str) -> Result<Curl
     request_bounded(url, body, token, 16 * 1024, 5)
 }
 
+/// Central rechecks live policy before consuming a ten-second start grant.
+/// Let the reply arrive within that window. The worker checks the grant's
+/// expiry again before entering execution and never repeats this request.
+pub(crate) fn request_start_grant(url: &str, body: &str, token: &str) -> Result<CurlResponse> {
+    request_bounded(url, body, token, 16 * 1024, 10)
+}
+
 /// Preparation may stream a complete history before acknowledging ownership.
 /// A lost reply still cannot activate that dormant reservation.
 pub(crate) fn request_controller(url: &str, body: &str, token: &str) -> Result<CurlResponse> {

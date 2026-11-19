@@ -5,6 +5,8 @@ Uses disposable configuration and units, real host admission settings and kernel
 locks. No model, forge, controller or installed service is invoked/reconfigured.
 Requires a unified cgroup user manager with systemd-notify --fd (systemd 254+)
 and enough real headroom for the default 4 GiB implementation reservation.
+Pass "http-lost-consume <node> <compiled server dist>" to exercise a consumed
+start whose HTTP reply is lost, followed by a lost capacity-release reply.
 """
 import fcntl
 import datetime
@@ -12,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -56,7 +59,7 @@ def empty(group):
 def main():
     binary = Path(sys.argv[1]).resolve(strict=True)
     mode = sys.argv[2] if len(sys.argv) > 2 else 'running'
-    assert mode in ('running', 'release-unused', 'release-unused-lost-reply', 'release-unused-broker', 'http-broker')
+    assert mode in ('running', 'release-unused', 'release-unused-lost-reply', 'release-unused-broker', 'http-broker', 'http-lost-consume')
     assert Path('/sys/fs/cgroup/cgroup.controllers').exists()
     # Read-only inventory before the fixture. Never clean another worker's file.
     runtime = Path(os.environ['XDG_RUNTIME_DIR'])
@@ -65,7 +68,7 @@ def main():
     run_id = str(uuid.uuid4())
     holder = f'gah-native-capacity-{run_id}.service'
     job = f'gah-native-job-{run_id}.service'
-    with tempfile.TemporaryDirectory(prefix='parasaur-native-host-', dir=Path.home() / '.cache') as directory:
+    with tempfile.TemporaryDirectory(prefix='parasaur-native-host-', dir=Path.home() / '.cache') as directory, socket.socket() as listener:
         root = Path(directory)
         repo = root / 'repo'
         repo.mkdir()
@@ -73,7 +76,12 @@ def main():
         executable = root / 'codex'
         executable.write_text(f'#!/bin/sh\ntouch {canary}\nexit 91\n')
         executable.chmod(0o700)
-        common = f'''registry_central_url = "https://native-host-fixture.invalid"
+        origin = 'https://native-host-fixture.invalid'
+        if mode == 'http-lost-consume':
+            listener.bind(('127.0.0.1', 0))
+            listener.listen()
+            origin = f'http://127.0.0.1:{listener.getsockname()[1]}'
+        common = f'''registry_central_url = "{origin}"
 artifact_root = {json.dumps(str(root / 'artifacts'))}
 [profiles.fixture]
 display_name = "Native host fixture"
@@ -110,14 +118,19 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
         context.parent.mkdir(mode=0o700)
         binding = json.loads(run(str(binary), 'native-handoff', 'prepare', '--request-file', str(request),
                                  '--output', str(context), '--node-id', 'native-host-fixture',
-                                 '--central-url', 'https://native-host-fixture.invalid',
+                                 '--central-url', origin,
                                  '--config-path', str(central), env=environment).stdout)
-        if mode == 'http-broker':
+        if mode in ('http-broker', 'http-lost-consume'):
             expected = root / 'binding.json'
             expected.write_text(json.dumps(binding))
             expected.chmod(0o600)
             probe = Path(__file__).with_name('native_worker_http.mjs')
-            result = run(sys.argv[3], str(probe), sys.argv[4], str(binary), str(root), env=environment, check=False)
+            args = [sys.argv[3], str(probe), sys.argv[4], str(binary), str(root)]
+            descriptors = ()
+            if mode == 'http-lost-consume':
+                descriptors = (listener.fileno(),)
+                args.append(str(listener.fileno()))
+            result = subprocess.run(args, env=environment, pass_fds=descriptors, capture_output=True, text=True, timeout=45)
             assert result.returncode == 0, result.stderr
             report = json.loads(result.stdout)
             assert report['passed'] and not canary.exists()

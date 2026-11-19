@@ -31,7 +31,7 @@ function fixture(dispatch_reason: string | null = null) {
   const reservation = (): NativeHostReservation => ({ ...binding, id: 'reservation', expires_at: new Date(now + 20_000).toISOString() });
   let observation: NativeWorkerObservation = { ...binding, state: 'ready', reservation: reservation() };
   let authorize: () => Promise<NativeAuthorization> = async () => ({ allowed: true });
-  let grant: NativeStartGrant | undefined; let consume = true;
+  let grant: NativeStartGrant | undefined; let consume = true; let loseConsumedReply = false;
   let stageFails = false; let startFails = false; let importFails = false; let observeFails = false; let stageHangs = false; let timeout=5000;
   let release: ((result: NativeWorkerRelease)=>Promise<NativeWorkerRelease>) = async result=>result;
   let cancel: ((result: NativeReservationRelease)=>Promise<NativeReservationRelease>) = async result=>result;
@@ -41,12 +41,20 @@ function fixture(dispatch_reason: string | null = null) {
     authorizeContinuation: () => authorize(),
     transport: {
       async stage() { stages++; assert.equal(JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8')).stage_offered,true); if (stageHangs) return new Promise<NativeWorkerObservation>(() => undefined); if (stageFails) throw Error('PRIVATE_STAGE_TOKEN'); return observation; },
-      async start(_binding: NativeDispatchBinding, offered: NativeStartGrant) { starts++; grant = offered; assert.equal(JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8')).start_offered,true); if (startFails) throw Error('PRIVATE_START_TOKEN'); if (consume && !(await broker.consumeStartGrant(offered)).allowed) throw Error('Start authority refused'); observation = { ...binding,state: 'running' }; return observation; },
+      async start(_binding: NativeDispatchBinding, offered: NativeStartGrant) {
+        starts++; grant = offered;
+        assert.equal(JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8')).start_offered,true);
+        if (startFails) throw Error('PRIVATE_START_TOKEN');
+        if (consume && !(await broker.consumeStartGrant(offered)).allowed) throw Error('Start authority refused');
+        if (loseConsumedReply) throw Error('Worker lost the consumption reply');
+        observation = { ...binding,state: 'running' }; return observation;
+      },
       async observe() { if (observeFails) throw Error('PRIVATE_OBSERVATION_TOKEN'); return observation; },
       async releaseReservation(_binding:NativeDispatchBinding,held:NativeHostReservation) {
         releases++;
         const journal=JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8'));
-        assert.equal(journal.phase,'cancelling'); assert.equal(journal.start_grant?.consumed_at,undefined);
+        assert.equal(journal.phase,'cancelling');
+        if(journal.start_grant?.consumed_at) assert.ok(journal.reservation_release.exited_job_invocation);
         assert.ok(journal.reservation_release);assert.ok(claims.getLease('gah','#1525')?.native_handoff);
         return cancel({...binding,reservation_id:held.id,capacity_released:true,dispatch_started:false});
       },
@@ -67,6 +75,7 @@ function fixture(dispatch_reason: string | null = null) {
     release(value:typeof release) {release=value;},
     cancel(value:typeof cancel) {cancel=value;},
     get grant() { assert.ok(grant); return structuredClone(grant); }, skipConsumption() { consume = false; },
+    dropConsumptionReply() { loseConsumedReply = true; },
     observe(value: NativeWorkerObservation) { observation = value; },
     failStage() { stageFails = true; }, failStart() { startFails = true; }, failImport() { importFails = true; }, recoverImport() { importFails = false; }, failObserve() { observeFails = true; },
     hangStage() { stageHangs=true; timeout=5; broker=new NativeDispatchBroker(deps()); },
@@ -99,14 +108,75 @@ test('a refused start retires only after expiry, matching wrapper exit and confi
   assert.equal(f.imports, 0);
 });
 
-test('wrapper exit cannot cancel a consumed grant after a lost reply', async () => {
+test('an observed running job cannot be retired as an unused start after reload', async () => {
   const f = fixture();
   await f.broker.offerPrepared(f.run, f.binding.context_sha256);
   f.advance();
-  f.observe({...f.binding,state:'exited_before_dispatch',reservation_id:f.grant.reservation_id});
+  f.observe({...f.binding,state:'unknown'});
+  await f.broker.reconcile(f.run);
+  f.observe({...f.binding,state:'exited_before_dispatch',reservation_id:f.grant.reservation_id,exited_job_invocation:'a'.repeat(32)});
   assert.equal((await f.reload().reconcile(f.run)).phase, 'reconciling');
   assert.ok(f.claims.getLease('gah','#1525'));
   assert.equal(f.releases, 0);
+});
+
+test('a lost start acknowledgement retires only after matching exit and release proofs', async () => {
+  const f = fixture();
+  f.dropConsumptionReply();
+  const offered = await f.broker.offerPrepared(f.run, f.binding.context_sha256);
+  assert.equal(offered.phase, 'reconciling');
+  assert.ok(offered.grant_consumed_at);
+  const exit = {...f.binding, state:'exited_before_dispatch' as const, reservation_id:f.grant.reservation_id};
+  const invocation = 'b'.repeat(32);
+  f.observe({...exit, exited_job_invocation:invocation});
+  assert.equal((await f.broker.reconcile(f.run)).phase, 'reconciling');
+  f.advance();
+  f.observe({...exit, exited_job_invocation:invocation + '\n'});
+  assert.equal((await f.broker.reconcile(f.run)).phase, 'reconciling');
+  f.observe(exit);
+  assert.equal((await f.reload().reconcile(f.run)).phase, 'reconciling');
+  assert.equal(f.releases, 0);
+  f.observe({...exit, exited_job_invocation:invocation});
+  f.cancel(async proof => ({...proof, exited_job_invocation:'c'.repeat(32)}));
+  const held = await f.broker.reconcile(f.run);
+  assert.equal(held.reservation_release?.reason, 'worker_release_mismatch');
+  assert.ok(f.claims.getLease('gah','#1525'));
+  assert.equal((await f.broker.authorizeOperation(operation(f))).allowed, false);
+  f.cancel(async proof => ({...proof, exited_job_invocation:invocation}));
+  const retired = await f.reload().reconcile(f.run);
+  assert.equal(retired.phase, 'cancelled');
+  assert.equal(retired.reservation_release?.proof?.exited_job_invocation, invocation);
+  assert.equal(f.reload().get(f.run).phase, 'cancelled');
+  assert.equal(f.claims.getLease('gah','#1525'), undefined);
+  assert.equal(f.starts, 1);
+  assert.equal(f.imports, 0);
+});
+
+test('a running claim written before the broker journal survives repeated reconciliation after upgrade', async () => {
+  const f = fixture();
+  f.dropConsumptionReply();
+  await f.broker.offerPrepared(f.run, f.binding.context_sha256);
+  f.claims.observeNative('central', 'gah', '#1525', f.binding, 'running');
+  f.advance();
+  f.observe({...f.binding,state:'exited_before_dispatch',reservation_id:f.grant.reservation_id,exited_job_invocation:'a'.repeat(32)});
+  assert.equal((await f.reload().reconcile(f.run)).phase, 'reconciling');
+  assert.equal((await f.reload().reconcile(f.run)).phase, 'reconciling');
+  assert.ok(f.claims.getLease('gah','#1525'));
+  assert.equal(f.releases, 0);
+});
+
+test('a granted claim, attempt or publication still requires a result after a lost start reply', async () => {
+  for (const purpose of ['claim','attempt','publish'] as const) {
+    const f = fixture();
+    f.dropConsumptionReply();
+    await f.broker.offerPrepared(f.run, f.binding.context_sha256);
+    assert.equal((await f.broker.authorizeOperation(operation(f, 1, purpose))).allowed, true);
+    f.advance();
+    f.observe({...f.binding,state:'exited_before_dispatch',reservation_id:f.grant.reservation_id,exited_job_invocation:'a'.repeat(32)});
+    assert.equal((await f.reload().reconcile(f.run)).phase, 'reconciling');
+    assert.ok(f.claims.getLease('gah','#1525'));
+    assert.equal(f.releases, 0);
+  }
 });
 
 async function grantEndpoint(broker: NativeDispatchBroker, worker: (id: string)=>{profiles?:string[]}|undefined) {
