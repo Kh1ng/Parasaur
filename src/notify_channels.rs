@@ -202,6 +202,10 @@ impl NotifyTransport for CurlNotifyTransport {
         let output = child
             .wait_with_output()
             .context("running curl for channel notification")?;
+        if !output.status.success() {
+            // curl stderr may contain the credential-bearing webhook URL.
+            bail!("channel notification transport failed ({})", output.status);
+        }
         let raw = String::from_utf8_lossy(&output.stdout);
         // `-w` appends the status code on its own final line.
         let (response_body, status) = match raw.rfind('\n') {
@@ -224,6 +228,10 @@ fn curl_args(config_path: &str, timeout_secs: u32) -> Vec<String> {
         "-sS",
         "--max-time",
         &timeout_secs.to_string(),
+        "--retry",
+        "1",
+        "--retry-max-time",
+        "3",
         "-K",
         config_path,
         "-H",

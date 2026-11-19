@@ -3,6 +3,10 @@
 mod support;
 
 #[cfg(unix)]
+#[path = "scenario_lifecycle/notifications.rs"]
+mod notifications;
+
+#[cfg(unix)]
 #[path = "scenario_lifecycle/shutdown.rs"]
 mod shutdown;
 

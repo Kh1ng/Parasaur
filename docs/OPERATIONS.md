@@ -1352,6 +1352,11 @@ Upgrade: a config written before the switch has no `notifications_enabled`
 key. It is on exactly when `notification_channel` is `telegram` or `discord`,
 so an existing channel keeps delivering.
 
+For a transient delivery error, the channel can retry once. The retry must
+start within three seconds, and each request has a ten-second timeout. A
+longer rate-limit delay or a permanent rejection ends the attempt. The factory
+records a delivery failure and continues processing the work item.
+
 Turn it on in one guided step. It explains where to get each value, reads
 the token with echo off, and sends a test message:
 
