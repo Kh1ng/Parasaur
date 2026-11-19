@@ -256,7 +256,7 @@ fn prune_remote_gah_branches(profile: &Profile, dry_run: bool) -> Result<()> {
         Err(_) => return Ok(()), // best-effort, matches done_worktree_names
     };
     let push_url = profile.push_url()?;
-    let pat = profile.pat();
+    let pat = crate::provider::push_token(profile);
     let repo_path = Path::new(&profile.local_path);
     for (branch, class) in remote_gah_branches_to_delete(&mrs) {
         if dry_run {

@@ -1,0 +1,16 @@
+# The Rust tests run under cargo-nextest: `cargo nextest run`.
+#
+# nextest gives every test its own process. That matters here because the unit
+# tests put every test that starts a fixture executable behind one in-process
+# lock (EXEC_LOCK in src/test_support.rs, 408 tests), so under `cargo test` they
+# run one at a time however many cores there are. In separate processes the
+# lock is never contended. Measured on 8 cores: the unit tests take 48 s instead
+# of 275 s, and the whole suite about 4 minutes instead of about 15.
+#
+# `cargo test` still works and runs the same tests.
+
+[profile.default]
+fail-fast = false
+# Report a test as slow after a minute and stop it after three. The slowest
+# passing test takes about 45 s.
+slow-timeout = { period = "60s", terminate-after = 3 }

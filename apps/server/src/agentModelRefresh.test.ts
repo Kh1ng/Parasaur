@@ -8,8 +8,8 @@ import { invalidateAgentModels, resolveAdapter, resolveInstanceAdapter } from '.
 test('model adapter observes direct terminal updates once and ignores failed updates', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-model-update-'));
   const previous = process.env.XDG_STATE_HOME;
-  const routerSettings = process.env.GAH_CLI_ROUTER_SETTINGS_PATH;
-  process.env.GAH_CLI_ROUTER_SETTINGS_PATH = join(dir, 'unconfigured-router.json');
+  const routerSettings = process.env.PARASAUR_CLI_ROUTER_SETTINGS_PATH;
+  process.env.PARASAUR_CLI_ROUTER_SETTINGS_PATH = join(dir, 'unconfigured-router.json');
   process.env.XDG_STATE_HOME = dir;
   const adapter = resolveAdapter('codex');
   const invalidate = adapter.invalidateModels;
@@ -35,7 +35,7 @@ test('model adapter observes direct terminal updates once and ignores failed upd
   } finally {
     adapter.invalidateModels = invalidate;
     if (previous === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = previous;
-    if (routerSettings === undefined) delete process.env.GAH_CLI_ROUTER_SETTINGS_PATH; else process.env.GAH_CLI_ROUTER_SETTINGS_PATH = routerSettings;
+    if (routerSettings === undefined) delete process.env.PARASAUR_CLI_ROUTER_SETTINGS_PATH; else process.env.PARASAUR_CLI_ROUTER_SETTINGS_PATH = routerSettings;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -43,18 +43,18 @@ test('model adapter observes direct terminal updates once and ignores failed upd
 
 test('CLI updates invalidate named accounts by runner kind, including logical aliases', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-alias-model-update-'));
-  const previous = process.env.GAH_BINARY;
+  const previous = process.env.PARASAUR_BINARY;
   const stateHome = process.env.XDG_STATE_HOME;
-  const routerSettings = process.env.GAH_CLI_ROUTER_SETTINGS_PATH;
+  const routerSettings = process.env.PARASAUR_CLI_ROUTER_SETTINGS_PATH;
   process.env.XDG_STATE_HOME = dir;
-  process.env.GAH_CLI_ROUTER_SETTINGS_PATH = join(dir, 'unconfigured-router.json');
+  process.env.PARASAUR_CLI_ROUTER_SETTINGS_PATH = join(dir, 'unconfigured-router.json');
   try {
     const runtime = { backend_instance: 'work', runner_kind: 'claude', logical_backend: 'team-claude',
       executable: '/tools/claude', state_root: '/isolated/work', account_label: 'Work',
       credential_id: 'work-key', credential_provider: 'anthropic', credential_revision: 'generation-1' };
     const cli = join(dir, 'gah');
     writeFileSync(cli, `#!/bin/sh\nprintf '%s' '${JSON.stringify(runtime)}'\n`, { mode: 0o700 });
-    process.env.GAH_BINARY = cli;
+    process.env.PARASAUR_BINARY = cli;
     const first = await resolveInstanceAdapter('agent-update-test', 'team-claude', 'work');
     assert.equal(await resolveInstanceAdapter('agent-update-test', 'team-claude', 'work'), first);
     let refreshes = 0;
@@ -64,9 +64,9 @@ test('CLI updates invalidate named accounts by runner kind, including logical al
     assert.equal(refreshes, 1);
   } finally {
     invalidateAgentModels('claude');
-    if (previous === undefined) delete process.env.GAH_BINARY; else process.env.GAH_BINARY = previous;
+    if (previous === undefined) delete process.env.PARASAUR_BINARY; else process.env.PARASAUR_BINARY = previous;
     if (stateHome === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = stateHome;
-    if (routerSettings === undefined) delete process.env.GAH_CLI_ROUTER_SETTINGS_PATH; else process.env.GAH_CLI_ROUTER_SETTINGS_PATH = routerSettings;
+    if (routerSettings === undefined) delete process.env.PARASAUR_CLI_ROUTER_SETTINGS_PATH; else process.env.PARASAUR_CLI_ROUTER_SETTINGS_PATH = routerSettings;
     rmSync(dir, { recursive: true, force: true });
   }
 });

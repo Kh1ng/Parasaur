@@ -108,8 +108,8 @@ test('helper inputs are bounded and missing models use deterministic fallback', 
 });
 
 test('helper input redacts provider tokens, configured secrets, and credential assignments', () => {
-  const previous = process.env.GAH_TEST_API_KEY;
-  process.env.GAH_TEST_API_KEY = 'private-value-1234';
+  const previous = process.env.PARASAUR_TEST_API_KEY;
+  process.env.PARASAUR_TEST_API_KEY = 'private-value-1234';
   try {
     const clean = sanitizeHelperInput([
       'branch: fix/sk-' + 'x'.repeat(24),
@@ -121,14 +121,14 @@ test('helper input redacts provider tokens, configured secrets, and credential a
     assert.match(clean, /REDACTED/);
     assert.match(clean, /credential line omitted/);
   } finally {
-    if (previous === undefined) delete process.env.GAH_TEST_API_KEY; else process.env.GAH_TEST_API_KEY = previous;
+    if (previous === undefined) delete process.env.PARASAUR_TEST_API_KEY; else process.env.PARASAUR_TEST_API_KEY = previous;
   }
 });
 
 test('helper telemetry keeps task, account, model, usage, latency, and fallback separate', () => {
   const directory = mkdtempSync(join(tmpdir(), 'gah-helper-usage-'));
-  const previous = process.env.GAH_CHAT_STATE_DIR;
-  process.env.GAH_CHAT_STATE_DIR = directory;
+  const previous = process.env.PARASAUR_CHAT_STATE_DIR;
+  process.env.PARASAUR_CHAT_STATE_DIR = directory;
   try {
     recordHelperUsage('gah', {
       kind: 'commit_message', text: 'Fix updates', generated: true, backend: 'codex', backendInstance: 'codex-work',
@@ -152,7 +152,7 @@ test('helper telemetry keeps task, account, model, usage, latency, and fallback 
       inputTokens: null, outputTokens: null, totalTokens: null, latencyMs: 5, fallbackReason: 'missing_model'
     }]);
   } finally {
-    if (previous === undefined) delete process.env.GAH_CHAT_STATE_DIR; else process.env.GAH_CHAT_STATE_DIR = previous;
+    if (previous === undefined) delete process.env.PARASAUR_CHAT_STATE_DIR; else process.env.PARASAUR_CHAT_STATE_DIR = previous;
     rmSync(directory, { recursive: true, force: true });
   }
 });

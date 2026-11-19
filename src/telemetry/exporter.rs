@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use fs2::FileExt;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
@@ -199,10 +199,12 @@ impl TelemetryExporter {
     where
         F: FnMut(&serde_json::Value) -> Result<()>,
     {
-        let content = fs::read_to_string(path)
+        let file = fs::File::open(path)
             .with_context(|| format!("Reading telemetry file: {}", path.display()))?;
 
-        for (line_num, line) in content.lines().enumerate() {
+        for (line_num, line) in BufReader::new(file).lines().enumerate() {
+            let line =
+                line.with_context(|| format!("Reading telemetry file: {}", path.display()))?;
             let line = line.trim();
             if line.is_empty() {
                 continue;
@@ -234,24 +236,48 @@ impl TelemetryExporter {
             .format(&Rfc3339)
             .unwrap_or_else(|_| OffsetDateTime::now_utc().unix_timestamp().to_string());
 
-        let mut new_records = Vec::new();
+        let records_to_export = entries
+            .iter()
+            .flat_map(|entry| extract_telemetry_records(entry, &exported_at))
+            .filter(|record| !self.exported_ids.contains(&record.get_id()))
+            .collect();
+        self.commit_pending_records(records_to_export)
+    }
 
-        // Extract records from all entries
-        for entry in entries {
-            let records = extract_telemetry_records(entry, &exported_at);
-            new_records.extend(records);
-        }
-
-        // Filter out already exported records (deduplication)
-        let mut records_to_export = Vec::new();
-        for record in new_records {
-            if !self.exported_ids.contains(&record.get_id()) {
-                records_to_export.push(record);
-            } else {
-                log::debug!("Skipping already exported record: {}", record.get_id());
+    /// Export new records after validating the complete ledger, retaining only
+    /// pending telemetry rather than the full execution history. The read lock
+    /// is released before acquiring the export write lock.
+    pub(crate) fn export_from_ledger(
+        &mut self,
+        cfg: &crate::config::GahConfig,
+    ) -> Result<Option<String>> {
+        let exported_at = OffsetDateTime::now_utc()
+            .format(&Rfc3339)
+            .unwrap_or_else(|_| OffsetDateTime::now_utc().unix_timestamp().to_string());
+        let mut pending = Vec::new();
+        let mut watermark: Option<String> = None;
+        crate::ledger::visit_entries(cfg, |entry| {
+            pending.extend(
+                extract_telemetry_records(&entry, &exported_at)
+                    .into_iter()
+                    .filter(|record| !self.exported_ids.contains(&record.get_id())),
+            );
+            if watermark
+                .as_ref()
+                .is_none_or(|current| entry.timestamp > *current)
+            {
+                watermark = Some(entry.timestamp);
             }
-        }
+            Ok(())
+        })?;
+        self.commit_pending_records(pending)?;
+        Ok(watermark)
+    }
 
+    fn commit_pending_records(
+        &mut self,
+        records_to_export: Vec<ExportedTelemetryRecord>,
+    ) -> Result<()> {
         if records_to_export.is_empty() {
             log::info!("No new telemetry records to export");
             return Ok(());

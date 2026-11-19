@@ -30,8 +30,8 @@ fn direct_dispatch_reconciles_an_abandoned_prior_run() {
             "--skip-validation-gate",
         ])
         .env("HOME", &home)
-        .env("GAH_LEDGER_PATH", &ledger_path)
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .assert()
         .success();
 

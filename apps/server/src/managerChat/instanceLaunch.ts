@@ -7,7 +7,7 @@ import type { ManagerAdapter, ManagerConversation } from './registry.js';
  * before changing HOME, then applies the runner's isolated child environment.
  * Only public instance metadata crosses the server/CLI boundary. */
 function instanceArgs(profile: string, runtime: BackendInstanceRuntime, model?: string | null): string[] {
-  const args = ['config', 'exec-backend-instance', '--profile', profile, '--instance', runtime.backend_instance];
+  const args = ['config', 'exec-backend-instance', '--profile', profile, '--instance', runtime.backend_instance, '--chat-environment'];
   if (model) args.push('--model', model);
   return args;
 }

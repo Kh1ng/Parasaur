@@ -30,13 +30,13 @@ if (fs.existsSync(${JSON.stringify(mode)})) { process.stderr.write('provider exp
 `, { mode: 0o755 });
 
   const saved = { ...process.env };
-  process.env.GAH_BINARY = resolve(dirname(fileURLToPath(import.meta.url)), '../tests/fixtures/gah/gah');
+  process.env.PARASAUR_BINARY = resolve(dirname(fileURLToPath(import.meta.url)), '../tests/fixtures/gah/gah');
   process.env.PATH = `${root}:${process.env.PATH}`;
-  process.env.GAH_FIXTURE_PROFILE_LIST = profiles;
-  process.env.GAH_MUTATION_STORE_PATH = join(root, 'mutations');
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(root, 'identity.json');
+  process.env.PARASAUR_FIXTURE_PROFILE_LIST = profiles;
+  process.env.PARASAUR_MUTATION_STORE_PATH = join(root, 'mutations');
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(root, 'identity.json');
   process.env.COORDINATOR_TOKEN = 'review-edit-token';
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
   resetCachedCoordinatorIdentity();
   t.after(() => {
     process.env = saved;

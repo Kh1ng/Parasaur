@@ -223,7 +223,7 @@ export function Navbar({ currentPage, sideView, onPageChange, activityUnreadCoun
     <>
       <header className="mobile-app-header z-30 flex shrink-0 items-center gap-2 border-b border-subtle bg-card px-4 lg:min-h-0 lg:gap-4 lg:px-3">
         <h1 className="sr-only">Parasaur</h1>
-        <ProjectSwitcher onImport={onImportProject} onCreate={onCreateProject} />
+        <ProjectSwitcher onImport={onImportProject} onCreate={onCreateProject} onConnection={() => handleSelect('settings')} />
         <nav className="hidden min-w-0 shrink items-stretch gap-0.5 overflow-x-auto lg:flex" aria-label="Primary">
           {items.map((item) => {
             const Icon = item.icon;

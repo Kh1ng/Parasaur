@@ -6,7 +6,7 @@ for (const scenario of [
   { pageName: 'Settings', section: 'Skill bank', paths: ['/api/skills'] },
   { pageName: 'Settings', section: 'TDAI / memory', paths: ['/api/settings/gateway'] },
   { pageName: 'Projects', tab: 'Git', section: '', paths: ['/api/git/status', '/api/git/log', '/api/git/prs'] },
-  { pageName: 'Usage', usage: 'Telemetry' as const, section: '', paths: ['/api/usage/rollup'] }
+  { pageName: 'Usage', usage: 'Telemetry' as const, section: '', paths: ['/api/usage/report'] }
 ]) {
   test(`${[scenario.pageName, scenario.section].filter(Boolean).join(" ")} recovers protected reads after the first token without navigation`, async ({ page }) => {
     const rejected = new Set<string>();

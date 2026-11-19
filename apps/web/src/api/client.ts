@@ -26,9 +26,11 @@ import type {
   FleetSnapshot,
   FleetQuotaSnapshot,
   NodeHealthCheckResult,
+  NodeFactorySnapshot,
   StatusSnapshot,
   QuotaSnapshot,
   UsageRollupSummary,
+  RecordedUsageReport,
   ReportData,
   ReportSeriesData,
   ReportGroupBy,
@@ -37,6 +39,7 @@ import type {
   ControllerActivity,
   LoopDecision,
   ProfileSummary,
+  ProfileChecks,
   WakeAutonomyValue,
   ConfigSummary,
   SettingsConfigProfileSummary,
@@ -106,7 +109,8 @@ export class GahApiError extends Error {
 export const pairingApi = {
   createHandoff: () => postJson<{ code: string; verifier: string; expires_in: number }, object>('/api/pairing/handoff', {}),
   approveHandoff: (code: string) => postJson<{ approved: boolean }, { code: string }>('/api/pairing/handoff/approve', { code }),
-  claimHandoff: (code: string, verifier: string) => postJson<{ token?: string; pending?: boolean }, { code: string; verifier: string }>('/api/pairing/handoff/claim', { code, verifier }),
+  // Older 0.3 coordinators return a tab-only token; current servers issue a device cookie.
+  claimHandoff: (code: string, verifier: string) => postJson<{ device?: PairedDevice; pending?: boolean; token?: string }, { code: string; verifier: string }>('/api/pairing/handoff/claim', { code, verifier }),
   session: () => getJson<{ principal: { kind: 'owner' | 'device'; id?: string }; can_approve_pairing: boolean }>('/api/pairing/session'),
   devices: () => getJson<{ devices: PairedDevice[] }>('/api/pairing/devices'),
   create: (origin: string) => postJson<PairingOffer, { origin: string }>('/api/pairing/offers', { origin }),
@@ -177,14 +181,14 @@ export const activityApi = {
   )
 };
 
-async function getJson<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
+async function getJson<T>(path: string, params?: Record<string, string | undefined>, signal?: AbortSignal): Promise<T> {
   const url = apiUrl(path);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined) url.searchParams.set(key, value);
     }
   }
-  const res = await fetch(url.toString(), { headers: authHeaders() });
+  const res = await fetch(url.toString(), { headers: authHeaders(), ...(signal ? { signal } : {}) });
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
@@ -333,18 +337,21 @@ export interface GahDataSource {
   getFleetQuota(params?: { profile?: string; since?: string }): Promise<FleetQuotaSnapshot>;
   checkNodeHealth(nodeId: string): Promise<NodeHealthCheckResult>;
   getNodeDoctor(nodeId: string, profile: string): Promise<DoctorSnapshot>;
+  getNodeFactory(nodeId: string, profile: string): Promise<NodeFactorySnapshot>;
   getStatus(profile?: string): Promise<StatusSnapshot>;
   getQuota(params?: { profile?: string; since?: string }): Promise<QuotaSnapshot>;
   getUsageRollup(profile?: string, days?: number): Promise<UsageRollupSummary>;
+  getRecordedUsage(profile?: string, days?: number): Promise<RecordedUsageReport>;
   getDoctor(profile?: string): Promise<DoctorSnapshot>;
   getReport(params?: { profile?: string; since?: string; groupBy?: ReportGroupBy }): Promise<ReportData>;
   getReportSeries(params?: { profile?: string; since?: string; bucket?: string }): Promise<ReportSeriesData>;
-  getWorkTimeline(workId: string): Promise<LedgerEntry[]>;
+  getWorkTimeline(workId: string, profile?: string): Promise<LedgerEntry[]>;
   getEvents(params?: { profile?: string; since?: string }): Promise<ControllerEvent[]>;
   getGitLabRuns(params: { project: string; kind: 'issue' | 'merge_request'; iid: number; gitlab?: string; branch?: string; limit?: number }): Promise<GitLabRunsFeedResponse>;
   getControllerActivity(params?: { profile?: string; since?: string }): Promise<ControllerActivity[]>;
   getLoopDecision(profile: string): Promise<LoopDecision | null>;
   getProfiles(): Promise<ProfileSummary[]>;
+  getProfileChecks(profile: string): Promise<ProfileChecks>;
   startWorker(params: { profile: string; providerKind: string; repo: string; backend: string; model: string; target: string; reasoningEffort?: string; requestId: string }): Promise<{ session: Session }>;
   getProjects(): Promise<ProjectSummary[]>;
   addProject(profile: string): Promise<ProjectSummary>;
@@ -415,7 +422,8 @@ export interface GahDataSource {
   getChatStorage(profile: string): Promise<ChatReclaimResult>;
   reclaimChatSessions(profile: string, dryRun: boolean): Promise<ChatReclaimResult>;
   getChatNodes(profile?: string, backend?: string): Promise<{ nodes: ChatNodeInfo[] }>;
-  getManagerChatModelsForBackend(profile: string, backend: string, nodeId?: string, backendInstance?: string | null): Promise<ManagerModelsSummary>;
+  getChatAccounts(profile: string, backend: string, nodeId: string, signal?: AbortSignal): Promise<{ accounts: import('@git-agent-harness/contracts').ChatAccountInfo[] }>;
+  getManagerChatModelsForBackend(profile: string, backend: string, nodeId?: string, backendInstance?: string | null, signal?: AbortSignal): Promise<ManagerModelsSummary>;
   getChatPreview(profile: string, sessionId: string): Promise<{ preview: ChatPreviewInfo | null }>;
   setChatPreview(profile: string, sessionId: string, port: number | null): Promise<{ preview: ChatPreviewInfo | null }>;
   getChatIssues(profile: string): Promise<{ issues: ChatIssueSummary[] }>;
@@ -438,6 +446,8 @@ export interface GahDataSource {
 }
 
 export interface CoordinatorInfo {
+  /** Only the fixture server declares mock mode. Absence does not prove a live connection. */
+  environment?: 'mock';
   identity: {
     node_id: string;
     display_name: string;
@@ -543,6 +553,9 @@ export const gahApi: GahDataSource = {
   getNodeDoctor(nodeId, profile) {
     return getJson<DoctorSnapshot>(`/api/registry/nodes/${encodeURIComponent(nodeId)}/doctor`, { profile });
   },
+  getNodeFactory(nodeId, profile) {
+    return getJson<NodeFactorySnapshot>(`/api/registry/nodes/${encodeURIComponent(nodeId)}/factory`, { profile });
+  },
   getFleetSnapshot() {
     return getJson<FleetSnapshot>('/api/registry/fleet/snapshot');
   },
@@ -564,6 +577,9 @@ export const gahApi: GahDataSource = {
   getUsageRollup(profile?: string, days = 7) {
     return getJson<UsageRollupSummary>('/api/usage/rollup', { profile, days: String(days) });
   },
+  getRecordedUsage(profile, days = 7) {
+    return getJson<RecordedUsageReport>('/api/usage/report', { profile, days: String(days) });
+  },
   getDoctor(profile) {
     return getJson<DoctorSnapshot>('/api/doctor', { profile });
   },
@@ -581,8 +597,10 @@ export const gahApi: GahDataSource = {
       bucket: params.bucket
     });
   },
-  getWorkTimeline(workId) {
-    return getJson<LedgerEntry[]>(`/api/work/${encodeURIComponent(workId)}`);
+  async getWorkTimeline(workId, profile) {
+    const entries = await getJson<LedgerEntry[]>(`/api/work/${encodeURIComponent(workId)}`, { profile });
+    // Older central nodes ignore the query; retain project isolation on upgrade.
+    return profile ? entries.filter(entry => entry.profile === profile) : entries;
   },
   getEvents(params = {}) {
     return getJson<ControllerEvent[]>('/api/events', {
@@ -600,8 +618,11 @@ export const gahApi: GahDataSource = {
       limit: params.limit === undefined ? undefined : String(params.limit)
     });
   },
-  getLoopDecision(profile) {
-    return getJson<LoopDecision | null>('/api/loop/last-decision', { profile });
+  async getLoopDecision(profile) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    try { return await getJson<LoopDecision | null>('/api/loop/last-decision', { profile }, controller.signal); }
+    finally { clearTimeout(timer); }
   },
   getControllerActivity(params = {}) {
     return getJson<ControllerActivity[]>('/api/controller-activity', {
@@ -633,8 +654,11 @@ export const gahApi: GahDataSource = {
   removeProfile(name, params = {}) {
     return deleteJson<{ success: boolean; message: string }>(`/api/profiles/${encodeURIComponent(name)}`, profileRemoveParamsToRecord(params));
   },
-  getLoopStatus(profile) {
-    return getJson<LoopStatus>('/api/loop/status', { profile });
+  async getLoopStatus(profile) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    try { return await getJson<LoopStatus>('/api/loop/status', { profile }, controller.signal); }
+    finally { clearTimeout(timer); }
   },
   async startLoop(profile) {
     // Unlike the other POSTs above, a non-2xx here (409) still carries a
@@ -667,6 +691,9 @@ export const gahApi: GahDataSource = {
   },
   getProfileConfig(profile) {
     return getJson<SettingsConfigProfileSummary>('/api/config/effective', { profile });
+  },
+  getProfileChecks(profile) {
+    return getJson<ProfileChecks>(`/api/profiles/${encodeURIComponent(profile)}/checks`);
   },
   async ledgerClearAttempts(params) {
     return postJson('/api/ledger/clear-attempts', {
@@ -859,8 +886,11 @@ export const gahApi: GahDataSource = {
   getChatNodes(profile, backend) {
     return getJson<{ nodes: ChatNodeInfo[] }>('/api/manager-chat/nodes', { profile, backend });
   },
-  getManagerChatModelsForBackend(profile, backend, nodeId, backendInstance) {
-    return getJson<ManagerModelsSummary>('/api/manager-chat/models', { profile, backend, nodeId, backendInstance: backendInstance ?? undefined });
+  getChatAccounts(profile, backend, nodeId, signal) {
+    return getJson<{ accounts: import('@git-agent-harness/contracts').ChatAccountInfo[] }>('/api/manager-chat/accounts', { profile, backend, nodeId }, signal);
+  },
+  getManagerChatModelsForBackend(profile, backend, nodeId, backendInstance, signal) {
+    return getJson<ManagerModelsSummary>('/api/manager-chat/models', { profile, backend, nodeId, backendInstance: backendInstance ?? undefined }, signal);
   },
   getChatPreview(profile, sessionId) {
     return getJson<{ preview: ChatPreviewInfo | null }>('/api/manager-chat/preview', { profile, sessionId });
@@ -996,6 +1026,7 @@ export const promptPoliciesApi = {
 
 export type BackendRunnerKind = 'codex' | 'claude' | 'opencode' | 'openhands' | 'vibe' | 'agy' | 'hermes';
 export const backendInstancesApi = {
+  authenticate: (profile: string, instance: string) => postJson<{ key: string; repair: LoginRepairView }, { profile: string; instance: string }>('/api/backend-instances/authenticate', { profile, instance }),
   list: (profile: string) => getJson<{ profile: string; backend_instances: import('@git-agent-harness/contracts').BackendInstanceSummary[] }>('/api/backend-instances', { profile }),
   setEnabled: (profile: string, instance: string, enabled: boolean) => postJson<{ profile: string; backend_instances: import('@git-agent-harness/contracts').BackendInstanceSummary[] }, { profile: string; instance: string }>(`/api/backend-instances/${enabled ? 'enable' : 'disable'}`, { profile, instance }),
   add: (profile: string, instance: string, runnerKind: BackendRunnerKind, accountLabel: string) => postJson<{ profile: string; backend_instances: import('@git-agent-harness/contracts').BackendInstanceSummary[] }, { profile: string; instance: string; runnerKind: BackendRunnerKind; accountLabel: string }>('/api/backend-instances/add', { profile, instance, runnerKind, accountLabel }),

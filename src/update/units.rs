@@ -26,7 +26,7 @@ fn effective_uid() -> u32 {
     // suite also runs under a root account (#1561). Release binaries do not
     // compile this branch and always check the live effective uid.
     #[cfg(debug_assertions)]
-    if let Some(uid) = env::var("GAH_TEST_EFFECTIVE_UID")
+    if let Some(uid) = env::var("PARASAUR_TEST_EFFECTIVE_UID")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
     {
@@ -60,7 +60,7 @@ impl UnitValues {
         Ok(())
     }
 
-    /// The config file the rendered unit's `GAH_CONFIG_PATH` points at; the
+    /// The config file the rendered unit's config default points at; the
     /// ownership repair reads the same file to find the state roots (#1626).
     pub(super) fn config_path(&self) -> &Path {
         &self.config
@@ -298,6 +298,38 @@ mod tests {
         ));
         assert!(rendered.contains("\nExecStart=\"/srv/other user/node 22/bin/node\" apps/server"));
         assert!(rendered.contains("\nEnvironment=\"PATH=/srv/other user/node 22/bin:"));
+    }
+
+    /// A unit default named `PARASAUR_*` beats a `GAH_*` line in the env file
+    /// the unit reads afterwards, because startup adoption keeps a current
+    /// name that is already set. An install whose env file still overrides the
+    /// config path under the old name would then load the default instead.
+    #[test]
+    fn unit_defaults_do_not_shadow_old_names_in_an_env_file() {
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("packaging/systemd");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("service") {
+                continue;
+            }
+            let template = std::fs::read_to_string(&path).unwrap();
+            if !template.contains("\nEnvironmentFile=") {
+                continue;
+            }
+            checked += 1;
+            for line in template.lines() {
+                let setting = line
+                    .strip_prefix("Environment=")
+                    .map(|value| value.trim_matches('"'));
+                assert!(
+                    !setting.is_some_and(|value| value.starts_with("PARASAUR_")),
+                    "{}: {line}",
+                    path.display()
+                );
+            }
+        }
+        assert_eq!(checked, 5);
     }
 
     #[test]

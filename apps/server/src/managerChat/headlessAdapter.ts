@@ -184,7 +184,9 @@ function withModelSelectionLock<T>(scope: string, action: () => Promise<T>): Pro
   return run;
 }
 
-export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter {
+export function createHeadlessBackend(spec: HeadlessBackendSpec, options: {
+  environment?: (conversation: ManagerConversation, signal?: AbortSignal) => Promise<Record<string, string>>;
+} = {}): ManagerAdapter {
   const states = new Map<string, ConversationState>();
   const parseReply = spec.parseReply ?? defaultParseReply(spec.displayName);
 
@@ -268,7 +270,9 @@ export function createHeadlessBackend(spec: HeadlessBackendSpec): ManagerAdapter
             model: pinnedModel,
             reasoningEffort: input.reasoningEffort === undefined ? state.currentReasoningEffortId : input.reasoningEffort
           });
-          const env = agentChildEnv(await spec.spawnEnv?.(conversation, { model: pinnedModel }));
+          const workspaceEnv = await options.environment?.(conversation, signal);
+          signal.throwIfAborted();
+          const env = agentChildEnv({ ...workspaceEnv, ...await spec.spawnEnv?.(conversation, { model: pinnedModel }) });
           signal.throwIfAborted();
           const child = spawn(args[0], args.slice(1), {
             cwd,

@@ -33,8 +33,8 @@ test('the notification routes are owner-only, rate-limited, and record the test 
   const root = mkdtempSync(join(tmpdir(), 'gah-notification-route-'));
   const saved = { ...process.env };
   Object.assign(process.env, {
-    COORDINATOR_TOKEN: 'notification-route-token', GAH_ALLOW_INSECURE_HTTP: '1',
-    GAH_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json')
+    COORDINATOR_TOKEN: 'notification-route-token', PARASAUR_ALLOW_INSECURE_HTTP: '1',
+    PARASAUR_COORDINATOR_IDENTITY_PATH: join(root, 'identity.json')
   });
   resetCachedCoordinatorIdentity();
   const access = new DeviceAccess(join(root, 'devices.json'));

@@ -8,7 +8,8 @@ use std::collections::BTreeMap;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
-pub type LedgerEntriesByWorkId = BTreeMap<String, Vec<LedgerEntry>>;
+/// Work-item aliases borrow canonical history; indexing never copies record payloads.
+pub type LedgerEntriesByWorkId<'a> = BTreeMap<String, Vec<&'a LedgerEntry>>;
 
 /// The current work-item-scoped human gate derived from append-only ledger
 /// history. Consumers must use this shared projection instead of inferring the
@@ -109,18 +110,18 @@ pub fn effective_human_gate_from_entries(
     repo_id: &str,
     work_id: &str,
 ) -> Option<EffectiveHumanGate> {
-    effective_human_gate_for_scope(entries, Some(profile_name), repo_id, work_id)
+    effective_human_gate_for_scope(entries.iter(), Some(profile_name), repo_id, work_id)
 }
 
-fn effective_human_gate_for_scope(
-    entries: &[LedgerEntry],
+fn effective_human_gate_for_scope<'a>(
+    entries: impl Iterator<Item = &'a LedgerEntry>,
     profile_name: Option<&str>,
     repo_id: &str,
     work_id: &str,
 ) -> Option<EffectiveHumanGate> {
     let aliases = work_id_aliases(work_id);
     let mut gate = None;
-    for entry in entries.iter().filter(|entry| {
+    for entry in entries.filter(|entry| {
         profile_name.is_none_or(|profile_name| entry.profile == profile_name)
             && entry.repo_id == repo_id
             && entry
@@ -244,9 +245,9 @@ pub fn effective_human_gate_from_index(
     repo_id: &str,
     work_id: &str,
 ) -> Option<EffectiveHumanGate> {
-    entries
-        .get(work_id)
-        .and_then(|entries| effective_human_gate_for_scope(entries, None, repo_id, work_id))
+    entries.get(work_id).and_then(|entries| {
+        effective_human_gate_for_scope(entries.iter().copied(), None, repo_id, work_id)
+    })
 }
 
 /// `validation_result` of a dispatch that lost its provider issue claim to
@@ -283,19 +284,42 @@ pub fn work_id_aliases(work_id: &str) -> Vec<String> {
     }
 }
 
-pub fn index_entries_by_work_id(entries: &[LedgerEntry]) -> LedgerEntriesByWorkId {
+pub fn index_entries_by_work_id(entries: &[LedgerEntry]) -> LedgerEntriesByWorkId<'_> {
     let mut index = BTreeMap::new();
     for entry in entries {
         if let Some(work_id) = entry.work_id.as_ref() {
             for alias in work_id_aliases(work_id) {
-                index
-                    .entry(alias)
-                    .or_insert_with(Vec::new)
-                    .push(entry.clone());
+                index.entry(alias).or_insert_with(Vec::new).push(entry);
             }
         }
     }
     index
+}
+
+#[cfg(test)]
+mod index_retention_tests {
+    use super::*;
+
+    #[test]
+    fn aliases_borrow_the_same_history_without_copying_payloads() {
+        let profile = crate::ledger::test_util::profile();
+        let mut entry = LedgerEntry::new("real", &profile, "codex", "fix", "fixture", None, None);
+        entry.work_id = Some("TICKET-911".into());
+        entry.error_summary = Some("retained evidence ".repeat(65_536));
+        let entries = vec![entry];
+        let index = index_entries_by_work_id(&entries);
+        let canonical: &LedgerEntry = index["TICKET-911"][0];
+        let alias: &LedgerEntry = index["#911"][0];
+        assert!(
+            std::ptr::eq(canonical, &entries[0]),
+            "the index must borrow history"
+        );
+        assert!(
+            std::ptr::eq(alias, &entries[0]),
+            "aliases must share the same record"
+        );
+        assert_eq!(canonical.error_summary, entries[0].error_summary);
+    }
 }
 
 #[cfg(test)]

@@ -21,8 +21,8 @@ Do not include tokens, pairing links, cookies, or private source files in test r
 1. Replace the two PENDING values before installation.
 2. Start central from the recorded source revision.
 3. Configure `COORDINATOR_TOKEN` on central.
-4. For trusted LAN worker enrollment, configure `GAH_ALLOW_INSECURE_HTTP=1` on central.
-5. For named dashboard origins, include the exact origin in `GAH_WS_ALLOWED_ORIGINS`.
+4. For trusted LAN worker enrollment, configure `PARASAUR_ALLOW_INSECURE_HTTP=1` on central.
+5. For named dashboard origins, include the exact origin in `PARASAUR_WS_ALLOWED_ORIGINS`.
 6. Prepare x64 Windows and WSL2 Ubuntu with a non-root default user.
 7. Open Ubuntu once to complete its user setup.
 8. Prepare a second worker or a matching central checkout for the two-node test.

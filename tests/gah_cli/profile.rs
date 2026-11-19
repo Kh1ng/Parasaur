@@ -264,3 +264,114 @@ fn profile_show_displays_validation_commands() {
         .stdout(predicate::str::contains("cargo test --quiet"))
         .stdout(predicate::str::contains("cargo clippy -- -D warnings"));
 }
+
+#[test]
+fn profile_checks_preserve_complete_commands_and_legacy_flags() {
+    let (tmp, path) = super::config::config_with_profile();
+    let command = "node -e \"console.log([1,2], 'a,b')\"";
+    let multiline = "printf 'first,second\\n'\nprintf done";
+    let config_path = path.to_str().unwrap();
+    for (action, name) in [("add", "exact-checks"), ("set", "test")] {
+        let mut invocation = bin();
+        invocation.args([
+            "profile",
+            action,
+            name,
+            "--config",
+            config_path,
+            "--validation-command",
+            command,
+            "--validation-command",
+            multiline,
+            "--validation-command",
+            "--literal-command-text",
+            "--auto-fix-command",
+            "printf 'fix,format'",
+        ]);
+        if action == "add" {
+            invocation.args([
+                "--display-name",
+                "Exact",
+                "--repo-id",
+                "exact",
+                "--provider",
+                "github",
+                "--repo",
+                "owner/repo",
+                "--local-path",
+                tmp.path().to_str().unwrap(),
+                "--artifact-root",
+                tmp.path().to_str().unwrap(),
+            ]);
+        }
+        invocation.assert().success();
+        let output = bin()
+            .args([
+                "profile",
+                "show",
+                "--json",
+                "--config",
+                config_path,
+                "--",
+                name,
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let shown: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            shown["validation_commands"],
+            serde_json::json!([command, multiline, "--literal-command-text"])
+        );
+        assert_eq!(
+            shown["auto_fix_commands"],
+            serde_json::json!(["printf 'fix,format'"])
+        );
+    }
+    bin()
+        .args([
+            "profile",
+            "set",
+            "test",
+            "--config",
+            config_path,
+            "--validation-commands",
+            "cargo test,npm test",
+        ])
+        .assert()
+        .success();
+    let output = bin()
+        .args(["profile", "show", "test", "--config", config_path, "--json"])
+        .output()
+        .unwrap();
+    let shown: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        shown["validation_commands"],
+        serde_json::json!(["cargo test", "npm test"])
+    );
+    bin()
+        .args([
+            "profile",
+            "set",
+            "test",
+            "--config",
+            config_path,
+            "--clear",
+            "validation_commands",
+            "--clear",
+            "auto_fix_commands",
+        ])
+        .assert()
+        .success();
+    let output = bin()
+        .args(["profile", "show", "test", "--config", config_path, "--json"])
+        .output()
+        .unwrap();
+    let cleared: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(cleared["validation_commands"], serde_json::json!([]));
+    assert_eq!(cleared["auto_fix_commands"], serde_json::json!([]));
+}

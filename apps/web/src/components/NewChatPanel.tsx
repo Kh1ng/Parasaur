@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { FolderGit2, Cpu, X, CircleDot, GitPullRequest, SlidersHorizontal } from 'lucide-react';
-import type { BackendInstanceSummary, ChatIssueSummary, ChatPrSummary, ManagerModelInfo, ProfileSummary, ProjectSummary } from '@git-agent-harness/contracts';
+import type { ChatAccountInfo, ChatIssueSummary, ChatPrSummary, ManagerModelInfo, ProfileSummary, ProjectSummary } from '@git-agent-harness/contracts';
 import { ChatNodePicker } from './ChatNodePicker.js';
 import { useChatNodes } from '../hooks/useChatNodes.js';
 import { BoundedCollection } from './BoundedCollection.js';
-import { backendInstancesApi, gahApi } from '../api/client.js';
+import { gahApi } from '../api/client.js';
 import type { ManagerBackendInfo } from '@git-agent-harness/contracts';
 
 export type ChatProfile = ProfileSummary & Partial<Pick<ProjectSummary, 'node_id' | 'chat_profile'>> & { remote?: boolean; catalogName?: string };
@@ -49,8 +49,10 @@ export function NewChatPanel({ currentProfile, profiles, backends, onClose, onCr
   const [backend, setBackend] = useState<string>('');
   const [models, setModels] = useState<ManagerModelInfo[]>([]);
   const [model, setModel] = useState<string | null>(null);
-  const [backendInstances, setBackendInstances] = useState<BackendInstanceSummary[]>([]);
-  const [backendInstance, setBackendInstance] = useState<string | null>(null);
+  const [accountCatalog, setAccountCatalog] = useState<{ scope: string; accounts: ChatAccountInfo[] } | null>(null);
+  const [accountChoice, setAccountChoice] = useState<{ scope: string; instance: string | null } | null>(null);
+  const [accountFailure, setAccountFailure] = useState<{ scope: string; message: string } | null>(null);
+  const [accountRetry, setAccountRetry] = useState(0);
   const [title, setTitle] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +80,11 @@ export function NewChatPanel({ currentProfile, profiles, backends, onClose, onCr
     : ownerUsable ? ownerId : nodeSnapshot.nodes.find(node => node.eligible)?.nodeId ?? centralId;
   const selectedNode = nodeSnapshot.nodes.find(node => node.nodeId === nodeId);
   const nodeReady = !nodeSnapshot.loading && !nodeSnapshot.error && !!(selectedNode?.eligible ?? selectedNode?.chatCapable);
+  const accountScope = JSON.stringify([project, backend, nodeId]);
+  const backendInstances = accountCatalog?.scope === accountScope ? accountCatalog.accounts : [];
+  const backendInstance = accountChoice?.scope === accountScope ? accountChoice.instance : null;
+  const accountError = accountFailure?.scope === accountScope ? accountFailure.message : null;
+  const accountsReady = accountCatalog?.scope === accountScope && !accountError;
   const implementedBackends = backends.filter((b) => b.implemented);
   const projectLabel = projectInfo?.display_name || projectInfo?.name || project;
   const backendLabel = implementedBackends.find((b) => b.id === backend)?.displayName ?? backend;
@@ -87,6 +94,7 @@ export function NewChatPanel({ currentProfile, profiles, backends, onClose, onCr
   useEffect(() => {
     if (nodeSnapshot.error || (!nodeSnapshot.loading && !nodeReady)) setExtraOpen(true);
   }, [nodeSnapshot.error, nodeSnapshot.loading, nodeReady]);
+  useEffect(() => { if (accountError) setExtraOpen(true); }, [accountError]);
 
   // A different source discards its selection; retrying the same source does not.
   useEffect(() => {
@@ -143,18 +151,23 @@ export function NewChatPanel({ currentProfile, profiles, backends, onClose, onCr
   }, [project]);
 
   useEffect(() => {
-    if (!project || !backend) return;
+    if (!project || !backend || !nodeReady || !nodeId) return;
     let cancelled = false;
-    backendInstancesApi.list(project)
-      .then(({ backend_instances: instances }) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    setAccountCatalog(null);
+    setAccountFailure(null);
+    gahApi.getChatAccounts(project, backend, nodeId, controller.signal)
+      .then(({ accounts }) => {
         if (cancelled) return;
-        const eligible = instances.filter((instance) => instance.enabled && instance.executable_resolved !== false && instance.auth_ready !== false && instance.logical_backend === backend);
-        setBackendInstances(eligible);
-        setBackendInstance((selected) => eligible.some((instance) => instance.backend_instance === selected) ? selected : null);
+        const eligible = accounts.filter(instance => instance.enabled && instance.executableReady !== false && instance.authReady !== false && instance.backend === backend);
+        setAccountCatalog({ scope: accountScope, accounts: eligible });
+        setAccountChoice(selected => ({ scope: accountScope, instance: selected?.scope === accountScope && eligible.some(instance => instance.instance === selected.instance) ? selected.instance : null }));
       })
-      .catch(() => { if (!cancelled) { setBackendInstances([]); setBackendInstance(null); } });
-    return () => { cancelled = true; };
-  }, [project, backend]);
+      .catch(() => { if (!cancelled) setAccountFailure({ scope: accountScope, message: 'Cannot load accounts on this node. Check its connection and Parasaur version, then retry.' }); })
+      .finally(() => clearTimeout(timer));
+    return () => { cancelled = true; clearTimeout(timer); controller.abort(); };
+  }, [project, backend, nodeId, nodeReady, accountScope, accountRetry]);
 
   useEffect(() => {
     if (!backend || !nodeId || !nodeReady) {
@@ -182,7 +195,7 @@ export function NewChatPanel({ currentProfile, profiles, backends, onClose, onCr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, backend, backendInstance, nodeId, nodeReady]);
   const startFromSource = async (source: Exclude<ChatSource, 'blank'>, number: number) => {
-    if (!backend || creating || !nodeReady) return;
+    if (!backend || creating || !nodeReady || !accountsReady) return;
     setCreating(true);
     setError(null);
     try {
@@ -199,7 +212,7 @@ export function NewChatPanel({ currentProfile, profiles, backends, onClose, onCr
   };
 
   const create = async () => {
-    if (!backend || !nodeReady) return;
+    if (!backend || !nodeReady || !accountsReady) return;
     setCreating(true);
     setError(null);
     try {
@@ -299,7 +312,7 @@ export function NewChatPanel({ currentProfile, profiles, backends, onClose, onCr
                 key={candidate.number}
                 type="button"
                 onClick={() => { setIssue(candidate); void startFromSource('issue', candidate.number); }}
-                disabled={creating || !backend || !nodeReady}
+                disabled={creating || !backend || !nodeReady || !accountsReady}
                 aria-pressed={issue?.number === candidate.number}
                 className={`rounded-md px-3 py-2 text-left ${issue?.number === candidate.number ? 'bg-accent/15 border border-accent/40' : 'border border-transparent hover:bg-overlay/5'}`}
               >
@@ -341,7 +354,7 @@ export function NewChatPanel({ currentProfile, profiles, backends, onClose, onCr
                 key={candidate.number}
                 type="button"
                 onClick={() => { setPr(candidate); void startFromSource('pr', candidate.number); }}
-                disabled={creating || !backend || !nodeReady}
+                disabled={creating || !backend || !nodeReady || !accountsReady}
                 aria-pressed={pr?.number === candidate.number}
                 className={`rounded-md px-3 py-2 text-left ${pr?.number === candidate.number ? 'bg-accent/15 border border-accent/40' : 'border border-transparent hover:bg-overlay/5'}`}
               >
@@ -370,7 +383,7 @@ export function NewChatPanel({ currentProfile, profiles, backends, onClose, onCr
         <SlidersHorizontal size={14} aria-hidden="true" />
         <span className="font-medium text-primary">Extra settings</span>
         <span className="min-w-0 flex-1 truncate text-right text-xs text-muted">
-          {[projectLabel, selectedNode?.displayName, [backendLabel, modelLabel].filter(Boolean).join(' · ')].filter(Boolean).join(' / ')}
+          {[projectLabel, selectedNode?.displayName, [backendLabel, backendInstances.find(account => account.instance === backendInstance)?.label, modelLabel].filter(Boolean).join(' · ')].filter(Boolean).join(' / ')}
         </span>
       </summary>
       <div className="space-y-5 border-t border-subtle p-3">
@@ -428,20 +441,22 @@ export function NewChatPanel({ currentProfile, profiles, backends, onClose, onCr
           ))}
         </select>
       )}
-      {backendInstances.length > 0 && (
+      {backend && nodeReady && (
         <label className="block space-y-1 text-xs text-secondary">Account
-          <select value={backendInstance ?? ''} onChange={(event) => setBackendInstance(event.target.value || null)} className="w-full rounded-md border border-subtle bg-raised px-2 py-1.5 text-primary">
-            <option value="">Default provider login</option>
+          <select value={backendInstance ?? ''} disabled={creating || !accountsReady} onChange={(event) => setAccountChoice({ scope: accountScope, instance: event.target.value || null })} className="min-h-11 w-full rounded-md border border-subtle bg-raised px-2 py-1.5 text-base text-primary sm:min-h-0 sm:text-xs">
+            <option value="">{accountsReady ? 'Default provider login' : 'Accounts not loaded'}</option>
             {backendInstances.map((instance) => (
-              <option key={instance.backend_instance} value={instance.backend_instance}>
-                {instance.account_label ?? instance.backend_instance} · {instance.backend_instance}
+              <option key={instance.instance} value={instance.instance}>
+                {instance.label} · {instance.instance}
               </option>
             ))}
           </select>
         </label>
       )}
+      {backend && nodeReady && !accountsReady && !accountError && <p role="status" className="text-xs text-secondary">Loading accounts on {selectedNode?.displayName}…</p>}
+      {accountError && <div className="space-y-2"><p role="alert" className="text-sm text-critical">{accountError}</p><button type="button" className="btn-secondary text-xs max-sm:min-h-11" onClick={() => setAccountRetry(value => value + 1)}>Retry accounts</button></div>}
       {backend && models.length === 0 && (
-        <p className="text-[11px] text-muted">This provider uses its default model.</p>
+        <p className="text-[11px] text-muted">No model selected. Use the provider's configured default.</p>
       )}
     </section>
       </div>
@@ -469,7 +484,7 @@ export function NewChatPanel({ currentProfile, profiles, backends, onClose, onCr
       <button
         type="button"
         onClick={create}
-        disabled={creating || !backend || !nodeReady || profiles.length === 0 || (mode === 'blank' && !title.trim()) || (mode === 'issue' && !issue) || (mode === 'pr' && !pr)}
+        disabled={creating || !backend || !nodeReady || !accountsReady || profiles.length === 0 || (mode === 'blank' && !title.trim()) || (mode === 'issue' && !issue) || (mode === 'pr' && !pr)}
         className="btn-primary text-xs"
       >
         {creating ? 'Creating…' : 'Start chat'}

@@ -43,6 +43,19 @@ function collapsedPreview(value: string, max: number): string {
   return redactTextSecrets(value).replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
+/** Only known pre-launch refusals qualify. Fallback refusals after actual
+ * attempts and unfamiliar errors keep their failure notification. Reuse the
+ * original id and receipt when correcting already persisted controller events. */
+function correctCapacityWait(event: ActivityEvent): boolean {
+  if (event.origin !== 'controller' || event.kind !== 'dispatch_failed'
+    || !/^[a-z_]+:\s*deferred_capacity:\s*(?:node admission deferred:|no eligible backend\b)/i.test(event.message)) return false;
+  event.kind = 'dispatch_deferred';
+  event.severity = 'info';
+  event.title = 'Waiting for capacity';
+  event.notificationMuted = true;
+  return true;
+}
+
 /** A tool title can carry a full command line; only its leading name may leave the server. */
 export function chatToolName(value?: string): string | null {
   return value?.match(/^[\p{L}\p{N}_-]{1,40}/u)?.[0] ?? null;
@@ -133,9 +146,11 @@ export function activityFromController(event: ControllerEvent): ActivityEvent | 
     'backend-wide quota_exhausted', 'model-specific quota_exhausted',
     'quota-pool quota_exhausted', 'availability quota_exhausted'
   ].includes(route.reason));
-  return succeeded
+  const activity: ActivityEvent = succeeded
     ? { ...shared, kind: 'dispatch_completed', severity: 'success', title: 'Work finished' }
     : { ...shared, kind: 'dispatch_failed', severity: 'error', title: 'Work failed', ...(quotaBlocked ? { notificationMuted: true } : {}) };
+  correctCapacityWait(activity);
+  return activity;
 }
 
 export function activityFromNode(transition: {
@@ -247,7 +262,7 @@ export class ActivityFeed {
   private preferences = { ...DEFAULT_ACTIVITY_NOTIFICATION_PREFERENCES };
 
   constructor(
-    private path: string | null = process.env.GAH_ACTIVITY_PATH ?? resolve(process.cwd(), 'config/activity.jsonl'),
+    private path: string | null = process.env.PARASAUR_ACTIVITY_PATH ?? resolve(process.cwd(), 'config/activity.jsonl'),
     private deliver?: ActivityDeliverer,
     private now: () => number = Date.now
   ) {
@@ -265,6 +280,9 @@ export class ActivityFeed {
         if (!line.trim()) continue;
         const event = JSON.parse(line) as ActivityEvent;
         if (event?.id && !this.ids.has(event.id)) {
+          if (correctCapacityWait(event)) {
+            event.readAt = event.readAt ?? new Date(this.now()).toISOString(); migrated = true;
+          }
           if (this.optionalNotificationEnabled(event) === false && (!event.notificationMuted || event.readAt == null)) {
             event.notificationMuted = true; event.readAt = event.readAt ?? new Date(this.now()).toISOString(); migrated = true;
           }
@@ -387,6 +405,8 @@ export class ActivityFeed {
 
   private optionalNotificationEnabled(event: ActivityEvent): boolean | undefined {
     switch (event.kind) {
+      // Routine admission receipts are always history-only.
+      case 'dispatch_deferred': return false;
       case 'node_back': return this.preferences.nodeBack;
       case 'quota_near_limit': return this.preferences.quotaNearLimit;
       case 'auth_restored': return this.preferences.authRestored;

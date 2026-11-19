@@ -236,21 +236,23 @@ function gatewayPort(): number {
   return DEFAULT_GATEWAY_PORT;
 }
 
-/** True when something accepts TCP connections on the loopback at `port`.
- * Auto-detection only adopts a port that is listening, not every port
- * number that appears in tool output. */
-export async function loopbackPortListening(port: number, timeoutMs = 500): Promise<boolean> {
-  const probe = (host: string): Promise<boolean> => new Promise((resolve) => {
-    const socket = net.connect({ port, host });
-    const finish = (listening: boolean): void => {
-      socket.destroy();
-      resolve(listening);
-    };
-    socket.setTimeout(timeoutMs, () => finish(false));
-    socket.once('connect', () => finish(true));
-    socket.once('error', () => finish(false));
+/** An HTTP response proves the target can serve the preview. TCP relays can
+ * accept a connection even after its listener closes. Probe the same address
+ * and Host as the proxy, with a bounded, body-free request. */
+export async function loopbackHttpReady(port: number, timeoutMs = 500): Promise<boolean> {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return false;
+  return new Promise(resolve => {
+    const request = http.request({ host: '127.0.0.1', port, method: 'HEAD', path: '/', headers: { host: `localhost:${port}` }, agent: false });
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    function finish(ready: boolean): void {
+      clearTimeout(timer);
+      request.destroy();
+      resolve(ready);
+    }
+    request.once('response', response => { response.resume(); finish(true); });
+    request.once('error', () => finish(false));
+    request.end();
   });
-  return (await probe('127.0.0.1')) || (await probe('::1'));
 }
 
 function toInfo(entry: PreviewEntry): PreviewInfo {
@@ -268,8 +270,8 @@ class PreviewProxy {
     advertiseHost?: string;
     bindHost?: string;
   } = {
-    basePort: Number.parseInt(process.env.GAH_PREVIEW_BASE_PORT ?? '', 10) || DEFAULT_BASE_PORT,
-    maxPort: Number.parseInt(process.env.GAH_PREVIEW_MAX_PORT ?? '', 10) || DEFAULT_MAX_PORT,
+    basePort: Number.parseInt(process.env.PARASAUR_PREVIEW_BASE_PORT ?? '', 10) || DEFAULT_BASE_PORT,
+    maxPort: Number.parseInt(process.env.PARASAUR_PREVIEW_MAX_PORT ?? '', 10) || DEFAULT_MAX_PORT,
     protectedPorts: [Number.parseInt(process.env.PORT ?? '', 10) || 3773]
   };
 

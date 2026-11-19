@@ -9,6 +9,8 @@ struct ProfileSummary<'a> {
     provider: &'a str,
     repo: &'a str,
     local_path: &'a str,
+    artifact_root: &'a str,
+    default_target_branch: &'a str,
     /// Stable repo identity used for GAH-owned branch and worktree naming
     /// (e.g. `gah/<repo_id>-<ts>`, `gah-chat-<repo_id>-<session>`). Clients
     /// that materialize worktrees MUST use this rather than deriving from
@@ -48,6 +50,8 @@ pub(crate) fn list_json(cfg: &GahConfig) -> Result<String> {
                 provider: &profile.provider,
                 repo: &profile.repo,
                 local_path: &profile.local_path,
+                artifact_root: &profile.artifact_root,
+                default_target_branch: &profile.default_target_branch,
                 repo_id: &profile.repo_id,
                 worktree_base: &cfg.defaults.worktree_base,
                 web_url: profile.web_url(),
@@ -82,7 +86,7 @@ mod tests {
     /// defaults.worktree_base; it learns that base from `gah profile list
     /// --json`, so the field must be present even when TOML leaves it empty.
     #[test]
-    fn profile_list_json_exposes_worktree_base() {
+    fn profile_list_json_exposes_workspace_metadata() {
         let config: GahConfig = toml::from_str(
             r#"
 [defaults]
@@ -95,7 +99,7 @@ provider = "github"
 repo = "owner/repo"
 local_path = "/tmp/repo"
 artifact_root = "/tmp/artifacts"
-default_target_branch = "main"
+default_target_branch = "release/stable"
 "#,
         )
         .unwrap();
@@ -103,6 +107,8 @@ default_target_branch = "main"
         let summary = &parsed[0];
         assert_eq!(summary["worktree_base"], "/srv/gah/worktrees");
         assert_eq!(summary["repo_id"], "repo");
+        assert_eq!(summary["artifact_root"], "/tmp/artifacts");
+        assert_eq!(summary["default_target_branch"], "release/stable");
         assert_eq!(summary["chat_session_idle_days"], 14);
     }
 }

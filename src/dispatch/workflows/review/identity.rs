@@ -1,5 +1,25 @@
 use crate::ledger::LedgerEntry;
 
+/// A handed-off review must still name the generation selected by central.
+/// Retain a changed observed generation as stale evidence, never as an opinion.
+pub(super) fn assert_selected_generation(
+    expected: Option<&str>,
+    ledger: &mut LedgerEntry,
+) -> anyhow::Result<()> {
+    if expected.is_some_and(|expected| ledger.review_generation.as_deref() != Some(expected)) {
+        ledger.set_failure(
+            crate::ledger::FailureClass::StaleSource,
+            crate::ledger::FailureStage::Preflight,
+        );
+        anyhow::bail!(
+            "Selected review generation changed before reviewer launch: selected '{}', observed '{}'",
+            expected.unwrap_or_default(),
+            ledger.review_generation.as_deref().unwrap_or("none")
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn canonicalize_review_ledger_identity(
     ledger: &mut LedgerEntry,
     source_branch: &str,
@@ -16,6 +36,20 @@ pub(super) fn canonicalize_review_ledger_identity(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selected_generation_refuses_stale_or_missing_observations_before_review() {
+        let profile = crate::ledger::test_util::profile();
+        let mut entry = LedgerEntry::new("test", &profile, "codex", "review", "branch", None, None);
+        assert!(assert_selected_generation(Some("selected"), &mut entry).is_err());
+        assert_eq!(entry.failure_class.as_deref(), Some("stale_source"));
+        assert_eq!(entry.validation_result, None, "validation has not run");
+        entry.review_generation = Some("observed-new".into());
+        assert!(assert_selected_generation(Some("selected"), &mut entry).is_err());
+        assert_eq!(entry.review_generation.as_deref(), Some("observed-new"));
+        assert!(assert_selected_generation(Some("observed-new"), &mut entry).is_ok());
+        assert!(assert_selected_generation(None, &mut entry).is_ok());
+    }
 
     #[test]
     fn explicit_mr_identity_is_canonicalized_to_provider_branch_url_and_work() {

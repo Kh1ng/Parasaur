@@ -39,7 +39,7 @@ export interface SessionLogOptions {
 export function chatLogPath(profile: string, opts: SessionLogOptions = {}): string {
   const base =
     opts.stateDir ??
-    process.env.GAH_CHAT_STATE_DIR ??
+    process.env.PARASAUR_CHAT_STATE_DIR ??
     (process.env.XDG_STATE_HOME
       ? resolve(process.env.XDG_STATE_HOME, 'gah', 'chat')
       : (process.env.HOME

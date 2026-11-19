@@ -1265,9 +1265,9 @@ fn standalone_rebinds_an_existing_server_env() {
         let mut command = Command::new("bash");
         command.arg("-c").arg(harness);
         if let Some(host) = override_host {
-            command.env("GAH_SERVER_HOST", host);
+            command.env("PARASAUR_SERVER_HOST", host);
         } else {
-            command.env_remove("GAH_SERVER_HOST");
+            command.env_remove("PARASAUR_SERVER_HOST");
         }
         let result = command.output().unwrap();
         assert!(
@@ -1288,7 +1288,7 @@ fn standalone_rebinds_an_existing_server_env() {
 /// Extracts the `gateway-url-default:start`/`:end` block from each install
 /// script and evaluates it under bash with a worker-local Tailscale address
 /// that differs from the configured central node. Regression test for issue
-/// #947: an unset `GAH_GATEWAY_URL` must reuse the existing central-node host,
+/// #947: an unset `PARASAUR_GATEWAY_URL` must reuse the existing central-node host,
 /// never the worker's own Tailscale address, while explicit overrides remain
 /// untouched.
 #[test]
@@ -1318,14 +1318,14 @@ fn install_linux_defaults_gateway_url_to_central_host() {
 
     let run = |extra: &str| {
         let probe = format!(
-            "PATH=\"{}:$PATH\"\nHOME=\"{}\"\n{extra}\n{block}\nprintf '%s' \"$GAH_GATEWAY_URL\"\n",
+            "PATH=\"{}:$PATH\"\nHOME=\"{}\"\n{extra}\n{block}\nprintf '%s' \"$PARASAUR_GATEWAY_URL\"\n",
             tmp.display(),
             home.display()
         );
         Command::new("bash").arg("-c").arg(&probe).output().unwrap()
     };
 
-    let defaulted = run("unset GAH_GATEWAY_URL");
+    let defaulted = run("unset PARASAUR_GATEWAY_URL");
     assert!(
         defaulted.status.success(),
         "{script_path} stderr: {}",
@@ -1338,7 +1338,7 @@ fn install_linux_defaults_gateway_url_to_central_host() {
         );
 
     fs::remove_file(config_dir.join("config.toml")).unwrap();
-    let explicit = run("GAH_GATEWAY_URL=http://central-node.example:9443");
+    let explicit = run("PARASAUR_GATEWAY_URL=http://central-node.example:9443");
     assert!(
         explicit.status.success(),
         "{script_path} explicit override stderr: {}",
@@ -1347,10 +1347,10 @@ fn install_linux_defaults_gateway_url_to_central_host() {
     assert_eq!(
         String::from_utf8_lossy(&explicit.stdout),
         "http://central-node.example:9443",
-        "{script_path} must preserve an explicit GAH_GATEWAY_URL override"
+        "{script_path} must preserve an explicit PARASAUR_GATEWAY_URL override"
     );
 
-    let missing = run("unset GAH_GATEWAY_URL");
+    let missing = run("unset PARASAUR_GATEWAY_URL");
     assert!(
             !missing.status.success(),
             "{script_path} must fail rather than use the worker's own Tailscale address when no central is configured"
@@ -1381,8 +1381,8 @@ fn install_linux_prefers_the_tailnet_bind_host() {
 
     let run = |host: Option<&str>, path: &Path, role: &str| {
         let host = host
-            .map(|value| format!("GAH_SERVER_HOST={value}"))
-            .unwrap_or_else(|| "unset GAH_SERVER_HOST".to_string());
+            .map(|value| format!("PARASAUR_SERVER_HOST={value}"))
+            .unwrap_or_else(|| "unset PARASAUR_SERVER_HOST".to_string());
         Command::new("bash")
             .arg("-c")
             .arg(format!(
@@ -1420,7 +1420,7 @@ fn install_linux_prefers_the_tailnet_bind_host() {
     assert_eq!(
         String::from_utf8_lossy(&run(Some("10.0.0.5"), &tmp, "standalone").stdout),
         "10.0.0.5",
-        "an explicit GAH_SERVER_HOST override still wins for standalone"
+        "an explicit PARASAUR_SERVER_HOST override still wins for standalone"
     );
     fs::remove_dir_all(tmp).unwrap();
 }

@@ -77,7 +77,7 @@ mod tests {
             let output = Command::new("bash")
                 .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/macos-launchd.sh"))
                 .args(["status", installer_role])
-                .env("GAH_LAUNCHD_DRY_RUN", "1")
+                .env("PARASAUR_LAUNCHD_DRY_RUN", "1")
                 .output()
                 .unwrap();
             assert!(

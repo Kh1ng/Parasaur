@@ -200,7 +200,7 @@ fn fixture_repo(dir: &Path) -> PathBuf {
 }
 
 static WEB_DEPLOY_ROOT_LOCK: Mutex<()> = Mutex::new(());
-static GAH_CONFIG_LOCK: Mutex<()> = Mutex::new(());
+static PARASAUR_CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
 /// Scoped, serialized overrides for the two env vars the managed-path
 /// collection reads; both must be restored before a parallel test can
@@ -217,18 +217,18 @@ impl ManagedPathsEnvGuard {
         let web_lock = WEB_DEPLOY_ROOT_LOCK
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        let config_lock = GAH_CONFIG_LOCK
+        let config_lock = PARASAUR_CONFIG_LOCK
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        let web_original = std::env::var_os("GAH_WEB_DEPLOY_ROOT");
+        let web_original = std::env::var_os("PARASAUR_WEB_DEPLOY_ROOT");
         match web {
-            Some(value) => std::env::set_var("GAH_WEB_DEPLOY_ROOT", value),
-            None => std::env::remove_var("GAH_WEB_DEPLOY_ROOT"),
+            Some(value) => std::env::set_var("PARASAUR_WEB_DEPLOY_ROOT", value),
+            None => std::env::remove_var("PARASAUR_WEB_DEPLOY_ROOT"),
         }
-        let config_original = std::env::var_os("GAH_CONFIG");
+        let config_original = std::env::var_os("PARASAUR_CONFIG");
         match config {
-            Some(path) => std::env::set_var("GAH_CONFIG", path),
-            None => std::env::remove_var("GAH_CONFIG"),
+            Some(path) => std::env::set_var("PARASAUR_CONFIG", path),
+            None => std::env::remove_var("PARASAUR_CONFIG"),
         }
         Self {
             _web: web_lock,
@@ -242,12 +242,12 @@ impl ManagedPathsEnvGuard {
 impl Drop for ManagedPathsEnvGuard {
     fn drop(&mut self) {
         match self.web.take() {
-            Some(value) => std::env::set_var("GAH_WEB_DEPLOY_ROOT", value),
-            None => std::env::remove_var("GAH_WEB_DEPLOY_ROOT"),
+            Some(value) => std::env::set_var("PARASAUR_WEB_DEPLOY_ROOT", value),
+            None => std::env::remove_var("PARASAUR_WEB_DEPLOY_ROOT"),
         }
         match self.config.take() {
-            Some(value) => std::env::set_var("GAH_CONFIG", value),
-            None => std::env::remove_var("GAH_CONFIG"),
+            Some(value) => std::env::set_var("PARASAUR_CONFIG", value),
+            None => std::env::remove_var("PARASAUR_CONFIG"),
         }
     }
 }
@@ -310,7 +310,7 @@ fn managed_paths_collect_state_roots_checkout_and_web_root() {
     }
     assert!(!managed.anchors.contains(&web.canonicalize().unwrap()));
     drop(env);
-    // An explicitly-empty GAH_WEB_DEPLOY_ROOT opts out of the web root.
+    // An explicitly-empty PARASAUR_WEB_DEPLOY_ROOT opts out of the web root.
     let _env = ManagedPathsEnvGuard::set(Some(""), Some(&config));
     let managed = server_managed_paths(&repo, &config).unwrap();
     assert!(!managed.paths.contains(&web));
@@ -1388,7 +1388,7 @@ fn ownership_without_systemctl_uses_the_complete_disk_configuration() {
     let _exec = crate::test_support::ExecGuard::new();
     let dir = ownership_tempdir();
     // Hide systemctl only in a child process, without racing other tests' git.
-    const CHILD: &str = "GAH_TEST_OWNERSHIP_WITHOUT_SYSTEMCTL";
+    const CHILD: &str = "PARASAUR_TEST_OWNERSHIP_WITHOUT_SYSTEMCTL";
     if std::env::var_os(CHILD).is_none() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "update::ownership::tests::ownership_without_systemctl_uses_the_complete_disk_configuration", "--nocapture"])

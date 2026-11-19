@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { test } from 'node:test';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -15,12 +15,9 @@ import { runEvents } from './gahCli.js';
 import type { ControllerEvent, NodeRoleStatus, ServerMessage } from '@git-agent-harness/contracts';
 import { ActivityFeed, activityFromController } from './activityFeed.js';
 
-// Hermetic: welcome is pushed only after gahCli.runStatus() spawns a real
-// `gah status` child. A cold call of the repo's release binary takes ~21s
-// here (statusCache then serves subsequent calls), which blows past the
-// per-message welcome deadline and makes the first connection a flaky
-// ~20s timeout. Point GAH_BINARY at the instant fixture instead.
-process.env.GAH_BINARY = fileURLToPath(new URL('../tests/fixtures/gah/gah', import.meta.url));
+// Other handler paths still query the CLI; keep those hermetic even though
+// the welcome handshake no longer depends on a status query.
+process.env.PARASAUR_BINARY = fileURLToPath(new URL('../tests/fixtures/gah/gah', import.meta.url));
 
 /**
  * AC3 ("a restored WebSocket connection re-triggers a fresh REST pull",
@@ -50,10 +47,8 @@ async function withWsServer(testFn: (wsUrl: string) => Promise<void>, node?: Nod
   }
 }
 
-// sendWelcomeMessage awaits a real `gah status --json` child process
-// (gahCli.runStatus) before pushing -- typically single-digit seconds on
-// first call, then cached (see gahCli.ts's statusCache) for the rest of
-// the run. This margin is for that first, uncached call.
+// Lease reconciliation remains part of the handshake. Bound the observation
+// independently of the test's own lifetime.
 function nextWelcome(ws: WebSocket): Promise<ServerMessage & { type: 'server.welcome' }> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('timed out waiting for server.welcome')), 15000);
@@ -151,22 +146,52 @@ test('server.welcome reconciles persisted leases before reporting running sessio
     ]
   }));
 
-  const previousPath = process.env.GAH_DISPATCH_LEASES_PATH;
-  process.env.GAH_DISPATCH_LEASES_PATH = leasesPath;
+  const previousPath = process.env.PARASAUR_DISPATCH_LEASES_PATH;
+  process.env.PARASAUR_DISPATCH_LEASES_PATH = leasesPath;
   try {
     await withWsServer(async (wsUrl) => {
       const ws = new WebSocket(wsUrl);
       try {
         const welcome = await nextWelcome(ws);
-        assert.deepEqual(welcome.sessions, []);
+        assert.equal(welcome.sessions.length, 1);
+        assert.equal(welcome.sessions[0]?.id, 'stale-session');
+        assert.equal(welcome.sessions[0]?.leaseState, 'uncertain_reconciling');
+        assert.equal(welcome.sessions[0]?.endedAt, undefined);
       } finally {
         ws.close();
       }
     });
   } finally {
-    if (previousPath === undefined) delete process.env.GAH_DISPATCH_LEASES_PATH;
-    else process.env.GAH_DISPATCH_LEASES_PATH = previousPath;
+    if (previousPath === undefined) delete process.env.PARASAUR_DISPATCH_LEASES_PATH;
+    else process.env.PARASAUR_DISPATCH_LEASES_PATH = previousPath;
     rmSync(dir, { recursive: true });
+  }
+});
+
+test('welcome never runs slow status or fabricates empty work observations', { skip: process.platform === 'win32' ? 'POSIX executable fixture' : false, timeout: 10000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-welcome-status-'));
+  const cli = join(dir, 'gah');
+  const queried = join(dir, 'queried');
+  const previous = process.env.PARASAUR_BINARY;
+  writeFileSync(cli, `#!${process.execPath}\nconst fs=require('node:fs');fs.writeFileSync(${JSON.stringify(queried)},'queried');setTimeout(()=>process.exit(1),1000);\n`);
+  chmodSync(cli, 0o755);
+  process.env.PARASAUR_BINARY = cli;
+  try {
+    await withWsServer(async url => {
+      const ws = new WebSocket(url);
+      try {
+        const welcome = await nextWelcome(ws);
+        assert.equal(existsSync(queried), false, 'A welcome must not spawn the CLI');
+        for (const key of ['mergeRequests','availability','blockers','constraints','dependencyBlockers','recentLedger','backendConfigured','errors']) {
+          assert.equal(Object.hasOwn(welcome,key), false, `${key} must stay absent until status is observed`);
+        }
+        assert.deepEqual(welcome.sessions, []);
+        assert.ok(welcome.serverProviderCatalog);
+      } finally { ws.close(); }
+    });
+  } finally {
+    if (previous===undefined) delete process.env.PARASAUR_BINARY; else process.env.PARASAUR_BINARY=previous;
+    rmSync(dir,{recursive:true});
   }
 });
 
@@ -247,6 +272,55 @@ test('activity reconnect replays only events after the client cursor', async () 
   }
 });
 
+test('quiet capacity receipts reach capable clients without breaking an already-open legacy client', { timeout: 10000 }, async () => {
+  const server = http.createServer();
+  const wss = new WebSocketServer({ server });
+  const events: ControllerEvent[] = [
+    { timestamp: '2026-11-06T06:00:00Z', event_type: 'dispatch_finished', profile: 'gah', work_id: '#7', details: 'review: deferred_capacity: node admission deferred: memory reserve' },
+    { timestamp: '2026-11-06T06:00:01Z', event_type: 'dispatch_finished', profile: 'gah', work_id: '#8', details: 'dispatch_ticket: success' }
+  ];
+  createWebSocketHandler(wss, { activityFeed: new ActivityFeed(null), runEvents: async () => [...events],
+    runQuota: (async () => { throw new Error('fixture quota unavailable'); }) as never, backgroundProfiles: async () => ['gah'], backgroundIntervalMs: 20 });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const connect = async (capable: boolean) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}`);
+    const messages: ServerMessage[] = [];
+    let replayResolve!: () => void;
+    const replay = new Promise<void>(resolve => { replayResolve = resolve; });
+    ws.on('message', bytes => {
+      const message = JSON.parse(bytes.toString()) as ServerMessage;
+      messages.push(message);
+      if (message.type === 'activity.replay') replayResolve();
+    });
+    await new Promise<void>(resolve => ws.once('open', resolve));
+    ws.send(JSON.stringify({ type: 'client.hello', clientVersion: 'test', profile: 'gah', capabilities: capable ? { supportsCapacityWaitActivity: true } : {} }));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([replay, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Capacity receipt replay timed out')), 3000); })]);
+    } finally { clearTimeout(timer); }
+    return { ws, messages };
+  };
+  try {
+    const legacy = await connect(false);
+    const modern = await connect(true);
+    const replayKinds = (messages: ServerMessage[]) => messages.flatMap(message => message.type === 'activity.replay' ? message.events.map(event => event.kind) : []);
+    assert.deepEqual(replayKinds(legacy.messages), ['dispatch_completed']);
+    assert.deepEqual(replayKinds(modern.messages), ['dispatch_deferred', 'dispatch_completed']);
+    events.push({ ...events[0], timestamp: '2026-11-06T06:01:00Z' }, { ...events[1], timestamp: '2026-11-06T06:01:01Z' });
+    const received = (messages: ServerMessage[], kind: string) => messages.some(message => message.type === 'activity.event' && message.event.kind === kind);
+    const deadline = Date.now() + 3000;
+    while (!received(legacy.messages, 'dispatch_completed') || !received(modern.messages, 'dispatch_deferred')) {
+      assert.ok(Date.now() < deadline, 'Both clients receive supported live events');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(received(legacy.messages, 'dispatch_deferred'), false);
+  } finally {
+    for (const socket of wss.clients) socket.terminate();
+    await new Promise<void>(resolve => wss.close(() => resolve()));
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
 test('background activity is delivered without a dashboard and backfill stays silent', async () => {
   const server = http.createServer();
   const wss = new WebSocketServer({ server });
@@ -306,10 +380,10 @@ test('worker websocket authenticates execution handshake and rejects manager cha
 
 test('trusted-LAN sockets receive a warning but cannot invoke session mutations', async (t) => {
   const { getFleetDispatch } = await import('./wsServer.js');
-  const savedMode = process.env.GAH_WS_AUTH_MODE;
-  const savedHttp = process.env.GAH_ALLOW_INSECURE_HTTP;
-  process.env.GAH_WS_AUTH_MODE = 'trusted_lan';
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
+  const savedMode = process.env.PARASAUR_WS_AUTH_MODE;
+  const savedHttp = process.env.PARASAUR_ALLOW_INSECURE_HTTP;
+  process.env.PARASAUR_WS_AUTH_MODE = 'trusted_lan';
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
   const server = http.createServer();
   const wss = createAuthorizedWebSocketServer(server, 'central');
   createWebSocketHandler(wss);
@@ -337,8 +411,8 @@ test('trusted-LAN sockets receive a warning but cannot invoke session mutations'
     ws.terminate();
     await new Promise<void>(resolve => wss.close(() => resolve()));
     await new Promise<void>(resolve => server.close(() => resolve()));
-    if (savedMode === undefined) delete process.env.GAH_WS_AUTH_MODE; else process.env.GAH_WS_AUTH_MODE = savedMode;
-    if (savedHttp === undefined) delete process.env.GAH_ALLOW_INSECURE_HTTP; else process.env.GAH_ALLOW_INSECURE_HTTP = savedHttp;
+    if (savedMode === undefined) delete process.env.PARASAUR_WS_AUTH_MODE; else process.env.PARASAUR_WS_AUTH_MODE = savedMode;
+    if (savedHttp === undefined) delete process.env.PARASAUR_ALLOW_INSECURE_HTTP; else process.env.PARASAUR_ALLOW_INSECURE_HTTP = savedHttp;
   }
 });
 
@@ -355,11 +429,11 @@ test('session.start validates the GitLab context with the same validator as the 
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   try {
     await nextWelcome(ws);
-    const sendStart = (gitlab: unknown, requestId: string) => {
+    const sendStart = (gitlab: unknown, requestId: string, executionOptions: Record<string, unknown> = {}) => {
       const reply = new Promise<ServerMessage>(resolve => ws.once('message', data => resolve(JSON.parse(data.toString()))));
       ws.send(JSON.stringify({
         type: 'session.start', requestId, profile: 'gl-profile', providerKind: 'gitlab', instanceId: 'gitlab-0',
-        repo: 'team/project', mode: 'review', gitlab
+        repo: 'team/project', mode: 'review', gitlab, ...executionOptions
       }));
       return reply;
     };
@@ -378,10 +452,16 @@ test('session.start validates the GitLab context with the same validator as the 
     }
     // A valid context passes through to the session like the HTTP route's.
     const context = { project: 'team/project', kind: 'merge_request' as const, iid: 42, webUrl: 'https://gitlab.example.com/team/project' };
-    const response = await sendStart(context, 'valid');
+    for (const invalid of [{ dryRun: 'true' }, { retries: -1 }, { manualWorker: 'false' }]) {
+      assert.equal((await sendStart(context, 'invalid-options', invalid)).type, 'error');
+      assert.equal(start.mock.callCount(), 0);
+    }
+    const executionOptions = { dryRun: true, retries: 0, allowDraftFail: true, prod: true, allowUnknownRedBaseline: true, escalate: true, manualWorker: false };
+    const response = await sendStart(context, 'valid', executionOptions);
     assert.equal(response.type, 'session.started');
     assert.equal(started.length, 1);
     assert.deepEqual((started[0] as { gitlab: unknown }).gitlab, context);
+    for (const [key, value] of Object.entries(executionOptions)) assert.equal((started[0] as Record<string, unknown>)[key], value, key);
   } finally {
     ws.terminate();
     await new Promise<void>(resolve => wss.close(() => resolve()));
@@ -450,8 +530,8 @@ process.stdout.write(',' + newest.map((event) => JSON.stringify(event)).join(','
 test('an over-cap event window still refreshes the feed with the newest events (#1598)', { timeout: 20000 }, async () => {
   const fakeDir = mkdtempSync(join(tmpdir(), 'gah-overcap-events-'));
   const fakeBin = writeOverCapEventsGah(fakeDir);
-  const previousBinary = process.env.GAH_BINARY;
-  process.env.GAH_BINARY = fakeBin;
+  const previousBinary = process.env.PARASAUR_BINARY;
+  process.env.PARASAUR_BINARY = fakeBin;
   try {
     // The unlimited 30-day window read (what the HTTP endpoints request)
     // exceeds the events output cap: the incident, reproduced through the
@@ -493,7 +573,7 @@ test('an over-cap event window still refreshes the feed with the newest events (
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   } finally {
-    if (previousBinary === undefined) delete process.env.GAH_BINARY; else process.env.GAH_BINARY = previousBinary;
+    if (previousBinary === undefined) delete process.env.PARASAUR_BINARY; else process.env.PARASAUR_BINARY = previousBinary;
     rmSync(fakeDir, { recursive: true, force: true });
   }
 });

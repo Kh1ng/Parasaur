@@ -20,7 +20,7 @@ git clone "$stage/origin.git" "$stage/checkout"
 registration_file="$stage/registration.json"
 health_file="$stage/health-checks"
 health_mode="$stage/health-mode"
-export GAH_CENTRAL_URL=http://127.0.0.1:47819
+export PARASAUR_CENTRAL_URL=http://127.0.0.1:47819
 python3 - "$registration_file" "$health_file" "$health_mode" <<'PY' &
 import json, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -68,23 +68,23 @@ ThreadingHTTPServer(('127.0.0.1', 47819), Handler).serve_forever()
 PY
 central_pid=$!
 trap 'launchctl bootout "gui/$(id -u)/dev.git-agent-harness.worker-tunnel" 2>/dev/null || true; kill "$central_pid" 2>/dev/null || true' EXIT
-for _ in {1..50}; do /usr/bin/curl -s -o /dev/null "$GAH_CENTRAL_URL" && break; sleep 0.1; done
-/usr/bin/curl -s -o /dev/null "$GAH_CENTRAL_URL" || { echo 'ERROR: fake central did not start' >&2; exit 1; }
+for _ in {1..50}; do /usr/bin/curl -s -o /dev/null "$PARASAUR_CENTRAL_URL" && break; sleep 0.1; done
+/usr/bin/curl -s -o /dev/null "$PARASAUR_CENTRAL_URL" || { echo 'ERROR: fake central did not start' >&2; exit 1; }
 export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
 export REGISTRATION_FILE="$registration_file"
 export HEALTH_FILE="$health_file"
-export GAH_NODE_ROLE=worker
-export GAH_INSTALL_AGENT=opencode
-export GAH_INSTALL_CONFIRMED=1
+export PARASAUR_NODE_ROLE=worker
+export PARASAUR_INSTALL_AGENT=opencode
+export PARASAUR_INSTALL_CONFIRMED=1
 export COORDINATOR_TOKEN=ci-install-test-token
 # The hosted runner has no tailnet. Production workers keep the Tailscale default.
-export GAH_DESKTOP_SERVER_PORT=4774
-export GAH_NODE_SSH_TARGET=127.0.0.1
-export GAH_NODE_SSH_REMOTE_PORT=48774
+export PARASAUR_DESKTOP_SERVER_PORT=4774
+export PARASAUR_NODE_SSH_TARGET=127.0.0.1
+export PARASAUR_NODE_SSH_REMOTE_PORT=48774
 bash "$stage/checkout/scripts/install-macos.sh"
 launchctl print "gui/$(id -u)/dev.git-agent-harness.worker-tunnel" >/dev/null
 
-unset GAH_DESKTOP_SERVER_PORT GAH_NODE_SSH_TARGET GAH_NODE_SSH_REMOTE_PORT
+unset PARASAUR_DESKTOP_SERVER_PORT PARASAUR_NODE_SSH_TARGET PARASAUR_NODE_SSH_REMOTE_PORT
 bash "$stage/checkout/scripts/macos-launchd.sh" install worker "$stage/checkout"
 launchctl print "gui/$(id -u)/dev.git-agent-harness.worker-tunnel" >/dev/null
 
@@ -97,7 +97,7 @@ import tomllib
 config_root = Path.home() / '.config'
 config = tomllib.loads((config_root / 'gah/config.toml').read_text())['defaults']
 assert config['node_role'] == 'worker', config
-assert config['registry_central_url'] == os.environ['GAH_CENTRAL_URL'], config
+assert config['registry_central_url'] == os.environ['PARASAUR_CENTRAL_URL'], config
 credentials = config_root / 'gah/gah-loop.env'
 assert credentials.stat().st_mode & 0o777 == 0o600
 assert credentials.read_text() == 'COORDINATOR_TOKEN="ci-install-test-token"\n'

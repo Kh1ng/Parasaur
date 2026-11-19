@@ -14,9 +14,10 @@ const candidates = [
       { backend: 'claude', quota_window: '5-hour', quota_remaining_percent: 34, quota_reset_at: '2026-10-04T23:20:00Z', observed_at: '2026-10-04T22:58:00Z' }
     ] },
   { backend: 'codex', backend_instance: 'codex', provider: 'openai', model: 'gpt-6-sol', modes: ['improve'], configured: false, eligible_now: true, usage: { actual_cost_usd: 8.1 },
-    quota_observations: [{ backend: 'codex', quota_window: '10080m', quota_remaining_percent: 94, quota_reset_at: '2026-10-11T08:06:15Z' }] },
+    quota_observations: [{ backend: 'codex', quota_window: '10080m', observed_at: '2026-10-04T22:58:00Z', quota_remaining_percent: 94, quota_reset_at: '2026-10-11T08:06:15Z' }] },
   { backend: 'vibe', backend_instance: 'vibe', provider: 'z-ai', model: 'glm-5-3', modes: ['improve'], configured: false, eligible_now: false, reason: 'quota exhausted', unavailable_until: '2026-10-05T01:00:00Z', usage: {} }
 ];
+const accountSpend = [{ backend: 'codex', backend_instance: 'codex', actual_cost_usd: 8.1, estimated_cost_usd: null, observations: 1, actual_cost_unknown_observations: 0 }];
 
 // Routes that fetch from the fixture server must not outlive the test.
 test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: 'ignoreErrors' }); });
@@ -28,7 +29,7 @@ test('windows are named and sized from the provider names, and projected to rese
   expect(parseWindow('weekly').label).toBe('Weekly');
   expect(parseWindow('AGY individual quota')).toEqual({ label: 'AGY individual quota', windowMs: null });
 
-  const [claude, codex, vibe] = subscriptionUsage({ candidates } as never);
+  const [claude, codex, vibe] = subscriptionUsage({ candidates, account_spend: accountSpend } as never);
   expect(claude.providerLabel).toBe('Anthropic');
   expect(claude.windows.map((window) => [window.label, window.usedPercent])).toEqual([['Session (5h)', 66], ['Weekly', 14]]);
   expect(claude.tightest?.label).toBe('Session (5h)');
@@ -43,24 +44,13 @@ test('windows are named and sized from the provider names, and projected to rese
   expect(projectedPercent({ ...claude.windows[0], resetAt: '2026-10-05T03:55:00Z' }, NOW)).toBeNull();
   expect(formatUntil('2026-10-04T23:20:00Z', NOW)).toBe('20 min');
   expect(formatUntil('2026-10-07T13:00:00Z', NOW)).toBe('2d 14h');
-  expect(formatUntil('2026-10-04T22:00:00Z', NOW)).toBe('now');
+  expect(formatUntil('2026-10-04T22:00:00Z', NOW)).toBeNull();
 
-  // A running session names its backend; a loop job is credited through the latest dispatch.
+  // Only exact executing accounts can light a ring; a transport name cannot.
   const subscriptions = [claude, codex, vibe];
-  expect([...busySubscriptionIds({ subscriptions, sessions: [{ id: 's', providerKind: 'github', instanceId: 'claude', status: 'running', backend: 'claude' }] as never, controllerRuns: [], claims: [], recentLedger: null })]).toEqual(['claude']);
-  expect([...busySubscriptionIds({ subscriptions, sessions: [], controllerRuns: [{ run_id: 'r', profile: 'gah', work_id: '#1', started_at: '', finished_at: null, action: 'fix', status: 'running', outcome: null }],
-    claims: [], recentLedger: { most_recent_work_id: '#1', most_recent_effective_backend: 'codex' } as never })]).toEqual(['codex']);
-  expect(busySubscriptionIds({ subscriptions, sessions: [], controllerRuns: [], claims: [], recentLedger: { most_recent_work_id: '#1', most_recent_effective_backend: 'codex' } as never }).size).toBe(0);
-  // A factory agent process is a subscription at work, whatever the ledger says.
-  expect([...busySubscriptionIds({ subscriptions, sessions: [], controllerRuns: [], claims: [], recentLedger: null, factoryAgents: [{ pid: 1, tool: 'codex', cwd: '/w', started_at: null }] })]).toEqual(['codex']);
-  // Two subscriptions behind one CLI: the model the process runs picks the one that is busy.
-  const pools = [
-    { ...subscriptions[0], id: 'agy:google-native', backend: 'agy', model: 'Gemini Pro' },
-    { ...subscriptions[0], id: 'agy:external', backend: 'agy', model: 'Claude Sonnet' }
-  ];
-  const agyAgent = (model?: string) => ({ pid: 1, tool: 'agy', cwd: '/w', started_at: null, ...(model ? { model } : {}) });
-  expect([...busySubscriptionIds({ subscriptions: pools, sessions: [], controllerRuns: [], claims: [], recentLedger: null, factoryAgents: [agyAgent('Claude Sonnet')] })]).toEqual(['agy:external']);
-  expect([...busySubscriptionIds({ subscriptions: pools, sessions: [], controllerRuns: [], claims: [], recentLedger: null, factoryAgents: [agyAgent()] })]).toEqual(['agy:google-native']);
+  expect([...busySubscriptionIds({ subscriptions, sessions: [{ id: 's', providerKind: 'github', instanceId: 'transport', backendInstance: 'claude', status: 'running', backend: 'claude' }] as never })]).toEqual(['claude']);
+  expect(busySubscriptionIds({ subscriptions, sessions: [{ id: 's', providerKind: 'github', instanceId: 'codex', status: 'running', backend: 'codex' }] as never }).size).toBe(0);
+
 });
 
 test('one ring per account: pools are windows of it, router aliases are not accounts (#1411)', () => {
@@ -88,13 +78,15 @@ test('the navbar shows a ring per subscription and opens its windows; Quota list
   await page.route('**/api/quota?*', async (route) => {
     const snapshot = await (await route.fetch()).json();
     snapshot.quota_checks = [];
-    snapshot.candidates = candidates.map((candidate) => ({ ...candidate, quota_observations: candidate.quota_observations?.map((o) => ({ ...o, quota_reset_at: o.quota_window === '5-hour' ? soon : week })) }));
+    snapshot.since = '7d';
+    snapshot.account_spend = accountSpend;
+    snapshot.candidates = [...candidates, { ...candidates[1], model: 'another-codex-model' }].map((candidate) => ({ ...candidate, quota_observations: candidate.quota_observations?.map((o) => ({ ...o, observed_at: new Date().toISOString(), quota_reset_at: o.quota_window === '5-hour' ? soon : week })) }));
     await route.fulfill({ json: snapshot });
   });
   await page.routeWebSocket('**/ws**', (ws) => {
     ws.send(JSON.stringify({
       type: 'server.welcome', serverVersion: '0.0.0-test', serverProviderCatalog: { providers: [] }, providers: {},
-      sessions: [{ id: 's1', providerKind: 'github', instanceId: 'codex', status: 'running', backend: 'codex', target: '#946', mode: 'improve', startedAt: new Date().toISOString() }]
+      sessions: [{ id: 's1', providerKind: 'github', instanceId: 'transport', backendInstance: 'codex', status: 'running', backend: 'codex', target: '#946', mode: 'improve', startedAt: new Date().toISOString() }]
     }));
     ws.send(JSON.stringify({ type: 'activity.replay', events: [] }));
   });
@@ -121,6 +113,6 @@ test('the navbar shows a ring per subscription and opens its windows; Quota list
   await expect(codex).toContainText('Weekly6%');
   await codex.getByRole('button', { name: /OpenAI/ }).click();
   await expect(codex.getByRole('progressbar', { name: 'Weekly' })).toHaveAttribute('aria-valuenow', '6');
-  await expect(codex).toContainText('spend $8.10 this period');
+  await expect(codex).toContainText('Recorded actual cost (7d): $8.10');
   await expect(cards.getByRole('article', { name: 'Z.ai subscription' })).toContainText('quota exhausted');
 });

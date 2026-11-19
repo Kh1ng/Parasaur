@@ -1,5 +1,4 @@
 use anyhow::Result;
-use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -80,7 +79,7 @@ pub(crate) fn run_with_executable(
         "launching codex; is it installed and on PATH?",
     )?;
 
-    let output_text = fs::read_to_string(&log_path).unwrap_or_default();
+    let output_text = output::read_capture_log(&log_path);
     let transcript_path =
         crate::runner::review_usage::find_codex_transcript(env_vars, &output_text)
             .map(|path| path.to_string_lossy().into_owned());
@@ -110,7 +109,9 @@ pub(crate) fn run_with_executable(
         exit_code,
         duration_secs,
         log_path: log_path.to_string_lossy().into_owned(),
-        final_summary: output::extract_codex_jsonl_summary(&output_text),
+        final_summary: output::log_capture_complete(&log_path)
+            .then(|| output::extract_codex_jsonl_summary(&output_text))
+            .flatten(),
         agy_cli_log_delta: None,
         internal_log_delta: None,
         internal_log_path: None,
@@ -398,6 +399,49 @@ mod tests {
         ));
     }
     // ── run_codex ────────────────────────────────────────────────────────
+
+    #[test]
+    fn incomplete_capture_never_publishes_an_earlier_codex_summary() {
+        let _exec_guard = crate::test_support::ExecGuard::new();
+        let f = fixture();
+        let prefix = "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Earlier result\"}}\n{\"type\":\"turn.completed\"}\n";
+        make_fake_bin(
+            &f.bin_dir,
+            "codex",
+            &format!(
+                "#!/bin/sh\ncat <<'EOF'\n{prefix}EOF\nhead -c 33554432 /dev/zero | tr '\\000' x\n"
+            ),
+        );
+        let run = || {
+            run_with_executable(
+                &f.bin_dir.join("codex"),
+                &f.worktree,
+                "task",
+                &f.session_dir,
+                None,
+                &[],
+                &[],
+                300,
+                WriteIntent::Implementation,
+            )
+            .unwrap()
+        };
+        let result = run();
+        assert_eq!(
+            result.exit_code, 0,
+            "capture limits do not cancel implementation"
+        );
+        assert_eq!(result.final_summary, None);
+        let log = Path::new(&result.log_path);
+        let marker = log.with_extension(crate::runner::log_copier::INCOMPLETE_CAPTURE_EXTENSION);
+        assert!(marker.exists());
+        // Model a failed notice write and later reuse of the same artifact.
+        // A successful subsequent empty stream cannot clear prior uncertainty.
+        fs::write(log, prefix).unwrap();
+        make_fake_bin(&f.bin_dir, "codex", "#!/bin/sh\nexit 0\n");
+        assert_eq!(run().final_summary, None);
+        assert!(marker.exists());
+    }
 
     #[test]
     fn run_codex_success_writes_stdout_and_stderr_to_log() {
@@ -693,7 +737,7 @@ mod tests {
             &f.bin_dir,
             "codex",
             &format!(
-                "#!/bin/sh\n{edit}cat <<'GAH_EOF'\n{}\nGAH_EOF\n",
+                "#!/bin/sh\n{edit}cat <<'PARASAUR_EOF'\n{}\nPARASAUR_EOF\n",
                 events.join("\n")
             ),
         );

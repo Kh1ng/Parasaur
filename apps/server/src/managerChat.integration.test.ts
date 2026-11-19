@@ -83,10 +83,10 @@ test('a new project chat recalls a code word from shared project context', { tim
 
   const savedEnv = { ...process.env };
   process.env.PATH = `${join(fixtures, 'hermes')}:${process.env.PATH}`;
-  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
-  process.env.GAH_CHAT_STATE_DIR = join(stateDir, 'chat');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
+  process.env.PARASAUR_BINARY = join(fixtures, 'gah', 'gah');
+  process.env.PARASAUR_CHAT_STATE_DIR = join(stateDir, 'chat');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
   process.env.TDAI_GATEWAY_URL = `http://127.0.0.1:${gatewayPort}`;
 
   const server = http.createServer();
@@ -138,10 +138,10 @@ test('a configured-but-unreachable gateway completes the turn and shows the degr
   const stateDir = mkdtempSync(join(tmpdir(), 'gah-chat-degraded-'));
   const savedEnv = { ...process.env };
   process.env.PATH = `${join(fixtures, 'hermes')}:${process.env.PATH}`;
-  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
-  process.env.GAH_CHAT_STATE_DIR = join(stateDir, 'chat');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
+  process.env.PARASAUR_BINARY = join(fixtures, 'gah', 'gah');
+  process.env.PARASAUR_CHAT_STATE_DIR = join(stateDir, 'chat');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
   // Issue #878: point at a port with nothing listening -- the gateway is
   // "configured" (env URL set) but down, so the turn must fail open and the
   // degradation must be visible in the transcript.
@@ -211,10 +211,10 @@ test('an empty backend reply preserves the user turn in an accepted gateway capt
 
   const savedEnv = { ...process.env };
   process.env.PATH = `${join(fixtures, 'hermes')}:${process.env.PATH}`;
-  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
-  process.env.GAH_CHAT_STATE_DIR = join(stateDir, 'chat');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
+  process.env.PARASAUR_BINARY = join(fixtures, 'gah', 'gah');
+  process.env.PARASAUR_CHAT_STATE_DIR = join(stateDir, 'chat');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(stateDir, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
   process.env.TDAI_GATEWAY_URL = `http://127.0.0.1:${gatewayPort}`;
 
   const server = http.createServer();

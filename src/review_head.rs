@@ -65,6 +65,13 @@ fn has_receipt(body: &str, head: &str) -> bool {
 
 /// A completed opinion is a head-level stop, even when metadata or routing changes.
 /// Invalid output and interrupted calls remain eligible for bounded rerouting.
+/// So does an opinion that never reached the provider: it exists only on this
+/// machine, and running the review again is how the operator publishes it
+/// once provider access is repaired.
+///
+/// `entries` are in ledger order. The newest opinion on this head decides; a
+/// duplicate-skip record only echoes an opinion, so it counts only when no
+/// opinion was recorded here (the review was found on the provider).
 pub(crate) fn locally_reviewed(
     entries: &[LedgerEntry],
     profile_name: &str,
@@ -73,7 +80,7 @@ pub(crate) fn locally_reviewed(
     mr_url: Option<&str>,
     head: &str,
 ) -> bool {
-    entries.iter().any(|entry| {
+    let mut on_head = entries.iter().filter(|entry| {
         entry.profile == profile_name
             && entry.repo_id == profile.repo_id
             && entry.mode == "review"
@@ -81,12 +88,21 @@ pub(crate) fn locally_reviewed(
             && entry.branch.as_deref() == Some(branch)
             && (mr_url.is_none() || entry.mr_url.as_deref() == mr_url)
             && entry.review_source_sha.as_deref() == Some(head)
-            && (entry.validation_result.as_deref() == Some("skipped_duplicate_review")
-                || matches!(
-                    entry.review_verdict.as_deref(),
-                    Some("APPROVE" | "NEEDS_FIX" | "REJECT" | "HUMAN_REVIEW")
-                ))
-    })
+    });
+    let opinion = on_head.clone().rev().find(|entry| {
+        matches!(
+            entry.review_verdict.as_deref(),
+            Some("APPROVE" | "NEEDS_FIX" | "REJECT" | "HUMAN_REVIEW")
+        )
+    });
+    match opinion {
+        Some(entry) => {
+            entry.human_required_reason_code.as_deref()
+                != Some(crate::controller::HumanRequiredReason::PublicationFailed.as_str())
+        }
+        None => on_head
+            .any(|entry| entry.validation_result.as_deref() == Some("skipped_duplicate_review")),
+    }
 }
 
 #[derive(Deserialize)]

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import './legacySettings.js';
 import { createAuthorizedWebSocketServer } from './webSocketAuth.js';
 import { startModelPriceRefresh } from './modelPricing.js';
 import { helperPriceExtractor } from './modelPriceHelper.js';
@@ -8,8 +9,12 @@ import { createServer as createExpressServer, initializeSkillBank } from './serv
 import { createServer as createHttpServer } from 'http';
 import { createWebSocketHandler } from './wsServer.js';
 import { validateNodeRole, workerMemoryEnvironment } from './nodeRole.js';
-import { runNodeRole, runProfileList } from './gahCli.js';
+import { runNodeRole, runProfileList, findGahBinary } from './gahCli.js';
+import { NativeWorker } from './nativeWorker.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { isGahCliAvailable } from './gahCli.js';
+import { chooseDefaultProfile, defaultProfile } from './defaultProfile.js';
 import { getProviderRegistry } from './provider/ProviderRegistry.js';
 import { RegistryService } from './registryService.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
@@ -122,10 +127,10 @@ async function main() {
   let stopWorkerAutoUpdate: (() => void) | undefined;
 
   // A central or standalone node serves the dashboard itself unless the
-  // operator pointed GAH_WEB_ROOT elsewhere or emptied it (#1327). A worker
+  // operator pointed PARASAUR_WEB_ROOT elsewhere or emptied it (#1327). A worker
   // has no dashboard.
-  const webRoot = node.role === 'worker' ? null : resolveWebRoot(process.env.GAH_WEB_ROOT);
-  process.env.GAH_WEB_ROOT = webRoot ?? '';
+  const webRoot = node.role === 'worker' ? null : resolveWebRoot(process.env.PARASAUR_WEB_ROOT);
+  process.env.PARASAUR_WEB_ROOT = webRoot ?? '';
 
   // Create Express app
   const app = createExpressServer({
@@ -133,6 +138,12 @@ async function main() {
     node,
     deviceAccess,
     registryService,
+    nativeDispatchRoot:node.role==='central'?join(process.env.XDG_STATE_HOME??join(homedir(),'.local','state'),'gah','native-dispatch'):undefined,
+    nativeWorker:node.role==='worker' && process.platform==='linux'?new NativeWorker({
+      root:join(process.env.XDG_STATE_HOME??join(homedir(),'.local','state'),'gah','native-worker'),
+      nodeId:coordinatorIdentity.node_id,binary:findGahBinary(),config:process.env.PARASAUR_CONFIG_PATH,
+      profiles:runProfileList,centralToken:()=>process.env.COORDINATOR_TOKEN,
+    }):undefined,
     webPushNotifications,
     apnsNotifications,
     activityFeed,
@@ -170,10 +181,14 @@ async function main() {
 
   // Initialize provider registry with default profile
   const providerRegistry = getProviderRegistry();
-  providerRegistry.setDefaultProfile('gah');
-  await providerRegistry.refreshAllFromGah();
-  markReadinessCheck('providerRegistry', true);
-  
+  // Chosen before the first client connects, so nothing starts on a profile
+  // this installation does not have.
+  // A CLI that cannot list profiles leaves the default alone; it must never
+  // stop the server from starting.
+  if (cliAvailable) {
+    chooseDefaultProfile(await runProfileList().catch(() => null));
+  }
+
   // Set up WebSocket handler
   createWebSocketHandler(wss, {
     registryService,
@@ -228,16 +243,33 @@ async function main() {
   let stopRouterQuotaRefresh: (() => void) | undefined;
   let stopQuotaRefresh: (() => Promise<void>) | undefined;
   // Start HTTP server
+  let stopNativeReconciliation:(()=>void)|undefined;
   server.listen(PORT, HOST, () => {
+    if(app.locals.nativeDispatchBroker) {
+      let checking=false;
+      const reconcile=async()=>{
+        if(checking) return;checking=true;
+        try {await app.locals.nativeDispatchBroker.reconcilePending();}
+        catch {console.warn('Native dispatch reconciliation unavailable; existing runs remain held.');}
+        finally {checking=false;}
+      };
+      const timer=setInterval(()=>{void reconcile();},10_000);timer.unref();
+      stopNativeReconciliation=()=>clearInterval(timer);void reconcile();
+    }
     logLifecycle(`Parasaur server listening on ${HOST}:${PORT}`);
+    // A slow ledger/availability read must not hide health and repair APIs.
+    // The registry owns its pending, failed and recovered readiness state.
+    void providerRegistry.refreshAllFromGah().catch(() => {
+      markReadinessCheck('providerRegistry', false, 'Provider status initialization failed');
+    });
     // Model prices: checked a few seconds after start when a day old, then daily.
-    if (process.env.GAH_DISABLE_PRICE_REFRESH !== '1') startModelPriceRefresh(helperPriceExtractor('gah'), logLifecycle);
+    if (process.env.PARASAUR_DISABLE_PRICE_REFRESH !== '1') startModelPriceRefresh(helperPriceExtractor(defaultProfile()), logLifecycle);
     console.log(`WebSocket server available on ws://${HOST}:${PORT}`);
     console.log(`Health check available on http://${HOST}:${PORT}/health`);
     if (webRoot) {
       console.log(`Dashboard served from ${webRoot}`);
     } else if (node.role !== 'worker') {
-      console.warn('No dashboard is served: apps/web is not built and GAH_WEB_ROOT is not set. Run `gah update`, or set GAH_WEB_ROOT to a built web app.');
+      console.warn('No dashboard is served: apps/web is not built and PARASAUR_WEB_ROOT is not set. Run `gah update`, or set PARASAUR_WEB_ROOT to a built web app.');
     }
     const warning = networkExposureWarning(HOST);
     if (warning) {
@@ -265,6 +297,7 @@ async function main() {
     app.locals.gitLabEventsQueue?.stop();
     stopChatMaintenanceScheduler();
     stopWorkerAutoUpdate?.();
+    stopNativeReconciliation?.();
     authHealthProber.stop();
     server.close();
     stopRouterQuotaRefresh?.();

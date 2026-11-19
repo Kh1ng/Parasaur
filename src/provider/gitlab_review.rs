@@ -14,11 +14,14 @@ mod tests;
 
 type Api<'a> = dyn FnMut(&str, &str, Value) -> Result<Value> + 'a;
 
+const MISSING_BOT_PAT: &str = "GitLab bot PAT is required";
+const BOT_API_FAILED: &str = "GitLab bot API request failed";
+
 /// Send structured JSON with the configured bot PAT, never a glab login or requester's token.
 pub(crate) fn bot_api(profile: &Profile, path: &str, method: &str, body: Value) -> Result<Value> {
     let token = profile.pat();
     if token.trim().is_empty() {
-        bail!("GitLab bot PAT is required");
+        bail!(MISSING_BOT_PAT);
     }
     let hostname = gitlab_hostname(
         profile
@@ -35,7 +38,9 @@ pub(crate) fn bot_api(profile: &Profile, path: &str, method: &str, body: Value) 
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if !body.is_null() {
-        command.args(["--input", "-"]);
+        // glab sends a piped body without a content type, which GitLab
+        // refuses with HTTP 415, so the type is named here.
+        command.args(["--input", "-", "--header", "Content-Type: application/json"]);
     }
     let mut child = command.spawn().context("launch GitLab bot API")?;
     if !body.is_null() {
@@ -47,9 +52,20 @@ pub(crate) fn bot_api(profile: &Profile, path: &str, method: &str, body: Value) 
             .write_all(&input)?;
     }
     let output = child.wait_with_output()?;
-    // Provider output can contain credentials or untrusted note bodies.
+    // Provider output can contain credentials or untrusted note bodies; of
+    // it, only the HTTP status glab reports is repeated.
     if !output.status.success() {
-        bail!("GitLab bot API request failed");
+        let status: String = String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("glab: HTTP "))
+            .unwrap_or_default()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if status.is_empty() {
+            bail!("{BOT_API_FAILED}");
+        }
+        bail!("{BOT_API_FAILED} (HTTP {status})");
     }
     serde_json::from_slice(&output.stdout).context("invalid GitLab bot API response")
 }
@@ -155,7 +171,7 @@ fn publish_with(
         "POST",
         json!({"body": publication_body(&summary)}),
     )?;
-    let remove = super::GAH_REVIEW_STATE_LABELS
+    let remove = super::PARASAUR_REVIEW_STATE_LABELS
         .iter()
         .filter(|label| !labels.contains(label))
         .copied()
@@ -364,9 +380,22 @@ impl DiscussionIdentity {
     }
 }
 
+/// Reports a failed bot operation. Its cause may carry provider output, so
+/// only the two causes this module words itself are named: a missing token,
+/// and a refused request with its HTTP status.
 pub(crate) fn soft_failure(result: Result<()>, operation: &str) -> bool {
-    if result.is_err() {
-        eprintln!("warning: GitLab {operation} incomplete; human review required");
+    if let Err(error) = &result {
+        let causes: Vec<String> = error.chain().map(|cause| cause.to_string()).collect();
+        let detail = if causes.iter().any(|cause| cause == MISSING_BOT_PAT) {
+            ". No bot token is set: put GITLAB_PAT or GITLAB_PAT2 in the profile's env file (this step never uses the glab login)".to_string()
+        } else {
+            causes
+                .iter()
+                .find(|cause| cause.starts_with(BOT_API_FAILED))
+                .map(|cause| format!(": {cause}"))
+                .unwrap_or_default()
+        };
+        eprintln!("warning: GitLab {operation} incomplete; human review required{detail}");
     }
     result.is_ok()
 }

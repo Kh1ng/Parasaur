@@ -28,6 +28,7 @@ import { bindOpenCodeModels, instanceAcpSpawn, instanceHeadlessSpec } from './in
 import { findInstalledExecutable } from './installedExecutable.js';
 import { readAgentUpdates } from '../agentCliState.js';
 import { createCliRouterModelRefresher } from '../cliRouter.js';
+import { workspaceEnvironment } from './workspaceEnvironment.js';
 
 export type { ManagerCommandInfo, ManagerModelInfo, ManagerReasoningEffortInfo };
 
@@ -100,6 +101,8 @@ export interface ManagerAdapter extends ManagerBackendInfo {
   setReasoningEffort(conversation: ManagerConversation, effortId: string): Promise<void>;
   steerTurn(gahProfile: string, message: string): Promise<{ outcome: 'injected' }>;
   cancelTurn(gahProfile: string): Promise<void>;
+  /** Release one idle conversation's runtime while retaining its durable history. */
+  releaseConversation?(key: string): Promise<void>;
   /** Release processes when a selected credential or instance changes. */
   dispose?(): void;
   /** Refresh catalogs while retaining controllers for active prompts. */
@@ -110,9 +113,12 @@ function acpManagerAdapter(
   id: string,
   displayName: string,
   spawnSpec: () => import('./acpAdapter.js').SpawnSpec,
-  options?: { consecutiveFailureReconnectThreshold?: number }
+  options?: { consecutiveFailureReconnectThreshold?: number; workspaceEnvironment?: boolean }
 ): ManagerAdapter {
-  const backend = createAcpBackend(displayName, spawnSpec, options);
+  const backend = createAcpBackend(displayName, spawnSpec, {
+    consecutiveFailureReconnectThreshold: options?.consecutiveFailureReconnectThreshold,
+    ...(options?.workspaceEnvironment ? { environment: workspaceEnvironment } : {})
+  });
   return { id, displayName, implemented: true, ...backend };
 }
 
@@ -131,13 +137,13 @@ export function defaultClaudeSpawn(searchPath?: string): SpawnSpec & { bundledRu
 }
 
 const DEFAULT_ADAPTERS: Record<string, () => ManagerAdapter> = {
-  hermes: () => acpManagerAdapter('hermes', 'Hermes', hermesSpawnSpec),
-  codex: () => acpManagerAdapter('codex', 'Codex', codexSpawnSpec, { consecutiveFailureReconnectThreshold: 2 }),
-  claude: () => acpManagerAdapter('claude', 'Claude', () => defaultClaudeSpawn()),
-  opencode: () => acpManagerAdapter('opencode', 'OpenCode', opencodeSpawnSpec),
-  vibe: () => ({ ...createHeadlessBackend(vibeBackendSpec()) }) as ManagerAdapter,
-  agy: () => ({ ...createHeadlessBackend(agyBackendSpec()) }) as ManagerAdapter,
-  openhands: () => ({ ...createHeadlessBackend(openhandsBackendSpec()) }) as ManagerAdapter
+  hermes: () => acpManagerAdapter('hermes', 'Hermes', hermesSpawnSpec, { workspaceEnvironment: true }),
+  codex: () => acpManagerAdapter('codex', 'Codex', codexSpawnSpec, { consecutiveFailureReconnectThreshold: 2, workspaceEnvironment: true }),
+  claude: () => acpManagerAdapter('claude', 'Claude', () => defaultClaudeSpawn(), { workspaceEnvironment: true }),
+  opencode: () => acpManagerAdapter('opencode', 'OpenCode', opencodeSpawnSpec, { workspaceEnvironment: true }),
+  vibe: () => ({ ...createHeadlessBackend(vibeBackendSpec(), { environment: workspaceEnvironment }) }) as ManagerAdapter,
+  agy: () => ({ ...createHeadlessBackend(agyBackendSpec(), { environment: workspaceEnvironment }) }) as ManagerAdapter,
+  openhands: () => ({ ...createHeadlessBackend(openhandsBackendSpec(), { environment: workspaceEnvironment }) }) as ManagerAdapter
 };
 
 const REGISTRY = Object.fromEntries(Object.entries(DEFAULT_ADAPTERS).map(([id, create]) => [id, create()]));
@@ -158,6 +164,14 @@ export function resolveAdapter(backendId: string): ManagerAdapter {
 }
 
 const INSTANCE_ADAPTERS = new Map<string, { runtime: string; runnerKind: string; adapter: ManagerAdapter }>();
+
+/** Retire every backend/account visited by this conversation, including before a handoff. */
+export async function releaseManagerConversation(key: string): Promise<void> {
+  await Promise.all([
+    ...Object.values(REGISTRY),
+    ...Array.from(INSTANCE_ADAPTERS.values(), entry => entry.adapter)
+  ].map(adapter => adapter.releaseConversation?.(key)));
+}
 
 /** Resolve one named account to its own ACP process and connection map. */
 export async function resolveInstanceAdapter(profile: string, backendId: string, instance?: string | null): Promise<ManagerAdapter> {

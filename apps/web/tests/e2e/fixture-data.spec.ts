@@ -27,14 +27,15 @@ test('Overview renders fixture profile + status data from the hermetic server', 
 });
 
 test('Quota page renders the fixture quota snapshot observations', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-08-10T12:00:00Z'));
   await page.goto('/');
   await openUsage(page, 'Quota');
   // responses/quota.json carries codex/claude candidate ledger rows with quota windows.
   await expect(page.getByText('codex', { exact: false }).first()).toBeVisible();
   await expect(page.getByText('claude', { exact: false }).first()).toBeVisible();
-  await expect(page.getByTestId('quota-candidate-codex-0').getByRole('progressbar', { name: 'weekly · codex-mini: 34.2% used, 65.8% remaining', exact: true })).toBeVisible();
+  await expect(page.getByTestId('quota-candidate-codex-0').getByRole('progressbar', { name: 'Last recorded weekly · codex-mini: 34.2% used, 65.8% remaining', exact: true })).toBeVisible();
   await expect(page.getByText('weekly', { exact: false }).first()).toBeVisible();
-  await expect(page.getByText('65.8% remaining', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('quota-candidate-codex-0')).toContainText('Quota unknown');
   await page.getByText('Usage and data freshness', { exact: true }).click();
   await expect(page.getByText('Account quota check', { exact: true })).toBeVisible();
   await expect(page.getByText('Quota data', { exact: true })).toBeVisible();
@@ -51,10 +52,14 @@ test('Telemetry page renders a backend row from the fixture report', async ({ pa
   await expect(page.getByText('codex', { exact: false }).first()).toBeVisible();
   await expect(page.getByText('claude', { exact: false }).first()).toBeVisible();
 
-  const chatUsage = page.locator('section').filter({ hasText: 'Manager chat usage' });
-  await expect(chatUsage.getByText('gpt-5.3-codex · 3.0k · 4 turns', { exact: true })).toBeVisible();
-  await expect(chatUsage.getByRole('columnheader', { name: 'Cache / other' })).toBeVisible();
-  await expect(chatUsage.getByText(/\$0\.0500 API equivalent/)).toBeVisible();
+  const usage = page.getByRole('region', { name: 'Recorded usage', exact: true });
+  await expect(usage).toContainText('4 chat turns · 1 recorded dispatch attempt');
+  const chat = usage.getByRole('row').filter({ hasText: 'mock-worker' });
+  await expect(chat.getByRole('cell').nth(1)).toHaveText('4');
+  await expect(chat.getByRole('cell').nth(4)).toHaveText('3.0k');
+  await expect(chat.getByRole('cell').nth(6)).toHaveText('$0.0500');
+  await usage.getByRole('combobox', { name: 'Group usage by' }).selectOption('model');
+  await expect(usage.getByRole('row').filter({ hasText: 'mock-worker' })).toContainText('gpt-5.3-codex');
 });
 
 test('the project switcher lists the fixture profile', async ({ page }) => {

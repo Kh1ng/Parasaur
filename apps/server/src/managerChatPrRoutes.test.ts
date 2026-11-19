@@ -45,15 +45,15 @@ test('manager-chat PR routes list and start through the fixture provider', { tim
   }]));
 
   const savedEnv = { ...process.env };
-  process.env.GAH_BINARY = join(fixtures, 'gah', 'gah');
-  process.env.GAH_FIXTURE_PROFILE_LIST = profileListPath;
+  process.env.PARASAUR_BINARY = join(fixtures, 'gah', 'gah');
+  process.env.PARASAUR_FIXTURE_PROFILE_LIST = profileListPath;
   process.env.PATH = `${join(fixtures, 'gh')}:${process.env.PATH}`;
-  process.env.GAH_FAKE_GH_FIXTURE = join(fixtures, 'gh/data');
-  process.env.GAH_FAKE_GH_STATE = join(root, 'gh-state.log');
-  process.env.GAH_CHAT_STATE_DIR = join(root, 'chat');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(root, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(root, 'manager-chat.json');
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(root, 'coordinator-identity.json');
+  process.env.PARASAUR_FAKE_GH_FIXTURE = join(fixtures, 'gh/data');
+  process.env.PARASAUR_FAKE_GH_STATE = join(root, 'gh-state.log');
+  process.env.PARASAUR_CHAT_STATE_DIR = join(root, 'chat');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(root, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(root, 'manager-chat.json');
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(root, 'coordinator-identity.json');
   resetCachedCoordinatorIdentity();
 
   const app = createServer({});
@@ -90,7 +90,7 @@ test('manager-chat PR routes list and start through the fixture provider', { tim
     assert.equal(session.worktreePath, null, 'no worktree created');
     assert.equal(session.title, '#12 Ship the PR chat mode');
     assert.ok(!existsSync(join(root, 'worktrees')), 'worktree base never created');
-    assert.ok(!existsSync(process.env.GAH_FAKE_GH_STATE!), 'no provider mutation');
+    assert.ok(!existsSync(process.env.PARASAUR_FAKE_GH_STATE!), 'no provider mutation');
 
     // The session is listed and its log opens with the PR as the first message.
     const sessionsResponse = await fetch(`${baseUrl}/api/manager-chat/sessions?profile=${profile}`);

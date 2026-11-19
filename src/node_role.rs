@@ -47,13 +47,17 @@ impl NodeRole {
 pub struct NodeRoleStatus {
     pub role: NodeRole,
     pub central_url: Option<String>,
-    /// Central arbitration never falls back automatically to local claims.
-    pub claim_policy: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub central_claim_observation:
+        Option<crate::central_claims::observations::CentralClaimObservation>,
 }
 
 impl NodeRoleStatus {
     pub fn resolve(defaults: &crate::config::Defaults) -> Result<Self> {
-        Self::with_override(defaults, std::env::var("GAH_NODE_ROLE").ok().as_deref())
+        Self::with_override(
+            defaults,
+            std::env::var("PARASAUR_NODE_ROLE").ok().as_deref(),
+        )
     }
 
     pub fn with_override(
@@ -81,15 +85,10 @@ impl NodeRoleStatus {
                 bail!("registry_central_url must be an HTTP(S) origin without credentials, query, or path");
             }
         }
-        let claim_policy = if central_url.is_some() {
-            "central_fail_closed"
-        } else {
-            "local"
-        };
         Ok(Self {
             role,
             central_url,
-            claim_policy,
+            central_claim_observation: None,
         })
     }
 }

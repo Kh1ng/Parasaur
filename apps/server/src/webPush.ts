@@ -77,13 +77,13 @@ export class WebPushNotifications {
   private failures = new Map<string, number>();
 
   constructor(
-    private readonly keysPath = process.env.GAH_VAPID_KEYS_PATH ?? resolve(process.cwd(), 'config/push/vapid.json'),
-    private readonly subscriptionsPath = process.env.GAH_WEB_PUSH_SUBSCRIPTIONS_PATH ?? resolve(process.cwd(), 'config/push/subscriptions.json'),
+    private readonly keysPath = process.env.PARASAUR_VAPID_KEYS_PATH ?? resolve(process.cwd(), 'config/push/vapid.json'),
+    private readonly subscriptionsPath = process.env.PARASAUR_WEB_PUSH_SUBSCRIPTIONS_PATH ?? resolve(process.cwd(), 'config/push/subscriptions.json'),
     private readonly transport: WebPushTransport = webPush
   ) {
     this.keys = this.loadOrCreateKeys();
     this.transport.setVapidDetails(
-      process.env.GAH_VAPID_SUBJECT ?? 'mailto:operator@localhost',
+      process.env.PARASAUR_VAPID_SUBJECT ?? 'mailto:operator@localhost',
       this.keys.publicKey,
       this.keys.privateKey
     );

@@ -44,6 +44,48 @@ tags:
 security: [{ nodeAuth: [] }]
 
 paths:
+  /api/backend-instances/authenticate:
+    post:
+      operationId: backend_instance.authenticate
+      tags: [config]
+      summary: Sign in a configured Codex or Claude account on the connected central node
+      description: |
+        Owner-only. Resolves the named instance through the local CLI and runs
+        its browser/device login in isolated state. Saved credentials and
+        unsupported runners return 409. No executable, state path, or remote
+        node can be supplied. The returned repair ID and private key use the
+        existing /api/auth-health/repairs/{id} status, input, and cancel routes.
+        Keep the key in memory; the repair expires after ten minutes.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [profile, instance]
+              properties:
+                profile: { type: string, minLength: 1, maxLength: 128 }
+                instance: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '201':
+          description: Login repair started; repair follows LoginRepairView in contracts/registry.ts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key, repair]
+                properties:
+                  key: { type: string }
+                  repair: { type: object }
+        '400': { description: Invalid input or missing idempotency key }
+        '403': { description: Owner access required }
+        '409': { description: Account unavailable, unsupported, already signing in, or repeated mutation }
   /api/planning/epics:
     get:
       operationId: planning.epics
@@ -240,7 +282,12 @@ paths:
           schema: { type: string, default: 7d }
       responses:
         "200":
-          description: QuotaSnapshot
+          description: >-
+            QuotaSnapshot for the selected profile and period. New snapshots
+            include account_spend with canonical recorded actual and estimated
+            costs grouped by exact backend/instance identity. A null instance
+            remains unattributed. These are ledger observations, not provider
+            invoices; older workers may omit account_spend.
           content:
             application/json:
               schema: { type: object }
@@ -319,6 +366,10 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: profile
+          in: query
+          description: Filter to one project; omitted for legacy aggregate history.
+          schema: { type: string, minLength: 1, maxLength: 128 }
       responses:
         "200":
           description: LedgerEntry[]
@@ -576,6 +627,8 @@ paths:
                 repo: { type: string }
                 local_path: { type: string }
                 artifact_root: { type: string }
+                validation_commands: { $ref: "#/components/schemas/CommandListInput" }
+                auto_fix_commands: { $ref: "#/components/schemas/CommandListInput" }
       responses:
         "201": { description: Created }
         "502": { $ref: "#/components/responses/GahError" }
@@ -584,6 +637,7 @@ paths:
     patch:
       tags: [profiles]
       summary: Update fields on an existing profile
+      description: Each supplied command list replaces that list; an empty array clears it. Omitted lists remain unchanged. Commands are not executed by this request.
       parameters:
         - name: name
           in: path
@@ -593,7 +647,11 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object }
+            schema:
+              type: object
+              properties:
+                validation_commands: { $ref: "#/components/schemas/CommandListInput" }
+                auto_fix_commands: { $ref: "#/components/schemas/CommandListInput" }
       responses:
         "200": { description: Updated }
         "502": { $ref: "#/components/responses/GahError" }
@@ -611,6 +669,26 @@ paths:
       responses:
         "200": { description: Removed }
         "502": { $ref: "#/components/responses/GahError" }
+
+  /api/profiles/{name}/checks:
+    get:
+      tags: [profiles]
+      summary: Read private factory validation and auto-fix commands
+      description: Owner-only, on the connected node. Command text is excluded from public profile and settings projections. Responses use Cache-Control no-store. Requires a CLI supporting profile show --json.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        "200":
+          description: Private ProfileChecks
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProfileChecks" }
+        "400": { description: Invalid profile }
+        "403": { description: Owner access required }
+        "502": { description: Profile or CLI unavailable; no private CLI error is returned }
 
   /api/config:
     get:
@@ -762,6 +840,52 @@ paths:
           content:
             application/json:
               schema: { type: object }
+        "502": { $ref: "#/components/responses/GahError" }
+
+  /api/manager-chat/accounts:
+    get:
+      tags: [manager-chat]
+      summary: Read account metadata from the selected chat execution node
+      description: |
+        Uses the registered authenticated worker chat transport for remote nodes.
+        Does not start a provider or login, expose credentials/paths, or fall back
+        to central accounts when a worker cannot answer. Older workers must be
+        updated to support the accounts action. Null readiness is unknown.
+      parameters:
+        - name: profile
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: backend
+          in: query
+          required: true
+          schema: { type: string, pattern: "^[a-zA-Z0-9_-]{1,128}$" }
+        - name: nodeId
+          in: query
+          schema: { type: string, pattern: "^[a-zA-Z0-9_-]{1,128}$" }
+      responses:
+        "200":
+          description: Safe account choices for this profile, runner and node
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accounts]
+                properties:
+                  accounts:
+                    type: array
+                    maxItems: 128
+                    items:
+                      type: object
+                      required: [instance, backend, label, enabled, executableReady, authReady]
+                      properties:
+                        instance: { type: string }
+                        backend: { type: string }
+                        label: { type: string }
+                        enabled: { type: boolean }
+                        executableReady: { type: [boolean, "null"] }
+                        authReady: { type: [boolean, "null"] }
+        "400": { description: Invalid project, runner or node selector }
         "502": { $ref: "#/components/responses/GahError" }
 
   /api/manager-chat/models:
@@ -1175,6 +1299,19 @@ components:
         error: { type: string }
         message: { type: string }
         operationId: { type: string, description: Opaque operation receipt identifier when available }
+    CommandListInput:
+      type: array
+      maxItems: 128
+      description: One item is one complete command. Commas, quotes and newlines are preserved. NUL and whitespace-only commands are rejected.
+      items: { type: string, minLength: 1, maxLength: 16384, pattern: '\S' }
+    ProfileChecks:
+      type: object
+      required: [profile, validation_commands, auto_fix_commands, validation_timeout_seconds]
+      properties:
+        profile: { type: string }
+        validation_commands: { type: array, items: { type: string } }
+        auto_fix_commands: { type: array, items: { type: string } }
+        validation_timeout_seconds: { type: integer }
     ProfileSummary:
       type: object
       description: Mirrors packages/contracts/src/gah.ts ProfileSummary
@@ -1184,6 +1321,8 @@ components:
         provider: { type: string }
         repo: { type: string }
         local_path: { type: string }
+        artifact_root: { type: string, description: Absent on older nodes }
+        default_target_branch: { type: string, description: Absent on older nodes }
         web_url: { type: string, nullable: true }
         max_parallel_workers: { type: integer, nullable: true }
         max_open_managed_mrs: { type: integer }

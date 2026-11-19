@@ -27,7 +27,7 @@ export function BlockedWorkItem({ blocker, onOpenWork }: { blocker: Blocker; onO
   const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const workId = blocker.source_reference;
+  const workId = blocker.remediation_plan?.work_id ?? blocker.source_reference;
   const isUnknownReason =
     !blocker.reason_code || blocker.reason_code === 'unknown';
 
@@ -46,7 +46,7 @@ export function BlockedWorkItem({ blocker, onOpenWork }: { blocker: Blocker; onO
     setClearing(true);
     setError(null);
     try {
-      await gahApi.ledgerClearAttempts({ work_id: workId });
+      await gahApi.ledgerClearAttempts({ profile: blocker.remediation_plan?.profile, work_id: workId });
     } catch (failure) {
       setError(failure instanceof GahApiError ? failure.message : 'Clear attempts failed.');
     } finally {
@@ -61,7 +61,7 @@ export function BlockedWorkItem({ blocker, onOpenWork }: { blocker: Blocker; onO
   const plan = blocker.remediation_plan;
 
   return (
-    <li className="border border-subtle rounded-md p-2.5 space-y-2">
+    <li className="min-w-0 break-words border border-subtle rounded-md p-2.5 space-y-2">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm text-primary">
@@ -112,7 +112,7 @@ export function BlockedWorkItem({ blocker, onOpenWork }: { blocker: Blocker; onO
                       type="button"
                       onClick={() => copy(action.command ?? '', `cmd-${index}`)}
                       title="Copy command"
-                      className="inline-flex items-center gap-1.5 font-mono text-xs bg-raised border border-subtle rounded px-2 py-0.5 text-primary hover:border-accent"
+                      className="inline-flex max-w-full items-center gap-1.5 whitespace-normal break-all text-left font-mono text-xs bg-raised border border-subtle rounded px-2 py-0.5 text-primary hover:border-accent"
                     >
                       {copied === `cmd-${index}` ? <Check size={11} aria-hidden="true" /> : <Copy size={11} aria-hidden="true" />}
                       {action.command}

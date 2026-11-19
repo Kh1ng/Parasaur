@@ -19,7 +19,9 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { repositoryCli, loginRepairMethod, type LoginRepairState, type LoginRepairView } from '@git-agent-harness/contracts';
-import { nodeHeaders, type RegistryService } from './registryService.js';
+import type { RegistryService } from './registryService.js';
+import { LinkRefused, linkTo } from './workerLink.js';
+import { findGahBinary, getSpawnOptions, runBackendInstanceAuth, runBackendInstanceRuntime, terminateProcessTree } from './gahCli.js';
 
 const REPAIR_TTL_MS = 10 * 60_000;
 /** A finished repair stays readable briefly so the device sees the outcome. */
@@ -80,6 +82,7 @@ interface Repair {
   expiresAt: number;
   stop: () => void;
   input?: (text: string) => Promise<void>;
+  launch?: { command: string; args: string[]; key: string; profile: string; instance: string };
 }
 
 export interface LoginRepairDeps {
@@ -95,10 +98,13 @@ export interface LoginRepairDeps {
   minPollMs?: number;
   /** How long a repair may run before it is stopped (default 10 minutes). */
   ttlMs?: number;
+  instanceRuntime?: typeof runBackendInstanceRuntime;
+  instanceAuth?: typeof runBackendInstanceAuth;
+  gahBinary?: () => string;
 }
 
 export function providerKeysPath(env: NodeJS.ProcessEnv = process.env): string {
-  return env.GAH_PROVIDER_KEYS_PATH ?? join(homedir(), '.config/gah/provider-keys.env');
+  return env.PARASAUR_PROVIDER_KEYS_PATH ?? join(homedir(), '.config/gah/provider-keys.env');
 }
 
 /** Keys repaired from another device live in a node-private env file; the
@@ -123,14 +129,15 @@ export class LoginRepairs {
     this.env = deps.env ?? process.env;
   }
 
-  start(login: Login): LoginRepairView {
+  start(login: Login, launch?: Repair['launch']): LoginRepairView {
     this.sweep();
-    if ([...this.repairs.values()].some((repair) => loginKey(repair.login) === loginKey(login) && !terminal(repair.state))) {
+    if ([...this.repairs.values()].some((repair) => (repair.launch?.key ?? loginKey(repair.login)) === (launch?.key ?? loginKey(login)) && !terminal(repair.state))) {
       throw new LoginRepairError(409, 'A login for this is already in progress.');
     }
     const repair: Repair = {
       id: crypto.randomUUID(),
       login,
+      launch,
       state: { status: 'starting' },
       expiresAt: Date.now() + (this.deps.ttlMs ?? REPAIR_TTL_MS),
       stop: () => undefined
@@ -148,6 +155,26 @@ export class LoginRepairs {
       this.beginLogin(repair);
     }
     return this.view(repair.id)!;
+  }
+
+  /** Resolve on the owning node; Rust remains responsible for executable and
+   * isolated credential paths. No state path or executable comes from HTTP. */
+  async startInstance(profile: string, instance: string): Promise<LoginRepairView> {
+    let runtime;
+    try { runtime = await (this.deps.instanceRuntime ?? runBackendInstanceRuntime)(profile, instance); }
+    catch { throw new LoginRepairError(409, 'That account is unavailable. Refresh the profile and check its executable.'); }
+    if (runtime.credential_id) throw new LoginRepairError(409, 'This account uses a saved credential. Replace it in Settings on the owning computer.');
+    if (!runtime.state_root || !['codex', 'claude'].includes(runtime.runner_kind)) {
+      throw new LoginRepairError(409, 'This account has no supported isolated browser login. Use its provider controls on the owning computer.');
+    }
+    return this.start({ backend: runtime.runner_kind, provider: null }, {
+      profile, instance,
+      command: (this.deps.gahBinary ?? findGahBinary)(),
+      args: ['config', 'authenticate-backend-instance', '--profile', profile, '--instance', instance],
+      // Canonical instances can be shared by profiles: lock the actual state,
+      // so two profiles cannot run overlapping logins for the same account.
+      key: JSON.stringify([runtime.runner_kind, runtime.state_root])
+    });
   }
 
   private beginLogin(repair: Repair): void {
@@ -204,7 +231,7 @@ export class LoginRepairs {
 
   cancel(id: string): void {
     const repair = this.repairs.get(id);
-    if (!repair) return;
+    if (!repair || terminal(repair.state)) return;
     repair.stop();
     if (!terminal(repair.state)) repair.state = { status: 'failed', reason: 'Cancelled.' };
   }
@@ -216,6 +243,18 @@ export class LoginRepairs {
   }
 
   private async succeed(repair: Repair): Promise<void> {
+    if (terminal(repair.state)) return;
+    if (repair.launch) {
+      try {
+        const auth = await (this.deps.instanceAuth ?? runBackendInstanceAuth)(repair.launch.profile, repair.launch.instance);
+        if (auth.auth_ready !== true) return this.fail(repair, auth.auth_ready === false
+          ? 'Provider sign-in finished, but this account still needs a login. Use Test in Profile to check again.'
+          : 'Provider sign-in finished, but this account could not be checked. Use Test in Profile to verify it.');
+      } catch {
+        return this.fail(repair, 'Provider sign-in finished, but this account could not be checked. Use Test in Profile to verify it.');
+      }
+    }
+    if (terminal(repair.state)) return;
     try { await this.deps.onSuccess?.(repair.login); }
     catch { /* The login worked; the next scheduled check reports it. */ }
     if (!terminal(repair.state)) repair.state = { status: 'succeeded' };
@@ -229,14 +268,17 @@ export class LoginRepairs {
   private runCli(repair: Repair, command: 'codex' | 'claude', args: string[], hosts: keyof typeof VERIFICATION_HOSTS): void {
     let child: ChildProcess;
     try {
-      child = this.spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], env: this.env, detached: process.platform !== 'win32' });
+      child = this.spawn(repair.launch?.command ?? command, repair.launch?.args ?? args, { ...(repair.launch ? getSpawnOptions() : {}), stdio: ['pipe', 'pipe', 'pipe'], env: this.env, detached: process.platform !== 'win32' });
     } catch {
       return this.fail(repair, `The ${command} CLI could not start on this machine.`);
     }
     let output = '';
     let url: string | null = null;
     repair.stop = () => {
-      try { if (child.pid) process.kill(process.platform === 'win32' ? child.pid : -child.pid, 'SIGTERM'); }
+      try {
+        if (child.pid && process.platform === 'win32') void terminateProcessTree(child.pid, child);
+        else if (child.pid) process.kill(-child.pid, 'SIGTERM');
+      }
       catch { child.kill('SIGTERM'); }
     };
     const read = (chunk: Buffer | string) => {
@@ -265,6 +307,9 @@ export class LoginRepairs {
       this.fail(repair, error.code === 'ENOENT' ? `The ${command} CLI is not installed on this machine.` : `The ${command} login could not start.`);
     });
     child.on('close', (code) => {
+      // Verification can outlive the process. Never signal its recycled PID.
+      repair.stop = () => undefined;
+      repair.input = undefined;
       if (code === 0) void this.succeed(repair);
       else this.fail(repair, 'The login did not complete.');
     });
@@ -424,10 +469,20 @@ export class LoginRepairBroker {
   }) {}
 
   async start(principal: RepairPrincipal, nodeId: string, login: Login): Promise<{ key: string; repair: LoginRepairView }> {
-    for (const [id, repair] of this.repairs) if (Date.now() > repair.expiresAt + RESULT_TTL_MS) this.repairs.delete(id);
     const view = nodeId === this.deps.localNodeId
       ? this.deps.local.start(login)
       : await this.worker(nodeId, { action: 'start', backend: login.backend, provider: login.provider });
+    return this.retain(principal, nodeId, view);
+  }
+
+  /** Adding or changing a configured account remains an owner operation. */
+  async startInstance(principal: RepairPrincipal, profile: string, instance: string): Promise<{ key: string; repair: LoginRepairView }> {
+    if (principal.kind !== 'owner') throw new LoginRepairError(403, 'Owner access is required to sign in a named account.');
+    return this.retain(principal, this.deps.localNodeId, await this.deps.local.startInstance(profile, instance));
+  }
+
+  private retain(principal: RepairPrincipal, nodeId: string, view: LoginRepairView): { key: string; repair: LoginRepairView } {
+    for (const [id, repair] of this.repairs) if (Date.now() > repair.expiresAt + RESULT_TTL_MS) this.repairs.delete(id);
     const key = crypto.randomBytes(32).toString('hex');
     const id = crypto.randomUUID();
     this.repairs.set(id, {
@@ -476,20 +531,15 @@ export class LoginRepairBroker {
   private async worker(nodeId: string, body: Record<string, unknown>): Promise<LoginRepairView> {
     const node = this.deps.registry.getNode(nodeId);
     if (!node) throw new LoginRepairError(404, 'That node is no longer registered.');
-    const endpoint = new URL('/api/login-repair', node.advertised_url);
-    if (endpoint.protocol !== 'https:' && process.env.GAH_ALLOW_INSECURE_HTTP !== '1'
-      && !['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname)) {
-      throw new LoginRepairError(502, 'Login repair on this worker requires HTTPS or trusted LAN HTTP.');
-    }
     let response: Response;
     try {
-      response = await (this.deps.fetch ?? fetch)(endpoint, {
-        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(20_000),
-        headers: { ...nodeHeaders(node), 'Content-Type': 'application/json' },
+      response = await linkTo(node).fetch('/api/login-repair', {
+        method: 'POST', signal: AbortSignal.timeout(20_000),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
-      });
-    } catch {
-      throw new LoginRepairError(502, 'The worker could not be reached.');
+      }, this.deps.fetch);
+    } catch (error) {
+      throw new LoginRepairError(502, error instanceof LinkRefused ? error.message : 'The worker could not be reached.');
     }
     const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
     if (!response.ok) {

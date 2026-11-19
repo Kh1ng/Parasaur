@@ -4,15 +4,7 @@ import type { ChatSessionSummary, SkillBindingSummary } from '@git-agent-harness
 import { formatChatName } from '../lib/format.js';
 import { ProviderPicker, type ProviderPickerProps } from './ProviderPicker.js';
 import { StatusBadge } from './ui/StatusBadge.js';
-
-export type SessionUsageSummary = {
-  turns: number;
-  inputTokens: number | null;
-  outputTokens: number | null;
-  totalTokens: number | null;
-  estimatedCostUsd: number | null;
-  costIncomplete: boolean;
-};
+import type { SessionUsageSummary } from '../lib/chatUsage.js';
 
 type Props = {
   session: ChatSessionSummary;
@@ -115,9 +107,15 @@ export function ChatSessionDetailDrawer({
               <Metric label="Reported turns" value={usage.turns.toLocaleString()} />
               <Metric label="Input tokens" value={tokenCount(usage.inputTokens)} />
               <Metric label="Output tokens" value={tokenCount(usage.outputTokens)} />
+              <Metric label="Cache read tokens" value={tokenCount(usage.cacheReadTokens ?? null)} />
+              <Metric label="Cache write tokens" value={tokenCount(usage.cacheWriteTokens ?? null)} />
+              <Metric label="Reasoning tokens" value={tokenCount(usage.reasoningTokens ?? null)} />
               <Metric label="Estimated cost" value={usage.estimatedCostUsd == null ? 'Not reported' : `$${usage.estimatedCostUsd.toFixed(4)}${usage.costIncomplete ? '+' : ''}`} />
             </dl>
             {usage.totalTokens != null && <p className="mt-2 text-xs text-muted">{usage.totalTokens.toLocaleString()} total reported tokens</p>}
+            <p className="mt-2 text-xs text-muted">Provider token categories may overlap. The total is reported independently.</p>
+            {usage.tokenIncomplete && <p className="mt-2 text-xs text-warning">Some replies have no reported token total. Session totals are incomplete.</p>}
+            {usage.costIncomplete && <p className="mt-2 text-xs text-muted">Some reply costs are unavailable.</p>}
           </section>
 
           <section aria-labelledby="session-skills-heading">

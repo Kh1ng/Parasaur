@@ -1,0 +1,5 @@
+# WSL and Unix execute these files directly; CRLF breaks their shebangs.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf

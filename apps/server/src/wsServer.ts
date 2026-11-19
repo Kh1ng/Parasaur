@@ -1,4 +1,5 @@
 import { runningWorkers } from './runningWorkers.js';
+import { parseDispatchExecutionOptions } from './dispatchExecutionOptions.js';
 /**
  * WebSocket server handler
  * Inspired by t3code's wsServer.ts
@@ -19,19 +20,14 @@ import { RegistryService } from './registryService.js';
 import { getCoordinatorIdentity } from './coordinatorIdentity.js';
 import { assertIssueNotManaged } from './managedIssues.js';
 import * as gahCli from './gahCli.js';
+import { defaultProfile } from './defaultProfile.js';
 import { sendManagerChatMessage, steerManagerChatTurn, cancelManagerChatTurn, getSessionView as getManagerChatSessionView, setChunkPublisher, setChatEventPublishers, setPreviewPublisher, listChatSessions, createChatSession, archiveChatSession, updateChatSession, respondManagerChatPermission } from './managerChat/ManagerChatManager.js';
 import { generateRequestId, GAHError, createErrorResponse } from '@git-agent-harness/shared';
 import type {
   ServerMessage,
   ClientMessage,
   ClientCapabilities,
-  ProviderKind,
-  MergeRequest,
-  AvailabilityScope,
-  Blocker,
-  StatusError,
-  RecentLedgerSummary,
-  DependencyBlocker
+  ProviderKind
 } from '@git-agent-harness/contracts';
 
 // Session store for tracking active WebSocket connections
@@ -73,6 +69,8 @@ class WebSocketSessionStore {
       if (ws !== exclude && ws.readyState === WebSocket.OPEN) {
         if (message.type === 'workers.snapshot' && (!webSocketAccessValid(ws) || requiresFleetAuthentication(ws, 'session.status'))) continue;
         if (message.type === 'activity.event' && message.event.pairingRequestId && !webSocketCanApprovePairing(ws)) continue;
+        if ((message.type === 'activity.event' || message.type === 'activity.updated')
+          && message.event.kind === 'dispatch_deferred' && info.capabilities?.supportsCapacityWaitActivity !== true) continue;
         // Profile-scoped chat pushes only reach clients subscribed to that
         // profile; everything else still fans out to all connected clients.
         if (profile && info.profile !== profile) continue;
@@ -265,7 +263,7 @@ export function createWebSocketHandler(
       try {
         const message = JSON.parse(data.toString()) as ClientMessage;
         if (message.type === 'client.hello') {
-          const profile = message.profile ?? pendingProfiles.get(ws) ?? 'gah';
+          const profile = message.profile ?? pendingProfiles.get(ws) ?? defaultProfile();
           sessionStore.add(ws, message.clientVersion, message.capabilities, profile);
           pendingProfiles.delete(ws);
           await syncActivity(profile);
@@ -273,6 +271,7 @@ export function createWebSocketHandler(
           ws.send(JSON.stringify({
             type: 'activity.replay',
             events: activityFeed.replay(profile, message.activityCursor)
+              .filter(event => event.kind !== 'dispatch_deferred' || message.capabilities?.supportsCapacityWaitActivity === true)
           } satisfies ServerMessage));
           ws.send(JSON.stringify({ type: 'activity.unread', count: activityFeed.unreadCount(webSocketCanApprovePairing(ws)) } satisfies ServerMessage));
           console.log(`Client hello from ${message.clientVersion} with profile: ${profile}`);
@@ -435,6 +434,10 @@ async function handleClientMessage(ws: WebSocket, message: ClientMessage) {
 
 async function handleStartSession(ws: WebSocket, message: Extract<ClientMessage, { type: 'session.start' }>, requestId: string) {
   try {
+    const executionOptions = parseDispatchExecutionOptions(message);
+    if (executionOptions === 'invalid') {
+      throw new GAHError('Execution options require booleans and retries must be an unsigned 32-bit integer', 'INVALID_DISPATCH_OPTIONS');
+    }
     // The GitLab context arrives over the network: validate it with the same
     // runtime validator as POST /api/dispatch before it is stored on a session.
     const gitlab = parseGitLabDispatchContext(message.gitlab);
@@ -456,9 +459,10 @@ async function handleStartSession(ws: WebSocket, message: Extract<ClientMessage,
       mr: message.mr,
       mode: message.mode,
       backend: message.backend,
+      backendInstance: message.backendInstance,
       model: message.model,
       budget: message.budget,
-      manualWorker: message.manualWorker,
+      ...executionOptions,
       reasoningEffort: message.reasoningEffort,
       gitlab: gitlab ?? undefined
     });
@@ -466,6 +470,7 @@ async function handleStartSession(ws: WebSocket, message: Extract<ClientMessage,
     // Send success response
     ws.send(JSON.stringify({
       type: 'session.started' as const,
+      requestId,
       session
     }));
     
@@ -479,7 +484,7 @@ async function handleStopSession(ws: WebSocket, message: Extract<ClientMessage, 
     const session = await fleetDispatch.stopSession(message.sessionId);
 
     ws.send(JSON.stringify({
-      type: 'session.stopped' as const,
+      type: session.status === 'stopped' || session.status === 'error' ? 'session.stopped' as const : 'session.status' as const,
       session
     }));
     
@@ -698,79 +703,29 @@ async function handleProviderList(ws: WebSocket, message: Extract<ClientMessage,
 async function sendWelcomeMessage(ws: WebSocket) {
   try {
     const providerRegistry = getProviderRegistry();
-    const defaultProfile = sessionStore.get(ws)?.profile ?? pendingProfiles.get(ws) ?? 'gah';
+    const profile = sessionStore.get(ws)?.profile ?? pendingProfiles.get(ws) ?? defaultProfile();
 
     const serverProviderCatalog = {
       providers: providerRegistry.getProviderInstances()
     };
 
-    await fleetDispatch.reconcileLeases(defaultProfile);
-    const sessions = fleetDispatch.getAllSessions(defaultProfile);
+    await fleetDispatch.reconcileLeases(profile);
+    const sessions = fleetDispatch.getAllSessions(profile);
     const providers = providerRegistry.getAllProviderStatuses();
 
-    // Include real GAH data (TICKET-114) via the same gahCli.runStatus()
-    // path TICKET-113 already wired up -- there's no separate
-    // per-field ProviderRegistry accessor, `gah status --json` returns
-    // all of this in one call.
-    let mergeRequests: MergeRequest[] = [];
-    let availability: AvailabilityScope[] = [];
-    let blockers: Blocker[] = [];
-    let constraints: Blocker[] = [];
-    let errors: StatusError[] = [];
-    let dependencyBlockers: DependencyBlocker[] = [];
-    // recent_ledger is a single nullable summary, not an array -- it was
-    // previously mistyped as unknown[] here (silently accepted at runtime
-    // by JS, but wrong; DashboardPage already correctly treats it as an
-    // object via `{recentLedger && ...}`).
-    let recentLedger: RecentLedgerSummary | null = null;
-    // TICKET-157: per-backend "configured for this profile" signal,
-    // derived from the Rust harness `configured_backend_path()`. Maps a
-    // backend name to whether it has a real implementation and is wired
-    // for the active profile.
-    let backendConfigured: Record<string, boolean> = {};
-    try {
-      const status = await gahCli.runStatus(defaultProfile);
-      mergeRequests = status.merge_requests;
-      availability = status.availability;
-      blockers = status.blockers;
-      constraints = status.constraints;
-      errors = status.errors;
-      dependencyBlockers = status.dependency_blockers ?? [];
-      recentLedger = status.recent_ledger;
-      backendConfigured = status.backend_configured ?? {};
-    } catch (statusError) {
-      console.error('Failed to load gah status for welcome message:', statusError);
-    }
-
-    const welcomeMessage: ServerMessage & {
-      profile?: string;
-      mergeRequests?: MergeRequest[];
-      availability?: AvailabilityScope[];
-      blockers?: Blocker[];
-      constraints?: Blocker[];
-      errors?: StatusError[];
-      dependencyBlockers?: DependencyBlocker[];
-      recentLedger?: RecentLedgerSummary | null;
-      backendConfigured?: Record<string, boolean>;
-    } = {
+    // Work observations load through REST; missing status is not an empty queue.
+    // Keep the handshake independent of ledger reads and forge availability.
+    const welcomeMessage: Extract<ServerMessage, { type: 'server.welcome' }> = {
       type: 'server.welcome',
       serverVersion: SERVER_VERSION,
       trustedLanMode: trustedLanWebSocketMode(ws),
       serverProviderCatalog,
       sessions,
       providers,
-      profile: defaultProfile,
-      mergeRequests,
-      availability,
-      blockers,
-      constraints,
-      errors,
-      dependencyBlockers,
-      recentLedger,
-      backendConfigured
+      profile
     };
 
-    ws.send(JSON.stringify(welcomeMessage));
+    if (ws.readyState === WebSocket.OPEN && webSocketAccessValid(ws)) ws.send(JSON.stringify(welcomeMessage));
 
   } catch (error) {
     console.error('Failed to send welcome message:', error);

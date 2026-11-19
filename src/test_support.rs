@@ -28,7 +28,7 @@ static MISTRAL_ADMIN_KEY_LOCK: Mutex<()> = Mutex::new(());
 
 // A process-global env override would race other tests calling config::load().
 // The explicit test fixture is thread-local; every other test sees an empty
-// private directory, even if the runner has GAH_CANONICAL_CONFIG set.
+// private directory, even if the runner has PARASAUR_CANONICAL_CONFIG set.
 static CANONICAL_CONFIG_TEST_DIR: OnceLock<tempfile::TempDir> = OnceLock::new();
 thread_local! {
     static CANONICAL_CONFIG_TEST_OVERRIDE: std::cell::RefCell<Option<PathBuf>> =
@@ -62,7 +62,7 @@ fn unit_tests_do_not_inherit_operator_canonical_config() {
         path,
         crate::config::default_config_dir().join("canonical.toml")
     );
-    if let Some(operator_path) = std::env::var_os("GAH_CANONICAL_CONFIG") {
+    if let Some(operator_path) = std::env::var_os("PARASAUR_CANONICAL_CONFIG") {
         assert_ne!(path, PathBuf::from(operator_path));
     }
     assert!(!path.exists());
@@ -129,8 +129,8 @@ impl ClaimStateEnvGuard {
         let lock = CLAIM_STATE_LOCK
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        let original = std::env::var_os("GAH_CLAIM_STATE_PATH");
-        std::env::set_var("GAH_CLAIM_STATE_PATH", path);
+        let original = std::env::var_os("PARASAUR_CLAIM_STATE_PATH");
+        std::env::set_var("PARASAUR_CLAIM_STATE_PATH", path);
         Self {
             _lock: lock,
             original,
@@ -141,8 +141,8 @@ impl ClaimStateEnvGuard {
 impl Drop for ClaimStateEnvGuard {
     fn drop(&mut self) {
         match &self.original {
-            Some(path) => std::env::set_var("GAH_CLAIM_STATE_PATH", path),
-            None => std::env::remove_var("GAH_CLAIM_STATE_PATH"),
+            Some(path) => std::env::set_var("PARASAUR_CLAIM_STATE_PATH", path),
+            None => std::env::remove_var("PARASAUR_CLAIM_STATE_PATH"),
         }
     }
 }
@@ -152,8 +152,8 @@ impl AvailabilityEnvGuard {
         let lock = AVAILABILITY_LOCK
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        let original = std::env::var_os("GAH_AVAILABILITY_PATH");
-        std::env::set_var("GAH_AVAILABILITY_PATH", path);
+        let original = std::env::var_os("PARASAUR_AVAILABILITY_PATH");
+        std::env::set_var("PARASAUR_AVAILABILITY_PATH", path);
         Self {
             _lock: lock,
             original,
@@ -164,8 +164,8 @@ impl AvailabilityEnvGuard {
 impl Drop for AvailabilityEnvGuard {
     fn drop(&mut self) {
         match &self.original {
-            Some(path) => std::env::set_var("GAH_AVAILABILITY_PATH", path),
-            None => std::env::remove_var("GAH_AVAILABILITY_PATH"),
+            Some(path) => std::env::set_var("PARASAUR_AVAILABILITY_PATH", path),
+            None => std::env::remove_var("PARASAUR_AVAILABILITY_PATH"),
         }
     }
 }
@@ -180,8 +180,8 @@ impl QuotaStoreEnvGuard {
         let lock = QUOTA_STORE_LOCK
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        let original = std::env::var_os("GAH_QUOTA_STORE_PATH");
-        std::env::set_var("GAH_QUOTA_STORE_PATH", path);
+        let original = std::env::var_os("PARASAUR_QUOTA_STORE_PATH");
+        std::env::set_var("PARASAUR_QUOTA_STORE_PATH", path);
         Self {
             _lock: lock,
             original,
@@ -192,8 +192,8 @@ impl QuotaStoreEnvGuard {
 impl Drop for QuotaStoreEnvGuard {
     fn drop(&mut self) {
         match &self.original {
-            Some(path) => std::env::set_var("GAH_QUOTA_STORE_PATH", path),
-            None => std::env::remove_var("GAH_QUOTA_STORE_PATH"),
+            Some(path) => std::env::set_var("PARASAUR_QUOTA_STORE_PATH", path),
+            None => std::env::remove_var("PARASAUR_QUOTA_STORE_PATH"),
         }
     }
 }

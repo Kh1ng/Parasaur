@@ -150,7 +150,7 @@ fn invalid_gitlab_mr_response_fails_publication_closed() {
         .env("PATH", path)
         .env("HOME", &home)
         .env("GITLAB_PAT", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .failure()
         .stderr(predicate::str::contains("invalid merge request payload"));

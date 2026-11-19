@@ -19,6 +19,7 @@ import type {
   ReportGroupBy,
   LedgerEntry,
   ControllerEvent,
+  LoopDecision,
   ProfileSummary,
   SettingsConfigProfileSummary,
   DoctorSnapshot
@@ -67,6 +68,7 @@ interface GahStoreState {
   config: Resource<ConfigSummary>;
   profileConfig: Resource<SettingsConfigProfileSummary>;
   loopStatus: Resource<LoopStatus>;
+  loopDecision: Resource<LoopDecision>;
   loopAction: { pending: boolean; error: string | null };
 
   fetchConfig: (opts?: { force?: boolean }) => Promise<void>;
@@ -79,13 +81,14 @@ interface GahStoreState {
   fetchReport: (params?: { profile?: string; since?: string; groupBy?: ReportGroupBy }, opts?: { force?: boolean }) => Promise<void>;
   fetchReportSeries: (params?: { profile?: string; since?: string; bucket?: string }, opts?: { force?: boolean }) => Promise<void>;
   fetchEvents: (params?: { profile?: string; since?: string }, opts?: { force?: boolean }) => Promise<void>;
-  fetchWorkTimeline: (workId: string, opts?: { force?: boolean }) => Promise<void>;
+  fetchWorkTimeline: (workId: string, opts?: { force?: boolean; profile?: string }) => Promise<void>;
   fetchProfiles: (opts?: { force?: boolean }) => Promise<void>;
   addProfile: (data: ProfileAddData) => Promise<void>;
   updateProfile: (name: string, data: ProfileUpdateData) => Promise<void>;
   removeProfile: (name: string, params?: ProfileRemoveParams) => Promise<void>;
   clearProfileErrors: () => void;
   fetchLoopStatus: (profile: string, opts?: { force?: boolean }) => Promise<void>;
+  fetchLoopDecision: (profile: string, opts?: { force?: boolean }) => Promise<void>;
   startLoop: (profile: string) => Promise<void>;
   stopLoop: (profile: string) => Promise<void>;
 }
@@ -106,6 +109,11 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** One issue number can exist in multiple project ledgers. */
+export function workTimelineKey(workId: string, profile = ''): string {
+  return JSON.stringify([profile, workId]);
+}
+
 export const useGahStore = create<GahStoreState>((set, get) => ({
   status: emptyResource(),
   quota: emptyResource(),
@@ -118,6 +126,7 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
   config: emptyResource(),
   profileConfig: emptyResource(),
   loopStatus: emptyResource(),
+  loopDecision: emptyResource(),
   loopAction: { pending: false, error: null },
   profileCrud: {
     adding: false,
@@ -135,7 +144,8 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
     const key = profile ?? '';
     const current = get().status;
     if ((current.loading && current.key === key) || (!opts?.force && isFresh(current, key))) return;
-    const pending = { ...(current.key === key ? current : emptyResource<StatusSnapshot>()), loading: true, error: null, key };
+    // A retry is not recovery: retain the failed-read warning until success.
+    const pending = { ...(current.key === key ? current : emptyResource<StatusSnapshot>()), loading: true, key };
     const requestId = ++statusRequestId;
     set({ status: pending });
     try {
@@ -159,7 +169,8 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
     if ((current.loading && current.key === key) || (!opts?.force && isFresh(current, key))) return;
     // A profile switch must start its own request and hide the old profile.
     // Object identity also rejects a late response from an earlier selection.
-    const pending = { ...(current.key === key ? current : emptyResource<QuotaSnapshot>()), loading: true, error: null, key };
+    // Starting a retry does not confirm the retained allowance readings.
+    const pending = { ...(current.key === key ? current : emptyResource<QuotaSnapshot>()), loading: true, key };
     set({ quota: pending });
     try {
       const data = await gahApi.getQuota(params);
@@ -174,13 +185,16 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
   async fetchDoctor(profile, opts) {
     const key = profile ?? '';
     const current = get().doctor;
-    if (current.loading || (!opts?.force && isFresh(current, key))) return;
-    set({ doctor: { ...current, loading: true, error: null } });
+    if ((current.loading && current.key === key) || (!opts?.force && isFresh(current, key))) return;
+    const pending = { ...(current.key === key ? current : emptyResource<DoctorSnapshot>()), loading: true, error: null, key };
+    set({ doctor: pending });
     try {
       const data = await gahApi.getDoctor(profile);
+      if (get().doctor !== pending) return;
       set({ doctor: { data, loading: false, error: null, fetchedAt: Date.now(), key } });
     } catch (error) {
-      set({ doctor: { ...get().doctor, loading: false, error: errorMessage(error), key } });
+      if (get().doctor !== pending) return;
+      set({ doctor: { ...pending, loading: false, error: errorMessage(error) } });
     }
   },
 
@@ -203,46 +217,53 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
   async fetchReportSeries(params, opts) {
     const key = JSON.stringify(params ?? {});
     const current = get().reportSeries;
-    if (current.loading || (!opts?.force && isFresh(current, key))) return;
-    set({ reportSeries: { ...current, loading: true, error: null } });
+    if ((current.loading && current.key === key) || (!opts?.force && isFresh(current, key))) return;
+    const pending = { ...(current.key === key ? current : emptyResource<ReportSeriesData>()), loading: true, error: null, key };
+    set({ reportSeries: pending });
     try {
       const data = await gahApi.getReportSeries(params);
+      if (get().reportSeries !== pending) return;
       set({ reportSeries: { data, loading: false, error: null, fetchedAt: Date.now(), key } });
     } catch (error) {
-      set({ reportSeries: { ...get().reportSeries, loading: false, error: errorMessage(error), key } });
+      if (get().reportSeries !== pending) return;
+      set({ reportSeries: { ...pending, loading: false, error: errorMessage(error) } });
     }
   },
 
   async fetchEvents(params, opts) {
     const key = JSON.stringify(params ?? {});
     const current = get().events;
-    if (current.loading || (!opts?.force && isFresh(current, key))) return;
-    set({ events: { ...current, loading: true, error: null } });
+    if ((current.loading && current.key === key) || (!opts?.force && isFresh(current, key))) return;
+    const pending = { ...(current.key === key ? current : emptyResource<ControllerEvent[]>()), loading: true, error: null, key };
+    set({ events: pending });
     try {
       const data = await gahApi.getEvents(params);
+      if (get().events !== pending) return;
       set({ events: { data, loading: false, error: null, fetchedAt: Date.now(), key } });
     } catch (error) {
-      set({ events: { ...get().events, loading: false, error: errorMessage(error), key } });
+      if (get().events !== pending) return;
+      set({ events: { ...pending, loading: false, error: errorMessage(error) } });
     }
   },
 
   async fetchWorkTimeline(workId, opts) {
-    const current = get().workTimelines[workId] ?? emptyResource<LedgerEntry[]>();
-    if (current.loading || (!opts?.force && isFresh(current, workId))) return;
-    set({ workTimelines: { ...get().workTimelines, [workId]: { ...current, loading: true, error: null } } });
+    const key = workTimelineKey(workId, opts?.profile);
+    const current = get().workTimelines[key] ?? emptyResource<LedgerEntry[]>();
+    if (current.loading || (!opts?.force && isFresh(current, key))) return;
+    set({ workTimelines: { ...get().workTimelines, [key]: { ...current, loading: true, error: null } } });
     try {
-      const data = await gahApi.getWorkTimeline(workId);
+      const data = await gahApi.getWorkTimeline(workId, opts?.profile);
       set({
         workTimelines: {
           ...get().workTimelines,
-          [workId]: { data, loading: false, error: null, fetchedAt: Date.now(), key: workId }
+          [key]: { data, loading: false, error: null, fetchedAt: Date.now(), key }
         }
       });
     } catch (error) {
       set({
         workTimelines: {
           ...get().workTimelines,
-          [workId]: { ...current, loading: false, error: errorMessage(error), key: workId }
+          [key]: { ...current, loading: false, error: errorMessage(error), key }
         }
       });
     }
@@ -250,13 +271,16 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
 
   async fetchProfiles(opts) {
     const current = get().profiles;
-    if (current.loading || (!opts?.force && isFresh(current, ''))) return;
-    set({ profiles: { ...current, loading: true, error: null } });
+    if ((current.loading && !opts?.force) || (!opts?.force && isFresh(current, ''))) return;
+    const pending = { ...current, loading: true, error: null };
+    set({ profiles: pending });
     try {
       const data = await gahApi.getProfiles();
+      if (get().profiles !== pending) return;
       set({ profiles: { data, loading: false, error: null, fetchedAt: Date.now(), key: '' } });
     } catch (error) {
-      set({ profiles: { ...get().profiles, loading: false, error: errorMessage(error), key: '' } });
+      if (get().profiles !== pending) return;
+      set({ profiles: { ...pending, loading: false, error: errorMessage(error), key: '' } });
     }
   },
 
@@ -270,25 +294,9 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
           adding: false, 
           addError: null, 
           lastAddSuccess: true 
-        },
-        // Refresh profiles list
-        profiles: { ...get().profiles, loading: true }
+        }
       });
-      // Re-fetch profiles
-      try {
-        const profilesData = await gahApi.getProfiles();
-        set({ 
-          profiles: { 
-            data: profilesData, 
-            loading: false, 
-            error: null, 
-            fetchedAt: Date.now(), 
-            key: '' 
-          }
-        });
-      } catch {
-        // If refetch fails, that's okay - the add might still have succeeded
-      }
+      await get().fetchProfiles({ force: true });
     } catch (error) {
       set({ 
         profileCrud: { 
@@ -311,25 +319,9 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
           updating: false,
           updateError: null,
           lastUpdateSuccess: true
-        },
-        // Refresh profiles list
-        profiles: { ...get().profiles, loading: true }
+        }
       });
-      // Re-fetch profiles
-      try {
-        const profilesData = await gahApi.getProfiles();
-        set({
-          profiles: {
-            data: profilesData,
-            loading: false,
-            error: null,
-            fetchedAt: Date.now(),
-            key: ''
-          }
-        });
-      } catch {
-        // If refetch fails, that's okay - the update might still have succeeded
-      }
+      await get().fetchProfiles({ force: true });
     } catch (error) {
       set({ 
         profileCrud: { 
@@ -352,25 +344,9 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
           removing: false, 
           removeError: null, 
           lastRemoveSuccess: true 
-        },
-        // Refresh profiles list
-        profiles: { ...get().profiles, loading: true }
+        }
       });
-      // Re-fetch profiles
-      try {
-        const profilesData = await gahApi.getProfiles();
-        set({ 
-          profiles: { 
-            data: profilesData, 
-            loading: false, 
-            error: null, 
-            fetchedAt: Date.now(), 
-            key: '' 
-          }
-        });
-      } catch {
-        // If refetch fails, that's okay - the remove might still have succeeded
-      }
+      await get().fetchProfiles({ force: true });
     } catch (error) {
       set({ 
         profileCrud: { 
@@ -424,16 +400,17 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
     const key = profile ?? '';
     if (!profile) return;
     const current = get().profileConfig;
-    if (current.loading && current.key === key) return;
+    if (current.loading && current.key === key && !opts?.force) return;
     if (!opts?.force && isFresh(current, key)) return;
-    set({ profileConfig: { ...current, loading: true, error: null, key } });
+    const pending = { ...(current.key === key ? current : emptyResource<SettingsConfigProfileSummary>()), loading: true, error: null, key };
+    set({ profileConfig: pending });
     try {
       const data = await gahApi.getProfileConfig(profile);
-      if (get().profileConfig.key !== key) return;
+      if (get().profileConfig !== pending) return;
       set({ profileConfig: { data, loading: false, error: null, fetchedAt: Date.now(), key } });
     } catch (error) {
-      if (get().profileConfig.key !== key) return;
-      set({ profileConfig: { ...get().profileConfig, loading: false, error: errorMessage(error), key } });
+      if (get().profileConfig !== pending) return;
+      set({ profileConfig: { ...pending, loading: false, error: errorMessage(error) } });
     }
   },
 
@@ -441,15 +418,33 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
     set({ config: { ...get().config, error: null } });
   },
 
+  async fetchLoopDecision(profile, opts) {
+    const current = get().loopDecision;
+    if ((current.loading && current.key === profile) || (!opts?.force && isFresh(current, profile))) return;
+    const pending = { ...(current.key === profile ? current : emptyResource<LoopDecision>()), loading: true, error: null, key: profile };
+    set({ loopDecision: pending });
+    try {
+      const data = await gahApi.getLoopDecision(profile);
+      if (get().loopDecision !== pending) return;
+      set({ loopDecision: { data, loading: false, error: null, fetchedAt: Date.now(), key: profile } });
+    } catch (error) {
+      if (get().loopDecision !== pending) return;
+      set({ loopDecision: { ...pending, loading: false, error: errorMessage(error) } });
+    }
+  },
+
   async fetchLoopStatus(profile, opts) {
     const current = get().loopStatus;
-    if (current.loading || (!opts?.force && isFresh(current, profile))) return;
-    set({ loopStatus: { ...current, loading: true, error: null } });
+    if ((current.loading && current.key === profile) || (!opts?.force && isFresh(current, profile))) return;
+    const pending = { ...(current.key === profile ? current : emptyResource<LoopStatus>()), loading: true, error: null, key: profile };
+    set({ loopStatus: pending });
     try {
       const data = await gahApi.getLoopStatus(profile);
+      if (get().loopStatus !== pending) return;
       set({ loopStatus: { data, loading: false, error: null, fetchedAt: Date.now(), key: profile } });
     } catch (error) {
-      set({ loopStatus: { ...get().loopStatus, loading: false, error: errorMessage(error), key: profile } });
+      if (get().loopStatus !== pending) return;
+      set({ loopStatus: { ...pending, loading: false, error: errorMessage(error) } });
     }
   },
 
@@ -461,7 +456,7 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
     } catch (error) {
       set({ loopAction: { pending: false, error: errorMessage(error) } });
     }
-    await get().fetchLoopStatus(profile, { force: true });
+    if (get().loopStatus.key === profile) await get().fetchLoopStatus(profile, { force: true });
   },
 
   async stopLoop(profile) {
@@ -472,6 +467,6 @@ export const useGahStore = create<GahStoreState>((set, get) => ({
     } catch (error) {
       set({ loopAction: { pending: false, error: errorMessage(error) } });
     }
-    await get().fetchLoopStatus(profile, { force: true });
+    if (get().loopStatus.key === profile) await get().fetchLoopStatus(profile, { force: true });
   }
 }));

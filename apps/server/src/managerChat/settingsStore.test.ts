@@ -8,9 +8,9 @@ import { DEFAULT_BACKEND_ID } from './registry.js';
 
 test('a corrupt settings file is set aside and the conservative defaults apply', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-chat-settings-'));
-  const previous = process.env.GAH_MANAGER_CHAT_SETTINGS_PATH;
+  const previous = process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH;
   const path = join(dir, 'manager-chat-settings.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = path;
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = path;
   const logged = t.mock.method(console, 'error', () => {});
   try {
     const torn = '{"defaultBackend":"hermes","permissionMode":"bypass","profileOverrides":{"gah":';
@@ -29,8 +29,8 @@ test('a corrupt settings file is set aside and the conservative defaults apply',
     assert.equal(logged.mock.callCount(), 1, 'a repaired file is not reported again');
     assert.deepEqual(readdirSync(dir).sort(), [preserved[0], 'manager-chat-settings.json'].sort(), 'no temporary file is left behind');
   } finally {
-    if (previous === undefined) delete process.env.GAH_MANAGER_CHAT_SETTINGS_PATH;
-    else process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = previous;
+    if (previous === undefined) delete process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH;
+    else process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = previous;
     rmSync(dir, { recursive: true, force: true });
   }
 });

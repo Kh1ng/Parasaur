@@ -138,9 +138,9 @@ EOF
             format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
         )
         .env("HOME", &home)
-        .env("GAH_CANONICAL_CONFIG", root.join("canonical.toml"))
+        .env("PARASAUR_CANONICAL_CONFIG", root.join("canonical.toml"))
         .env("GITHUB_TOKEN", "test-token")
-        .env("GAH_LEDGER_PATH", &ledger)
+        .env("PARASAUR_LEDGER_PATH", &ledger)
         .env("XDG_STATE_HOME", root.join("xdg-state"))
         .env("TMPDIR", tmp)
         .assert()

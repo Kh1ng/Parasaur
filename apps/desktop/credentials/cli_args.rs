@@ -59,6 +59,8 @@ pub fn bind(profile: &str, instance: &str, credential_id: &str) -> Vec<String> {
         instance,
         "--credential-id",
         credential_id,
+        "--account-label",
+        credential_id,
     ]
     .map(str::to_owned)
     .into()
@@ -69,8 +71,9 @@ pub fn add_instance(
     instance: &str,
     runner: &str,
     credential_id: &str,
-    label: &str,
 ) -> Vec<String> {
+    // Routing labels are logical identifiers; display names may contain spaces
+    // and two accounts may share one. Keep the saved credential's identity.
     [
         "config",
         "add-backend-instance",
@@ -83,7 +86,7 @@ pub fn add_instance(
         "--credential-id",
         credential_id,
         "--account-label",
-        label,
+        credential_id,
     ]
     .map(str::to_owned)
     .into()

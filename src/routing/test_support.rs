@@ -159,6 +159,7 @@ pub(super) fn implementation_request() -> RouteRequest<'static> {
         last_failure_class: None,
         mode: "improve",
         requested_backend: "auto",
+        requested_instance: None,
         requested_model: None,
         recommended_backend: Some("codex"),
         recommended_model: Some("strong"),

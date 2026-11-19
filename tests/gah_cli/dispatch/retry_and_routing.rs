@@ -267,7 +267,7 @@ fn dispatch_fix_validation_never_passes_records_no_push_no_mr() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .failure()
         .stderr(predicate::str::contains("validation failed after"));
@@ -355,8 +355,8 @@ fn dispatch_fix_opencode_internal_rate_limit_marks_unavailable_and_reroutes() {
         .env("HOME", &home)
         .env("XDG_DATA_HOME", &data_home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
-        .env("GAH_AVAILABILITY_PATH", &availability_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &availability_path)
         .assert()
         .success()
         .stdout(predicate::str::contains(
@@ -433,8 +433,8 @@ fn dispatch_reroute_continues_partial_tree_after_billing_exhaustion() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
-        .env("GAH_AVAILABILITY_PATH", &availability_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_AVAILABILITY_PATH", &availability_path)
         .assert()
         .success()
         .stdout(predicate::str::contains(
@@ -502,7 +502,7 @@ fn dispatch_fix_retries_no_change_before_terminal_failure() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .failure()
         .stderr(predicate::str::contains(
@@ -564,7 +564,7 @@ fn dispatch_fix_validation_retry_retains_each_failed_wip_tree() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .failure()
         .stderr(predicate::str::contains(
@@ -649,7 +649,7 @@ fn dispatch_fix_one_shot_success_records_one_attempt() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success();
 
@@ -701,7 +701,7 @@ fn dispatch_runs_validation_gate_once_per_config_change_then_skips() {
             .env("PATH", prepend_path(&fake_bin))
             .env("HOME", &home)
             .env("GITHUB_TOKEN", "token")
-            .env("GAH_VALIDATION_CHECK_PATH", &state_path)
+            .env("PARASAUR_VALIDATION_CHECK_PATH", &state_path)
             .assert()
     };
 
@@ -774,7 +774,7 @@ fn dispatch_skip_validation_gate_bypasses_gate() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_VALIDATION_CHECK_PATH", &state_path)
+        .env("PARASAUR_VALIDATION_CHECK_PATH", &state_path)
         .assert()
         .success()
         .stdout(predicate::str::contains(
@@ -825,7 +825,7 @@ fn dispatch_fix_records_per_attempt_usage_from_backend_output() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success();
 
@@ -871,8 +871,8 @@ fn dispatch_fix_shutdown_records_cancelled_shutdown_and_dispatch_finished_event(
         .env("PATH", prepend_path(&tmp.path().join("bin")))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
-        .env("GAH_EVENTS_PATH", &events_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_EVENTS_PATH", &events_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -944,8 +944,8 @@ fn dispatch_fix_shutdown_after_backend_exit_preserves_completed_worktree_and_ski
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
-        .env("GAH_TEST_PAUSE_AFTER_BACKEND_RESULT_FILE", &pause_gate)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_TEST_PAUSE_AFTER_BACKEND_RESULT_FILE", &pause_gate)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -1108,7 +1108,7 @@ esac
         .env("PATH", &dispatch_path)
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -1158,7 +1158,7 @@ esac
         .env("PATH", &dispatch_path)
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success()
         .get_output()
@@ -1246,7 +1246,7 @@ fn dispatch_fix_escalate_flag_picks_stronger_backend_on_first_attempt() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success();
 
@@ -1303,7 +1303,7 @@ fn dispatch_fix_fail_then_success_records_two_attempts() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success();
 
@@ -1364,7 +1364,7 @@ fn dispatch_backend_retry_continues_checkpointed_progress() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success();
 
@@ -1425,7 +1425,7 @@ fn dispatch_fix_no_progress_abort_records_exact_consumed_attempts() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .failure();
 
@@ -1474,7 +1474,7 @@ fn dispatch_fix_aborts_on_first_attempt_when_failure_matches_baseline() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .failure()
         .stderr(predicate::str::contains("pristine-tree baseline"));

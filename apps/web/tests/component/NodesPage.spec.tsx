@@ -153,7 +153,7 @@ test('empty fleet offers installer and executable existing-worker registration c
   await component.getByLabel('Profiles (comma-separated)').fill('gah,tools');
   await component.getByRole('button', { name: 'Generate register-node command' }).click();
   const command = component.getByRole('textbox', { name: 'Register node command' });
-  await expect(command).toHaveValue("npm run register-node --workspace=apps/server -- --central-url 'https://central.example.com' --self-url 'http://127.0.0.1:3773' --transport-mode 'trusted_lan' --secret-ref 'env:GAH_NODE_TOKEN' --profiles 'gah,tools'");
+  await expect(command).toHaveValue("npm run register-node --workspace=apps/server -- --central-url 'https://central.example.com' --self-url 'http://127.0.0.1:3773' --transport-mode 'trusted_lan' --secret-ref 'env:PARASAUR_NODE_TOKEN' --profiles 'gah,tools'");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: testInfo.outputPath('register-mobile.png'), fullPage: true });
 });

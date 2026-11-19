@@ -21,6 +21,86 @@ fn quota_snapshot_signals_the_v3_source_check_contract() {
         .success();
     let snapshot: Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
     assert_eq!(snapshot["schema_version"], 3);
+    assert!(snapshot["account_spend"].is_array());
+}
+
+#[test]
+fn quota_account_costs_follow_recorded_identity_and_snapshot_profile_period() {
+    use git_agent_harness::ledger::{AttemptRecord, LedgerUsage};
+    let tmp = test_tempdir();
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+    let cfg = write_real_repo_config(&tmp, &repo, "github");
+    let now = time::OffsetDateTime::now_utc();
+    let timestamp = now
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut dispatch =
+        super::support::fake_ledger::ledger_entry_full("improve", "test", None, "#1", &timestamp);
+    dispatch["profile"] = "real".into();
+    dispatch["effective_backend"] = "codex".into();
+    dispatch["usage"] = serde_json::json!({"actual_cost_usd":7.0,"backend_instance":"work"});
+    dispatch["attempts"] = serde_json::to_value([("work", 2.0), ("personal", 5.0)].map(
+        |(id, cost)| AttemptRecord {
+            backend: "codex".into(),
+            usage: LedgerUsage {
+                backend_instance: Some(id.into()),
+                actual_cost_usd: Some(cost),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    ))
+    .unwrap();
+    let mut legacy = dispatch.clone();
+    legacy["attempts"] = serde_json::json!([]);
+    legacy["usage"] = serde_json::json!({"actual_cost_usd":7.0});
+    let mut other_profile = legacy.clone();
+    other_profile["profile"] = "other".into();
+    let mut expired = legacy.clone();
+    expired["timestamp"] = (now - time::Duration::days(30))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap()
+        .into();
+    let ledger = tmp.path().join("ledger.jsonl");
+    fs::write(
+        &ledger,
+        [dispatch, legacy, other_profile, expired]
+            .iter()
+            .map(|entry| format!("{entry}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    let output = bin()
+        .args([
+            "quota",
+            "snapshot",
+            "--profile",
+            "real",
+            "--since",
+            "7d",
+            "--json",
+            "--config-path",
+        ])
+        .arg(cfg)
+        .env("PARASAUR_LEDGER_PATH", &ledger)
+        .assert()
+        .success();
+    let snapshot: Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let rows = snapshot["account_spend"].as_array().unwrap();
+    assert_eq!(rows.len(), 3);
+    let cost = |id: Value| {
+        rows.iter()
+            .find(|row| row["backend_instance"] == id)
+            .unwrap()["actual_cost_usd"]
+            .as_f64()
+            .unwrap()
+    };
+    assert_eq!(cost("work".into()), 2.0);
+    assert_eq!(cost("personal".into()), 5.0);
+    assert_eq!(cost(Value::Null), 7.0);
+    assert_eq!(snapshot["usage"]["actual_cost_usd"], 14.0);
 }
 
 #[test]

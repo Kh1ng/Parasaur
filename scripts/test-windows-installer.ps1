@@ -17,15 +17,28 @@ function wsl.exe {
     $global:LASTEXITCODE = 0
     $script:networkCalls += "wsl $args"
     if ($args -contains 'hostname') { '192.168.1.11 172.28.0.1' }
+    if ($args -contains 'sleep') { $global:LASTEXITCODE = $script:keepaliveExitCode }
 }
 function netsh.exe {
     $global:LASTEXITCODE = 0
     $script:networkCalls += "netsh $args"
 }
-& ([scriptblock]::Create($startup))
-$networkLog = $script:networkCalls -join "`n"
-if ($networkLog -notmatch 'portproxy delete' -or $networkLog -match 'portproxy add') { throw 'Mirrored WSL must remove, not create, a self-looping portproxy.' }
-Remove-Item Function:\wsl.exe, Function:\netsh.exe
+try {
+    # Any keepalive exit must fail the task so Task Scheduler restarts it.
+    foreach ($exitCode in @(0, 17)) {
+        $script:networkCalls = @()
+        $script:keepaliveExitCode = $exitCode
+        $retryRequired = $false
+        try { & ([scriptblock]::Create($startup)) } catch {
+            if ($_.Exception.Message -cne "WSL worker keepalive exited (exit $exitCode). Task Scheduler must retry the worker.") { throw }
+            $retryRequired = $true
+        }
+        if (-not $retryRequired) { throw 'An exited keepalive must trigger Task Scheduler retry.' }
+        $networkLog = $script:networkCalls -join "`n"
+        if ($networkLog -notmatch 'portproxy delete' -or $networkLog -match 'portproxy add') { throw 'Mirrored WSL must remove, not create, a self-looping portproxy.' }
+        if ($networkLog -notmatch 'systemctl --user start gah-worker.service' -or $networkLog -notmatch 'sleep infinity') { throw 'Startup must start the worker and keep WSL alive.' }
+    }
+} finally { Remove-Item Function:\wsl.exe, Function:\netsh.exe }
 
 # Load only the connection writer; executing the installer would mutate this machine.
 $writer = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Save-DesktopConnection' }, $true)

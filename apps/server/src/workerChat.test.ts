@@ -119,9 +119,10 @@ test('a worker opens a worktree-less PR chat in its checkout (#1276)', async (t)
   for (const args of [['init', '--quiet', '--initial-branch=main'], ['config', 'user.email', 'test@gah'], ['config', 'user.name', 'Test'], ['commit', '--quiet', '--allow-empty', '-m', 'initial']]) execFileSync('git', args, { cwd });
   const profile: ProfileSummary = { ...JSON.parse(readFileSync(new URL('../tests/fixtures/gah/responses/profile-list.json', import.meta.url), 'utf8'))[0], name: 'demo', local_path: cwd, worktree_base: join(root, 'worktrees') };
   const adapter = { id: 'claude' } as ManagerAdapter;
+  const released: string[] = [];
   const app = express();
   app.use(express.json());
-  app.use('/api/worker-chat', createWorkerChatRouter({ node: { role: 'worker', central_url: 'https://central.test' }, nodeId: 'worker', profiles: async () => [profile], adapter: () => adapter, sessions: { stateDir: join(root, 'state') } }));
+  app.use('/api/worker-chat', createWorkerChatRouter({ node: { role: 'worker', central_url: 'https://central.test' }, nodeId: 'worker', profiles: async () => [profile], adapter: () => adapter, release: async key => { released.push(key); }, sessions: { stateDir: join(root, 'state') } }));
   const server = createServer(app);
   t.after(async () => {
     server.closeAllConnections();
@@ -147,6 +148,9 @@ test('a worker opens a worktree-less PR chat in its checkout (#1276)', async (t)
   const blank = await create({ sessionId: 'blank-session' });
   assert.equal(blank.status, 201);
   assert.ok((await blank.json() as { worktreePath: string | null }).worktreePath?.startsWith(profile.worktree_base));
+  const archived = await create({ action: 'archive', sessionId: 'blank-session' });
+  assert.equal(archived.status, 200);
+  assert.deepEqual(released, ['demo#blank-session']);
 });
 
 test('worker picker and turn entry points preserve the explicit profile and full key', async (t) => {

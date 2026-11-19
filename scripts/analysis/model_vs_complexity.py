@@ -6,7 +6,7 @@ difficulty); this script is the throwaway version that produced the
 findings referenced there and in docs/analysis/model-vs-complexity-2026-08-08.txt.
 
 Usage: python3 scripts/analysis/model_vs_complexity.py [path/to/ledger.jsonl] [profile]
-Defaults to $GAH_ARTIFACT_ROOT/ledger.jsonl (or ~/workspace/agent-lab/artifacts
+Defaults to $PARASAUR_ARTIFACT_ROOT/ledger.jsonl (or ~/workspace/agent-lab/artifacts
 as a last resort) and profile "gah".
 """
 
@@ -16,7 +16,7 @@ import sys
 from collections import defaultdict
 
 default_root = os.environ.get(
-    "GAH_ARTIFACT_ROOT", os.path.expanduser("~/workspace/agent-lab/artifacts")
+    "PARASAUR_ARTIFACT_ROOT", os.path.expanduser("~/workspace/agent-lab/artifacts")
 )
 path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(default_root, "ledger.jsonl")
 profile = sys.argv[2] if len(sys.argv) > 2 else "gah"

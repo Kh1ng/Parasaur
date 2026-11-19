@@ -63,8 +63,8 @@ jobs:
 
       - name: Check release version
         env:
-          GAH_RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
-        run: node scripts/check-release-version.mjs "$GAH_RELEASE_TAG"
+          PARASAUR_RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
+        run: node scripts/check-release-version.mjs "$PARASAUR_RELEASE_TAG"
 
       - name: Build shared packages
         run: npm run build:contracts && npm run build:shared

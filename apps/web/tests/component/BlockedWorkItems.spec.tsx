@@ -57,10 +57,15 @@ test('unknown and legacy reasons stay visibly unknown with no plan', async ({ mo
   await expect(component).toContainText('No remediation plan for this reason code.');
 });
 
-test('budget-capped reasons surface the clear-attempts control', async ({ mount }) => {
+test('budget-capped reasons reset the exact work item and profile from the plan', async ({ mount, page }) => {
+  let payload: unknown;
+  await page.route('**/api/ledger/clear-attempts', async route => {
+    payload = route.request().postDataJSON();
+    await route.fulfill({ json: { success: true } });
+  });
   const capped: Blocker = {
     ...planBlocker,
-    source_reference: '#42',
+    source_reference: 'gah/branch-42',
     reason_code: 'retry_budget_exhausted',
     remediation_plan: {
       result: 'plan',
@@ -75,4 +80,6 @@ test('budget-capped reasons surface the clear-attempts control', async ({ mount 
   };
   const component = await mount(<BlockedWorkItems blockers={[capped]} />);
   await expect(component).toContainText('Clear attempts & retry');
+  await component.getByRole('button', { name: 'Clear attempts & retry' }).click();
+  await expect.poll(() => payload).toMatchObject({ profile: 'test', workId: '#42' });
 });

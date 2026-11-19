@@ -50,10 +50,10 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   // Rely on Express's req.secure, which only trusts proxy headers if 'trust proxy' is configured.
   const isTls = req.secure;
 
-  if (!local && !isTls && process.env.GAH_ALLOW_INSECURE_HTTP !== '1') {
+  if (!local && !isTls && process.env.PARASAUR_ALLOW_INSECURE_HTTP !== '1') {
     return res.status(403).json({
       error: 'Forbidden',
-      message: 'Remote or cross-origin access requires TLS unless GAH_ALLOW_INSECURE_HTTP=1'
+      message: 'Remote or cross-origin access requires TLS unless PARASAUR_ALLOW_INSECURE_HTTP=1'
     });
   }
 

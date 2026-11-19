@@ -1,5 +1,5 @@
 import { GitBranch, Cpu, Brain } from 'lucide-react';
-import type { Session } from '@git-agent-harness/contracts';
+import { isSessionTerminal, type Session, type SessionExecutionResult } from '@git-agent-harness/contracts';
 import { StatusBadge, type StatusTone } from './ui/StatusBadge.js';
 import { providerIcon } from '../lib/icons.js';
 import { formatDispatchName } from '../lib/format.js';
@@ -17,6 +17,13 @@ const STATUS_TONE: Record<Session['status'], StatusTone> = {
   stopped: 'unknown',
   error: 'critical'
 };
+
+function executionLabel(result: SessionExecutionResult): string {
+  if (result.reason === 'not_started') return 'No process was started';
+  if (result.reason === 'launch_failed') return 'Process failed to launch';
+  const detail = result.signal ? result.signal : result.exitCode === null ? 'exit code not reported' : `exit code ${result.exitCode}`;
+  return `${result.reason === 'cancelled' ? 'Cancelled' : 'Process exited'} · ${detail}`;
+}
 
 export function SessionCard({ session, onClick }: SessionCardProps) {
   const Icon = providerIcon(session.providerKind);
@@ -46,8 +53,10 @@ export function SessionCard({ session, onClick }: SessionCardProps) {
                 <span className="inline-flex items-center gap-1">
                   <Cpu size={12} aria-hidden="true" />
                   {session.backend}
+                  {session.backendInstance && ` / ${session.backendInstance}`}
                 </span>
               )}
+              {session.nodeId && <span className="break-all">{session.nodeId}</span>}
               {session.model && (
                 <span className="inline-flex items-center gap-1">
                   <Brain size={12} aria-hidden="true" />
@@ -58,8 +67,12 @@ export function SessionCard({ session, onClick }: SessionCardProps) {
           </div>
         </div>
 
-        <StatusBadge tone={STATUS_TONE[session.status]} label={session.status} />
+        <StatusBadge tone={STATUS_TONE[session.status]} label={session.leaseState === 'uncertain_reconciling' ? 'Execution unconfirmed' : session.status} />
       </div>
+
+      {(session.execution || isSessionTerminal(session)) && <p className="mt-2 text-xs text-secondary">
+        {session.execution ? executionLabel(session.execution) : 'Exit result not reported by this node'}
+      </p>}
 
       {session.error && (
         <div className="mt-3 p-2 rounded-md text-xs text-critical" style={{ background: 'rgb(var(--status-critical) / 0.08)' }}>

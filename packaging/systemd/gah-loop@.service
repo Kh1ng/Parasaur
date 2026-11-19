@@ -37,6 +37,10 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=%h
 Environment=HOME=%h
+# This default keeps the pre-rename name on purpose. A value in the env file
+# below overrides it under either name: the old name replaces this line, and
+# the new name wins when the process adopts old names at startup. A default
+# under the new name would silently beat an existing GAH_ override.
 Environment=GAH_CONFIG=%h/.config/gah/config.toml
 Environment=XDG_STATE_HOME=%h/.local/state
 # Keep backend/compiler temporary files off small /tmp tmpfs mounts. The
@@ -44,7 +48,7 @@ Environment=XDG_STATE_HOME=%h/.local/state
 # filesystem that unattended workers will actually consume.
 Environment=TMPDIR=%h/.cache/gah/tmp
 Environment="PATH=@PATH@"
-# Never put GAH_TEST_NOW in this service file: it overrides wall-clock expiry
+# Never put PARASAUR_TEST_NOW in this service file: it overrides wall-clock expiry
 # and can keep cooldowns, claims, workers, and the controller on frozen time.
 EnvironmentFile=-%h/.config/gah/gah-loop.env
 ExecStartPre=/usr/bin/mkdir -p %h/.cache/gah/tmp

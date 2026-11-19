@@ -20,41 +20,41 @@ export type GitLabRouteDeps = {
 export function gitLabEventsRouter(deps: GitLabRouteDeps = {}): Router & { queue: GitLabEventQueue; store: GitLabEventStore } {
   const router = Router();
   const store = deps.store ?? new GitLabEventStore(10_000, 86_400_000, Date.now,
-    process.env.GAH_GITLAB_EVENTS_STORE_PATH || resolve(process.env.XDG_STATE_HOME || resolve(homedir(), '.local/state'), 'gah/gitlab-events.json'));
+    process.env.PARASAUR_GITLAB_EVENTS_STORE_PATH || resolve(process.env.XDG_STATE_HOME || resolve(homedir(), '.local/state'), 'gah/gitlab-events.json'));
   const queue = new GitLabEventQueue(store, deps.dispatch ?? dispatchGitLabEvent,
     deps.findDispatch ?? (async identity => {
       const fleet = getFleetDispatch();
       return fleet.getSessionByRequestId(identity.requestId);
     }), requestId => getFleetDispatch().releaseReceipt(requestId));
-  const configuredLimit = Number(process.env.GAH_GITLAB_EVENTS_RATE_LIMIT);
+  const configuredLimit = Number(process.env.PARASAUR_GITLAB_EVENTS_RATE_LIMIT);
   const limit = Number.isSafeInteger(configuredLimit) && configuredLimit > 0 ? configuredLimit : 600;
   router.use(rateLimit({ windowMs: 60_000, limit, standardHeaders: true, legacyHeaders: false,
     message: { error: 'rate_limited' } }));
   router.post('/events', (req, res, next) => {
-    if (!req.secure && !isLocalAddress(req.socket.remoteAddress ?? '') && process.env.GAH_ALLOW_INSECURE_HTTP !== '1') {
+    if (!req.secure && !isLocalAddress(req.socket.remoteAddress ?? '') && process.env.PARASAUR_ALLOW_INSECURE_HTTP !== '1') {
       return res.status(403).json({ error: 'https_required' });
     }
     if (!verifyHookSecret(req.get('X-Parasaur-Hook-Secret'))) return res.status(401).json({ error: 'authentication_required' });
     next();
   }, (req, res, next) => {
-    const bot = process.env.GAH_GITLAB_BOT_USERNAME || 'parasaur';
-    const event = classifyEvent(req.body, bot, process.env.GAH_GITLAB_PIPELINE_REPAIR === '1', req.get('X-Gitlab-Event-UUID'));
+    const bot = process.env.PARASAUR_GITLAB_BOT_USERNAME || 'parasaur';
+    const event = classifyEvent(req.body, bot, process.env.PARASAUR_GITLAB_PIPELINE_REPAIR === '1', req.get('X-Gitlab-Event-UUID'));
     if (!event) return res.sendStatus(204);
     res.locals.gitLabEvent = event;
     next();
   }, (req, res) => {
     const event: GitLabEvent = res.locals.gitLabEvent;
-    const bot = process.env.GAH_GITLAB_BOT_USERNAME || 'parasaur';
+    const bot = process.env.PARASAUR_GITLAB_BOT_USERNAME || 'parasaur';
     let panelUrl: string;
     try {
-      const url = new URL(process.env.GAH_GITLAB_PANEL_URL || '');
+      const url = new URL(process.env.PARASAUR_GITLAB_PANEL_URL || '');
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid panel URL');
       panelUrl = url.href;
     } catch { return res.set('Retry-After', '30').status(503).json({ error: 'gitlab_panel_url_required' }); }
     let reservation: ReturnType<GitLabEventStore['enqueue']>;
     try {
       reservation = store.enqueue({ key: event.key, body: req.body, eventUuid: req.get('X-Gitlab-Event-UUID'),
-        bot, pipelineEnabled: process.env.GAH_GITLAB_PIPELINE_REPAIR === '1', panelUrl });
+        bot, pipelineEnabled: process.env.PARASAUR_GITLAB_PIPELINE_REPAIR === '1', panelUrl });
     }
     catch { return res.set('Retry-After', '30').status(503).json({ error: 'gitlab_event_store_unavailable' }); }
     if (reservation === 'duplicate') return res.sendStatus(204);

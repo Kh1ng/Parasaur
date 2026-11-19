@@ -1,5 +1,6 @@
 import { activityPath, notifiableActivity, type ActivityEvent } from '@git-agent-harness/contracts';
 import { pushApi } from '../api/client.js';
+import { withBasePath } from './basePath.js';
 import { readNavigation } from './navigationState.js';
 
 const ENABLED_KEY = 'gah.activity.systemNotifications';
@@ -134,7 +135,7 @@ export function deliverSystemNotification(event: ActivityEvent): void {
     const notification = new Notification(event.title, { body: event.message, tag: event.id });
     notification.onclick = () => {
       window.focus();
-      window.location.assign(url);
+      window.location.assign(withBasePath(url));
       notification.close();
     };
   }

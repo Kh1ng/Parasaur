@@ -16,6 +16,7 @@ import { ManagerWakeQueue } from './managerWake.js';
 import {
   resolveAdapter,
   resolveInstanceAdapter,
+  releaseManagerConversation,
   listManagerBackends,
   type ManagerCommandInfo,
   type ManagerModelInfo,
@@ -52,7 +53,7 @@ import {
   type SettleDetails,
   type ChatSessionStoreOptions
 } from './chatSessions.js';
-import { previewProxy, detectDevPort, loopbackPortListening } from './previewProxy.js';
+import { previewProxy, detectDevPort, loopbackHttpReady } from './previewProxy.js';
 import { runProfileList, runSubscriptionRoutes, runQuotaFailure, type SubscriptionRoute, type QuotaFailure } from '../gahCli.js';
 import { randomUUID } from 'node:crypto';
 import type { ChatSessionEvent, ChatTranscriptTurn, ChatUsage, Skill } from '@git-agent-harness/contracts';
@@ -241,7 +242,7 @@ const PROFILE_INFO_TTL_MS = 30_000;
  * enough (every session turn) but change rarely, and `gah profile list`
  * shells out to the Rust CLI. A cache MISS forces one refresh before
  * giving up, so a freshly created profile is chattable immediately
- * (and tests that swap GAH_FIXTURE_PROFILE_LIST see the new list). */
+ * (and tests that swap PARASAUR_FIXTURE_PROFILE_LIST see the new list). */
 async function findProfileInfo(profile: string): Promise<ProfileSummary | null> {
   const now = Date.now();
   if (!profileInfoCache || now - profileInfoCache.at > PROFILE_INFO_TTL_MS) {
@@ -357,6 +358,7 @@ export async function archiveChatSession(
   try {
   const stored = getSession(profile, sessionId, chatSessionStoreOptions);
   await flushSession(profile);
+  await releaseManagerConversation(key);
   if (stored?.workspaceNodes?.length) {
     if (stored.archivedAt !== null) return stored;
     const localId = localChatNodeId();
@@ -1270,7 +1272,7 @@ export function sendManagerChatMessage(
         if (!sessionId || sessionId === 'default') return;
         const devPort = detectDevPort(text);
         if (devPort === null) return;
-        const setPromise = loopbackPortListening(devPort)
+        const setPromise = loopbackHttpReady(devPort)
           .then((listening) => (listening ? previewProxy.set(profile, sessionId, devPort) : null))
           .then((info) => {
             if (!info) return;

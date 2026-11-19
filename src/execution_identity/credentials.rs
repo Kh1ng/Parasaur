@@ -120,8 +120,8 @@ impl ExecutionIdentity {
             env.push((key.clone(), value.clone()));
         }
         if self.runner_kind == "vibe" && !selected.is_empty() {
-            env.retain(|(name, _)| name != "VIBE_CLI" && name != "GAH_VIBE_CREDENTIAL_BOUND");
-            env.push(("GAH_VIBE_CREDENTIAL_BOUND".into(), "1".into()));
+            env.retain(|(name, _)| name != "VIBE_CLI" && name != "PARASAUR_VIBE_CREDENTIAL_BOUND");
+            env.push(("PARASAUR_VIBE_CREDENTIAL_BOUND".into(), "1".into()));
             if let Some(model) = &self.effective_model {
                 env.retain(|(name, _)| name != "VIBE_ACTIVE_MODEL");
                 env.push(("VIBE_ACTIVE_MODEL".into(), model.clone()));

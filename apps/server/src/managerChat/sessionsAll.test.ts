@@ -95,8 +95,8 @@ test('GET /api/manager-chat/sessions/all groups sessions by project with display
 
   resetCachedCoordinatorIdentity();
   const identityDir = mkdtempSync(join(tmpdir(), 'gah-sessions-all-identity-'));
-  const savedIdentityPath = process.env.GAH_COORDINATOR_IDENTITY_PATH;
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(identityDir, 'coordinator-identity.json');
+  const savedIdentityPath = process.env.PARASAUR_COORDINATOR_IDENTITY_PATH;
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(identityDir, 'coordinator-identity.json');
   resetCachedCoordinatorIdentity();
   const app = createServer({ runProfileList: () => Promise.resolve(profiles) });
   const server = http.createServer(app);
@@ -116,8 +116,8 @@ test('GET /api/manager-chat/sessions/all groups sessions by project with display
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     setChatSessionStoreOptions({ stateDir: undefined });
-    if (savedIdentityPath === undefined) delete process.env.GAH_COORDINATOR_IDENTITY_PATH;
-    else process.env.GAH_COORDINATOR_IDENTITY_PATH = savedIdentityPath;
+    if (savedIdentityPath === undefined) delete process.env.PARASAUR_COORDINATOR_IDENTITY_PATH;
+    else process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = savedIdentityPath;
     resetCachedCoordinatorIdentity();
     rmSync(stateDir, { recursive: true, force: true });
     rmSync(identityDir, { recursive: true, force: true });

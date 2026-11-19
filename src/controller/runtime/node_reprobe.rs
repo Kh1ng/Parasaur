@@ -12,7 +12,7 @@ fn interval() -> Duration {
     // the production interval without making the release scheduler tunable
     // through an accidentally inherited environment variable.
     #[cfg(debug_assertions)]
-    if let Some(milliseconds) = std::env::var_os("GAH_TEST_NODE_CAPACITY_REPROBE_MS")
+    if let Some(milliseconds) = std::env::var_os("PARASAUR_TEST_NODE_CAPACITY_REPROBE_MS")
         .and_then(|value| value.to_str().and_then(|value| value.parse::<u64>().ok()))
     {
         return Duration::from_millis(milliseconds.clamp(10, 5_000));

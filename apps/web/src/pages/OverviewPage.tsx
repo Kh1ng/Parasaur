@@ -1,5 +1,6 @@
 import { RunningWorkersRoster } from '../components/RunningWorkersRoster.js';
-import { useEffect, useState } from 'react';
+import { SpendBudgetCard } from '../components/SpendBudgetCard.js';
+import { useEffect } from 'react';
 import { ExternalAnchor } from '../components/ExternalAnchor';
 import { useAutoRefresh } from '../hooks/useAutoRefresh.js';
 import { useWsReconnectRefresh } from '../hooks/useWsReconnectRefresh.js';
@@ -14,8 +15,7 @@ import {
   Square
 } from 'lucide-react';
 import type { Page } from '../App.js';
-import type { DeviceAgentsSnapshot, LoopDecision, Session } from '@git-agent-harness/contracts';
-import { gahApi } from '../api/client.js';
+import type { DeviceAgentsSnapshot, Session } from '@git-agent-harness/contracts';
 import { useWebSocket } from '../ws/WebSocketContext.js';
 import { useUiStore } from '../store/uiStore.js';
 import { useGahStore } from '../store/gahStore.js';
@@ -42,7 +42,7 @@ type OverviewPageProps = {
 const OVERVIEW_REFRESH_MS = 5 * 60 * 1000;
 
 export function OverviewPage({ sessions, onNavigate, onOpenWork = () => {}, onWatchRun, deviceAgents = { data: null, error: null } }: OverviewPageProps) {
-  const { status, quota, loopStatus, loopAction } = useGahStore();
+  const { status, quota, loopStatus, loopDecision, loopAction } = useGahStore();
   const { profile: wsProfile, controllerActivity } = useWebSocket();
   const profileOverride = useUiStore((s) => s.profileOverride);
   const openChatSession = useUiStore((s) => s.openChatSession);
@@ -50,35 +50,40 @@ export function OverviewPage({ sessions, onNavigate, onOpenWork = () => {}, onWa
   const fetchStatus = useGahStore((s) => s.fetchStatus);
   const fetchQuota = useGahStore((s) => s.fetchQuota);
   const fetchLoopStatus = useGahStore((s) => s.fetchLoopStatus);
+  const fetchLoopDecision = useGahStore((s) => s.fetchLoopDecision);
   const startLoop = useGahStore((s) => s.startLoop);
   const stopLoop = useGahStore((s) => s.stopLoop);
 
-  // What the loop last decided and why, so a stalled loop explains itself (#1406).
-  const [lastDecision, setLastDecision] = useState<LoopDecision | null>(null);
-  const fetchLastDecision = () => {
-    if (!profile) return;
-    gahApi.getLoopDecision(profile).then(setLastDecision, () => setLastDecision(null));
-  };
+  // Profile identity applies to diagnostics as well as work and usage totals.
+  const lastDecision = loopDecision.key === profile ? loopDecision.data : null;
+  const decisionError = loopDecision.key === profile ? loopDecision.error : null;
 
   useEffect(() => {
     fetchStatus(profile ?? undefined);
     fetchQuota({ profile: profile ?? undefined, since: '7d' });
-    if (profile) fetchLoopStatus(profile);
-    fetchLastDecision();
+    if (profile) {
+      fetchLoopStatus(profile);
+      fetchLoopDecision(profile);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refetch on profile change only
-  }, [profile, fetchStatus, fetchQuota, fetchLoopStatus]);
+  }, [profile, fetchStatus, fetchQuota, fetchLoopStatus, fetchLoopDecision]);
 
   const refresh = () => {
     fetchStatus(profile ?? undefined, { force: true });
     fetchQuota({ profile: profile ?? undefined, since: '7d' }, { force: true });
-    fetchLastDecision();
+    if (profile) {
+      fetchLoopStatus(profile, { force: true });
+      fetchLoopDecision(profile, { force: true });
+    }
   };
   useAutoRefresh(refresh, OVERVIEW_REFRESH_MS);
   useWsReconnectRefresh(refresh);
 
-  const loopRunning = loopStatus.data?.running ?? false;
+  const loopKnown = loopStatus.key === profile && !!loopStatus.data && !loopStatus.error;
+  const loopRunning = loopKnown ? loopStatus.data!.running : null;
+  const loopChecking = loopStatus.key !== profile || loopStatus.loading;
   const toggleLoop = () => {
-    if (!profile) return;
+    if (!profile || !loopKnown || loopStatus.loading) return;
     if (loopRunning) {
       stopLoop(profile);
     } else {
@@ -142,11 +147,11 @@ export function OverviewPage({ sessions, onNavigate, onOpenWork = () => {}, onWa
         actions={
           profile && (
             <div className="flex items-center gap-2">
-              <StatusBadge tone={loopRunning ? 'good' : 'unknown'} label={loopRunning ? 'Factory on' : 'Factory off'} />
+              <StatusBadge tone={loopRunning ? 'good' : 'unknown'} label={loopChecking ? 'Checking factory…' : !loopKnown ? 'Factory status unavailable' : loopRunning ? 'Factory on' : 'Factory off'} />
               <button
                 onClick={toggleLoop}
-                disabled={loopAction.pending || loopStatus.loading}
-                className={loopRunning ? 'btn-secondary text-critical border-critical/30' : 'btn-secondary'}
+                disabled={loopAction.pending || loopStatus.loading || !loopKnown}
+                className={`max-sm:min-h-11 max-sm:min-w-11 ${loopRunning ? 'btn-secondary text-critical border-critical/30' : 'btn-secondary'}`}
                 title={loopAction.error ?? undefined}
                 aria-label={loopRunning ? 'Turn factory off' : 'Turn factory on'}
               >
@@ -160,13 +165,22 @@ export function OverviewPage({ sessions, onNavigate, onOpenWork = () => {}, onWa
       {loopAction.error && (
         <p className="text-xs text-critical -mt-4">{loopAction.error}</p>
       )}
+      {profile && loopStatus.key === profile && loopStatus.error && (
+        <p role="alert" className="text-sm text-critical">Cannot read factory status. Refresh to check before changing it.</p>
+      )}
+      {profile && decisionError && (
+        <p role="alert" className="text-sm text-critical">Cannot read the last factory decision. Refresh to retry.</p>
+      )}
       {lastDecision && (
         <p className="text-xs text-secondary -mt-4 break-words" title={formatLocalTime(lastDecision.timestamp) ?? lastDecision.timestamp}>
-          <span className="text-muted">Factory last decided {formatAge(lastDecision.timestamp)}: </span>
+          <span className="text-muted">{decisionError ? 'Last recorded decision (refresh failed)' : 'Factory last decided'} {formatAge(lastDecision.timestamp)}: </span>
           <span className="font-mono">{lastDecision.kind.replace(/_/g, ' ')}</span>
           {lastDecision.work_id && <span className="font-mono"> {lastDecision.work_id}</span>}
           {' — '}{lastDecision.reason}
         </p>
+      )}
+      {profile && loopDecision.key === profile && !loopDecision.loading && !decisionError && !lastDecision && (
+        <p className="text-sm text-secondary">No factory decision recorded in the last 24 hours.</p>
       )}
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
@@ -319,6 +333,8 @@ export function OverviewPage({ sessions, onNavigate, onOpenWork = () => {}, onWa
           )}
         </section>
       </div>
+
+      <SpendBudgetCard budget={status.key === profile ? snapshot?.spend_budget : undefined} />
 
       {snapshot?.recent_ledger && (
         <section className="card-padded">

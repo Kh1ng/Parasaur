@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 
-const MOCK_BASE_URL = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+const MOCK_BASE_URL = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
 
 // #1241: an epic as a read-only star map, a frontier list that is the whole
 // page on a phone, and planning chats seeded from the map.

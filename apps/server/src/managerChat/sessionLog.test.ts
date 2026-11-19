@@ -61,6 +61,19 @@ test('append + fold produces the derived transcript with attribution', () => {
   }
 });
 
+test('token categories survive durable event replay without changing the provider total', () => {
+  const dir = tempStateDir();
+  try {
+    const event = assistantMsg(1, 1, 'usage fixture');
+    if (event.type !== 'assistant/message') throw new Error('Expected assistant fixture');
+    event.usage = { input_tokens: 10, output_tokens: 5, total_tokens: 100,
+      cache_read_tokens: 80, cache_write_tokens: 0, reasoning_tokens: 3,
+      estimated_cost_usd: null, duration_seconds: 1 };
+    appendEvents('gah', [event], { stateDir: dir });
+    assert.deepEqual(foldSession('gah', { stateDir: dir }).turns[0].usage, event.usage);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('model history uses the logged model prompt while the UI uses the human prompt', () => {
   const events: ChatSessionEvent[] = [
     turnStart(1, 1),

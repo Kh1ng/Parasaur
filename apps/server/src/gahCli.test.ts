@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { MAX_DIAGNOSTIC_CHARS, DIAGNOSTIC_TRUNCATION } from './diagnosticTail.js';
 import {
   buildConfigSetArgs,
   buildProfileAddArgs,
@@ -10,6 +11,8 @@ import {
   findGahBinary,
   loopSystemctlArgs,
   runDispatchCancellable,
+  runDispatchUsageReport,
+  runCheckNativePolicy,
   runConfigSet,
   runConfigShow,
   runDoctor,
@@ -19,29 +22,72 @@ import {
   stopLoop,
 } from './gahCli.js';
 
-/** Writes a fake `gah` shell script, pins GAH_BINARY to it, and returns a
+test('native work checks require the explicit CLI flag and affirmative work evidence', async () => {
+  const binding = {run_id:'11111111-1111-4111-8111-111111111111',node_id:'worker',context_sha256:'a'.repeat(64),profile:'fixture',repo_id:'fixture',repo:'fixture/repo',work_id:'#1',mode:'fix',backend:'codex',backend_instance:null,model:'fixture-model',branch:null,review_generation:null,dispatch_reason:'initial'};
+  const options = { contextDirectory:'/private/context', contextSha256:binding.context_sha256, nodeId:binding.node_id, centralUrl:'https://central.invalid', checkWork:true };
+  for (const current of [true,null]) {
+    const response = JSON.stringify({binding,policy_current:true,execution_authorized:false,work_current:current});
+    const restore = pinFakeGah(`case " $* " in *" --check-work "*) ;; *) exit 91 ;; esac\nprintf '%s\\n' '${response}'`);
+    try {
+      if (current) assert.deepEqual(await runCheckNativePolicy(options),binding);
+      else await assert.rejects(runCheckNativePolicy(options),/mismatched binding/);
+    } finally { restore(); }
+  }
+});
+
+/** Writes a fake `gah` shell script, pins PARASAUR_BINARY to it, and returns a
  * cleanup that restores the previous override. */
 function pinFakeGah(body: string): () => void {
   const dir = mkdtempSync(join(tmpdir(), 'gah-fake-bin-'));
   const bin = join(dir, 'gah');
   writeFileSync(bin, `#!/bin/sh\n${body}\n`);
   chmodSync(bin, 0o755);
-  const original = process.env.GAH_BINARY;
-  process.env.GAH_BINARY = bin;
+  const original = process.env.PARASAUR_BINARY;
+  process.env.PARASAUR_BINARY = bin;
   return () => {
-    if (original === undefined) delete process.env.GAH_BINARY;
-    else process.env.GAH_BINARY = original;
+    if (original === undefined) delete process.env.PARASAUR_BINARY;
+    else process.env.PARASAUR_BINARY = original;
     rmSync(dir, { recursive: true, force: true });
   };
 }
 
-test('manual worker and per-launch reasoning reach the actual dispatch CLI argv', async () => {
+test('canonical dispatch usage preserves scope arguments and rejects older report schemas', async () => {
+  let restore = pinFakeGah(`[ "$1" = report ] && [ "$2" = --usage ] && [ "$3" = --json ] && [ "$5" = 24h ] && [ "$7" = 'fixture profile' ] || exit 9
+printf '%s\\n' '{"schema_version":1,"profile":"fixture profile","since":"2026-11-05T12:00:00Z","generated_at":"2026-11-06T12:00:00Z","entries":0,"excluded_preflight_entries":2,"rows":[]}'`);
+  try {
+    const report = await runDispatchUsageReport({ since: '24h', profile: 'fixture profile' });
+    assert.equal(report.profile, 'fixture profile');
+    assert.equal(report.excluded_preflight_entries, 2);
+    assert.deepEqual(report.rows, []);
+  } finally { restore(); }
+  restore = pinFakeGah(`printf '%s\\n' '{"rows":[]}'`);
+  try { await assert.rejects(runDispatchUsageReport(), /Unsupported dispatch usage report/); }
+  finally { restore(); }
+});
+
+test('noisy dispatch stderr keeps a diagnostic tail without stopping stdout or changing failure status', async () => {
+  const restore = pinFakeGah(`exec "${process.execPath}" -e 'process.stdout.write("still-streaming\\n"); process.stderr.write("old-prefix\\n" + "x".repeat(${MAX_DIAGNOSTIC_CHARS * 10}) + "\\nfinal-cause"); process.exitCode=7;'`);
+  try {
+    const lines: string[] = [];
+    const result = await runDispatchCancellable({ profile: 'fixture', mode: 'fix' }, line => lines.push(line)).promise;
+    assert.equal(result.exitCode, 7);
+    assert.deepEqual(lines, ['still-streaming']);
+    assert.ok(result.stderr.startsWith(DIAGNOSTIC_TRUNCATION));
+    assert.ok(result.stderr.endsWith('final-cause'));
+    assert.ok(result.stderr.length <= MAX_DIAGNOSTIC_CHARS + DIAGNOSTIC_TRUNCATION.length);
+  } finally { restore(); }
+});
+
+test('execution controls and per-launch reasoning reach the actual dispatch CLI argv', async () => {
   const restore = pinFakeGah('printf "%s\\n" "$@"');
   const lines: string[] = [];
   try {
-    const result = await runDispatchCancellable({ profile: 'repo', mode: 'improve', backend: 'codex', model: 'gpt-6.1-sol', target: 'ticket.md', manualWorker: true, reasoningEffort: 'high' }, (line) => lines.push(line)).promise;
+    const result = await runDispatchCancellable({ profile: 'repo', mode: 'improve', backend: 'codex', backendInstance: 'work', model: 'gpt-6.1-sol', target: 'ticket.md', manualWorker: true, reasoningEffort: 'high', dryRun: true, retries: 0, allowDraftFail: true, prod: true, allowUnknownRedBaseline: true, escalate: true }, (line) => lines.push(line)).promise;
     assert.equal(result.exitCode, 0);
     assert.ok(lines.includes('--manual-worker'));
+    for (const flag of ['--dry-run', '--allow-draft-fail', '--prod', '--allow-unknown-red-baseline', '--escalate']) assert.ok(lines.includes(flag), flag);
+    assert.equal(lines[lines.indexOf('--retries') + 1], '0');
+    assert.equal(lines[lines.indexOf('--backend-instance') + 1], 'work');
     const effortFlag = lines.indexOf('--reasoning-effort');
     assert.equal(lines[effortFlag + 1], 'high');
   } finally { restore(); }
@@ -104,16 +150,16 @@ test('read commands reject with a spawn failure when the pinned binary cannot ex
   // A directory passes findGahBinary's X_OK probe but cannot be spawned,
   // exercising the transport-level failure path without any real gah build.
   const dir = mkdtempSync(join(tmpdir(), 'gah-unspawnable-'));
-  const original = process.env.GAH_BINARY;
-  process.env.GAH_BINARY = dir;
+  const original = process.env.PARASAUR_BINARY;
+  process.env.PARASAUR_BINARY = dir;
   try {
     await assert.rejects(
       runQuota({ profile: 'fixture' }),
       (error: unknown) => error instanceof Error && /Failed to spawn gah/.test(error.message)
     );
   } finally {
-    if (original === undefined) delete process.env.GAH_BINARY;
-    else process.env.GAH_BINARY = original;
+    if (original === undefined) delete process.env.PARASAUR_BINARY;
+    else process.env.PARASAUR_BINARY = original;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -171,6 +217,11 @@ test('node capacity fields survive the config API read projection', async () => 
   }
 });
 
+test('environment source changes preserve the explicit replacement and removal', () => {
+  assert.deepEqual(buildProfileSetArgs({ name: 'workspace', env_file: '/srv/workspace/dev.env', clear: ['env_file_prod'] }),
+    ['profile', 'set', 'workspace', '--env-file', '/srv/workspace/dev.env', '--clear', 'env_file_prod']);
+});
+
 test('profile add args map required and optional fields without spawning gah', () => {
   assert.deepEqual(
     buildProfileAddArgs({
@@ -206,8 +257,10 @@ test('profile add args map required and optional fields without spawning gah', (
       '/srv/artifacts/api-worker',
       '--default-target-branch',
       'trunk',
-      '--validation-commands',
-      'cargo test,npm test',
+      '--validation-command',
+      'cargo test',
+      '--validation-command',
+      'npm test',
       '--max-parallel-workers',
       '2',
       '--validation-timeout-seconds',
@@ -254,6 +307,14 @@ test('profile set args map fields and emit each clear key once', () => {
       '/tmp/gah-config.toml',
     ],
   );
+});
+
+test('profile checks preserve complete commands and empty arrays clear each list once', () => {
+  const commands = ['node -e "console.log([1,2], \'a,b\')"', "printf 'a,b\\n'\nprintf done"];
+  assert.deepEqual(buildProfileSetArgs({ name: 'workspace', validation_commands: commands, auto_fix_commands: [], clear: ['auto_fix_commands'] }),
+    ['profile', 'set', 'workspace', '--validation-command', commands[0], '--validation-command', commands[1], '--clear', 'auto_fix_commands']);
+  assert.deepEqual(buildProfileSetArgs({ name: 'workspace', validation_commands: [], auto_fix_commands: [] }),
+    ['profile', 'set', 'workspace', '--clear', 'validation_commands', '--clear', 'auto_fix_commands']);
 });
 
 test('profile set args carry worker scaling, a boost, and their clear keys', () => {
@@ -453,11 +514,11 @@ test('gah binary resolution probes candidates in order and falls back to PATH', 
   assert.equal(unavailable.at(-1), 'gah');
 });
 
-// Issue #635: GAH_BINARY lets tests/deployments pin a specific binary
+// Issue #635: PARASAUR_BINARY lets tests/deployments pin a specific binary
 // (a fixture, or a specific installed build) deterministically.
-test('GAH_BINARY override is tried first, ahead of every build-path/PATH candidate', () => {
-  const original = process.env.GAH_BINARY;
-  process.env.GAH_BINARY = '/fixtures/gah';
+test('PARASAUR_BINARY override is tried first, ahead of every build-path/PATH candidate', () => {
+  const original = process.env.PARASAUR_BINARY;
+  process.env.PARASAUR_BINARY = '/fixtures/gah';
   try {
     const visited: string[] = [];
     const selected = findGahBinary((candidate) => {
@@ -468,14 +529,14 @@ test('GAH_BINARY override is tried first, ahead of every build-path/PATH candida
     assert.equal(selected, '/fixtures/gah');
     assert.deepEqual(visited, ['/fixtures/gah']);
   } finally {
-    if (original === undefined) delete process.env.GAH_BINARY;
-    else process.env.GAH_BINARY = original;
+    if (original === undefined) delete process.env.PARASAUR_BINARY;
+    else process.env.PARASAUR_BINARY = original;
   }
 });
 
-test('a missing or non-executable GAH_BINARY override falls through to normal resolution, not an error', () => {
-  const original = process.env.GAH_BINARY;
-  process.env.GAH_BINARY = '/fixtures/does-not-exist';
+test('a missing or non-executable PARASAUR_BINARY override falls through to normal resolution, not an error', () => {
+  const original = process.env.PARASAUR_BINARY;
+  process.env.PARASAUR_BINARY = '/fixtures/does-not-exist';
   try {
     const visited: string[] = [];
     const selected = findGahBinary((candidate) => {
@@ -486,14 +547,14 @@ test('a missing or non-executable GAH_BINARY override falls through to normal re
     assert.equal(visited[0], '/fixtures/does-not-exist');
     assert.match(selected, /\/target\/debug\/gah$/);
   } finally {
-    if (original === undefined) delete process.env.GAH_BINARY;
-    else process.env.GAH_BINARY = original;
+    if (original === undefined) delete process.env.PARASAUR_BINARY;
+    else process.env.PARASAUR_BINARY = original;
   }
 });
 
-test('with no GAH_BINARY set, resolution is unaffected by the override candidate', () => {
-  const original = process.env.GAH_BINARY;
-  delete process.env.GAH_BINARY;
+test('with no PARASAUR_BINARY set, resolution is unaffected by the override candidate', () => {
+  const original = process.env.PARASAUR_BINARY;
+  delete process.env.PARASAUR_BINARY;
   try {
     const visited: string[] = [];
     const selected = findGahBinary((candidate) => {
@@ -504,8 +565,8 @@ test('with no GAH_BINARY set, resolution is unaffected by the override candidate
     assert.equal(selected, 'gah');
     assert.match(visited[0], /\/target\/release\/gah$/);
   } finally {
-    if (original === undefined) delete process.env.GAH_BINARY;
-    else process.env.GAH_BINARY = original;
+    if (original === undefined) delete process.env.PARASAUR_BINARY;
+    else process.env.PARASAUR_BINARY = original;
   }
 });
 
@@ -529,7 +590,7 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 5000): Promise<vo
 }
 
 // P0 regression: cancel() must kill the whole process tree, not just the
-// direct `gah` child. GAH_BINARY here points at a fake "gah" that forks a
+// direct `gah` child. PARASAUR_BINARY here points at a fake "gah" that forks a
 // grandchild (a background `sleep`) -- the real dispatch/validation
 // processes GAH itself spawns. If cancel() only signalled the direct
 // child (or used the unsupported SpawnOptions.setsid that never took
@@ -551,8 +612,8 @@ wait
     );
     chmodSync(script, 0o755);
 
-    const original = process.env.GAH_BINARY;
-    process.env.GAH_BINARY = script;
+    const original = process.env.PARASAUR_BINARY;
+    process.env.PARASAUR_BINARY = script;
     try {
       const dispatch = runDispatchCancellable({ profile: 'p', mode: 'fix' }, () => {});
 
@@ -562,7 +623,8 @@ wait
 
       const result = await dispatch.cancel();
 
-      assert.deepEqual(result, { cancelled: true });
+      assert.equal(result.cancelled, true);
+      assert.ok(result.result, "confirmed cancellation includes the observed result");
       assert.equal(
         isPidAlive(grandchildPid),
         false,
@@ -572,8 +634,8 @@ wait
       const dispatchResult = await dispatch.promise;
       assert.notEqual(dispatchResult.exitCode, 0);
     } finally {
-      if (original === undefined) delete process.env.GAH_BINARY;
-      else process.env.GAH_BINARY = original;
+      if (original === undefined) delete process.env.PARASAUR_BINARY;
+      else process.env.PARASAUR_BINARY = original;
       rmSync(dir, { recursive: true, force: true });
     }
   }
@@ -588,8 +650,8 @@ test('cancel() returns an explicit error when the process has already completed'
   writeFileSync(script, `#!/bin/sh\nexit 0\n`);
   chmodSync(script, 0o755);
 
-  const original = process.env.GAH_BINARY;
-  process.env.GAH_BINARY = script;
+  const original = process.env.PARASAUR_BINARY;
+  process.env.PARASAUR_BINARY = script;
   try {
     const dispatch = runDispatchCancellable({ profile: 'p', mode: 'fix' }, () => {});
     await dispatch.promise;
@@ -598,8 +660,8 @@ test('cancel() returns an explicit error when the process has already completed'
     assert.equal(result.cancelled, false);
     assert.match(result.error ?? '', /already completed/);
   } finally {
-    if (original === undefined) delete process.env.GAH_BINARY;
-    else process.env.GAH_BINARY = original;
+    if (original === undefined) delete process.env.PARASAUR_BINARY;
+    else process.env.PARASAUR_BINARY = original;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -610,14 +672,14 @@ test('prompt policy mutation passes dry-run and content as literal argv', async 
   const log = join(dir, 'args.log');
   const marker = join(dir, 'must-not-exist');
   writeFileSync(script, `#!/bin/sh
-printf '%s\n' "$@" > "$GAH_ARGS_LOG"
+printf '%s\n' "$@" > "$PARASAUR_ARGS_LOG"
 printf '%s\n' '{"profile":"repo","previous_revision":0,"revision":1,"changed":true,"dry_run":true,"preview_diff":"preview","summary":{"schema_version":1,"profile":"repo","revision":1,"policies":[],"rollback_revisions":[0]}}'
 `);
   chmodSync(script, 0o755);
-  const savedBinary = process.env.GAH_BINARY;
-  const savedLog = process.env.GAH_ARGS_LOG;
-  process.env.GAH_BINARY = script;
-  process.env.GAH_ARGS_LOG = log;
+  const savedBinary = process.env.PARASAUR_BINARY;
+  const savedLog = process.env.PARASAUR_ARGS_LOG;
+  process.env.PARASAUR_BINARY = script;
+  process.env.PARASAUR_ARGS_LOG = log;
   try {
     const content = `Keep this literal: $(touch ${marker})`;
     const result = await runPromptPolicyMutation('set', {
@@ -633,10 +695,10 @@ printf '%s\n' '{"profile":"repo","previous_revision":0,"revision":1,"changed":tr
     assert.ok(args.includes(content));
     assert.equal(existsSync(marker), false);
   } finally {
-    if (savedBinary === undefined) delete process.env.GAH_BINARY;
-    else process.env.GAH_BINARY = savedBinary;
-    if (savedLog === undefined) delete process.env.GAH_ARGS_LOG;
-    else process.env.GAH_ARGS_LOG = savedLog;
+    if (savedBinary === undefined) delete process.env.PARASAUR_BINARY;
+    else process.env.PARASAUR_BINARY = savedBinary;
+    if (savedLog === undefined) delete process.env.PARASAUR_ARGS_LOG;
+    else process.env.PARASAUR_ARGS_LOG = savedLog;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -650,18 +712,18 @@ test('cancel() is idempotent: concurrent callers settle on one shared result', a
   writeFileSync(script, `#!/bin/sh\nsleep 60\n`);
   chmodSync(script, 0o755);
 
-  const original = process.env.GAH_BINARY;
-  process.env.GAH_BINARY = script;
+  const original = process.env.PARASAUR_BINARY;
+  process.env.PARASAUR_BINARY = script;
   try {
     const dispatch = runDispatchCancellable({ profile: 'p', mode: 'fix' }, () => {});
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     const [first, second] = await Promise.all([dispatch.cancel(), dispatch.cancel()]);
-    assert.deepEqual(first, { cancelled: true });
-    assert.deepEqual(second, { cancelled: true });
+    assert.equal(first.cancelled, true);
+    assert.strictEqual(first, second);
   } finally {
-    if (original === undefined) delete process.env.GAH_BINARY;
-    else process.env.GAH_BINARY = original;
+    if (original === undefined) delete process.env.PARASAUR_BINARY;
+    else process.env.PARASAUR_BINARY = original;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -684,6 +746,30 @@ test('factory module disabled rejects loop starts before touching systemd', asyn
     if (originalPath === undefined) delete process.env.PATH;
     else process.env.PATH = originalPath;
     restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test('a closed dispatch parent does not complete while its process group can still execute', { skip: process.platform !== 'linux', timeout: 10000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-parent-exit-'));
+  const script = join(dir, 'fake-gah'); const marker = join(dir, 'child.pid');
+  writeFileSync(script, `#!/bin/sh\nsleep 60 >/dev/null 2>&1 &\necho $! > "${marker}"\nexit 0\n`);chmodSync(script, 0o755);
+  const original = process.env.PARASAUR_BINARY;process.env.PARASAUR_BINARY = script;
+  let pid: number | undefined;
+  try {
+    const dispatch = runDispatchCancellable({ profile: 'fixture', mode: 'fix' }, () => {});
+    let settled = false;void dispatch.promise.then(() => { settled = true; });
+    await waitUntil(() => existsSync(marker));pid = Number(readFileSync(marker, 'utf8').trim());
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(settled, false, 'parent exit is not descendant completion');
+    assert.ok(isPidAlive(pid));
+    const cancelled = await dispatch.cancel();assert.equal(cancelled.cancelled, true);
+    await waitUntil(() => settled);
+    const result = await dispatch.promise;assert.equal(result.exitCode, 0);assert.equal(result.signal, null);
+  } finally {
+    if (pid) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    if (original === undefined) delete process.env.PARASAUR_BINARY;else process.env.PARASAUR_BINARY = original;
     rmSync(dir, { recursive: true, force: true });
   }
 });

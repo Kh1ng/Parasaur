@@ -15,7 +15,7 @@ import {
   publicPathPrefix
 } from './embedView.js';
 
-test('frame origins parse GAH_GITLAB_ORIGIN, drop invalid entries, and fail closed when unset', () => {
+test('frame origins parse PARASAUR_GITLAB_ORIGIN, drop invalid entries, and fail closed when unset', () => {
   assert.deepEqual(gitLabFrameOrigins(undefined), []);
   assert.deepEqual(gitLabFrameOrigins(''), []);
   assert.deepEqual(gitLabFrameOrigins('https://gitlab.example.com'), ['https://gitlab.example.com']);
@@ -87,9 +87,9 @@ test('embed route is frameable only by the configured GitLab origin; the rest of
   const webRoot = mkdtempSync(join(tmpdir(), 'gah-embed-web-'));
   writeFileSync(join(webRoot, 'index.html'), '<!DOCTYPE html><html><head><title>Parasaur</title></head><body><div id="root"></div></body></html>');
   writeFileSync(join(webRoot, 'asset.txt'), 'shell');
-  const saved = { GAH_WEB_ROOT: process.env.GAH_WEB_ROOT, GAH_GITLAB_ORIGIN: process.env.GAH_GITLAB_ORIGIN };
-  process.env.GAH_WEB_ROOT = webRoot;
-  process.env.GAH_GITLAB_ORIGIN = 'https://gitlab.example.com https://misconfigured.example.com/rejected';
+  const saved = { PARASAUR_WEB_ROOT: process.env.PARASAUR_WEB_ROOT, PARASAUR_GITLAB_ORIGIN: process.env.PARASAUR_GITLAB_ORIGIN };
+  process.env.PARASAUR_WEB_ROOT = webRoot;
+  process.env.PARASAUR_GITLAB_ORIGIN = 'https://gitlab.example.com https://misconfigured.example.com/rejected';
   const app = createServer({});
   const server = await serve(app);
   try {
@@ -121,9 +121,9 @@ test('explicit /index.html goes through the document pipeline: DENY, prefix boot
   const webRoot = mkdtempSync(join(tmpdir(), 'gah-embed-web-'));
   writeFileSync(join(webRoot, 'index.html'), '<!DOCTYPE html><html><head><title>Parasaur</title></head><body></body></html>');
   writeFileSync(join(webRoot, 'asset.txt'), 'shell');
-  const saved = { GAH_WEB_ROOT: process.env.GAH_WEB_ROOT, GAH_GITLAB_ORIGIN: process.env.GAH_GITLAB_ORIGIN };
-  process.env.GAH_WEB_ROOT = webRoot;
-  process.env.GAH_GITLAB_ORIGIN = 'https://gitlab.example.com';
+  const saved = { PARASAUR_WEB_ROOT: process.env.PARASAUR_WEB_ROOT, PARASAUR_GITLAB_ORIGIN: process.env.PARASAUR_GITLAB_ORIGIN };
+  process.env.PARASAUR_WEB_ROOT = webRoot;
+  process.env.PARASAUR_GITLAB_ORIGIN = 'https://gitlab.example.com';
   const app = createServer({});
   const server = await serve(app);
   try {
@@ -164,12 +164,12 @@ test('explicit /index.html goes through the document pipeline: DENY, prefix boot
   }
 });
 
-test('with GAH_GITLAB_ORIGIN unset the embed route fails closed: not frameable', async () => {
+test('with PARASAUR_GITLAB_ORIGIN unset the embed route fails closed: not frameable', async () => {
   const webRoot = mkdtempSync(join(tmpdir(), 'gah-embed-web-'));
   writeFileSync(join(webRoot, 'index.html'), '<!DOCTYPE html><html><head></head><body></body></html>');
-  const saved = { GAH_WEB_ROOT: process.env.GAH_WEB_ROOT, GAH_GITLAB_ORIGIN: process.env.GAH_GITLAB_ORIGIN };
-  process.env.GAH_WEB_ROOT = webRoot;
-  delete process.env.GAH_GITLAB_ORIGIN;
+  const saved = { PARASAUR_WEB_ROOT: process.env.PARASAUR_WEB_ROOT, PARASAUR_GITLAB_ORIGIN: process.env.PARASAUR_GITLAB_ORIGIN };
+  process.env.PARASAUR_WEB_ROOT = webRoot;
+  delete process.env.PARASAUR_GITLAB_ORIGIN;
   const app = createServer({});
   const server = await serve(app);
   try {

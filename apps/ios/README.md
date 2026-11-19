@@ -26,10 +26,10 @@ Disconnecting the paired device removes its APNs registration.
 The central server needs an Apple APNs token key outside the repository:
 
 ```sh
-GAH_APNS_KEY_PATH=/secure/path/AuthKey_KEYID.p8
-GAH_APNS_KEY_ID=KEYID
-GAH_APNS_TEAM_ID=TEAMID
-GAH_APNS_ENVIRONMENT=sandbox # use production for distribution builds
+PARASAUR_APNS_KEY_PATH=/secure/path/AuthKey_KEYID.p8
+PARASAUR_APNS_KEY_ID=KEYID
+PARASAUR_APNS_TEAM_ID=TEAMID
+PARASAUR_APNS_ENVIRONMENT=sandbox # use production for distribution builds
 ```
 
 Without all three key settings, APNs is disabled and foreground alerts still

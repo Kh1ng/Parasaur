@@ -4,6 +4,22 @@ use clap::Subcommand;
 /// Quota/usage observation management (issue #151 / #166).
 #[derive(Subcommand)]
 pub enum CredentialCommands {
+    /// Capture an opaque version for native Mistral session verification.
+    #[command(hide = true)]
+    MistralSessionSnapshot {
+        #[arg(long)]
+        id: Option<String>,
+    },
+    /// Publish a verified session only if its connection has not changed.
+    #[command(hide = true)]
+    MistralSessionSave {
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long)]
+        account_label: Option<String>,
+        #[arg(long)]
+        change_token: String,
+    },
     /// List safe metadata only. No credential values or storage paths are returned.
     List {
         #[arg(long)]

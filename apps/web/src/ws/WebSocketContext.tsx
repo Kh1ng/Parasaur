@@ -22,7 +22,7 @@ import type {
 } from '@git-agent-harness/contracts';
 import { notifiableActivity } from '@git-agent-harness/contracts';
 import { gahApi } from '../api/client.js';
-import { withBasePath } from '../lib/basePath.js';
+import { webSocketUrl } from './webSocketUrl.js';
 import { deliverSystemNotification, mergeActivityEvents } from '../lib/activityNotifications.js';
 
 export interface WebSocketInboxEntry {
@@ -78,17 +78,12 @@ type WebSocketContextType = {
 
 const WebSocketContext = createContext<WebSocketContextType | undefined>(undefined);
 const MAX_INBOX_MESSAGES = 100;
+const CONNECTION_TIMEOUT_MS = 15_000;
 
-// Vite injects import.meta.env - use type assertion for TypeScript
-const SERVER_WS_BASE = (import.meta as unknown as { env: { VITE_WS_URL?: string } }).env?.VITE_WS_URL ||
-  `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${withBasePath('/ws')}`;
-
+// Explicit socket URLs remain authoritative for desktop and development.
 function getWebSocketUrl(profile?: string | null): string {
-  const url = new URL(SERVER_WS_BASE);
-  if (profile) {
-    url.searchParams.set('profile', profile);
-  }
-  return url.toString();
+  const override = (import.meta as unknown as { env: { VITE_WS_URL?: string } }).env?.VITE_WS_URL;
+  return webSocketUrl(window.location, override, profile);
 }
 
 export function WebSocketProvider({ children }: { children: ReactNode }) {
@@ -171,7 +166,17 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     try {
       const newSocket = new WebSocket(getWebSocketUrl(profileOverride), coordinatorWebSocketProtocols());
 
+      // A stalled handshake must release Connecting so the normal retry can run.
+      const connectionTimeout = setTimeout(() => {
+        if (newSocket.readyState !== WebSocket.CONNECTING) return;
+        connectionCleanupRef.current?.();
+        connectionCleanupRef.current = null;
+        setIsConnecting(false);
+        setError('Connection timed out. Retrying…');
+      }, CONNECTION_TIMEOUT_MS);
+
       newSocket.onopen = () => {
+        clearTimeout(connectionTimeout);
         setIsConnected(true);
         setIsConnecting(false);
         setError(null);
@@ -189,6 +194,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
           profile: profileOverride ?? undefined,
           activityCursor: activityCursorRef.current ?? undefined,
           capabilities: {
+            supportsCapacityWaitActivity: true,
             supportsTerminal: true,
             supportsNotifications: true,
             version: '0.1.0'
@@ -197,6 +203,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       };
 
       newSocket.onclose = () => {
+        clearTimeout(connectionTimeout);
         setIsConnected(false);
         setIsConnecting(false);
         setSocket(null);
@@ -334,6 +341,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       }, 30000);
 
       connectionCleanupRef.current = () => {
+        clearTimeout(connectionTimeout);
         clearInterval(keepaliveInterval);
         newSocket.onopen = null;
         newSocket.onclose = null;

@@ -38,7 +38,7 @@ const MAX_RESPONSE_BYTES = 512 * 1024; // 512 KiB
 // ---------------------------------------------------------------------------
 
 function settingsPath(): string {
-  return process.env.GAH_CLI_ROUTER_SETTINGS_PATH
+  return process.env.PARASAUR_CLI_ROUTER_SETTINGS_PATH
     ?? join(homedir(), '.config', 'gah', 'cli-router.json');
 }
 

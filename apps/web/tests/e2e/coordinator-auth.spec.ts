@@ -44,7 +44,7 @@ test('connection settings restore dashboard access after the first valid token',
 });
 
 test('the first token restores mounted Chat projects, provider choices, git, and open storage', async ({ page, request }) => {
-  const mock = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+  const mock = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
   await request.post(`${mock}/api/mock/scenario`, { data: { name: 'normal' } });
   let protectReads = false;
   const rejected = new Set<string>();
@@ -58,7 +58,7 @@ test('the first token restores mounted Chat projects, provider choices, git, and
     }
     if (protectReads) {
       authenticated.add(path);
-      if (path === '/api/manager-chat/commands' || path === '/api/manager-chat/models') {
+      if (path === '/api/manager-chat/commands' || path === '/api/manager-chat/models' || path === '/api/manager-chat/accounts') {
         providerNodes.set(path, new URL(route.request().url()).searchParams.get('nodeId'));
       }
     }
@@ -86,7 +86,7 @@ test('the first token restores mounted Chat projects, provider choices, git, and
   const initialPaths = ['/api/profiles', '/api/projects', '/api/manager-chat/settings', '/api/git/status', '/api/manager-chat/issues', '/api/manager-chat/prs', '/api/manager-chat/storage'];
   // Node eligibility, commands, and models all wait for a live connection,
   // so they are never issued -- let alone rejected -- before login.
-  const providerPaths = ['/api/manager-chat/nodes', '/api/manager-chat/commands', '/api/manager-chat/models'];
+  const providerPaths = ['/api/manager-chat/nodes', '/api/manager-chat/commands', '/api/manager-chat/models', '/api/manager-chat/accounts'];
   await expect.poll(() => initialPaths.filter(path => !rejected.has(path))).toEqual([]);
   // Node readiness is attempted and rejected. Commands and models wait for
   // an authenticated node readiness result.
@@ -104,6 +104,7 @@ test('the first token restores mounted Chat projects, provider choices, git, and
   const extras = launcher.locator('details');
   if (!await extras.evaluate((element) => (element as HTMLDetailsElement).open)) await extras.locator('summary').click();
   await expect(launcher.getByRole('button').filter({ hasText: 'Kh1ng/git-agent-harness' })).toBeVisible();
+  await expect(launcher.getByRole('combobox', { name: 'Account' })).toBeEnabled();
   await launcher.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Provider picker' })).toContainText('Codex · GPT-5.3 Codex');
   await expect(page.getByText('feat/mock-control-plane-1087', { exact: true })).toBeVisible();
@@ -112,7 +113,7 @@ test('the first token restores mounted Chat projects, provider choices, git, and
   await expect(page.getByLabel('Run on node', { exact: true })).toBeEnabled();
   await expect(page.getByLabel('Run on node', { exact: true })).toHaveValue('mock-central');
   await expect.poll(() => [...initialPaths, ...providerPaths, '/api/skills/bindings'].filter(path => !authenticated.has(path))).toEqual([]);
-  expect(providerPaths.slice(1).map(path => providerNodes.get(path))).toEqual(['mock-central', 'mock-central']);
+  expect(providerPaths.slice(1).map(path => providerNodes.get(path))).toEqual(['mock-central', 'mock-central', 'mock-central']);
   await page.getByPlaceholder('Message the manager… (try "/")').fill('/sta');
   await expect(page.getByRole('button', { name: '/status Show mock status', exact: true })).toBeVisible();
   await page.getByPlaceholder('Message the manager… (try "/")').fill('');

@@ -1,7 +1,7 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { openProjects } from './helpers/navigation.js';
 
-const MOCK_BASE_URL = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+const MOCK_BASE_URL = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
 
 async function selectScenario(request: APIRequestContext, name: string): Promise<void> {
   const response = await request.post(`${MOCK_BASE_URL}/api/mock/scenario`, { data: { name } });

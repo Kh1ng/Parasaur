@@ -734,9 +734,12 @@ pub(super) fn configured_route_candidate(
     mode: &str,
     backend: &str,
     model: Option<&str>,
+    instance: Option<&str>,
 ) -> Option<RouteCandidate> {
     let matches = |candidate: &&crate::config::CandidateConfig| {
-        candidate.backend == backend && candidate.model.as_deref() == model
+        candidate.backend == backend
+            && candidate.model.as_deref() == model
+            && instance.is_none_or(|id| candidate.instance.as_deref() == Some(id))
     };
     let mode_candidates = match JobKind::parse(mode).map(|kind| kind.family()) {
         Ok(JobFamily::Pm) => routing.pm_candidates.as_deref(),
@@ -749,9 +752,28 @@ pub(super) fn configured_route_candidate(
     // so the entry that admits the route supplies its approval, billing and
     // instance on the explicit route too. An entry for every model of the
     // backend runs the model that was asked for.
-    if let Some(entry) = routing.allowed_entry(mode, backend, model) {
+    let allowed = routing.allowed_models_for(mode).and_then(|entries| {
+        let matching = || {
+            entries.iter().filter(|entry| {
+                entry.backend == backend
+                    && instance.is_none_or(|id| {
+                        entry
+                            .instance
+                            .as_deref()
+                            .is_none_or(|configured| configured == id)
+                    })
+            })
+        };
+        matching()
+            .find(|entry| entry.model.as_deref() == model)
+            .or_else(|| matching().find(|entry| entry.model.is_none()))
+    });
+    if let Some(entry) = allowed {
         let entry = crate::config::CandidateConfig {
             model: model.map(str::to_string),
+            instance: instance
+                .map(str::to_string)
+                .or_else(|| entry.instance.clone()),
             ..entry.clone()
         };
         return route_candidates(routing, std::slice::from_ref(&entry)).pop();

@@ -30,7 +30,7 @@ export interface ManagerChatSettings {
 }
 
 function settingsPath(): string {
-  return process.env.GAH_MANAGER_CHAT_SETTINGS_PATH || resolve(process.cwd(), 'config/manager-chat-settings.json');
+  return process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH || resolve(process.cwd(), 'config/manager-chat-settings.json');
 }
 
 export function readSettings(): ManagerChatSettings {

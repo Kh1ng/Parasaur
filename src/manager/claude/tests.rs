@@ -1063,7 +1063,7 @@ fn mismatched_session_event_terminates_the_child_and_stays_failed() {
 
 #[test]
 fn installed_claude_start_and_restart_resume_smoke_when_requested() {
-    let Some(executable) = std::env::var_os("GAH_TEST_REAL_CLAUDE") else {
+    let Some(executable) = std::env::var_os("PARASAUR_TEST_REAL_CLAUDE") else {
         return;
     };
     let _exec_guard = crate::test_support::ExecGuard::new();
@@ -1086,10 +1086,10 @@ fn installed_claude_start_and_restart_resume_smoke_when_requested() {
         let id = adapter
             .start(StartRequest {
                 profile: "installed-smoke".into(),
-                instruction: "Reply with exactly GAH_CLAUDE_START_OK".into(),
+                instruction: "Reply with exactly PARASAUR_CLAUDE_START_OK".into(),
             })
             .unwrap();
-        assert_bounded_real_turn(&mut adapter, &id, "GAH_CLAUDE_START_OK");
+        assert_bounded_real_turn(&mut adapter, &id, "PARASAUR_CLAUDE_START_OK");
         id
     };
 
@@ -1098,9 +1098,9 @@ fn installed_claude_start_and_restart_resume_smoke_when_requested() {
             .unwrap();
     restarted.resume(&id).unwrap();
     restarted
-        .send(&id, "Reply with exactly GAH_CLAUDE_RESUME_OK")
+        .send(&id, "Reply with exactly PARASAUR_CLAUDE_RESUME_OK")
         .unwrap();
-    assert_bounded_real_turn(&mut restarted, &id, "GAH_CLAUDE_RESUME_OK");
+    assert_bounded_real_turn(&mut restarted, &id, "PARASAUR_CLAUDE_RESUME_OK");
 }
 
 fn assert_bounded_real_turn(

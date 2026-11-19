@@ -261,10 +261,18 @@ mod tests {
         child.wait().unwrap();
         let writer = read_pid(&pid_file);
         let retained = Arc::downgrade(&capture.bytes);
+        // `take` returns only what the reader thread has read by then, and
+        // the shell exiting does not mean that thread has run yet.
+        let read_early = wait_until(Instant::now() + Duration::from_secs(2), || {
+            let bytes = capture.bytes.lock().unwrap();
+            bytes
+                .as_ref()
+                .is_some_and(|bytes| bytes.starts_with(b"early"))
+        });
 
         let (bytes, eof) = capture.take().unwrap();
 
-        assert!(!eof);
+        assert!(read_early && !eof);
         assert!(bytes.starts_with(b"early"));
         // The reader dropped its buffer and its read end: the writer dies on
         // EPIPE instead of growing memory nobody can reach.
@@ -317,7 +325,7 @@ mod tests {
     /// process-wide, so this runs in its own re-executed test process.
     #[test]
     fn lost_child_is_never_signalled_under_ignored_sigchld() {
-        const ISOLATED: &str = "GAH_TEST_SIGCHLD_IGNORED";
+        const ISOLATED: &str = "PARASAUR_TEST_SIGCHLD_IGNORED";
         if std::env::var_os(ISOLATED).is_none() {
             let name = concat!(
                 module_path!(),
@@ -406,7 +414,7 @@ mod tests {
     #[test]
     fn startup_reset_keeps_children_waitable_under_auto_reaping_sigchld() {
         use std::os::unix::process::CommandExt;
-        const ISOLATED: &str = "GAH_TEST_SIGCHLD_AUTO_REAP";
+        const ISOLATED: &str = "PARASAUR_TEST_SIGCHLD_AUTO_REAP";
         let Ok(mode) = std::env::var(ISOLATED) else {
             let name = concat!(
                 module_path!(),

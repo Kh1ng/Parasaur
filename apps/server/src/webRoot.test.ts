@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { resolveWebRoot } from './webRoot.js';
 
 // Issue #1327: a fresh Linux install had no process serving the dashboard,
-// because the server served static files only when GAH_WEB_ROOT was set.
+// because the server served static files only when PARASAUR_WEB_ROOT was set.
 test('the server serves the checkout build when no web root is configured', () => {
   const built = mkdtempSync(join(tmpdir(), 'gah-built-web-'));
   try {

@@ -27,25 +27,26 @@ pub struct DesktopUpdateStatus {
 }
 
 /// The updater feed configuration: endpoint + minisign public key. The key
-/// comes from GAH_DESKTOP_UPDATER_PUBKEY, or from
+/// comes from PARASAUR_DESKTOP_UPDATER_PUBKEY, or from
 /// `$XDG_CONFIG_HOME/gah/desktop-updater.json`
 /// (`{"endpoint": "...", "pubkey": "..."}`) so launchd/registry-managed
-/// installs can provision it without rebuilding the app.
+/// installs can provision it without rebuilding the app. Without XDG_CONFIG_HOME,
+/// use the desktop settings directory: USERPROFILE/.config/gah on Windows,
+/// HOME/.config/gah on other platforms.
 struct UpdaterConfig {
     endpoint: String,
     pub_key: String,
 }
 
 fn config_path() -> PathBuf {
-    let config_home = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .unwrap_or_else(|| PathBuf::from(".config"));
-    config_home.join("gah").join("desktop-updater.json")
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(|home| PathBuf::from(home).join("gah"))
+        .unwrap_or_else(crate::config_dir)
+        .join("desktop-updater.json")
 }
 
 fn updater_config() -> Result<UpdaterConfig, String> {
-    let explicit = std::env::var("GAH_DESKTOP_UPDATER_CONFIG").ok();
+    let explicit = std::env::var("PARASAUR_DESKTOP_UPDATER_CONFIG").ok();
     let config_file = explicit
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
@@ -78,11 +79,11 @@ fn updater_config() -> Result<UpdaterConfig, String> {
         }
         return Ok(UpdaterConfig { endpoint, pub_key });
     }
-    let pub_key = std::env::var("GAH_DESKTOP_UPDATER_PUBKEY").unwrap_or_default();
-    let endpoint = std::env::var("GAH_DESKTOP_UPDATER_ENDPOINT")
+    let pub_key = std::env::var("PARASAUR_DESKTOP_UPDATER_PUBKEY").unwrap_or_default();
+    let endpoint = std::env::var("PARASAUR_DESKTOP_UPDATER_ENDPOINT")
         .unwrap_or_else(|_| DEFAULT_ENDPOINT.to_string());
     if pub_key.is_empty() {
-        return Err("updater not configured: set GAH_DESKTOP_UPDATER_PUBKEY (or GAH_DESKTOP_UPDATER_CONFIG)".to_string());
+        return Err("updater not configured: set PARASAUR_DESKTOP_UPDATER_PUBKEY (or PARASAUR_DESKTOP_UPDATER_CONFIG)".to_string());
     }
     Ok(UpdaterConfig { endpoint, pub_key })
 }
@@ -148,4 +149,93 @@ pub async fn desktop_apply_update(app: AppHandle) -> Result<(), String> {
         .await
         .map_err(|error| format!("the update download or install failed: {error}"))?;
     app.restart();
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "isolated updater configuration child"]
+    fn configuration_child() {
+        let config = updater_config().unwrap();
+        assert_eq!(
+            config.pub_key,
+            std::env::var("PARASAUR_TEST_EXPECTED_KEY").unwrap()
+        );
+        assert_eq!(config.endpoint, DEFAULT_ENDPOINT);
+    }
+
+    #[test]
+    fn windows_updater_reads_the_desktop_profile_without_home_and_keeps_overrides() {
+        let root = std::env::temp_dir().join(format!(
+            "gah-updater-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        let profile = root.join("profile");
+        let xdg = root.join("xdg");
+        let explicit = root.join("explicit.json");
+        let cwd = root.join("unrelated-working-directory");
+        std::fs::create_dir_all(&cwd).unwrap();
+        for (path, key) in [
+            (
+                profile.join(".config/gah/desktop-updater.json"),
+                "profile-key",
+            ),
+            (xdg.join("gah/desktop-updater.json"), "xdg-key"),
+            (explicit.clone(), "explicit-key"),
+        ] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, serde_json::json!({"pubkey":key}).to_string()).unwrap();
+        }
+        for expected in ["profile-key", "xdg-key", "explicit-key", "environment-key"] {
+            let mut child = crate::command(std::env::current_exe().unwrap().to_str().unwrap());
+            child
+                .args([
+                    "--exact",
+                    "desktop_update::tests::configuration_child",
+                    "--ignored",
+                ])
+                .current_dir(&cwd)
+                .env_remove("HOME")
+                .env_remove("XDG_CONFIG_HOME")
+                .env_remove("PARASAUR_DESKTOP_UPDATER_CONFIG")
+                .env_remove("PARASAUR_DESKTOP_UPDATER_PUBKEY")
+                .env_remove("PARASAUR_DESKTOP_UPDATER_ENDPOINT")
+                .env("USERPROFILE", &profile)
+                .env("PARASAUR_TEST_EXPECTED_KEY", expected);
+            match expected {
+                "xdg-key" => {
+                    child.env("XDG_CONFIG_HOME", &xdg);
+                }
+                "explicit-key" => {
+                    child
+                        .env("XDG_CONFIG_HOME", &xdg)
+                        .env("PARASAUR_DESKTOP_UPDATER_CONFIG", &explicit);
+                }
+                "environment-key" => {
+                    child
+                        .env("USERPROFILE", root.join("empty-profile"))
+                        .env("PARASAUR_DESKTOP_UPDATER_PUBKEY", expected);
+                }
+                _ => {}
+            }
+            let output = child.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{expected}: {} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        assert_eq!(
+            root.parent().unwrap().canonicalize().unwrap(),
+            std::env::temp_dir().canonicalize().unwrap()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

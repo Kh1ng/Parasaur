@@ -10,6 +10,9 @@ use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+mod history;
+pub(super) use history::{read_recovery_reports, read_stuck_loop};
+
 /// A route-only capacity refusal launched no backend and cannot become
 /// actionable while the observed routing state is unchanged. Suppress that
 /// work item for a bounded interval so one unroutable repair cannot monopolize
@@ -166,8 +169,7 @@ pub(crate) fn reconcile_abandoned_dispatches(
     profile_name: &str,
     entries: &mut Vec<crate::ledger::LedgerEntry>,
 ) -> Result<usize> {
-    let events = crate::events::read_events(cfg)?;
-    let mut orphans = crate::events::orphaned_dispatch_runs(&events, profile_name);
+    let mut orphans = crate::events::read_orphaned_dispatch_runs(cfg, profile_name)?;
     if orphans.is_empty() {
         return Ok(0);
     }
@@ -237,6 +239,7 @@ const STUCK_LOOP_THRESHOLD: usize = 3;
 /// Returns `Some(reason)` if the last `STUCK_LOOP_THRESHOLD` decisions for
 /// this action's work_id all match its current fingerprint. Reads the
 /// existing event stream (TICKET-083) rather than new storage.
+#[cfg(test)]
 pub(super) fn detect_stuck_loop(
     events: &[crate::events::ControllerEvent],
     profile_name: &str,
@@ -402,6 +405,9 @@ pub(super) fn record_action_events(
     review_generation: Option<&str>,
 ) -> Result<()> {
     let original_reason_code = original_action.human_required_reason_code();
+    if let Err(error) = crate::spend_budget::record_action(cfg, profile_name, effective_action) {
+        eprintln!("[gah] spend budget notice failed (swallowed): {error:#}");
+    }
     let effective_reason_code = effective_action.human_required_reason_code();
     let original_plan = remediation_plan_for_action(cfg, profile_name, original_action);
     let effective_plan = remediation_plan_for_action(cfg, profile_name, effective_action);
@@ -682,8 +688,8 @@ pub(super) fn report_blocked_work_items_once(
     cfg: &crate::config::GahConfig,
     profile_name: &str,
     snapshot: &crate::status::StatusSnapshot,
+    history: &[crate::events::ControllerEvent],
 ) -> Result<()> {
-    let history = crate::events::read_events(cfg)?;
     for blocker in snapshot
         .blocked_work_items
         .iter()
@@ -705,7 +711,7 @@ pub(super) fn report_blocked_work_items_once(
             .unwrap_or(reference);
         let reason_code = blocker.reason_code.as_deref().or(blocker.reason.as_deref());
         let already_reported =
-            matching_human_required_report(&history, profile_name, Some(identity), reason_code);
+            matching_human_required_report(history, profile_name, Some(identity), reason_code);
         if already_reported {
             continue;
         }
@@ -885,6 +891,7 @@ mod tests {
             details: format!("{kind}: test"),
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         }
     }
 
@@ -907,6 +914,7 @@ mod tests {
             details: details.into(),
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         }
     }
 
@@ -1034,6 +1042,7 @@ mod tests {
             details: "fix_existing: deferred_capacity: claude/sonnet busy".into(),
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         });
 
         assert_eq!(
@@ -1072,6 +1081,7 @@ mod tests {
             details: "branch 'gah/real-1' already attached to worktree /tmp/gah/real-1 (clean=true); deferring to next eligible item".into(),
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         });
 
         assert_eq!(
@@ -1180,6 +1190,7 @@ mod tests {
             details: "fix_existing: deferred_capacity: claude/sonnet busy".into(),
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         }
     }
 
@@ -1470,6 +1481,7 @@ default_target_branch = "main"
             review_contract_version: None, // Pre-bump event
             remediation_plan: None,
             skipped: Vec::new(),
+            central_claim: None,
         };
 
         let events = vec![old_event.clone(), old_event.clone(), old_event.clone()];

@@ -47,7 +47,7 @@ pub(super) fn latest_review_for_mr<'a>(
     mr: &SyncMr,
 ) -> Option<&'a LedgerEntry> {
     let entries = ledger.get(mr.work_id.as_ref()?)?;
-    entries.iter().rev().find(|entry| {
+    entries.iter().rev().copied().find(|entry| {
         entry.branch.as_deref() == Some(mr.branch.as_str())
             && matches!(
                 entry

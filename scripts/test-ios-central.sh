@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
 # Run the read-only native navigation test on an already-paired physical iPhone.
 set -euo pipefail
-: "${GAH_IOS_DEVICE:?Set the physical iPhone UDID}"
-: "${GAH_IOS_TEAM:?Set the Apple development team}"
-: "${GAH_IOS_CENTRAL_URL:?Set the HTTPS central origin}"
+: "${PARASAUR_IOS_DEVICE:?Set the physical iPhone UDID}"
+: "${PARASAUR_IOS_TEAM:?Set the Apple development team}"
+: "${PARASAUR_IOS_CENTRAL_URL:?Set the HTTPS central origin}"
 python3 - <<'PY_ORIGIN'
 import os, urllib.parse
 try:
-    uri = urllib.parse.urlsplit(os.environ['GAH_IOS_CENTRAL_URL'])
+    uri = urllib.parse.urlsplit(os.environ['PARASAUR_IOS_CENTRAL_URL'])
     valid = uri.scheme in ('http', 'https') and uri.hostname and not uri.username and not uri.password
     valid = valid and not uri.query and not uri.fragment and uri.path in ('', '/')
     valid = valid and (uri.port is None or 0 < uri.port < 65536)
 except ValueError:
     valid = False
 if not valid:
-    raise SystemExit('GAH_IOS_CENTRAL_URL must be an HTTP(S) origin without credentials or a path')
+    raise SystemExit('PARASAUR_IOS_CENTRAL_URL must be an HTTP(S) origin without credentials or a path')
 PY_ORIGIN
 root=$(cd "$(dirname "$0")/.." && pwd)
 output=$(mktemp -d "${TMPDIR:-/tmp}/gah-ios-central.XXXXXX")
 echo "Evidence directory: $output"
 xcodebuild -project "$root/apps/ios/GAH.xcodeproj" -scheme GAH \
-  -configuration Debug -destination "platform=iOS,id=$GAH_IOS_DEVICE" \
-  -derivedDataPath "$output/derived" "DEVELOPMENT_TEAM=$GAH_IOS_TEAM" \
+  -configuration Debug -destination "platform=iOS,id=$PARASAUR_IOS_DEVICE" \
+  -derivedDataPath "$output/derived" "DEVELOPMENT_TEAM=$PARASAUR_IOS_TEAM" \
   -allowProvisioningUpdates build-for-testing > "$output/build.log" 2>&1
 # An xctestrun environment belongs to the test runner, rather than the build
 # shell. Only the public origin and optional expected node enter this file.
@@ -33,9 +33,9 @@ if len(files) != 1:
 path = files[0]
 with path.open('rb') as f:
     data = plistlib.load(f)
-settings = {'GAH_IOS_LIVE_CENTRAL_URL': os.environ['GAH_IOS_CENTRAL_URL']}
-if os.environ.get('GAH_IOS_EXPECTED_NODE'):
-    settings['GAH_IOS_EXPECTED_NODE'] = os.environ['GAH_IOS_EXPECTED_NODE']
+settings = {'PARASAUR_IOS_LIVE_CENTRAL_URL': os.environ['PARASAUR_IOS_CENTRAL_URL']}
+if os.environ.get('PARASAUR_IOS_EXPECTED_NODE'):
+    settings['PARASAUR_IOS_EXPECTED_NODE'] = os.environ['PARASAUR_IOS_EXPECTED_NODE']
 if data.get('TestConfigurations'):
     targets = [target for config in data['TestConfigurations'] for target in config['TestTargets']]
 else:
@@ -49,7 +49,7 @@ with path.open('wb') as f:
 PY
 runfiles=("$output"/derived/Build/Products/*.xctestrun)
 if xcodebuild test-without-building -xctestrun "${runfiles[0]}" \
-  -destination "platform=iOS,id=$GAH_IOS_DEVICE" \
+  -destination "platform=iOS,id=$PARASAUR_IOS_DEVICE" \
   -only-testing:GAHTests/ControllerTests/testPhysicalCentralNavigationAndBackgroundRecovery \
   -resultBundlePath "$output/central.xcresult" > "$output/test.log" 2>&1; then
   status=0

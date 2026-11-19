@@ -11,8 +11,8 @@ import { updateNavigation } from '../lib/navigationState.js';
  * Import from Git (the chat's project rail import form) and Create new (the
  * Profile sidebar's add form).
  */
-export function ProjectSwitcher({ onImport, onCreate }: { onImport: () => void; onCreate: () => void }) {
-  const { profile: wsProfile, serverVersion } = useWebSocket();
+export function ProjectSwitcher({ onImport, onCreate, onConnection }: { onImport: () => void; onCreate: () => void; onConnection: () => void }) {
+  const { profile: wsProfile, serverVersion, isConnected, isConnecting, error, reconnectSeq } = useWebSocket();
   const profileOverride = useUiStore((state) => state.profileOverride);
   const setProfileOverride = useUiStore((state) => state.setProfileOverride);
   const profiles = useGahStore((state) => state.profiles);
@@ -20,7 +20,7 @@ export function ProjectSwitcher({ onImport, onCreate }: { onImport: () => void; 
   const [open, setOpen] = useState(false);
   const menu = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { fetchProfiles(); }, [fetchProfiles]);
+  useEffect(() => { void fetchProfiles({ force: reconnectSeq > 0 }); }, [fetchProfiles, reconnectSeq]);
   useEffect(() => {
     if (!open) return;
     fetchProfiles();
@@ -35,8 +35,8 @@ export function ProjectSwitcher({ onImport, onCreate }: { onImport: () => void; 
   const configured = profiles.data ?? [];
   const selectedName = profileOverride ?? wsProfile ?? '';
   const selected = configured.find((candidate) => candidate.name === selectedName);
-  // Until the server's welcome arrives the project is unknown, not absent.
-  const label = selected?.display_name || selectedName || (serverVersion === null ? 'loading…' : 'none');
+  const unavailable = !!profiles.error || (!isConnected && !!error);
+  const label = selected?.display_name || selectedName || (unavailable ? 'unavailable' : profiles.loading || (serverVersion === null && isConnecting) ? 'loading…' : 'none');
 
   const choose = (name: string) => {
     setProfileOverride(name);
@@ -57,6 +57,10 @@ export function ProjectSwitcher({ onImport, onCreate }: { onImport: () => void; 
           <div className="max-h-72 overflow-y-auto py-1">
             {profiles.loading && configured.length === 0 && <p className="px-3 py-2 text-xs text-muted">Loading projects…</p>}
             {profiles.error && <p role="alert" className="px-3 py-2 text-xs text-critical">Cannot load projects: {profiles.error}</p>}
+            {unavailable && <div className="flex flex-wrap gap-2 px-3 py-2">
+              <button type="button" role="menuitem" className="btn-secondary text-xs" disabled={profiles.loading} onClick={() => void fetchProfiles({ force: true })}>Retry projects</button>
+              <button type="button" role="menuitem" className="btn-secondary text-xs" onClick={() => { setOpen(false); onConnection(); }}>Connection settings</button>
+            </div>}
             {!profiles.loading && !profiles.error && configured.length === 0 && <p className="px-3 py-2 text-xs text-muted">No project configured yet.</p>}
             {configured.map((candidate) => {
               const active = candidate.name === selectedName;

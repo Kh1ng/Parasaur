@@ -18,24 +18,24 @@ import type { ApnsNotifications } from './apns.js';
 
 test('real HTTP/WS pairing confirms access, rejects CSRF and owner exports, and revokes existing sockets individually', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gah-pairing-http-'));
-  const keys = ['COORDINATOR_TOKEN', 'GAH_ALLOW_INSECURE_HTTP', 'GAH_COORDINATOR_IDENTITY_PATH', 'GAH_WS_AUTH_MODE', 'GAH_SKILL_BANK_PATH',
-    'GAH_GATEWAY_SETTINGS_PATH', 'GAH_MANAGER_CHAT_SETTINGS_PATH', 'GAH_ENABLE_ADMIN_UPDATE', 'GAH_BINARY', 'GAH_FIXTURE_PROFILE_LIST'] as const;
+  const keys = ['COORDINATOR_TOKEN', 'PARASAUR_ALLOW_INSECURE_HTTP', 'PARASAUR_COORDINATOR_IDENTITY_PATH', 'PARASAUR_WS_AUTH_MODE', 'PARASAUR_SKILL_BANK_PATH',
+    'PARASAUR_GATEWAY_SETTINGS_PATH', 'PARASAUR_MANAGER_CHAT_SETTINGS_PATH', 'PARASAUR_ENABLE_ADMIN_UPDATE', 'PARASAUR_BINARY', 'PARASAUR_FIXTURE_PROFILE_LIST'] as const;
   const saved = keys.map(key => process.env[key]);
   process.env.COORDINATOR_TOKEN = 'owner-secret-never-in-qr';
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(directory, 'identity.json');
-  process.env.GAH_WS_AUTH_MODE = 'trusted_lan';
-  process.env.GAH_SKILL_BANK_PATH = join(directory, 'skills.json');
-  process.env.GAH_GATEWAY_SETTINGS_PATH = join(directory, 'gateway.json');
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(directory, 'manager-chat.json');
-  process.env.GAH_ENABLE_ADMIN_UPDATE = '1';
-  process.env.GAH_BINARY = FIXTURE_GAH_BINARY;
-  process.env.GAH_FIXTURE_PROFILE_LIST = join(directory, 'profiles.json');
-  writeFileSync(process.env.GAH_FIXTURE_PROFILE_LIST, '[]');
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(directory, 'identity.json');
+  process.env.PARASAUR_WS_AUTH_MODE = 'trusted_lan';
+  process.env.PARASAUR_SKILL_BANK_PATH = join(directory, 'skills.json');
+  process.env.PARASAUR_GATEWAY_SETTINGS_PATH = join(directory, 'gateway.json');
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(directory, 'manager-chat.json');
+  process.env.PARASAUR_ENABLE_ADMIN_UPDATE = '1';
+  process.env.PARASAUR_BINARY = FIXTURE_GAH_BINARY;
+  process.env.PARASAUR_FIXTURE_PROFILE_LIST = join(directory, 'profiles.json');
+  writeFileSync(process.env.PARASAUR_FIXTURE_PROFILE_LIST, '[]');
   const gatewaySettings = JSON.stringify({ url: 'https://gateway.example.test', apiKey: 'private-gateway-key', enabled: true });
   const managerSettings = JSON.stringify({ defaultBackend: 'claude', profileOverrides: {} });
-  writeFileSync(process.env.GAH_GATEWAY_SETTINGS_PATH, gatewaySettings);
-  writeFileSync(process.env.GAH_MANAGER_CHAT_SETTINGS_PATH, managerSettings);
+  writeFileSync(process.env.PARASAUR_GATEWAY_SETTINGS_PATH, gatewaySettings);
+  writeFileSync(process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH, managerSettings);
   resetCachedCoordinatorIdentity();
   const access = new DeviceAccess(join(directory, 'devices.json'));
   const registry = new RegistryService(join(directory, 'registry.json'));
@@ -156,7 +156,7 @@ test('real HTTP/WS pairing confirms access, rejects CSRF and owner exports, and 
       assert.deepEqual(await denied.json(), { error: 'Forbidden', message: 'This operation requires owner access.' });
     }
     assert.equal(JSON.stringify(registry.getNodes()), originalRegistry, 'Paired requests cannot add, revoke, or change worker credentials');
-    assert.equal(readFileSync(process.env.GAH_GATEWAY_SETTINGS_PATH, 'utf8'), gatewaySettings, 'Paired requests cannot redirect the retained gateway key');
+    assert.equal(readFileSync(process.env.PARASAUR_GATEWAY_SETTINGS_PATH, 'utf8'), gatewaySettings, 'Paired requests cannot redirect the retained gateway key');
     const switchHarness = await post('/api/manager-chat/backend', { profile: 'paired-test', backendId: 'codex' }, paired);
     assert.equal(switchHarness.status, 200, 'Paired devices can select the backend used for interactive chat');
     const bindSkills = await fetch(base + '/api/skills/bindings', {
@@ -165,12 +165,12 @@ test('real HTTP/WS pairing confirms access, rejects CSRF and owner exports, and 
       body: JSON.stringify({ profile: 'paired-test', backend: 'codex', skillIds: [] })
     });
     assert.equal(bindSkills.status, 200, 'Paired devices can change project skill bindings');
-    assert.equal(JSON.parse(readFileSync(process.env.GAH_MANAGER_CHAT_SETTINGS_PATH, 'utf8')).profileOverrides['paired-test'], 'codex');
-    assert.notEqual(JSON.parse(readFileSync(process.env.GAH_MANAGER_CHAT_SETTINGS_PATH, 'utf8')).permissionMode, 'bypass', 'Paired requests cannot turn off chat permission prompts');
+    assert.equal(JSON.parse(readFileSync(process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH, 'utf8')).profileOverrides['paired-test'], 'codex');
+    assert.notEqual(JSON.parse(readFileSync(process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH, 'utf8')).permissionMode, 'bypass', 'Paired requests cannot turn off chat permission prompts');
     assert.equal(adminUpdates, 0, 'Denied admin requests never start an update');
     assert.equal((await post('/api/admin/update', {}, owner)).status, 202);
     assert.equal(adminUpdates, 1, 'Explicit owner credentials retain administration access');
-    const chatSettings = () => JSON.parse(readFileSync(process.env.GAH_MANAGER_CHAT_SETTINGS_PATH!, 'utf8'));
+    const chatSettings = () => JSON.parse(readFileSync(process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH!, 'utf8'));
     assert.equal((await post('/api/manager-chat/settings', { permissionMode: 'always' }, owner)).status, 400, 'An unknown permission mode is rejected');
     assert.equal(chatSettings().permissionMode, 'ask');
     assert.equal((await post('/api/manager-chat/settings', { permissionMode: 'bypass' }, owner)).status, 200);
@@ -206,7 +206,7 @@ test('real HTTP/WS pairing confirms access, rejects CSRF and owner exports, and 
     assert.equal(logout.status, 200);
     assert.match(logout.headers.get('set-cookie')!, new RegExp(`${DEVICE_COOKIE}=;`));
     // TLS proxy transport sets a Secure cookie; disabling HTTP prevents insecure offers.
-    delete process.env.GAH_ALLOW_INSECURE_HTTP;
+    delete process.env.PARASAUR_ALLOW_INSECURE_HTTP;
     assert.equal((await post('/api/pairing/offers', { origin: base }, owner)).status, 403);
     const tlsOrigin = base.replace('http:', 'https:');
     const tlsHeaders = { ...remote, Origin: tlsOrigin, 'X-Forwarded-Proto': 'https' };

@@ -7,6 +7,10 @@
  * mutable data is the in-memory MockState below.
  */
 import { readFileSync } from 'node:fs';
+import type { RecordedUsageReport, RecordedUsageRow } from '@git-agent-harness/contracts';
+import { addUsageMeasurements, emptyUsageMeasurements, observeUsage } from '@git-agent-harness/shared';
+import { createHash } from 'node:crypto';
+import type { ComputeOutputCatalog, ComputeOutputEntry } from '@git-agent-harness/contracts';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { dirname, resolve } from 'node:path';
@@ -24,6 +28,7 @@ import type {
   AgentVersionsSnapshot,
   FleetUpdateResult,
   NodeSummary,
+  NodeFactorySnapshot,
   ReleaseChannelStatus,
   WorkerUpdateStatus,
   ChatNodeInfo,
@@ -194,6 +199,10 @@ function mockCliRouter(): CliRouterSnapshot {
 }
 
 interface MockState {
+  outputDiscarded: boolean;
+  outputKeys: Set<string>;
+  journalCleaned: boolean;
+  journalKeys: Set<string>;
   pairingRequests: PairingAccessRequest[];
   pairedDevices: PairedDevice[];
   cliRouter: CliRouterSnapshot;
@@ -202,6 +211,8 @@ interface MockState {
   connectionCount: number;
   settings: ManagerChatSettingsSummary;
   profiles: ProfileSummary[];
+  environmentSources: Map<string, { env_file_configured: boolean; env_file_prod_configured: boolean }>;
+  profileChecks: Map<string, { validation_commands: string[]; auto_fix_commands: string[] }>;
   config: ConfigSummary;
   notificationPreferences: ActivityNotificationPreferences;
   gateway: GatewaySettingsSummary;
@@ -247,6 +258,11 @@ const BACKENDS = [
 ] satisfies ManagerBackendInfo[];
 
 const MOCK_PROFILES = PROFILE_FIXTURE satisfies ProfileSummary[];
+const MOCK_FACTORY_ACCOUNTS = ['codex-work', 'codex-personal'].map(backend_instance => ({
+  backend_instance, logical_backend: 'codex', runner_kind: 'codex', account_label: backend_instance,
+  auth_source_label: null, quota_pool: backend_instance, supported_models: ['gpt-5.3-codex'],
+  enabled: true, executable_configured: true, isolated_state_configured: true,
+}));
 
 const MOCK_GATEWAY = {
   url: 'http://127.0.0.1:8420',
@@ -618,6 +634,12 @@ function createState(scenario: MockScenarioName, reset: number, previewOrigin?: 
   }
 
   return {
+    outputDiscarded: false,
+    outputKeys: new Set(),
+    journalCleaned: false,
+    journalKeys: new Set(),
+    environmentSources: new Map(),
+    profileChecks: new Map(),
     pairingRequests: [{ schema_version: 1, id: 'mock-pairing-request-1', name: 'Mock Linux', matching_code: 'ABCD1234',
       expires_at: new Date(Date.now() + 5 * 60_000).toISOString(), server: { id: 'mock-central', name: 'Mock central', origin: 'http://localhost:5173' },
       access: 'Dashboard control: read projects and chats, run agent work, and choose chat models.', status: 'pending' }],
@@ -1032,6 +1054,34 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     switch (message.type) {
       case 'client.hello':
         return;
+      case 'session.start': {
+        const profile = state.profiles.find(item => item.name === message.profile);
+        const previous = state.workerSessions.find(item => item.requestId === message.requestId);
+        if (previous) {
+          if (previous.backendInstance !== message.backendInstance || previous.nodeId !== (message.nodeId ?? 'mock-central')) {
+            send(ws, { type: 'error', requestId: message.requestId, error: 'Dispatch receipt does not match the selected account and node.' });
+          } else send(ws, { type: 'session.started', requestId: message.requestId, session: previous });
+          return;
+        }
+        if (!profile || message.backendInstance && (message.nodeId !== 'mock-central' || message.backend !== 'codex'
+          || !MOCK_FACTORY_ACCOUNTS.some(item => item.backend_instance === message.backendInstance))) {
+          send(ws, { type: 'error', requestId: message.requestId, error: 'Choose an available sample project, execution node and account.' });
+          return;
+        }
+        const session: Session = { id: `mock-worker-${state.workerSessions.length + 1}`, requestId: message.requestId,
+          providerKind: message.providerKind, instanceId: message.instanceId, repo: profile.repo,
+          nodeId: message.nodeId ?? 'mock-central', backend: message.backend, backendInstance: message.backendInstance,
+          model: message.model, mode: message.mode, target: message.target, status: 'running', startedAt: new Date(FIXED_NOW).toISOString() };
+        state.workerSessions.push(session);
+        broadcast({ type: 'session.started', requestId: message.requestId, session });
+        return;
+      }
+      case 'session.stop': {
+        const session = state.workerSessions.find(item => item.id === message.sessionId);
+        if (session) { session.status = 'stopped'; session.endedAt = new Date(FIXED_NOW).toISOString(); broadcast({ type: 'session.stopped', session }); }
+        else send(ws, { type: 'error', requestId: message.requestId, error: 'Sample session not found.' });
+        return;
+      }
       case 'ping':
         send(ws, { type: 'server.ping', timestamp: message.timestamp } satisfies ServerMessage);
         return;
@@ -1103,7 +1153,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
         } satisfies ServerMessage);
         return;
       case 'manager.chat.sessionCreate': {
-        const created = createSession(message.profile, message.backend, message.model ?? null, message.title);
+        const created = createSession(message.profile, message.backend, message.model ?? null, message.title, message.backendInstance ?? null);
         send(ws, { type: 'manager.chat.sessionCreated', requestId: message.requestId, profile: message.profile, session: created } satisfies ServerMessage);
         return;
       }
@@ -1124,7 +1174,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     }
   }
 
-  function createSession(profile: string, backend?: string, model: string | null = null, title?: string): ChatSessionSummary {
+  function createSession(profile: string, backend?: string, model: string | null = null, title?: string, backendInstance: string | null = null): ChatSessionSummary {
     const id = `mock-session-${state.sessions.size + 1}`;
     const created = {
       id,
@@ -1132,6 +1182,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       worktreePath: '/mock/in-memory-only',
       branch: `gah/${id}`,
       backend: backend ?? state.settings.defaultBackend,
+      backendInstance,
       model,
       reasoningEffort: null,
       title: title ?? null,
@@ -1146,12 +1197,13 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     return created;
   }
 
-  function updateSession(profile: string, id: string, patch: { backend?: string; model?: string | null; reasoningEffort?: string | null; title?: string }): ChatSessionSummary | null {
+  function updateSession(profile: string, id: string, patch: { backend?: string; backendInstance?: string | null; model?: string | null; reasoningEffort?: string | null; title?: string }): ChatSessionSummary | null {
     const current = state.sessions.get(id);
     if (!current || current.profile !== profile || current.archivedAt !== null) return null;
     const updated = {
       ...current,
       ...(patch.backend !== undefined ? { backend: patch.backend } : {}),
+      ...(patch.backendInstance !== undefined ? { backendInstance: patch.backendInstance } : {}),
       ...(patch.model !== undefined ? { model: patch.model } : {}),
       ...(patch.reasoningEffort !== undefined ? { reasoningEffort: patch.reasoningEffort } : {}),
       ...(patch.title !== undefined ? { title: patch.title } : {}),
@@ -1196,12 +1248,13 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
 
   /** PR → chat: a read-only session seeded with the PR -- worktree-less,
    * riding the PR's head branch, with the PR as the opening message. */
-  function createPrSession(profile: string, backend: string | undefined, model: string | null, pr: ChatPrSummary): ChatSessionSummary {
+  function createPrSession(profile: string, backend: string | undefined, model: string | null, pr: ChatPrSummary, backendInstance: string | null = null): ChatSessionSummary {
     const id = `mock-session-${state.sessions.size + 1}`;
     const created = {
       id,
       profile,
       prNumber: pr.number,
+      backendInstance,
       worktreePath: null,
       branch: pr.headRefName ?? `gah/pr/${id}`,
       backend: backend ?? state.settings.defaultBackend,
@@ -1279,6 +1332,43 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       return;
     }
     next();
+  });
+
+  // This opaque partial is simulated output, never a live job or host archive.
+  const outputBytes = Buffer.from('Simulated partial job output. No live job ran.\n');
+  const outputHash = createHash('sha256').update(outputBytes).digest('hex');
+  const outputEntry = (): ComputeOutputEntry => ({ id: 'job-0000',
+    revision: createHash('sha256').update(`mock-output-${state.reset}`).digest('hex'),
+    workId: '00000000-0000-0000-0000-000000000001', archiveBytes: outputBytes.length,
+    incomplete: true, discardable: true, state: 'retained' });
+  app.get('/api/owner/compute-output', (_req, res) => res.json({ maxJobs: 10, maxArchiveBytes: 1073741824,
+    entries: state.outputDiscarded ? [] : [outputEntry()], admissionBlocked: false,
+    journal: { entries: state.journalCleaned ? 3 : 4, limit: 10, cleanupAvailable: true } } satisfies ComputeOutputCatalog));
+  const journalRevision = () => createHash('sha256').update(`mock-journal-${state.reset}-${state.journalCleaned}`).digest('hex');
+  app.get('/api/owner/compute-journal/review', (_req, res) => res.json({ entries: state.journalCleaned ? 3 : 4,
+    limit: 10, storageVerified: true, revision: journalRevision(), candidates: state.journalCleaned ? [] : [{
+      id: createHash('sha256').update('mock-receipt').digest('hex'), revision: journalRevision(), workId: '00000000-0000-0000-0000-000000000002' }] }));
+  app.post('/api/owner/compute-journal/cleanup', (req, res) => {
+    const key = req.get('Idempotency-Key');
+    if (!key || !/^[A-Za-z0-9_-]{16,128}$/.test(key) || req.body?.confirm !== true) return jsonError(res, 400, 'Review required', 'Confirm removal of simulated receipts.');
+    if (state.journalKeys.has(key) || req.body?.revision !== journalRevision()) return jsonError(res, 409, 'Review changed', 'Review simulated receipts again.');
+    state.journalKeys.add(key); const removed = state.journalCleaned ? 0 : 1; state.journalCleaned = true;
+    res.json({ removed, retained: 0, unconfirmed: 0, interrupted: false });
+  });
+  const selectedOutput = (id: string, revision: unknown) => !state.outputDiscarded && id === 'job-0000' && revision === outputEntry().revision;
+  app.get('/api/owner/compute-output/:id/download', (req, res) => {
+    if (!selectedOutput(req.params.id, req.query.revision)) return jsonError(res, 409, 'Output changed', 'Refresh simulated output.');
+    res.json({ bytes: outputBytes.length, blockBytes: 1048576, sha256: outputHash, blocks: [outputHash], filename: 'simulated-output.partial.bin', incomplete: true });
+  });
+  app.get('/api/owner/compute-output/:id/block', (req, res) => {
+    if (!selectedOutput(req.params.id, req.query.revision) || req.query.index !== '0') return jsonError(res, 409, 'Output changed', 'Refresh simulated output.');
+    res.type('application/octet-stream').send(outputBytes);
+  });
+  app.post('/api/owner/compute-output/:id/discard', (req, res) => {
+    const key = req.get('Idempotency-Key');
+    if (!key || !/^[A-Za-z0-9_-]{16,128}$/.test(key) || req.body?.confirm !== true || req.body?.sha256 !== outputHash) return jsonError(res, 400, 'Review required', 'Confirm removal of simulated output.');
+    if (state.outputKeys.has(key) || !selectedOutput(req.params.id, req.body?.revision)) return jsonError(res, 409, 'Output changed', 'Refresh simulated output.');
+    state.outputKeys.add(key); state.outputDiscarded = true; res.json({ discarded: true });
   });
 
   // Pairing: the mock browser is always the paired owner. Deterministic
@@ -1370,6 +1460,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
   app.post('/api/activity/read', (_req, res) => res.json({ changed: 0, unread: 0 }));
 
   app.get('/api/info', (_req, res) => res.json({
+    environment: 'mock',
     identity: { node_id: 'mock-central', display_name: 'Mock central', advertised_url: 'http://localhost:5173', version: '0.1.2', schema_digest: 'mock-digest' }
   }));
 
@@ -1438,6 +1529,13 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     overall_status: 'ok',
     checks: [{ name: 'mock isolation', status: 'ok', detail: 'in-memory control plane' }]
   } satisfies DoctorSnapshot));
+  app.get('/api/registry/nodes/:id/factory', (req, res) => res.json({
+    node_id: req.params.id, profile: bodyString(req.query.profile) ?? 'gah', checked_at: new Date(FIXED_NOW).toISOString(),
+    loop: { state: 'available', value: { running: false } },
+    decision: { state: 'available', value: { timestamp: new Date(FIXED_NOW).toISOString(), kind: 'human_required', work_id: '#42', reason_code: 'stuck_loop_gate', reason: 'Sample worker: review repeated without progress; inspect its review evidence.' } },
+    status: { state: 'available', value: { generated_at: new Date(FIXED_NOW).toISOString(), profile_blockers: [], profile_blocker_count: 0,
+      work_blockers: [{ work_id: '#42', reason_code: 'stuck_loop_gate', message: 'Sample review gate awaiting operator action.', next_steps: ['Inspect the sample worker’s current review receipt.'] }], work_blocker_count: 1 } },
+  } satisfies NodeFactorySnapshot));
   app.get('/api/registry/nodes/:id/health', (req, res) => res.json({
     node_id: req.params.id,
     status: 'healthy',
@@ -1484,8 +1582,15 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     }]
   });
   app.get('/api/backend-instances', (req, res) => res.json(backendInstanceFixture(bodyString(req.query.profile) ?? 'fixture')));
+  app.get('/api/manager-chat/accounts', (req, res) => res.json({ accounts: backendInstanceFixture(bodyString(req.query.profile) ?? 'fixture').backend_instances
+    .filter(instance => instance.logical_backend === req.query.backend)
+    .map(instance => ({ instance: instance.backend_instance, backend: instance.logical_backend, label: instance.account_label, enabled: instance.enabled, executableReady: true, authReady: null })) }));
   app.post('/api/backend-instances/add', (req, res) => res.json(backendInstanceFixture(bodyString(req.body?.profile) ?? 'fixture')));
   app.post('/api/backend-instances/label', (req, res) => res.json(backendInstanceFixture(bodyString(req.body?.profile) ?? 'fixture')));
+  app.post('/api/backend-instances/authenticate', (_req, res) => res.status(201).json({
+    key: '0'.repeat(64),
+    repair: { ...mockRepair, backend: 'codex', instructions: 'This is sample data. No provider sign-in was started. Connect a real Parasaur node to authenticate an account.' }
+  }));
   // Enable/disable arrive as templated paths from the client; accept any
   // action token and keep the fixture enabled (stateless mock).
   app.post('/api/backend-instances/:action', (req, res) => res.json(backendInstanceFixture(bodyString(req.body?.profile) ?? 'fixture')));
@@ -1494,6 +1599,19 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
   app.post('/api/external-approvals/:action', (_req, res) => res.json([]));
   app.post('/api/route-approvals/:action', (_req, res) => res.json([]));
 
+  const saveProfileChecks = (profile: string, body: Record<string, unknown>) => {
+    const checks = { ...(state.profileChecks.get(profile) ?? { validation_commands: [], auto_fix_commands: [] }) };
+    for (const key of ['validation_commands', 'auto_fix_commands'] as const) {
+      if (Array.isArray(body[key]) && body[key].every(command => typeof command === 'string')) checks[key] = [...body[key]];
+      else if (Array.isArray(body.clear) && body.clear.includes(key)) checks[key] = [];
+    }
+    state.profileChecks.set(profile, checks);
+  };
+  app.get('/api/profiles/:name/checks', (req, res) => {
+    const profile = state.profiles.find(profile => profile.name === req.params.name);
+    if (!profile) return jsonError(res, 404, 'Profile not found', req.params.name);
+    res.json({ profile: profile.name, ...(state.profileChecks.get(profile.name) ?? { validation_commands: [], auto_fix_commands: [] }), validation_timeout_seconds: profile.validation_timeout_seconds });
+  });
   app.get('/api/profiles', (_req, res) => res.json(state.profiles.map((profile) => ({ agent_reasoning_effort: {}, ...profile }))));
   app.post('/api/profiles', (req, res) => {
     const required = ['name', 'display_name', 'repo_id', 'provider', 'repo', 'local_path', 'artifact_root'] as const;
@@ -1521,6 +1639,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       max_concurrent_per_model: {},
       chat_session_idle_days: 14
     } satisfies ProfileSummary);
+    saveProfileChecks(name, req.body ?? {});
     res.status(201).json({ success: true, message: `Profile '${name}' added` });
   });
   app.patch('/api/profiles/:name', (req, res) => {
@@ -1528,6 +1647,12 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     if (index < 0) return jsonError(res, 404, 'Profile not found', req.params.name);
     const current = state.profiles[index];
     const clear = Array.isArray(req.body?.clear) ? req.body.clear : [];
+    saveProfileChecks(req.params.name, req.body ?? {});
+    const sources = state.environmentSources.get(req.params.name) ?? { env_file_configured: false, env_file_prod_configured: false };
+    state.environmentSources.set(req.params.name, {
+      env_file_configured: bodyString(req.body?.env_file) ? true : clear.includes('env_file') ? false : sources.env_file_configured,
+      env_file_prod_configured: bodyString(req.body?.env_file_prod) ? true : clear.includes('env_file_prod') ? false : sources.env_file_prod_configured,
+    });
     state.profiles[index] = {
       ...current,
       ...(bodyString(req.body?.display_name) ? { display_name: req.body.display_name as string } : {}),
@@ -1550,6 +1675,8 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     const index = state.profiles.findIndex((profile) => profile.name === req.params.name);
     if (index < 0) return jsonError(res, 404, 'Profile not found', req.params.name);
     state.profiles.splice(index, 1);
+    state.environmentSources.delete(req.params.name);
+    state.profileChecks.delete(req.params.name);
     res.json({ success: true, message: `Profile '${req.params.name}' removed` });
   });
 
@@ -1590,7 +1717,10 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
   });
 
   app.get('/api/status', (_req, res) => {
-    if (state.scenario !== 'running-workers') return res.json(STATUS_FIXTURE);
+    const status = { ...STATUS_FIXTURE, node_id: 'mock-central', display_name: 'Mock central',
+      dispatch_backend_instances: true, backend_instances: MOCK_FACTORY_ACCOUNTS,
+      backend_configured: { ...STATUS_FIXTURE.backend_configured, codex: true } };
+    if (state.scenario !== 'running-workers') return res.json(status);
     const workers: RunningWorker[] = ['codex', 'claude'].map((backend, index) => ({
       run_id: String(1431 + index), work_id: `#${1431 + index}`, mode: 'improve',
       backend, runner: backend, backend_instance: `${backend}-account`,
@@ -1600,7 +1730,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       last_activity_at: new Date(Date.now() - (index ? 901_000 : 30_000)).toISOString(),
       stale_after_seconds: 900, state: index ? 'stale' : 'running'
     }));
-    return res.json({ ...STATUS_FIXTURE, running_workers: workers });
+    return res.json({ ...status, running_workers: workers });
   });
   app.get('/api/quota', (_req, res) => res.json(QUOTA_FIXTURE));
   app.get('/api/registry/quota', (req, res) => res.json({
@@ -1633,6 +1763,29 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
   });
   app.get('/api/usage/rollup', (req, res) => {
     res.json({ ...MOCK_USAGE_ROLLUP, profile: bodyString(req.query.profile) ?? 'fixture' } satisfies UsageRollupSummary);
+  });
+  app.get('/api/usage/report', (req, res) => {
+    const profile = bodyString(req.query.profile) ?? 'fixture';
+    const days = req.query.days === undefined ? 7 : Number(req.query.days);
+    if (!Number.isInteger(days) || days < 1 || days > 90) return res.status(400).json({ error: 'Invalid day window' });
+    const rows: RecordedUsageRow[] = MOCK_USAGE_ROLLUP.rows.map(row => {
+      const measurements = observeUsage(row);
+      for (const reading of Object.values(measurements)) {
+        reading.measured_observations *= row.turns;
+        reading.unmeasured_observations *= row.turns;
+      }
+      return { source: 'chat', profile, project_provider: null, repo: null, work_id: '#1087', backend: row.backend,
+        backend_instance: row.backend_instance, account_label: null, auth_source_label: null, quota_pool: null, node_id: 'mock-worker', requested_model: null, effective_model: row.model,
+        actual_model: null, model_provider: null, usage_classification: null, day: row.day, chat_turns: row.turns,
+        dispatch_attempts: 0, legacy_dispatches: 0, measurements };
+    });
+    rows.push({ ...rows[0], source: 'dispatch', project_provider: 'github', repo: 'fixture/mock-control-plane', node_id: null,
+      chat_turns: 0, dispatch_attempts: 1, measurements: observeUsage({ total_tokens: 400, cache_read_tokens: 80, actual_cost_usd: 0.12, estimated_cost_usd: 0.15 }) });
+    const totals = emptyUsageMeasurements();
+    for (const row of rows) addUsageMeasurements(totals, row.measurements);
+    res.json({ schema_version: 1, scope: 'recorded-ledger-and-chat', profile: bodyString(req.query.profile) ?? null,
+      since: new Date(FIXED_NOW - days * 86_400_000).toISOString(), generated_at: new Date(FIXED_NOW).toISOString(),
+      sources: { chat: { status: 'available' }, dispatch: { status: 'available' } }, rows, totals } satisfies RecordedUsageReport);
   });
   app.get('/api/manager-chat/helper-usage', (_req, res) => {
     res.json({ records: [{
@@ -1707,7 +1860,10 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
   app.put('/api/settings/notifications', (_req, res) => res.json({ saved: true }));
   app.post('/api/settings/notifications/test', (_req, res) => jsonError(res, 409, 'notifications_off', 'Turn notifications on and choose a channel first.'));
   app.get('/api/config/effective', (req, res) => {
-    res.json({ ...MOCK_PROFILE_CONFIG, profile: bodyString(req.query.profile) ?? 'fixture' } satisfies SettingsConfigProfileSummary);
+    const profile = bodyString(req.query.profile) ?? 'fixture';
+    res.json({ ...MOCK_PROFILE_CONFIG, profile, notifications: {
+      ...MOCK_PROFILE_CONFIG.notifications, ...state.environmentSources.get(profile)
+    } } satisfies SettingsConfigProfileSummary);
   });
   app.get('/api/loop/status', (_req, res) => res.json({ running: state.loopRunning, ...(state.loopRunning ? { pid: 998 } : {}) }));
   app.post('/api/dispatch', (req, res) => {
@@ -1738,7 +1894,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
   app.get('/api/settings/gateway', (_req, res) => res.json(state.gateway));
   app.post('/api/settings/gateway/bootstrap-command', (_req, res) => {
     res.set('Cache-Control', 'no-store');
-    res.json({ command: 'GAH_GATEWAY_MODE=remote GAH_GATEWAY_API_KEY=mock-only-token bash bootstrap.sh' } satisfies GatewayBootstrapCommand);
+    res.json({ command: 'PARASAUR_GATEWAY_MODE=remote PARASAUR_GATEWAY_API_KEY=mock-only-token bash bootstrap.sh' } satisfies GatewayBootstrapCommand);
   });
   app.put('/api/settings/gateway', (req, res) => {
     state.gateway = {
@@ -1998,7 +2154,8 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       profile,
       bodyString(req.body?.backend),
       bodyString(req.body?.model) ?? null,
-      `#${issue.number} ${issue.title}`
+      `#${issue.number} ${issue.title}`,
+      bodyString(req.body?.backendInstance) ?? null
     );
     const session = { ...created, branch: `gah/issue-${issue.number}` } satisfies ChatSessionSummary;
     state.sessions.set(session.id, session);
@@ -2060,7 +2217,8 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       profile,
       bodyString(req.body?.backend),
       bodyString(req.body?.model) ?? null,
-      pr
+      pr,
+      bodyString(req.body?.backendInstance) ?? null
     );
     res.status(201).json({ session: created, existing: false } satisfies ChatPrStartResult);
   });
@@ -2133,7 +2291,8 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
       bodyString(req.body?.profile) ?? 'fixture',
       bodyString(req.body?.backend),
       bodyString(req.body?.model) ?? null,
-      bodyString(req.body?.title)
+      bodyString(req.body?.title),
+      bodyString(req.body?.backendInstance) ?? null
     );
     res.status(201).json(created satisfies ChatSessionSummary);
   });
@@ -2143,6 +2302,7 @@ export function createMockControlPlane(options: MockControlPlaneOptions = {}) {
     if (!id) return jsonError(res, 400, 'Missing required field: sessionId', 'sessionId is required');
     const updated = updateSession(profile, id, {
       ...(bodyString(req.body?.backend) ? { backend: req.body.backend as string } : {}),
+      ...(typeof req.body?.backendInstance === 'string' || req.body?.backendInstance === null ? { backendInstance: req.body.backendInstance as string | null } : {}),
       ...(typeof req.body?.model === 'string' || req.body?.model === null ? { model: req.body.model as string | null } : {}),
       ...(typeof req.body?.reasoningEffort === 'string' || req.body?.reasoningEffort === null ? { reasoningEffort: req.body.reasoningEffort as string | null } : {}),
       ...(bodyString(req.body?.title) ? { title: req.body.title as string } : {})

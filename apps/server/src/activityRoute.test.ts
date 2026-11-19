@@ -14,9 +14,9 @@ test('posted worker activity is authenticated, audited, bounded, and deduplicate
   const root = mkdtempSync(join(tmpdir(), 'gah-activity-route-'));
   const saved = { ...process.env };
   process.env.COORDINATOR_TOKEN = 'activity-route-token';
-  process.env.GAH_ALLOW_INSECURE_HTTP = '1';
-  process.env.GAH_COORDINATOR_IDENTITY_PATH = join(root, 'identity.json');
-  process.env.GAH_MUTATION_STORE_PATH = join(root, 'mutations');
+  process.env.PARASAUR_ALLOW_INSECURE_HTTP = '1';
+  process.env.PARASAUR_COORDINATOR_IDENTITY_PATH = join(root, 'identity.json');
+  process.env.PARASAUR_MUTATION_STORE_PATH = join(root, 'mutations');
   resetCachedCoordinatorIdentity();
   const delivered: string[] = [];
   const feed = new ActivityFeed(null, (event) => { delivered.push(event.id); });

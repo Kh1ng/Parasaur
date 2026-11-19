@@ -36,7 +36,7 @@ fn ledger_skill_round_trip_and_legacy_defaults() {
     });
     entry.record_skills(&[resolved("review", "2.0.0")]);
     let mut json = serde_json::to_value(&entry).unwrap();
-    assert_eq!(json["schema_version"], 11);
+    assert_eq!(json["schema_version"], crate::ledger::LEDGER_SCHEMA_VERSION);
     assert_eq!(json["skills"].as_array().unwrap().len(), 2);
     assert!(!json.to_string().contains("secret instructions"));
     let loaded: LedgerEntry = serde_json::from_value(json.clone()).unwrap();

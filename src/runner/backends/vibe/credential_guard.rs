@@ -6,7 +6,7 @@ pub(crate) const SCRIPT: &str = include_str!("credential_guard.py");
 
 pub(crate) fn bound(env: &[(String, String)]) -> bool {
     env.iter()
-        .any(|(name, value)| name == "GAH_VIBE_CREDENTIAL_BOUND" && value == "1")
+        .any(|(name, value)| name == "PARASAUR_VIBE_CREDENTIAL_BOUND" && value == "1")
 }
 
 /// Use the explicitly selected launcher's Python environment, including venv

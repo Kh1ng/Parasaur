@@ -81,7 +81,7 @@ pub(super) fn for_dispatch(
     decide(
         args,
         has_issue,
-        std::env::var("GAH_ENFORCE_JOB_FILE").as_deref() == Ok("1"),
+        std::env::var("PARASAUR_ENFORCE_JOB_FILE").as_deref() == Ok("1"),
     )
 }
 

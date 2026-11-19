@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 for (const width of [320, 390]) {
   test(`mobile chat at ${width}px keeps the conversation ahead of navigation and secondary tools`, async ({ page, request }, testInfo) => {
-    const mock = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+    const mock = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
     expect((await request.post(`${mock}/api/mock/scenario`, { data: { name: 'normal' } })).ok()).toBe(true);
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/?page=chat&profile=fixture&chat=mock-session-1');
@@ -140,7 +140,7 @@ for (const width of [320, 390]) {
 }
 
 test('chat keeps the composer inside short and offline viewports', async ({ page, request }) => {
-  const mock = process.env.GAH_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
+  const mock = process.env.PARASAUR_MOCK_BASE_URL ?? 'http://127.0.0.1:3774';
   expect((await request.post(`${mock}/api/mock/scenario`, { data: { name: 'normal' } })).ok()).toBe(true);
   await page.setViewportSize({ width: 667, height: 375 });
   await page.goto('/?page=chat&profile=fixture&chat=mock-session-1');
@@ -150,8 +150,8 @@ test('chat keeps the composer inside short and offline viewports', async ({ page
   const expectComposerInsideViewport = async () => {
     await expect.poll(() => draft.evaluate((textarea) => {
       const composer = textarea.parentElement!.getBoundingClientRect();
-      return document.documentElement.scrollHeight <= window.innerHeight && composer.bottom <= window.innerHeight;
-    })).toBe(true);
+      return Math.max(document.documentElement.scrollHeight, composer.bottom) - window.innerHeight;
+    })).toBeLessThanOrEqual(0);
   };
 
   await expectComposerInsideViewport();

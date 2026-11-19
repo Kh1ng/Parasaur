@@ -8,7 +8,7 @@ use std::process::Command;
 
 /// Set on the re-run by the newly installed binary, which skips the install
 /// it just inherited and never re-runs itself again.
-pub(super) const ENV: &str = "GAH_UPDATE_REEXEC";
+pub(super) const ENV: &str = "PARASAUR_UPDATE_REEXEC";
 
 /// Run the same update with `binary` and return its result. Everything after
 /// the install (unit rendering, installers) is code the pull may have

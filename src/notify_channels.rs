@@ -94,9 +94,9 @@ pub fn validate_module(defaults: &Defaults) -> Result<()> {
 }
 
 /// The private credential file `gah setup` and Settings write, mode 0600.
-/// `GAH_NOTIFY_CREDENTIALS_FILE` moves it (tests, unusual layouts).
+/// `PARASAUR_NOTIFY_CREDENTIALS_FILE` moves it (tests, unusual layouts).
 pub fn credential_file() -> PathBuf {
-    std::env::var_os("GAH_NOTIFY_CREDENTIALS_FILE")
+    std::env::var_os("PARASAUR_NOTIFY_CREDENTIALS_FILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| crate::setup::host::home().join(".config/gah/notify.env"))
 }
@@ -424,7 +424,10 @@ pub(crate) mod tests {
         let all: Vec<(&str, Option<&str>)> = vars
             .iter()
             .copied()
-            .chain([("GAH_NOTIFY_CREDENTIALS_FILE", Some(file_value.as_str()))])
+            .chain([(
+                "PARASAUR_NOTIFY_CREDENTIALS_FILE",
+                Some(file_value.as_str()),
+            )])
             .collect();
         let previous: Vec<(&str, Option<String>)> = all
             .iter()

@@ -24,7 +24,7 @@ python3 scripts/setup-cli-router.py --service --register-profile gah \
 
 The importer verifies each refresh credential with the upstream OAuth client. It copies credentials into the private router directory. It preserves the original AGY logins. Existing router credentials are retained on repeated installation.
 
-The default directory is `~/.config/gah`. It contains private connection keys, OAuth credentials, and runner state. Keep this directory outside source control. Use `--directory` to choose another location. If that differs from the default, set `GAH_CLI_ROUTER_SETTINGS_PATH` for the Parasaur server.
+The default directory is `~/.config/gah`. It contains private connection keys, OAuth credentials, and runner state. Keep this directory outside source control. Use `--directory` to choose another location. If that differs from the default, set `PARASAUR_CLI_ROUTER_SETTINGS_PATH` for the Parasaur server.
 
 The proxy listens on `127.0.0.1:8317`. Parasaur accesses its management API locally. For additional accounts, use the upstream OAuth console through an SSH tunnel:
 

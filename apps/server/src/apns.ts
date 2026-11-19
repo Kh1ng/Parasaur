@@ -85,7 +85,7 @@ export class ApnsNotifications {
 
   constructor(
     private readonly config: ApnsConfig,
-    private readonly devicesPath = process.env.GAH_APNS_DEVICES_PATH ?? resolve(process.cwd(), 'config/push/apns-devices.json'),
+    private readonly devicesPath = process.env.PARASAUR_APNS_DEVICES_PATH ?? resolve(process.cwd(), 'config/push/apns-devices.json'),
     private readonly transport: ApnsTransport | undefined = undefined,
     private readonly now: () => number = Date.now,
     private readonly sessionFactory: ApnsSessionFactory = connect
@@ -311,18 +311,18 @@ export class ApnsNotifications {
 }
 
 export function apnsFromEnvironment(): ApnsNotifications | undefined {
-  const keyPath = process.env.GAH_APNS_KEY_PATH;
-  const keyId = process.env.GAH_APNS_KEY_ID;
-  const teamId = process.env.GAH_APNS_TEAM_ID;
+  const keyPath = process.env.PARASAUR_APNS_KEY_PATH;
+  const keyId = process.env.PARASAUR_APNS_KEY_ID;
+  const teamId = process.env.PARASAUR_APNS_TEAM_ID;
   if (!keyPath || !keyId || !teamId) {
-    console.log('APNs disabled: set GAH_APNS_KEY_PATH, GAH_APNS_KEY_ID, and GAH_APNS_TEAM_ID to enable it.');
+    console.log('APNs disabled: set PARASAUR_APNS_KEY_PATH, PARASAUR_APNS_KEY_ID, and PARASAUR_APNS_TEAM_ID to enable it.');
     return undefined;
   }
   return new ApnsNotifications({
     keyPath,
     keyId,
     teamId,
-    bundleId: process.env.GAH_APNS_BUNDLE_ID ?? 'com.kh1ng.gah.controller',
-    environment: process.env.GAH_APNS_ENVIRONMENT === 'production' ? 'production' : 'sandbox'
+    bundleId: process.env.PARASAUR_APNS_BUNDLE_ID ?? 'com.kh1ng.gah.controller',
+    environment: process.env.PARASAUR_APNS_ENVIRONMENT === 'production' ? 'production' : 'sandbox'
   });
 }

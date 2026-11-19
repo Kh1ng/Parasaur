@@ -196,10 +196,10 @@ pub fn run_loop(args: LoopArgs) -> Result<()> {
         // claim-eligible) before starting work. Advisory only -- a failed
         // registration warns loudly but never blocks startup. Transport mode
         // and secret reference are env-driven like the rest of the fleet
-        // config (COORDINATOR_TOKEN, GAH_COORDINATOR_INSECURE_TLS).
-        let transport_mode = std::env::var("GAH_REGISTRY_TRANSPORT_MODE")
+        // config (COORDINATOR_TOKEN, PARASAUR_COORDINATOR_INSECURE_TLS).
+        let transport_mode = std::env::var("PARASAUR_REGISTRY_TRANSPORT_MODE")
             .unwrap_or_else(|_| "trusted_lan".to_string());
-        let secret_ref = std::env::var("GAH_REGISTRY_SECRET_REF")
+        let secret_ref = std::env::var("PARASAUR_REGISTRY_SECRET_REF")
             .unwrap_or_else(|_| "env:COORDINATOR_TOKEN".to_string());
         crate::node_register::register_advisory(
             central_url,

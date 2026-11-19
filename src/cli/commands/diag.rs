@@ -18,7 +18,7 @@ enum Action {
         /// Output file (default: ./parasaur-diagnostics-<time>.json.gz).
         #[arg(long)]
         out: Option<String>,
-        /// Server to read from (default: GAH_SERVER_URL or http://127.0.0.1:3773).
+        /// Server to read from (default: PARASAUR_SERVER_URL or http://127.0.0.1:3773).
         #[arg(long)]
         server: Option<String>,
     },
@@ -27,9 +27,9 @@ enum Action {
 pub fn run(args: DiagArgs) -> Result<()> {
     let Action::Export { out, server } = args.action;
     let server = server
-        .or_else(|| std::env::var("GAH_SERVER_URL").ok())
+        .or_else(|| std::env::var("PARASAUR_SERVER_URL").ok())
         .unwrap_or_else(|| crate::mcp::DEFAULT_SERVER_URL.to_string());
-    let token = std::env::var("GAH_SERVER_TOKEN").ok();
+    let token = std::env::var("PARASAUR_SERVER_TOKEN").ok();
     let url = format!("{}/api/diagnostics/export", server.trim_end_matches('/'));
     let response = crate::curl_http::request("GET", &url, None, token.as_deref(), 60)
         .with_context(|| format!("requesting {url}; is the Parasaur server running?"))?;

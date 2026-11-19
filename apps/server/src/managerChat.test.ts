@@ -122,6 +122,9 @@ test('ACP usage is attributed to the turn with a session-cost delta', () => {
     input_tokens: 10,
     output_tokens: 5,
     total_tokens: 15,
+    cache_read_tokens: null,
+    cache_write_tokens: null,
+    reasoning_tokens: null,
     estimated_cost_usd: 0.25,
     duration_seconds: 2.5
   });
@@ -138,10 +141,34 @@ test('ACP cumulative counters are differenced without treating context occupancy
     input_tokens: 15,
     output_tokens: 7,
     total_tokens: 22,
+    cache_read_tokens: null,
+    cache_write_tokens: null,
+    reasoning_tokens: null,
     estimated_cost_usd: 0.25,
     duration_seconds: 1
   });
   assert.equal(toChatUsage(undefined, null, { used: 90, size: 100 }, 0, 1000)?.total_tokens, null);
+});
+
+test('ACP retains cache and reasoning deltas without rewriting the reported total', () => {
+  const before = { inputTokens: 100, outputTokens: 20, totalTokens: 500, cachedReadTokens: 300, cachedWriteTokens: 40, thoughtTokens: 10 };
+  const after = { inputTokens: 120, outputTokens: 25, totalTokens: 700, cachedReadTokens: 450, cachedWriteTokens: 40, thoughtTokens: 12 };
+  assert.deepEqual(toChatUsage(after, before, null, 0, 1000), {
+    input_tokens: 20, output_tokens: 5, total_tokens: 200,
+    cache_read_tokens: 150, cache_write_tokens: 0, reasoning_tokens: 2,
+    estimated_cost_usd: null, duration_seconds: 1
+  });
+  const first = toChatUsage(after, null, null, 0, 1000)!;
+  assert.equal(first.cache_read_tokens, 450);
+  assert.equal(first.reasoning_tokens, 12);
+  const missing = toChatUsage(after, { inputTokens: 100, outputTokens: 20, totalTokens: 500 }, null, 0, 1000)!;
+  assert.equal(missing.cache_read_tokens, null);
+  assert.equal(missing.reasoning_tokens, null);
+  assert.equal(toChatUsage({ ...after, cachedReadTokens: null }, before, null, 0, 1000)?.cache_read_tokens, null);
+  assert.equal(toChatUsage({ ...after, cachedReadTokens: NaN }, before, null, 0, 1000)?.cache_read_tokens, null);
+  assert.equal(toChatUsage(before, after, null, 0, 1000)?.cache_read_tokens, 300);
+  assert.equal(toChatUsage(after, undefined, null, 0, 1000)?.total_tokens, null);
+  assert.equal(toChatUsage(after, undefined, null, 0, 1000)?.cache_read_tokens, null);
 });
 
 test('ACP model config drives the existing model picker', () => {
@@ -223,8 +250,8 @@ test('normalizeRemoteUrl strips trailing slashes and is idempotent', () => {
 
 test('model override persists per profile+backend and survives a fresh read', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-manager-chat-settings-'));
-  const prevPath = process.env.GAH_MANAGER_CHAT_SETTINGS_PATH;
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(dir, 'settings.json');
+  const prevPath = process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH;
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(dir, 'settings.json');
   try {
     assert.equal(modelOverrideForProfile('gah', 'hermes'), undefined);
     setModelOverrideForProfile('gah', 'hermes', 'local-qwen');
@@ -235,15 +262,15 @@ test('model override persists per profile+backend and survives a fresh read', ()
     assert.equal(modelOverrideForProfile('gah', 'hermes'), 'deepseek/deepseek-v4-flash-0731');
   } finally {
     rmSync(dir, { recursive: true, force: true });
-    if (prevPath === undefined) delete process.env.GAH_MANAGER_CHAT_SETTINGS_PATH;
-    else process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = prevPath;
+    if (prevPath === undefined) delete process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH;
+    else process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = prevPath;
   }
 });
 
 test('reasoning effort override persists per profile+backend', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-manager-chat-reasoning-'));
-  const prevPath = process.env.GAH_MANAGER_CHAT_SETTINGS_PATH;
-  process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = join(dir, 'settings.json');
+  const prevPath = process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH;
+  process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(dir, 'settings.json');
   try {
     assert.equal(reasoningEffortOverrideForProfile('gah', 'codex'), undefined);
     setReasoningEffortOverrideForProfile('gah', 'codex', 'xhigh');
@@ -252,8 +279,8 @@ test('reasoning effort override persists per profile+backend', () => {
     assert.equal(reasoningEffortOverrideForProfile('other', 'codex'), undefined);
   } finally {
     rmSync(dir, { recursive: true, force: true });
-    if (prevPath === undefined) delete process.env.GAH_MANAGER_CHAT_SETTINGS_PATH;
-    else process.env.GAH_MANAGER_CHAT_SETTINGS_PATH = prevPath;
+    if (prevPath === undefined) delete process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH;
+    else process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = prevPath;
   }
 });
 

@@ -23,7 +23,7 @@ export function getCoordinatorIdentity(
   configPath?: string,
   port: number = 3773
 ): CoordinatorIdentity {
-  const identityPath = configPath || process.env.GAH_COORDINATOR_IDENTITY_PATH || resolve(process.cwd(), 'config/coordinator-identity.json');
+  const identityPath = configPath || process.env.PARASAUR_COORDINATOR_IDENTITY_PATH || resolve(process.cwd(), 'config/coordinator-identity.json');
   const cacheKey = `${identityPath}::${port}`;
   if (cachedIdentity?.cacheKey === cacheKey) return cachedIdentity.identity;
   

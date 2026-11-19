@@ -176,7 +176,7 @@ default_target_branch = "main"
     std::fs::write(&claims, &before).unwrap();
 
     let output = support::gah_command()
-        .env("GAH_CLAIM_STATE_PATH", &claims)
+        .env("PARASAUR_CLAIM_STATE_PATH", &claims)
         .args([
             "dispatch",
             "--profile",

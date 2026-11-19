@@ -146,11 +146,11 @@ fn read_request(socket: &mut TcpStream) -> Option<Recorded> {
 fn server_command(envs: &[(&str, &str)]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_gah-mcp-server"));
     for name in [
-        "GAH_SERVER_URL",
-        "GAH_SERVER_TOKEN",
-        "GAH_PROFILE",
-        "GAH_MCP_HOST",
-        "GAH_MCP_PORT",
+        "PARASAUR_SERVER_URL",
+        "PARASAUR_SERVER_TOKEN",
+        "PARASAUR_PROFILE",
+        "PARASAUR_MCP_HOST",
+        "PARASAUR_MCP_PORT",
     ] {
         command.env_remove(name);
     }
@@ -259,7 +259,7 @@ fn manifest_request_schemas() -> Value {
 #[test]
 fn lists_the_same_24_tools_with_their_titles_and_input_schemas() {
     let control_plane = FakeControlPlane::start();
-    let mut client = StdioClient::connect(&[("GAH_SERVER_URL", &control_plane.url)]);
+    let mut client = StdioClient::connect(&[("PARASAUR_SERVER_URL", &control_plane.url)]);
     let listed = client.request("tools/list", json!({}));
     let tools = listed["tools"].as_array().unwrap();
     let names: Vec<&str> = tools
@@ -321,7 +321,7 @@ fn lists_the_same_24_tools_with_their_titles_and_input_schemas() {
     // HTTP-only tools keep their hand-written schemas.
     let profile = json!({
         "type": "string",
-        "description": "GAH profile name; defaults to GAH_PROFILE / \"gah\"",
+        "description": "GAH profile name; defaults to PARASAUR_PROFILE / \"gah\"",
     });
     assert_eq!(
         tool("gah_usage_rollup")["inputSchema"],
@@ -406,9 +406,9 @@ fn lists_the_same_24_tools_with_their_titles_and_input_schemas() {
 fn every_tool_forwards_its_exact_http_request() {
     let control_plane = FakeControlPlane::start();
     let mut client = StdioClient::connect(&[
-        ("GAH_SERVER_URL", &format!("{}/", control_plane.url)),
-        ("GAH_SERVER_TOKEN", "test-token"),
-        ("GAH_PROFILE", "fixture"),
+        ("PARASAUR_SERVER_URL", &format!("{}/", control_plane.url)),
+        ("PARASAUR_SERVER_TOKEN", "test-token"),
+        ("PARASAUR_PROFILE", "fixture"),
     ]);
     let scope = json!({
         "profile": "real", "work_id": "#653", "backend": "opencode",
@@ -703,7 +703,7 @@ fn every_tool_forwards_its_exact_http_request() {
 #[test]
 fn defaults_to_the_gah_profile_and_sends_no_credentials_without_a_token() {
     let control_plane = FakeControlPlane::start();
-    let mut client = StdioClient::connect(&[("GAH_SERVER_URL", &control_plane.url)]);
+    let mut client = StdioClient::connect(&[("PARASAUR_SERVER_URL", &control_plane.url)]);
     let result = client.call("gah_status", json!({}));
     assert!(!is_error(&result), "{result}");
     let request = control_plane.last();
@@ -714,7 +714,7 @@ fn defaults_to_the_gah_profile_and_sends_no_credentials_without_a_token() {
 #[test]
 fn success_text_is_the_indented_response_in_the_servers_key_order() {
     let control_plane = FakeControlPlane::start();
-    let mut client = StdioClient::connect(&[("GAH_SERVER_URL", &control_plane.url)]);
+    let mut client = StdioClient::connect(&[("PARASAUR_SERVER_URL", &control_plane.url)]);
     control_plane.reply_with(200, r##"[{"work_id":"#653","approved":false}]"##);
     let result = client.call("gah_route_approvals", json!({ "profile": "real" }));
     assert_eq!(
@@ -731,7 +731,7 @@ fn success_text_is_the_indented_response_in_the_servers_key_order() {
 #[test]
 fn failures_surface_the_servers_message_and_status_without_a_retry() {
     let control_plane = FakeControlPlane::start();
-    let mut client = StdioClient::connect(&[("GAH_SERVER_URL", &control_plane.url)]);
+    let mut client = StdioClient::connect(&[("PARASAUR_SERVER_URL", &control_plane.url)]);
 
     control_plane.reply_with(
         409,
@@ -770,7 +770,7 @@ fn failures_surface_the_servers_message_and_status_without_a_retry() {
 #[test]
 fn rejected_arguments_never_reach_the_control_plane() {
     let control_plane = FakeControlPlane::start();
-    let mut client = StdioClient::connect(&[("GAH_SERVER_URL", &control_plane.url)]);
+    let mut client = StdioClient::connect(&[("PARASAUR_SERVER_URL", &control_plane.url)]);
     for (name, arguments) in [
         ("gah_hold_set", json!({ "profile": "gah" })),
         ("gah_hold_set", json!({ "work_id": 532 })),
@@ -794,7 +794,7 @@ fn an_unreachable_control_plane_is_a_tool_error() {
     let closed = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", closed.local_addr().unwrap());
     drop(closed);
-    let mut client = StdioClient::connect(&[("GAH_SERVER_URL", &url)]);
+    let mut client = StdioClient::connect(&[("PARASAUR_SERVER_URL", &url)]);
     let result = client.call("gah_info", json!({}));
     assert!(is_error(&result), "{result}");
     assert!(!text(&result).is_empty());
@@ -913,9 +913,9 @@ impl HttpReply {
 fn streamable_http_serves_tools_to_an_authenticated_client() {
     let control_plane = FakeControlPlane::start();
     let server = HttpServer::start(&[
-        ("GAH_SERVER_URL", &control_plane.url),
-        ("GAH_SERVER_TOKEN", "listener-token"),
-        ("GAH_PROFILE", "fixture"),
+        ("PARASAUR_SERVER_URL", &control_plane.url),
+        ("PARASAUR_SERVER_TOKEN", "listener-token"),
+        ("PARASAUR_PROFILE", "fixture"),
     ]);
     let auth = ("Authorization", "Bearer listener-token");
 
@@ -980,8 +980,8 @@ fn streamable_http_serves_tools_to_an_authenticated_client() {
 fn streamable_http_rejects_requests_without_the_bearer_token() {
     let control_plane = FakeControlPlane::start();
     let server = HttpServer::start(&[
-        ("GAH_SERVER_URL", &control_plane.url),
-        ("GAH_SERVER_TOKEN", "listener-token"),
+        ("PARASAUR_SERVER_URL", &control_plane.url),
+        ("PARASAUR_SERVER_TOKEN", "listener-token"),
     ]);
     let call = json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -1015,9 +1015,9 @@ fn the_http_listener_refuses_to_start_without_a_token_or_with_a_non_literal_host
         .output()
         .unwrap();
     assert!(!without_token.status.success());
-    assert!(String::from_utf8_lossy(&without_token.stderr).contains("GAH_SERVER_TOKEN"));
+    assert!(String::from_utf8_lossy(&without_token.stderr).contains("PARASAUR_SERVER_TOKEN"));
 
-    let named_host = server_command(&[("GAH_SERVER_TOKEN", "listener-token")])
+    let named_host = server_command(&[("PARASAUR_SERVER_TOKEN", "listener-token")])
         .args(["--http", "--port", "0", "--host", "localhost"])
         .output()
         .unwrap();
@@ -1031,7 +1031,7 @@ fn outbound_requests_ignore_curl_user_configuration() {
     let home = tempfile::tempdir().unwrap();
     std::fs::write(home.path().join(".curlrc"), "retry = 3\nretry-all-errors").unwrap();
     let mut client = StdioClient::connect(&[
-        ("GAH_SERVER_URL", &control_plane.url),
+        ("PARASAUR_SERVER_URL", &control_plane.url),
         ("HOME", home.path().to_str().unwrap()),
         ("CURL_HOME", home.path().to_str().unwrap()),
     ]);

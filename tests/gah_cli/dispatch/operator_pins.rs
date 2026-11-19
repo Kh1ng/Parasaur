@@ -1,6 +1,91 @@
 use crate::*;
 
 #[test]
+fn exact_account_pin_preserves_executable_state_and_ledger_across_retry() {
+    let tmp = test_tempdir();
+    let (_repo, home, cfg) = setup_fix_dispatch_repo(
+        &tmp,
+        "validation_commands = [\"grep -q '^done$' marker.txt\"]\n",
+    );
+    let bins = tmp.path().join("bin");
+    fs::create_dir_all(&bins).unwrap();
+    let state = tmp.path().join("work-state");
+    fs::create_dir_all(state.join(".claude")).unwrap();
+    let count = tmp.path().join("work-count");
+    let wrong = tmp.path().join("wrong-account");
+    let observed_state = tmp.path().join("observed-state");
+    let ledger = tmp.path().join("ledger.jsonl");
+    make_fake_bin_with_body(
+        &bins,
+        "claude",
+        &format!("#!/bin/sh\ntouch '{}'\nexit 1\n", wrong.display()),
+    );
+    make_fake_bin_with_body(&bins, "claude-work", &format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$CLAUDE_CONFIG_DIR\" >> '{}'\nn=$(cat '{}' 2>/dev/null || echo 0)\nn=$((n+1))\necho \"$n\" > '{}'\nif [ \"$n\" -eq 1 ]; then echo partial > marker.txt; else echo done > marker.txt; fi\n",
+        observed_state.display(), count.display(), count.display()));
+    make_fake_bin_with_body(&bins, "gh", "#!/bin/sh\nif [ \"$1 $2\" = 'pr create' ]; then echo 'https://github.com/owner/real/pull/1'; fi\nexit 0\n");
+    let config = format!(
+        "{}\n[profiles.real.routing.backend_instances.personal]\nrunner_kind = 'claude'\nlogical_backend = 'claude'\nexecutable = '{}'\n\n[profiles.real.routing.backend_instances.work]\nrunner_kind = 'claude'\nlogical_backend = 'claude'\nexecutable = '{}'\nstate_root = '{}'\naccount_label = 'work-login'\nquota_pool = 'work-pool'\n",
+        fs::read_to_string(&cfg).unwrap(), bins.join("claude").display(), bins.join("claude-work").display(), state.display());
+    fs::write(&cfg, &config).unwrap();
+    bin()
+        .args([
+            "dispatch",
+            "--profile",
+            "real",
+            "--mode",
+            "fix",
+            "--backend",
+            "claude",
+            "--backend-instance",
+            "work",
+            "--config-path",
+            cfg.to_str().unwrap(),
+            "--skip-validation-gate",
+            "--target",
+            "fix the marker file",
+            "--retries",
+            "1",
+            "--allow-unknown-red-baseline",
+        ])
+        .env("PATH", prepend_path(&bins))
+        .env("HOME", &home)
+        .env("GITHUB_TOKEN", "token")
+        .env("PARASAUR_LEDGER_PATH", &ledger)
+        .assert()
+        .success();
+    assert!(
+        !wrong.exists(),
+        "selected account must not launch the default or sibling executable"
+    );
+    assert_eq!(fs::read_to_string(count).unwrap().trim(), "2");
+    assert_eq!(
+        fs::read_to_string(observed_state)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        vec![state.join(".claude").to_str().unwrap(); 2]
+    );
+    assert_eq!(
+        fs::read_to_string(&cfg).unwrap(),
+        config,
+        "dispatch must not rewrite provider configuration"
+    );
+    let entry: Value =
+        serde_json::from_str(fs::read_to_string(ledger).unwrap().lines().next().unwrap()).unwrap();
+    assert_eq!(entry["usage"]["backend_instance"], "work");
+    assert_eq!(entry["usage"]["quota_pool"], "work-pool");
+    let routing = entry["attempt_routing"]
+        .as_array()
+        .expect("per-attempt account identity");
+    assert_eq!(routing.len(), 2);
+    for attempt in routing {
+        assert_eq!(attempt["backend_instance"], "work");
+        assert_eq!(attempt["identity"]["account_label"], "work-login");
+    }
+}
+
+#[test]
 fn explicit_backend_unavailable_never_launches_fallback() {
     use git_agent_harness::availability::{record_unavailable, Reason, Source};
     for mode in ["review", "improve"] {
@@ -58,7 +143,7 @@ fn explicit_backend_unavailable_never_launches_fallback() {
                 cfg.to_str().unwrap(),
             ])
             .env("PATH", prepend_path(&fake_bin))
-            .env("GAH_AVAILABILITY_PATH", &state)
+            .env("PARASAUR_AVAILABILITY_PATH", &state)
             .assert()
             .failure()
             .stderr(predicate::str::contains(
@@ -138,7 +223,7 @@ fn explicit_backend_pin_survives_validation_retry() {
         .env("PATH", prepend_path(&fake_bin))
         .env("HOME", &home)
         .env("GITHUB_TOKEN", "token")
-        .env("GAH_LEDGER_PATH", &ledger_path)
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
         .assert()
         .success();
 
