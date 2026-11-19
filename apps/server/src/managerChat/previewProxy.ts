@@ -31,6 +31,7 @@
 
 import http from 'node:http';
 import net from 'node:net';
+import type { Duplex } from 'node:stream';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { detectTailscaleIPv4 } from '../tailscaleDetect.js';
 import { isIP } from 'node:net';
@@ -51,6 +52,7 @@ export interface PreviewInfo {
 
 interface PreviewEntry extends PreviewInfo {
   server: http.Server;
+  upgradedSockets: Set<Duplex>;
   /** Access secret for this listener; stable across re-points. */
   secret: string;
   /** Cookie value derived from the secret, so the cookie never stores it. */
@@ -362,6 +364,7 @@ class PreviewProxy {
       listenPort: 0,
       url: '',
       server: undefined as unknown as http.Server,
+      upgradedSockets: new Set<Duplex>(),
       secret: randomBytes(32).toString('base64url'),
       cookieToken: ''
     } as PreviewEntry;
@@ -400,6 +403,8 @@ class PreviewProxy {
       // sockets so a closed preview actually releases its port.
       entry.server.closeAllConnections?.();
       entry.server.closeIdleConnections?.();
+      // Node's HTTP shutdown methods exclude upgraded connections (e.g. Vite HMR).
+      for (const socket of entry.upgradedSockets) socket.destroy();
     });
   }
 
@@ -494,6 +499,12 @@ class PreviewProxy {
         socket.pipe(upstream);
         upstream.pipe(socket);
       });
+      entry.upgradedSockets.add(socket);
+      socket.once('close', () => {
+        entry.upgradedSockets.delete(socket);
+        upstream.destroy();
+      });
+      upstream.once('close', () => socket.destroy());
       upstream.on('error', () => socket.destroy());
       socket.on('error', () => upstream.destroy());
     });
