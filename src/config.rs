@@ -329,6 +329,9 @@ pub struct Profile {
     /// Example: ["cargo test --quiet", "cargo clippy -- -D warnings"]
     #[serde(default)]
     pub validation_commands: Vec<String>,
+    /// Require passing validation before publishing changes from this profile.
+    #[serde(default)]
+    pub validation_required: bool,
     /// Best-effort mechanical fixups run before validation on every attempt.
     /// Example: ["cargo fmt"].
     #[serde(default)]

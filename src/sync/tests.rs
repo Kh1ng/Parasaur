@@ -608,6 +608,7 @@ fn ledger_entry(
         env_file: None,
         env_file_prod: None,
         validation_commands: vec![],
+        validation_required: false,
         auto_fix_commands: vec![],
         test_file_patterns: vec![],
         known_baseline_failure_markers: vec![],

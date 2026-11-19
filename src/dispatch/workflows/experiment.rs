@@ -290,6 +290,38 @@ pub(crate) fn experiment(
         return Ok(());
     }
 
+    if profile.validation_required {
+        let validation = super::super::publish::require_validation_commands(profile, &[], ledger)
+            .and_then(|()| {
+                crate::validation_runner::validate(
+                    &profile.validation_commands,
+                    &wt,
+                    &cargo_target.environment(),
+                    std::time::Duration::from_secs(profile.validation_timeout_seconds()),
+                )
+                .map_err(|error| {
+                    ledger.validation_result = Some("failed".into());
+                    ledger.set_failure(
+                        crate::ledger::FailureClass::ValidationFailure,
+                        crate::ledger::FailureStage::PostValidation,
+                    );
+                    anyhow::anyhow!(
+                        "Experiment validation failed: {}",
+                        utf8_safe_prefix(&format!("{error:#}"), 4000)
+                    )
+                })
+            });
+        if let Err(error) = validation {
+            worktree::preserve_wip(
+                &wt,
+                &profile.default_target_branch,
+                "gah: experiment awaiting validation",
+            )?;
+            worktree::cleanup(&wt, repo);
+            return Err(error);
+        }
+        ledger.validation_result = Some("passed".into());
+    }
     println!("Changes detected. Committing and pushing...");
     let mut commit_msg = format!("gah: experiment for {}", profile.repo_id);
     if !backend_summary.is_empty() {

@@ -97,6 +97,21 @@ pub(crate) fn improve(
     }
 
     let job_contract = job_contract::for_dispatch(args, issue_details.is_some())?;
+    let required =
+        profile.validation_required && super::super::publish::publishing_allows_publish(profile);
+    super::super::publish::require_validation_commands(
+        profile,
+        job_contract
+            .as_ref()
+            .map_or(&[][..], |job| job.commands.as_slice()),
+        ledger,
+    )?;
+    let allow_draft_fail = args.allow_draft_fail && !required;
+    let failure_hint = if required {
+        "This profile requires passing validation."
+    } else {
+        "Use --allow-draft-fail to push anyway."
+    };
     let ticket_meta = if let Some(ref issue) = issue_details {
         Some(parse_ticket_metadata_from_issue(issue))
     } else {
@@ -1108,6 +1123,7 @@ pub(crate) fn improve(
             }
             Err((e, exit_code)) => {
                 validation_failed = true;
+                ledger.validation_result = Some("failed".into());
                 let failure_output = format!("{:#}", e);
                 let failure_path = attempt_session.join("validation-failure.txt");
                 fs::write(&failure_path, &failure_output)?;
@@ -1338,7 +1354,7 @@ pub(crate) fn improve(
                             route.effective_model.as_deref(),
                         )?;
                     }
-                } else if attempt + 1 < max_attempts && !args.allow_draft_fail {
+                } else if attempt + 1 < max_attempts && !allow_draft_fail {
                     let Some(reason) = validation_failure_no_progress_reason(failure_progress)
                     else {
                         worktree::preserve_wip(
@@ -1348,7 +1364,7 @@ pub(crate) fn improve(
                         )?;
                         worktree::cleanup(&wt, repo);
                         anyhow::bail!(
-                            "validation failed after {} attempt(s). Use --allow-draft-fail to push anyway.\n\n{}",
+                            "validation failed after {} attempt(s). {failure_hint}\n\n{}",
                             max_attempts,
                             utf8_safe_prefix(&failure_output, 4_000),
                         );
@@ -1398,7 +1414,7 @@ pub(crate) fn improve(
                         attempt + 1,
                         utf8_safe_prefix(&failure_output, 4_000),
                     );
-                } else if args.allow_draft_fail {
+                } else if allow_draft_fail {
                     println!(
                         "Validation still failing; --allow-draft-fail set — pushing as draft."
                     );
@@ -1450,7 +1466,7 @@ pub(crate) fn improve(
                     )?;
                     worktree::cleanup(&wt, repo);
                     anyhow::bail!(
-                        "validation failed after {} attempt(s). Use --allow-draft-fail to push anyway.\n\n{}",
+                        "validation failed after {} attempt(s). {failure_hint}\n\n{}",
                         max_attempts,
                         utf8_safe_prefix(&failure_output, 4_000),
                     );

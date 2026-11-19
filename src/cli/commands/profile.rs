@@ -33,6 +33,7 @@ pub fn run(command: ProfileCommands) -> Result<()> {
                         "artifact_root": p.artifact_root, "default_target_branch": p.default_target_branch,
                         "validation_commands": p.validation_commands, "auto_fix_commands": p.auto_fix_commands,
                         "validation_timeout_seconds": p.validation_timeout_seconds(),
+                        "validation_required": p.validation_required,
                     })
                 );
                 return Ok(());
@@ -60,6 +61,7 @@ pub fn run(command: ProfileCommands) -> Result<()> {
             if !p.claude_args.is_empty() {
                 println!("claude_args:           {:?}", p.claude_args);
             }
+            println!("validation_required:   {}", p.validation_required);
             if !p.validation_commands.is_empty() {
                 println!("validation_commands:");
                 for cmd in &p.validation_commands {
@@ -100,6 +102,7 @@ pub fn run(command: ProfileCommands) -> Result<()> {
             policy_path,
             env_file,
             env_file_prod,
+            validation_required,
             mut validation_commands,
             validation_command,
             mut auto_fix_commands,
@@ -164,6 +167,7 @@ pub fn run(command: ProfileCommands) -> Result<()> {
                 env_file,
                 env_file_prod,
                 validation_commands,
+                validation_required: validation_required.unwrap_or(false),
                 auto_fix_commands,
                 test_file_patterns: vec![],
                 known_baseline_failure_markers: vec![],
@@ -213,6 +217,7 @@ pub fn run(command: ProfileCommands) -> Result<()> {
             policy_path,
             env_file,
             env_file_prod,
+            validation_required,
             mut validation_commands,
             validation_command,
             mut auto_fix_commands,
@@ -403,6 +408,9 @@ pub fn run(command: ProfileCommands) -> Result<()> {
                 existing.env_file_prod = None;
             }
 
+            if let Some(required) = validation_required {
+                existing.validation_required = required;
+            }
             if !validation_commands.is_empty() {
                 existing.validation_commands = validation_commands;
             } else if should_clear("validation_commands", &clear) {

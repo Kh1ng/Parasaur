@@ -78,7 +78,9 @@ fn assert_profile_fields(value: &Value) -> Result<()> {
             .as_object()
             .context("Profile is not a policy object")?
             .keys()
-            .all(|key| FIELDS.contains(&key.as_str()) || LOCAL_FIELDS.contains(&key.as_str())),
+            .all(|key| key == "validation_required"
+                || FIELDS.contains(&key.as_str())
+                || LOCAL_FIELDS.contains(&key.as_str())),
         "Profile schema changed; classify new fields before native policy transfer"
     );
     Ok(())
@@ -87,6 +89,9 @@ fn assert_profile_fields(value: &Value) -> Result<()> {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PortablePolicy {
+    // Older workers reject this envelope field when strict validation is requested.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub validation_required: bool,
     pub fields: Map<String, Value>,
     pub runtime_rules: BTreeMap<String, String>,
     pub context: crate::context::ContextConfig,
@@ -159,6 +164,7 @@ pub(super) fn prepare(cfg: &GahConfig, profile_name: &str) -> Result<PortablePol
     let mut context = cfg.context.clone();
     context.profiles.retain(|key, _| key == profile_name);
     let result = PortablePolicy {
+        validation_required: profile.validation_required,
         fields,
         runtime_rules: runtime_rules(&source)?,
         context,
@@ -284,6 +290,7 @@ pub(super) fn apply(
             }
         };
     }
+    profile.validation_required = policy.validation_required;
     profile.notify_command = None;
     profile.manager_wake_autonomy = crate::config::WakeAutonomy::Off;
     profile.policy_path = None; // The verified repository policy is installed by the context loader.
