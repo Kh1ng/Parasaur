@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { createServer as createTcpServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +12,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import type { ClientMessage, ServerMessage } from '@git-agent-harness/contracts';
 import { createWebSocketHandler } from './wsServer.js';
 import { previewProxy } from './managerChat/previewProxy.js';
+import { createServer } from './server.js';
 import { delayPermissionWrite } from './permissionWriteHold.js';
 
 const fixtures = resolve(dirname(fileURLToPath(import.meta.url)), '../tests/fixtures');
@@ -645,7 +646,7 @@ test('tool calls stream as structured events and permissions round-trip through 
 /** WP3: a dev server started by the agent in the session worktree is
  * auto-detected from tool output, pushed live, and proxied through a
  * dedicated port (Host rewritten to localhost). */
-test('a session preview auto-detects the dev-server port and proxies it', { timeout: 30_000 }, async () => {
+test('a session preview auto-detects its server and releases live connections on archive', { timeout: 30_000 }, async () => {
   const stateDir = mkdtempSync(join(tmpdir(), 'gah-chat-preview-e2e-'));
 
   const checkout = join(stateDir, 'checkout');
@@ -697,12 +698,13 @@ test('a session preview auto-detects the dev-server port and proxies it', { time
   process.env.PARASAUR_MANAGER_CHAT_SETTINGS_PATH = join(stateDir, 'manager-chat.json');
   process.env.TDAI_GATEWAY_URL = `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`;
 
-  const server = http.createServer();
+  const server = http.createServer(createServer());
   const wss = new WebSocketServer({ server });
   createWebSocketHandler(wss);
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
   const wsUrl = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
+  const apiUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   // Pin the advertised preview host to loopback: the real code path falls
   // back to this node's own Tailscale IPv4 when present (see
   // previewProxy.ts), but a node whose tailscaled runs in userspace-network
@@ -723,6 +725,11 @@ test('a session preview auto-detects the dev-server port and proxies it', { time
     res.end('<h1>dev server</h1>');
   });
   await new Promise<void>((done) => devServer.listen(4599, '127.0.0.1', done));
+  const devSockets = new WebSocketServer({ server: devServer });
+  devSockets.on('connection', client => {
+    client.on('message', message => client.send(message.toString()));
+  });
+  let previewSocket: WebSocket | undefined;
 
   try {
     const ws = await connect(wsUrl, profile);
@@ -770,9 +777,44 @@ test('a session preview auto-detects the dev-server port and proxies it', { time
     assert.ok(readinessHosts.length > 0, 'automatic detection checks HTTP readiness');
     assert.ok(readinessHosts.every(host => host === 'localhost:4599'), 'readiness uses the same Host as the proxy');
 
+    const route = new URL('/api/manager-chat/preview', apiUrl);
+    route.search = new URLSearchParams({ profile, sessionId }).toString();
+    const readPreview = async () => {
+      const response = await fetch(route);
+      assert.equal(response.status, 200);
+      const result = await response.json() as { preview: { url: string } | null };
+      return result.preview;
+    };
+    assert.equal((await readPreview())?.url, preview.url);
+    const socketUrl = new URL('/hmr', preview.url);
+    socketUrl.protocol = 'ws:';
+    previewSocket = new WebSocket(socketUrl, { origin: new URL(preview.url).origin, headers: { cookie: accessCookie } });
+    await once(previewSocket, 'open');
+    const echo = once(previewSocket, 'message');
+    previewSocket.send('hot reload');
+    assert.equal((await echo)[0].toString(), 'hot reload');
+
+    const browserClosed = once(previewSocket, 'close');
+    const [upstream] = devSockets.clients;
+    const upstreamClosed = once(upstream, 'close');
+    const archive = await fetch(new URL('/api/manager-chat/sessions/archive', apiUrl), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ profile, sessionId }), signal: AbortSignal.timeout(10_000)
+    });
+    assert.equal(archive.status, 200, await archive.text());
+    await Promise.all([browserClosed, upstreamClosed]);
+    assert.equal(await readPreview(), null);
+    const nextListener = createTcpServer();
+    nextListener.listen(preview.listenPort, '127.0.0.1');
+    await once(nextListener, 'listening');
+    await new Promise<void>(done => nextListener.close(() => done()));
+
     ws.close();
     await once(ws, 'close');
   } finally {
+    previewSocket?.terminate();
+    for (const client of devSockets.clients) client.terminate();
+    devSockets.close();
     for (const client of wss.clients) client.terminate();
     wss.close();
     await closeServer(server);

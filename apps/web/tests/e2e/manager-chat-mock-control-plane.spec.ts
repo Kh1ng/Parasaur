@@ -240,9 +240,7 @@ test('archive and preview states mutate through the same REST control plane', as
   await expect(page.getByTitle('Session preview')).toBeVisible();
   await expect(page.frameLocator('iframe[title="Session preview"]').getByRole('heading', { name: 'Mock preview available' })).toBeVisible();
 
-  await selectScenario(request, 'archive-success');
-  await openChat(page);
-  await selectSeededSession(page);
+  await page.getByRole('button', { name: 'Close preview', exact: true }).click();
 
   let delayNextSessionList = true;
   await page.route('**/api/manager-chat/sessions?**', async (route) => {
@@ -260,6 +258,9 @@ test('archive and preview states mutate through the same REST control plane', as
   expect(archived.ok(), await archived.text()).toBe(true);
   const archivedSessions = (await archived.json() as { sessions: { id: string; archivedAt: number | null }[] }).sessions;
   expect(archivedSessions.find((session) => session.id === 'mock-session-1')?.archivedAt).not.toBeNull();
+  const preview = await request.get(`${MOCK_BASE_URL}/api/manager-chat/preview?profile=fixture&sessionId=mock-session-1`);
+  expect(preview.ok()).toBe(true);
+  expect(await preview.json()).toEqual({ preview: null });
 
   // The Projects rail now lists the session under Archived, not in the working set.
   await openProjects(page);
