@@ -8,6 +8,7 @@ import { gitLabQueueRouter } from './integrations/gitlab/queueRoute.js';
 import { gitLabRunsRouter } from './integrations/gitlab/runsRoute.js';
 import { GitLabIdentity, type GitLabIdentityProvider } from './integrations/gitlab/identity.js';
 import { parseSkillSelections } from './skillSelections.js';
+import { cancelFactoryDispatch, cancellationTarget } from './factoryCancellation.js';
 import { runningWorkers } from './runningWorkers.js';
 import { documentRouter } from './integrations/gitlab/embedView.js';
 import express from 'express';
@@ -37,6 +38,7 @@ import {
   runSync,
   runLedgerSummary,
   runLedgerClearAttempts,
+  runCancelDispatch,
   runAvailability,
   runAvailabilityClear,
   runHoldSet,
@@ -1670,6 +1672,24 @@ export function createServer(
         message: error instanceof Error ? error.message : String(error)
       });
     }
+  });
+
+  app.post('/api/dispatch/cancel', requireOwner, mutation('dispatch.cancel'), async (req,res) => {
+    const target = cancellationTarget(req.body);
+    if (!target) return res.status(400).json({message:'Provide a work ID. A node-specific request also needs the profile and run ID.'});
+    const localId = getCoordinatorIdentity(undefined, coordinatorPort).node_id;
+    try {
+      const receipt = await cancelFactoryDispatch(target, {
+        localId, central:node.role === 'central', local:runCancelDispatch, registered:id=>registryService.getNode(id),
+        list: async profile => {
+          const names = profile ? [profile] : (await listProfiles()).map(p=>p.name);
+          const observations = registryService.getObservationsWithoutWaiting();
+          return (await Promise.all(names.map(async name =>
+            runningWorkers(await runStatus(name,undefined,true), observations, localId)))).flat();
+        },
+      });
+      return res.status(202).json(receipt);
+    } catch (error) { return res.status(409).json({message:error instanceof Error ? error.message : 'Cancellation could not be confirmed.'}); }
   });
 
   // Submits a dispatch as a fleet Session. Callers may opt into a single

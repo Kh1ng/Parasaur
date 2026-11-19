@@ -21,6 +21,7 @@ pub mod controller;
 pub mod credentials;
 mod curl_http;
 pub mod dispatch;
+mod dispatch_cancel;
 pub mod doctor;
 pub mod events;
 pub mod execution_identity;

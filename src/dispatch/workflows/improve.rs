@@ -1060,15 +1060,13 @@ pub(crate) fn improve(
 
         run_auto_fix_commands(&profile.auto_fix_commands, &wt, &validation_environment);
 
-        println!(
-            "Running validation ({} commands)...",
-            profile.validation_commands.len()
-        );
         match job_contract::validate_round(
             (job_contract.as_ref(), profile),
             &wt,
             &validation_environment,
             timeout,
+            &shutdown_ctx,
+            &route.identity,
         ) {
             Ok(()) => {
                 println!("Validation passed.");
@@ -1144,13 +1142,7 @@ pub(crate) fn improve(
                         profile,
                         ledger,
                     );
-                    worktree::preserve_wip(
-                        &wt,
-                        &profile.default_target_branch,
-                        &format!("gah: WIP interrupted {} attempt {}", args.mode, attempt + 1),
-                    )?;
-                    worktree::cleanup(&wt, repo);
-                    anyhow::bail!("shutdown requested during post-validation; not retrying");
+                    return shutdown_ctx.checkpoint_after_result(ledger, true);
                 }
 
                 if exit_code == Some(VALIDATION_COMMAND_TIMEOUT_EXIT_CODE) {

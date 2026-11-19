@@ -48,6 +48,31 @@ pub fn run() -> Result<()> {
     match cli.command {
         Commands::IsolationHost(_) => unreachable!("handled before interactive startup"),
         Commands::NativeHandoff(_) => unreachable!("handled before interactive startup"),
+        Commands::Cancel {
+            work_id,
+            profile,
+            run_id,
+            local,
+            config_path,
+            json,
+        } => {
+            let cfg = crate::config::load(config_path.as_deref())?;
+            let receipt = crate::dispatch_cancel::request(
+                &cfg,
+                &work_id,
+                profile.as_deref(),
+                run_id.as_deref(),
+                local,
+            )?;
+            if json {
+                println!("{}", serde_json::to_string(&receipt)?);
+            } else {
+                println!(
+                    "Cancellation requested for {} in {} (run {})",
+                    receipt.work_id, receipt.profile, receipt.run_id
+                );
+            }
+        }
         Commands::Memory(args) => commands::memory::run(args)?,
         Commands::Diag(args) => commands::diag::run(args)?,
         Commands::Route(args) => commands::route::run(

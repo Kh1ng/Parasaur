@@ -429,6 +429,22 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
       "cli_command_path": "gah config show-vibe-models",
       "is_stable": true
     },
+    "dispatch.cancel": {
+      "operation_id": "dispatch.cancel",
+      "display_name": "Cancel a running dispatch",
+      "class": "mutation",
+      "profile_scope": "profile_optional",
+      "request_schema": null,
+      "response_schema": null,
+      "streaming": "none",
+      "idempotency": "non_idempotent",
+      "secret_fields": [],
+      "remote_disposition": "remote_available",
+      "local_only_reason": null,
+      "documentation": "Request cancellation of one live factory dispatch.",
+      "cli_command_path": "gah cancel",
+      "is_stable": true
+    },
     "dispatch.run": {
       "operation_id": "dispatch.run",
       "display_name": "Dispatch Job",
@@ -1609,6 +1625,7 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
     "gah auth-health": "auth.health",
     "gah availability": "availability.get",
     "gah availability clear": "availability.clear",
+    "gah cancel": "dispatch.cancel",
     "gah candidates": "candidates.convert",
     "gah claims clear": "claims.clear",
     "gah claims list": "claims.list",
@@ -1725,6 +1742,7 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
     "events.list",
     "status.get",
     "sync.classify",
+    "dispatch.cancel",
     "dispatch.run",
     "pm.plans.list",
     "pm.plans.show",
@@ -2126,6 +2144,30 @@ export const CLI_CAPABILITIES_MANIFEST: CapabilityManifest = {
     },
     "config.show": {
       "properties": {},
+      "type": "object"
+    },
+    "dispatch.cancel": {
+      "properties": {
+        "node_id": {
+          "description": "Registered node executing this run.",
+          "type": "string"
+        },
+        "profile": {
+          "description": "GAH profile name; defaults to the configured default profile.",
+          "type": "string"
+        },
+        "run_id": {
+          "description": "Exact invocation to cancel.",
+          "type": "string"
+        },
+        "work_id": {
+          "description": "Work item being executed.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "work_id"
+      ],
       "type": "object"
     },
     "dispatch.run": {

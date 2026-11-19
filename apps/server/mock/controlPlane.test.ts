@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import ts from 'typescript';
 import { WebSocket } from 'ws';
-import type { ClientMessage, ProjectImportResult, ServerMessage, PairingAccessRequest, PairedDevice, RecordedUsageReport } from '@git-agent-harness/contracts';
+import type { RunningWorker, ClientMessage, ProjectImportResult, ServerMessage, PairingAccessRequest, PairedDevice, RecordedUsageReport } from '@git-agent-harness/contracts';
 import { createMockControlPlane, MOCK_SCENARIOS } from './controlPlane.js';
 import type { ComputeOutputCatalog, ComputeOutputDownload, ComputeJournalReview, NodeFactorySnapshot } from '@git-agent-harness/contracts';
 
@@ -78,6 +78,26 @@ test('sample output review removes only simulated bytes and reset invalidates a 
     await post(running.baseUrl, '/api/mock/reset');
     assert.equal((await remove('sample-new-action-key')).status, 409);
     assert.equal((await (await fetch(base)).json() as ComputeOutputCatalog).entries.length, 1);
+  } finally { await running.close(); }
+});
+
+test('mock cancellation removes only the selected live dispatch and reset restores the roster', async () => {
+  const running = await createMockControlPlane({ scenario: 'running-workers' }).listen(0);
+  try {
+    const workers = async () => (await (await fetch(running.baseUrl + '/api/status')).json() as { running_workers: RunningWorker[] }).running_workers;
+    const [selected, sibling] = await workers();
+    assert.equal(selected.cancellable, true);
+    const target = { profile: selected.profile, work_id: selected.work_id, run_id: selected.run_id, node_id: selected.node_id };
+    const cancel = (body: object) => post(running.baseUrl, '/api/dispatch/cancel', body);
+    assert.equal((await cancel({ work_id: selected.work_id, node_id: selected.node_id })).status, 400);
+    assert.equal((await cancel({ ...target, run_id: sibling.run_id })).status, 409);
+    const accepted = await cancel(target);
+    assert.equal(accepted.status, 202);
+    assert.deepEqual(await accepted.json(), { profile: selected.profile, work_id: selected.work_id, run_id: selected.run_id });
+    assert.deepEqual((await workers()).map(worker => worker.run_id), [sibling.run_id]);
+    assert.equal((await cancel(target)).status, 409);
+    await post(running.baseUrl, '/api/mock/reset');
+    assert.deepEqual((await workers()).map(worker => worker.run_id), [selected.run_id, sibling.run_id]);
   } finally { await running.close(); }
 });
 

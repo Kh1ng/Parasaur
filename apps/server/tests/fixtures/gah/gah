@@ -49,6 +49,13 @@ if (process.env.PARASAUR_FIXTURE_QUERY_LOG && (command === 'report' || (command 
   fs.appendFileSync(process.env.PARASAUR_FIXTURE_QUERY_LOG, JSON.stringify(args) + '\n');
 }
 
+if (command === 'cancel') {
+  const argument = name => args[args.indexOf(name) + 1];
+  if (!['--local', '--json', '--profile', '--run-id', '--'].every(name => args.includes(name))) process.exit(2);
+  process.stdout.write(JSON.stringify({ profile: argument('--profile'), run_id: argument('--run-id'), work_id: argument('--') }));
+  process.exit(0);
+}
+
 if (command === 'pm') {
   if (process.env.PARASAUR_FIXTURE_PM_LOG) fs.appendFileSync(process.env.PARASAUR_FIXTURE_PM_LOG, JSON.stringify(args) + '\n');
   const profile = args.find(value => value.startsWith('--profile='))?.slice('--profile='.length);

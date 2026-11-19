@@ -415,6 +415,8 @@ export type CentralClaimObservation =
 
 /** Dispatch-runtime observation, separate from lock ownership. Null routing facts are unknown. */
 export interface RunningWorker {
+  /** Absent on workers that do not supervise individual cancellation. */
+  cancellable?: boolean;
   profile?: string;
   work_id: string | null;
   run_id: string;

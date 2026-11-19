@@ -135,11 +135,19 @@ test('production mutation routes require keys before invoking CLI actions', asyn
   process.env.PARASAUR_MUTATION_STORE_PATH = directory;
   try {
     await withFixtureServer(async base => {
-      for (const route of ['loop/start', 'loop/stop', 'hold/set', 'hold/clear', 'availability/clear', 'ledger/clear-attempts', 'profiles/fixture/prompt-policies/set']) {
+      for (const route of ['loop/start', 'loop/stop', 'dispatch/cancel', 'hold/set', 'hold/clear', 'availability/clear', 'ledger/clear-attempts', 'profiles/fixture/prompt-policies/set']) {
         const res = await fetch(`${base}/api/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
         assert.equal(res.status, 400, route);
         assert.equal((await res.json() as { error: string }).error, 'idempotency_key_required', route);
       }
+      const {node_id} = await (await fetch(base + '/health')).json() as {node_id: string};
+      const receipt = {profile:'fixture', run_id:'8b402193-cd4e-4996-885f-b303ec3ac687', work_id:'TICKET-601'};
+      const cancelled = await fetch(base + '/api/dispatch/cancel', {
+        method:'POST', headers:{'Content-Type':'application/json', 'Idempotency-Key':'fixture-cancel-pinned-run'},
+        body:JSON.stringify({...receipt, node_id}),
+      });
+      assert.equal(cancelled.status, 202);
+      assert.deepEqual(await cancelled.json(), receipt);
     });
   } finally {
     if (saved === undefined) delete process.env.PARASAUR_MUTATION_STORE_PATH; else process.env.PARASAUR_MUTATION_STORE_PATH = saved;

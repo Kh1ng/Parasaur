@@ -327,9 +327,17 @@ pub(super) fn validate_round(
     wt: &Path,
     env: &[(String, String)],
     timeout: Duration,
+    shutdown: &super::shutdown::ShutdownContext<'_>,
+    identity: &crate::execution_identity::ExecutionIdentity,
 ) -> Result<(), (String, Option<i32>)> {
-    validate_with_exit_code(&profile.validation_commands, wt, env, timeout)?;
-    validate(contract, profile, wt, env, timeout)
+    println!(
+        "Running validation ({} commands)...",
+        profile.validation_commands.len()
+    );
+    shutdown.watch_validation(identity, || {
+        validate_with_exit_code(&profile.validation_commands, wt, env, timeout)?;
+        validate(contract, profile, wt, env, timeout)
+    })
 }
 
 #[cfg(test)]

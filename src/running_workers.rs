@@ -16,6 +16,9 @@ pub enum WorkerState {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RunningWorker {
+    /// The owning supervisor currently accepts cancellation for this dispatch.
+    #[serde(default)]
+    pub cancellable: bool,
     pub profile: String,
     pub work_id: Option<String>,
     pub run_id: String,
@@ -150,6 +153,7 @@ impl InvocationGuard {
             .and_then(|s| s.parse().ok())
             .unwrap_or(1);
         let worker = RunningWorker {
+            cancellable: false,
             profile: context.profile,
             work_id: work_id.map(str::to_string).or(context.work_id),
             run_id: context.run_id,
@@ -211,6 +215,15 @@ pub fn observe(root: &Path, now: OffsetDateTime) -> Vec<RunningWorker> {
                 };
                 let owner_gone = record.owner_pid.is_some_and(owner_is_gone);
                 let mut row = record.worker;
+                row.cancellable = !owner_gone
+                    && dir
+                        .ancestors()
+                        .find(|ancestor| {
+                            ancestor
+                                .file_name()
+                                .is_some_and(|name| name == row.run_id.as_str())
+                        })
+                        .is_some_and(crate::dispatch_cancel::available);
                 let mut last = OffsetDateTime::parse(&row.last_activity_at, &Rfc3339)
                     .or_else(|_| OffsetDateTime::parse(&row.started_at, &Rfc3339))
                     .unwrap_or(now);

@@ -1,3 +1,5 @@
+mod cancelled;
+pub(super) use cancelled::{record_cancelled_attempt, record_operator_cancellation};
 mod routing_record;
 pub(super) use routing_record::record_route_attempt;
 mod execution_env;
@@ -31,7 +33,7 @@ pub(super) fn mark_shutdown_cancelled(
 ) {
     ledger.set_failure(crate::ledger::FailureClass::HarnessError, stage);
     ledger.backend_exit_code = backend_exit_code;
-    ledger.validation_result = Some("cancelled_shutdown".into());
+    ledger.validation_result = Some(crate::dispatch_cancel::terminal_state().into());
 }
 pub(super) fn resolve_llm(
     cfg: &GahConfig,
@@ -581,7 +583,8 @@ pub(super) fn run_backend_with_reserved_route(
     );
     let backend_runner = runner::for_kind(backend_kind);
     let task = super::skill_delivery::prompt(backend_runner.as_ref(), task, &skills);
-    let result = backend_runner.run(&runner::RunContext {
+    let cancellation = crate::dispatch_cancel::Invocation::arm();
+    let mut result = backend_runner.run(&runner::RunContext {
         executable: &executable,
         worktree: wt,
         task: &task,
@@ -594,6 +597,14 @@ pub(super) fn run_backend_with_reserved_route(
         print_timeout_seconds: shape.print_timeout_seconds,
         write_intent,
     });
+    drop(cancellation);
+    if crate::dispatch_cancel::requested() {
+        if let Ok(run) = &mut result {
+            if run.exit_code != crate::runner::process::PROCESS_CLEANUP_FAILED_EXIT_CODE {
+                run.exit_code = -2;
+            }
+        }
+    }
     if let Some(origin_before) = origin_before {
         let origin_after = worktree::git(&["remote", "get-url", "origin"], wt)
             .context("checking git origin after backend run")?;

@@ -174,6 +174,16 @@ pub(crate) fn experiment(
         result.exit_code, result.duration_secs, result.log_path
     );
     ledger.backend_exit_code = Some(result.exit_code);
+    if super::super::attempts::record_operator_cancellation(ledger, &route, &llm.model, &result, 1)
+    {
+        worktree::preserve_wip(
+            &wt,
+            &profile.default_target_branch,
+            "gah: cancelled experiment",
+        )?;
+        worktree::cleanup(&wt, repo);
+        anyhow::bail!(crate::dispatch_cancel::Cancelled);
+    }
     record_external_approval_consumption_for_last_attempt(cfg, profile_name, profile, ledger);
 
     if ledger.usage.usage_unknown_reason.is_none() {
