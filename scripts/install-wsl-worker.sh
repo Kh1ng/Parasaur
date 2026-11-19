@@ -32,8 +32,9 @@ install -m 755 "$stage/gah" "$release_dir/bin/gah"
 # role-cli-check:start -- also exercised without installing a service.
 if ! "$release_dir/bin/gah" config set --help | grep -q -- '--node-role' ||
    ! "$release_dir/bin/gah" status --help | grep -q -- '--role' ||
-   ! "$release_dir/bin/gah" installer --help >/dev/null 2>&1; then
-  echo 'The downloaded Parasaur CLI is too old for this worker installer. Publish/install a matching CLI release with config --node-role, status --role, and installer support. The existing worker service and settings have not changed.' >&2
+   ! "$release_dir/bin/gah" installer --help >/dev/null 2>&1 ||
+   ! "$release_dir/bin/gah" native-handoff execute --help >/dev/null 2>&1; then
+  echo 'The downloaded Parasaur CLI is too old for this worker installer. Publish/install a matching CLI release with worker role, installer and native dispatch support. The existing worker service and settings have not changed.' >&2
   exit 1
 fi
 # role-cli-check:end

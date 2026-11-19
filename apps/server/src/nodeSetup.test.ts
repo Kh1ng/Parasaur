@@ -61,6 +61,32 @@ test('Windows enrollment excludes CLI executables and the broken hidden-window d
 });
 
 
+test('a packaged central serves worker enrollment without Git or release lookup', async () => {
+  const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const directory = await mkdtemp(join(tmpdir(), 'worker-enrollment-'));
+  const app = express();
+  app.use('/setup', nodeSetupRouter(directory));
+  const server = createServer(app);
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const base = `http://127.0.0.1:${address.port}/setup`;
+    assert.equal((await fetch(base + '/release/linux-cli')).status, 503);
+    for (const [route, file] of Object.entries({ 'install.ps1':'install-windows.ps1', 'release/linux-cli':'gah', 'source.tar.gz':'source.tar.gz', 'install-wsl.sh':'install-wsl.sh', 'worker-artifact.json':'worker-artifact.json' })) {
+      await writeFile(join(directory,file), 'packaged ' + file);
+      const response = await fetch(`${base}/${route}`);
+      assert.equal(response.status, 200);
+      assert.equal(await response.text(), 'packaged ' + file);
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
+    await rm(directory,{recursive:true,force:true});
+  }
+});
+
 test('setup rate limits installer reads and archive generation through one shared boundary', async () => {
   const app = express();
   app.use('/setup', nodeSetupRouter());

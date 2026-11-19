@@ -38,5 +38,12 @@ try {
   assert.throws(() => run(process.execPath, [stageScript, 'worker', 'worker']), /Artifact destination must be empty/);
   writeFileSync(join(root, 'apps/desktop/target/release/bundle/nsis', 'GAH Worker_0.1.2_x64-setup.exe'), 'another binary');
   assert.throws(() => run(process.execPath, [stageScript, 'desktop', 'ambiguous']));
+  for (const bytes of ['first installed CLI', 'updated installed CLI']) {
+    writeFileSync(join(root, 'installed-gah'), bytes);
+    run(process.execPath, [stageScript, 'worker', 'central-kit', 'installed-gah']);
+    const manifest = JSON.parse(readFileSync(join(root, 'central-kit/worker-artifact.json'), 'utf8'));
+    assert.equal(readFileSync(join(root, 'central-kit/gah'), 'utf8'), bytes);
+    assert.equal(manifest.files.gah, createHash('sha256').update(bytes).digest('hex'));
+  }
   console.log('Artifact staging passed: matching revisions, file checksums, tracked source only, ambiguous installers rejected.');
 } finally { rmSync(root, { recursive: true, force: true }); }

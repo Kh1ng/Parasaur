@@ -120,7 +120,7 @@ jobs:
           if-no-files-found: error
 
   server-bundle:
-    needs: trusted-source
+    needs: cli-linux
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -141,6 +141,12 @@ jobs:
           npm run build:web
       - name: Test release runtime and bundle scripts
         run: node --test scripts/build-release-bundle.test.mjs scripts/link-release-runtime.test.mjs scripts/clean-server-runtime.test.mjs
+      - uses: actions/download-artifact@v4
+        with:
+          name: edge-cli-linux
+          path: worker-cli
+      - name: Stage the Windows worker bundle from this revision
+        run: node scripts/stage-node-test-artifacts.mjs worker apps/server/dist/worker-artifacts worker-cli/gah-linux-x86_64
       - name: Archive the release bundle
         run: bash scripts/build-release-bundle.sh gah-server-bundle.tar.gz
       - uses: actions/upload-artifact@v4

@@ -65,7 +65,7 @@ function Get-TestArtifactFiles([string]$Directory, [string]$InstallRole, [string
             $result[$route] = $file
         }
     }
-    Write-Host "Verified unpublished test artifacts from $revision"
+    Write-Host "Verified $InstallRole artifacts from $revision"
     return $result
 }
 
@@ -119,10 +119,12 @@ try {
         $installer = Join-Path $stage 'gah_x64-setup.exe'
         if ($CentralUrl -or $TestArtifactDirectory) { Download-SetupFile 'release/desktop' $installer }
         else {
-            if (-not $Token -and (Get-Command gh -ErrorAction SilentlyContinue)) { $Token = (& gh auth token | Out-String).Trim() }
-            if (-not $Token) { throw 'Set GITHUB_TOKEN or run gh auth login to read the private release.' }
-            $headers = @{ Authorization = "Bearer $Token"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
-            $api = 'https://api.github.com/repos/Kh1ng/git-agent-harness/releases'
+            $headers = @{ Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+            if (-not $Token -and (Get-Command gh -ErrorAction SilentlyContinue)) {
+                $Token = (& gh auth token 2>$null | Out-String).Trim()
+            }
+            if ($Token) { $headers.Authorization = "Bearer $Token" }
+            $api = 'https://api.github.com/repos/Kh1ng/Parasaur/releases'
             $releases = if ($Version) { @(Invoke-RestMethod -Uri "$api/tags/$Version" -Headers $headers) } else { @(Invoke-RestMethod -Uri $api -Headers $headers) }
             $asset = $releases | Where-Object { -not $_.draft -and -not $_.prerelease } | ForEach-Object { $_.assets } | Where-Object { $_.name -match '_(\d+\.\d+\.\d+)_x64-setup\.exe$' -and [version]$Matches[1] -ge [version]'0.1.1' } | Select-Object -First 1
             if (-not $asset) { throw 'No Tauri desktop 0.1.1+ x64 NSIS setup asset exists in the selected releases.' }
@@ -147,6 +149,13 @@ try {
         Download-SetupFile 'source.tar.gz' (Join-Path $stage 'source.tar.gz')
         Download-SetupFile 'release/linux-cli' (Join-Path $stage 'gah')
         Download-SetupFile 'install-wsl.sh' (Join-Path $stage 'install-wsl.sh')
+        if (-not $TestArtifactDirectory) {
+            Download-SetupFile 'worker-artifact.json' (Join-Path $stage 'worker-artifact.json')
+            Download-SetupFile 'install.ps1' (Join-Path $stage 'install-windows.ps1')
+            # The central command executes a script block, which has no file path.
+            $entryScript = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $stage 'install-windows.ps1' }
+            [void](Get-TestArtifactFiles $stage 'worker' $entryScript)
+        }
         # Limit access before writing the coordinator credential to the staging directory.
         & icacls.exe $stage /inheritance:r /grant:r "$($env:USERNAME):(OI)(CI)F" 'SYSTEM:(OI)(CI)F' | Out-Null
         Assert-NativeSuccess 'Setup directory permissions'

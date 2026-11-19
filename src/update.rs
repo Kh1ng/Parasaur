@@ -171,6 +171,17 @@ pub fn run(args: UpdateArgs) -> Result<()> {
         if !repo.join("apps/server/dist/bin.js").is_file() {
             bail!("server build did not produce apps/server/dist/bin.js");
         }
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        run_command(
+            &repo,
+            "node",
+            &[
+                "scripts/stage-node-test-artifacts.mjs",
+                "worker",
+                "apps/server/dist/worker-artifacts",
+                binary.to_str().context("Invalid CLI path")?,
+            ],
+        )?;
         // The MCP server is a Rust binary of this crate: `cargo install`
         // above already placed it next to `gah`.
         let mcp_server = binary.with_file_name("gah-mcp-server");

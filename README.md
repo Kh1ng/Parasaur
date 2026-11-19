@@ -2,9 +2,7 @@
 
 Parallel automated routing of agents.
 
-The repository and packages are still named `git-agent-harness`. The CLI is
-`parasaur`; `gah` is the same program and stays a compatible alias, so existing
-scripts, services, and docs that call `gah` keep working.
+Run the CLI as `parasaur` or `gah`. Both names invoke the same program.
 
 `parasaur` is a CLI that runs coding agents against real repositories with guardrails around git worktrees, validation, pushing, draft MR/PR creation, PM ticket decomposition, session logging, and cleanup.
 
@@ -16,15 +14,14 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for coding and review standards.
 
 ## Binary releases (no build required)
 
-Pre-built binaries are published to [GitHub Releases](https://github.com/Kh1ng/git-agent-harness/releases). A GitHub token with `repo` read scope is required because the repository is private.
+Pre-built binaries are published to [GitHub Releases](https://github.com/Kh1ng/Parasaur/releases).
 
 ### Windows — desktop and WSL worker
 
 This command installs the desktop only:
 
 ```powershell
-$env:GITHUB_TOKEN="ghp_xxxxxxxxxxxx"
-irm "https://raw.githubusercontent.com/Kh1ng/git-agent-harness/main/scripts/install-windows.ps1" | iex
+irm "https://raw.githubusercontent.com/Kh1ng/Parasaur/main/scripts/install-windows.ps1" | iex
 ```
 
 Smoke test: GAH Worker appears in the system tray after install.
@@ -38,8 +35,7 @@ Provider CLIs use separate authentication inside WSL. See the [Windows tester gu
 ### Linux — desktop worker (AppImage)
 
 ```bash
-# Uses the GitHub CLI's login (gh auth login), so private releases work too.
-gh release download --repo Kh1ng/git-agent-harness --pattern '*.AppImage' --output GAH-Worker.AppImage
+gh release download --repo Kh1ng/Parasaur --pattern '*.AppImage' --output GAH-Worker.AppImage
 chmod +x GAH-Worker.AppImage && ./GAH-Worker.AppImage
 ```
 
@@ -53,7 +49,7 @@ The native Android app is a control-only WebView for a central Parasaur node. Bu
 
 ```bash
 # Linux: gah-linux-x86_64 | macOS: gah-macos-universal
-gh release download --repo Kh1ng/git-agent-harness --pattern gah-linux-x86_64 --output gah
+gh release download --repo Kh1ng/Parasaur --pattern gah-linux-x86_64 --output gah
 sudo install -m 755 gah /usr/local/bin/gah
 sudo ln -sf gah /usr/local/bin/parasaur
 ```
@@ -511,7 +507,7 @@ gah route-approval revoke --profile my-repo ISSUE-42 \
 ```
 
 The dashboard settings editor and effective-route display are tracked in
-[#149](https://github.com/Kh1ng/git-agent-harness/issues/149). Until that
+[#149](https://github.com/Kh1ng/Parasaur/issues/149). Until that
 lands, inspect the profile's TOML directly and keep every production route's
 model explicit.
 
