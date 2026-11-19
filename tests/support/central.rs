@@ -142,6 +142,13 @@ fn respond(state: &mut Value, method: &str, url: &url::Url, body: Value) -> (u16
     let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
     let profile = query.get("profile").map(String::as_str).unwrap_or("");
     match (method, url.path()) {
+        ("POST", "/test/webhook") => {
+            let status = state["webhook_replies"]
+                .as_array_mut()
+                .filter(|replies| !replies.is_empty())
+                .map_or(200, |replies| replies.remove(0).as_u64().unwrap() as u16);
+            (status, json!({}))
+        }
         ("POST", "/api/registry/nodes") => {
             state["nodes"][body["node_id"].as_str().unwrap()] = body.clone();
             (201, body)

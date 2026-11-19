@@ -364,6 +364,12 @@ impl ScenarioHarness {
         fs::create_dir_all(self._temp.path().join("tmp")).unwrap();
         command
             .env("HOME", self._temp.path().join("home"))
+            .env(
+                "PARASAUR_NOTIFY_CREDENTIALS_FILE",
+                self.artifacts_dir.join("notify.env"),
+            )
+            .env_remove("DISCORD_WEBHOOK_URL")
+            .env_remove("TELEGRAM_BOT_TOKEN")
             .env("TMPDIR", self._temp.path().join("tmp"))
             .env(
                 "PARASAUR_CANONICAL_CONFIG",

@@ -166,6 +166,13 @@ fn route_label(backend: &str, model: &str) -> String {
     }
 }
 
+fn human_required_reference(reference: Option<&str>, mr_url: Option<&str>) -> Option<String> {
+    match (reference, mr_url) {
+        (Some(reference), Some(url)) if reference != url => Some(format!("{reference}, {url}")),
+        _ => reference.or(mr_url).map(str::to_owned),
+    }
+}
+
 /// Render a `NotifyEvent` into the single-line message GAH pipes to
 /// `notify_command`. Pure and allocation-light; unit-tested below.
 pub fn format_message(event: &NotifyEvent) -> String {
@@ -186,7 +193,7 @@ pub fn format_message(event: &NotifyEvent) -> String {
                 failure_stage.unwrap_or("unknown"),
                 format_attempt_count(*attempt_count),
             );
-            if let Some(reference) = reference.or(*mr_url) {
+            if let Some(reference) = human_required_reference(*reference, *mr_url) {
                 msg.push_str(&format!(" ({reference})"));
             }
             if let Some(code) = reason_code {
@@ -424,7 +431,7 @@ pub fn format_wake_instruction(event: &NotifyEvent, autonomy: WakeAutonomy) -> O
             if let Some(code) = reason_code {
                 context.push_str(&format!(" [code={code}]"));
             }
-            if let Some(reference) = reference.or(*mr_url) {
+            if let Some(reference) = human_required_reference(*reference, *mr_url) {
                 context.push_str(&format!(" Reference: {reference}."));
             }
             if let Some(summary) = summarize_error_summary(*error_summary) {
