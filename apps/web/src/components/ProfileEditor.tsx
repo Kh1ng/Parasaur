@@ -5,7 +5,14 @@ import { useUiStore } from '../store/uiStore.js';
 import type { ProfileSummary } from '@git-agent-harness/contracts';
 import type { ProfileAddData, ProfileUpdateData } from '../api/client.js';
 
-type ProfileFormData = Pick<ProfileAddData, 'display_name' | 'repo_id' | 'provider' | 'repo' | 'local_path' | 'artifact_root' | 'default_target_branch'>;
+type ProfileFormData = Pick<ProfileAddData, 'display_name' | 'repo_id' | 'provider' | 'repo' | 'local_path' | 'artifact_root' | 'default_target_branch'>
+  & { provider_api_base: string; provider_project_id: string };
+
+const newProfile: ProfileFormData = {
+  display_name: '', repo_id: '', provider: 'github', repo: '', local_path: '',
+  artifact_root: '', default_target_branch: 'main', provider_api_base: '', provider_project_id: '',
+};
+
 
 export function ProfileEditor() {
   const {
@@ -30,15 +37,7 @@ export function ProfileEditor() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   
   const [changedFields, setChangedFields] = useState<Set<keyof ProfileFormData>>(new Set());
-  const [formData, setFormData] = useState<ProfileFormData>({
-    display_name: '',
-    repo_id: '',
-    provider: 'github',
-    repo: '',
-    local_path: '',
-    artifact_root: '',
-    default_target_branch: 'main',
-  });
+  const [formData, setFormData] = useState<ProfileFormData>(newProfile);
 
   const errorMessage = profileCrud.addError || profileCrud.updateError || profileCrud.removeError;
   const showSuccess = profileCrud.lastAddSuccess || profileCrud.lastUpdateSuccess || profileCrud.lastRemoveSuccess;
@@ -51,15 +50,7 @@ export function ProfileEditor() {
         : '';
 
   const resetForm = () => {
-    setFormData({
-      display_name: '',
-      repo_id: '',
-      provider: 'github',
-      repo: '',
-      local_path: '',
-      artifact_root: '',
-      default_target_branch: 'main',
-    });
+    setFormData(newProfile);
     setEditingProfile(null);
     setChangedFields(new Set());
   };
@@ -73,6 +64,8 @@ export function ProfileEditor() {
       local_path: profile.local_path,
       artifact_root: profile.artifact_root ?? '',
       default_target_branch: profile.default_target_branch ?? '',
+      provider_api_base: profile.provider_api_base ?? '',
+      provider_project_id: profile.provider_project_id ?? '',
     });
     setChangedFields(new Set());
     setEditingProfile(profile.name);
@@ -89,14 +82,15 @@ export function ProfileEditor() {
     clearProfileErrors();
     
     try {
+      const { provider_api_base, provider_project_id, ...common } = formData;
+      const submitted = formData.provider === 'gitlab' ? { ...common, provider_api_base, provider_project_id } : common;
       if (editingProfile) {
-        // The list omits branch/artifact settings. Only send explicit edits;
-        // a blank field must not replace configuration we never loaded.
-        const updateData: ProfileUpdateData = Object.fromEntries([...changedFields].map(field => [field, formData[field]]));
+        // An older node can omit fields. Send only settings the operator actually edited.
+        const updateData: ProfileUpdateData = Object.fromEntries(Object.entries(submitted).filter(([field]) => changedFields.has(field as keyof ProfileFormData)));
         await updateProfile(editingProfile, updateData);
         if (useGahStore.getState().profileCrud.updateError) return;
       } else {
-        await addProfile({ ...formData, name: formData.repo_id, default_target_branch: formData.default_target_branch || 'main' });
+        await addProfile({ ...submitted, name: formData.repo_id, default_target_branch: formData.default_target_branch || 'main' });
         if (useGahStore.getState().profileCrud.addError) return;
       }
       
@@ -260,6 +254,28 @@ function ProfileForm({ formData, editingProfile, changedFields, isLoading, onCha
           </select>
         </div>
 
+        {formData.provider === 'gitlab' && <>
+          <div>
+            <label htmlFor={`${formId}-gitlab-api`} className="block text-xs font-medium text-secondary mb-1">GitLab API URL</label>
+            <input id={`${formId}-gitlab-api`} type="url" value={formData.provider_api_base}
+              placeholder={editingProfile ? 'Leave unchanged' : 'https://gitlab.example.com/api/v4'}
+              required={!editingProfile || changedFields.has('provider') || changedFields.has('provider_api_base')}
+              pattern={String.raw`https?://[^@\/?#\s]+(/[^?#\s]*)?`}
+              title="Use an HTTP or HTTPS API URL without credentials, a query, or a fragment."
+              onChange={event => onChange('provider_api_base', event.target.value)}
+              className="w-full bg-raised border border-subtle rounded-md px-3 py-1.5 text-sm text-primary" />
+          </div>
+          <div>
+            <label htmlFor={`${formId}-gitlab-id`} className="block text-xs font-medium text-secondary mb-1">GitLab project ID</label>
+            <input id={`${formId}-gitlab-id`} inputMode="numeric" value={formData.provider_project_id}
+              placeholder={editingProfile ? 'Leave unchanged' : 'Numeric ID from the project overview'}
+              pattern={!editingProfile || changedFields.has('provider_project_id') ? '[1-9][0-9]*' : undefined}
+              required={!editingProfile || changedFields.has('provider') || changedFields.has('provider_project_id')}
+              onChange={event => onChange('provider_project_id', event.target.value)}
+              className="w-full bg-raised border border-subtle rounded-md px-3 py-1.5 text-sm text-primary" />
+          </div>
+        </>}
+
         <div>
           <label htmlFor={`${formId}-repo`} className="block text-xs font-medium text-secondary mb-1">
             Repository *
@@ -325,7 +341,7 @@ function ProfileForm({ formData, editingProfile, changedFields, isLoading, onCha
 
       <p className="text-xs text-muted inline-flex items-start gap-1.5">
         <Info size={13} className="shrink-0 mt-0.5" aria-hidden="true" />
-        Fields marked with * are required. For GitLab, you may need to set provider_api_base after creation.
+        Fields marked with * are required.
       </p>
 
       <div className="flex gap-2">
@@ -378,7 +394,7 @@ function ProfileListComponent({ profileList, isLoading, onEdit, onDelete }: Prof
               <div className="w-2 h-2 bg-accent rounded-full" />
               <div>
                 <p className="text-sm font-medium text-primary">{profile.display_name}</p>
-                <p className="text-xs text-muted">{profile.name} · {profile.provider} · {profile.repo}</p>
+                <p className="text-xs text-muted">{profile.name} Ã‚Â· {profile.provider} Ã‚Â· {profile.repo}</p>
               </div>
             </div>
           </div>

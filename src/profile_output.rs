@@ -25,6 +25,8 @@ struct ProfileSummary<'a> {
     /// here -- that would silently flip chat sessions into worktree mode.
     worktree_base: &'a str,
     web_url: Option<String>,
+    provider_api_base: Option<String>,
+    provider_project_id: Option<&'a str>,
     max_parallel_workers: Option<u32>,
     max_open_managed_mrs: u32,
     max_concurrent_per_model: &'a std::collections::HashMap<String, u32>,
@@ -55,6 +57,8 @@ pub(crate) fn list_json(cfg: &GahConfig) -> Result<String> {
                 repo_id: &profile.repo_id,
                 worktree_base: &cfg.defaults.worktree_base,
                 web_url: profile.web_url(),
+                provider_api_base: profile.gitlab_api_url().ok().map(String::from),
+                provider_project_id: profile.provider_project_id.as_deref(),
                 max_parallel_workers: profile.max_parallel_workers,
                 max_open_managed_mrs: profile.max_open_managed_mrs(),
                 max_concurrent_per_model: &profile.max_concurrent_per_model,
