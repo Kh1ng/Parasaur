@@ -9,10 +9,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
-pub mod checkpoints;
-
 mod already_satisfied;
 mod attempts;
+pub mod checkpoints;
 mod claims;
 mod command;
 pub(crate) mod dependencies;
@@ -222,12 +221,6 @@ pub fn run(cfg: &GahConfig, args: &DispatchArgs) -> Result<()> {
     println!("Session: {}", session_dir.display());
 
     let result = match JobKind::parse(&args.mode) {
-        #[cfg(target_os = "linux")]
-        Ok(JobKind::Fix)
-            if args.dispatch_reason.as_deref() == Some(publication_recovery::REASON) =>
-        {
-            publication_recovery::run(cfg, profile, args, &session_dir, &mut ledger)
-        }
         Ok(JobKind::Improve | JobKind::Fix) => {
             workflows::run_improve(cfg, profile, args, &session_dir, &mut ledger)
         }
