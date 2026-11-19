@@ -18,7 +18,39 @@ pub fn run(
     let profiles = selected_profiles(&cfg, profile_name)?;
 
     for (name, profile) in profiles {
-        prune_profile(&cfg, &name, profile, older_than_days, dry_run, true, None)?;
+        let scope = crate::work_claim::canonical_claim_scope(&name, &profile.repo_id);
+        let claimed: HashSet<_> = crate::work_claim::claim_details_for_profile(&scope)?
+            .into_iter()
+            .filter(|claim| !claim.is_stale)
+            .map(|claim| claim.work_id)
+            .collect();
+        let mrs = sync::fetch_mrs(profile).unwrap_or_default();
+        let mut observed = AutomaticWorktreeSets {
+            done: done_worktree_names_from_mrs(&mrs),
+            ..Default::default()
+        };
+        if !claimed.is_empty() {
+            crate::ledger::visit_entries(&cfg, |entry| {
+                if entry.profile == name && entry.repo_id == profile.repo_id {
+                    if let (Some(id), Some(branch)) = (entry.work_id, entry.branch) {
+                        if claimed.contains(&crate::work_claim::normalize_work_identity(&id)) {
+                            observed.protected.insert(worktree_name_for_branch(&branch));
+                        }
+                    }
+                }
+                Ok(())
+            })?;
+        }
+        prune_profile(
+            &cfg,
+            &name,
+            profile,
+            older_than_days,
+            dry_run,
+            true,
+            &observed,
+        )?;
+        prune_remote_gah_branches(profile, dry_run, &mrs, &observed.protected)?;
     }
     Ok(())
 }
@@ -61,15 +93,7 @@ pub fn run_automatic(
         active_mrs,
         active_claims,
     );
-    prune_profile(
-        cfg,
-        profile_name,
-        profile,
-        None,
-        false,
-        false,
-        Some(&observed),
-    )
+    prune_profile(cfg, profile_name, profile, None, false, false, &observed)
 }
 
 #[derive(Default)]
@@ -199,7 +223,7 @@ fn prune_profile(
     older_than_days: Option<u64>,
     dry_run: bool,
     announce: bool,
-    observed: Option<&AutomaticWorktreeSets>,
+    observed: &AutomaticWorktreeSets,
 ) -> Result<()> {
     // CLI --older-than overrides the per-profile retention window.
     let retention = older_than_days.unwrap_or_else(|| profile.effective_prune_older_than_days());
@@ -211,35 +235,15 @@ fn prune_profile(
     }
     prune_sessions(profile, cutoff, dry_run)?;
     crate::build_cache::prune_inactive(&profile.artifact_root, dry_run)?;
-    let provider_done;
-    let empty = HashSet::new();
-    let (done, abandoned_open, protected) = if let Some(observed) = observed {
-        (
-            &observed.done,
-            &observed.abandoned_open,
-            &observed.protected,
-        )
-    } else if announce {
-        provider_done = done_worktree_names(profile);
-        (&provider_done, &empty, &empty)
-    } else {
-        (&empty, &empty, &empty)
-    };
     prune_worktrees(
         cfg,
         profile,
         cutoff,
         dry_run,
-        done,
-        abandoned_open,
-        protected,
-    )?;
-    // Remote branch deletion still requires explicit full provider history;
-    // recurring maintenance only reuses the controller observation above.
-    if announce {
-        prune_remote_gah_branches(profile, dry_run)?;
-    }
-    Ok(())
+        &observed.done,
+        &observed.abandoned_open,
+        &observed.protected,
+    )
 }
 
 /// Deletes the remote branch for any MERGED/CLOSED_UNMERGED PR/MR whose
@@ -250,15 +254,22 @@ fn prune_profile(
 /// GitLab's own "delete branch on merge" doesn't always fire (e.g. `gh pr
 /// merge --admin` merges outside the normal UI flow), which is how ~280
 /// stale branches accumulated on this repo before this existed.
-fn prune_remote_gah_branches(profile: &Profile, dry_run: bool) -> Result<()> {
-    let mrs = match sync::fetch_mrs(profile) {
-        Ok(mrs) => mrs,
-        Err(_) => return Ok(()), // best-effort, matches done_worktree_names
-    };
+fn prune_remote_gah_branches(
+    profile: &Profile,
+    dry_run: bool,
+    mrs: &[SyncMr],
+    protected: &HashSet<String>,
+) -> Result<()> {
+    if mrs.is_empty() {
+        return Ok(());
+    }
     let push_url = profile.push_url()?;
     let pat = crate::provider::push_token(profile);
     let repo_path = Path::new(&profile.local_path);
-    for (branch, class) in remote_gah_branches_to_delete(&mrs) {
+    for (branch, class) in remote_gah_branches_to_delete(mrs) {
+        if protected.contains(&worktree_name_for_branch(branch)) {
+            continue;
+        }
         if dry_run {
             println!("  would delete remote branch {branch} ({class})");
             continue;
@@ -453,20 +464,7 @@ fn classify_worktree_ownership(
     }
 }
 
-/// Returns the set of worktree directory names that correspond to branches
-/// whose PR/MR is MERGED or CLOSED_UNMERGED. These worktrees are safe to prune
-/// immediately (they are already terminal upstream), regardless of the
-/// retention window. Best-effort: any fetch error yields an empty set so pruning
-/// never blocks on transient provider/network failure.
-fn done_worktree_names(profile: &Profile) -> HashSet<String> {
-    match sync::fetch_mrs(profile) {
-        Ok(mrs) => done_worktree_names_from_mrs(&mrs),
-        Err(_) => HashSet::new(),
-    }
-}
-
-/// Pure subset of `done_worktree_names`: maps a list of fetched PRs/MRs to the
-/// set of on-disk worktree names that are safe to prune immediately.
+/// Map terminal merge requests to local checkout names eligible for reclamation.
 pub(crate) fn done_worktree_names_from_mrs(mrs: &[SyncMr]) -> HashSet<String> {
     let mut done = HashSet::new();
     for mr in mrs {
@@ -567,16 +565,24 @@ fn prune_worktrees(
         // worktree -- this profile's retention and the remove_dir_all
         // fallback must not touch it. Orphaned directories keep today's
         // handling below.
-        if matches!(
-            classify_worktree_ownership(&path, profile_common_dir.as_deref()),
-            WorktreeOwnership::Foreign
-        ) {
-            println!(
-                "  retained worktree {} (owned by another repository)",
-                path.display()
-            );
-            continue;
-        }
+        let ownership = classify_worktree_ownership(&path, profile_common_dir.as_deref());
+        let _activity = match ownership {
+            WorktreeOwnership::Foreign => {
+                println!(
+                    "  retained worktree {} (owned by another repository)",
+                    path.display()
+                );
+                continue;
+            }
+            WorktreeOwnership::Owned => match crate::worktree::lock_activity(&path, !dry_run) {
+                Ok(guard) => guard,
+                Err(error) => {
+                    println!("  retained worktree {}: {error}", path.display());
+                    continue;
+                }
+            },
+            WorktreeOwnership::Orphan => None,
+        };
         // Never force-remove a dirty worktree. A terminal PR can still have
         // local, unpublished recovery work, and a failed worker can leave a
         // useful patch behind. This is intentionally fail-closed: if Git
@@ -597,32 +603,20 @@ fn prune_worktrees(
                 }
             );
         } else {
-            let git_result = crate::worktree::git(
-                &["worktree", "remove", "-f", path.to_str().unwrap_or("")],
-                Path::new(&profile.local_path),
-            );
-            // `git worktree remove` fails outright ("is not a working tree")
-            // once git's own admin metadata for this worktree is already
-            // gone -- e.g. left behind by a prior interrupted/partial
-            // removal. Previously that failure was silently discarded and
-            // "removed" printed anyway, so the directory (and its disk
-            // usage) never actually went away despite being logged as
-            // pruned on every run. Fall back to a direct removal whenever
-            // the directory is still there, since `worktree_is_clean`
-            // already confirmed above it's safe to delete.
-            if path.exists() {
-                if let Err(err) = fs::remove_dir_all(&path) {
-                    println!(
-                        "  failed to remove worktree {}: {}{}",
-                        path.display(),
-                        err,
-                        git_result
-                            .err()
-                            .map(|e| format!(" (git worktree remove also failed: {e})"))
-                            .unwrap_or_default()
-                    );
-                    continue;
-                }
+            // Let Git recheck cleanliness and its own worktree lock at removal
+            // time. Only a confirmed orphan has no Git registration to remove.
+            let removed = match ownership {
+                WorktreeOwnership::Owned => crate::worktree::git(
+                    &["worktree", "remove", path.to_str().unwrap_or("")],
+                    Path::new(&profile.local_path),
+                )
+                .map(|_| ()),
+                WorktreeOwnership::Orphan => fs::remove_dir_all(&path).map_err(Into::into),
+                WorktreeOwnership::Foreign => unreachable!(),
+            };
+            if let Err(error) = removed {
+                println!("  retained worktree {}: {error}", path.display());
+                continue;
             }
             println!(
                 "  removed worktree {}",
@@ -802,6 +796,49 @@ mod tests {
             !stale.exists(),
             "orphaned worktree directory should be removed even when `git worktree remove` fails"
         );
+    }
+
+    #[test]
+    fn prune_honors_a_git_lock_on_an_old_clean_checkout() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        init_repo_with_commit(repo.path());
+        let checkout = root.path().join(format!("gah-repo-{TEST_DISPATCH_TS}"));
+        add_linked_worktree(repo.path(), &checkout);
+        git(
+            repo.path(),
+            &["worktree", "lock", checkout.to_str().unwrap()],
+        );
+        touch_old(&checkout);
+        let cfg = config_with_worktree_base(root.path());
+        let profile = profile_on_repo("repo", repo.path());
+        let empty = HashSet::new();
+        prune_worktrees(
+            &cfg,
+            &profile,
+            day_ago_cutoff(),
+            false,
+            &empty,
+            &empty,
+            &empty,
+        )
+        .unwrap();
+        assert!(checkout.join(".git").is_file());
+        git(
+            repo.path(),
+            &["worktree", "unlock", checkout.to_str().unwrap()],
+        );
+        prune_worktrees(
+            &cfg,
+            &profile,
+            day_ago_cutoff(),
+            false,
+            &empty,
+            &empty,
+            &empty,
+        )
+        .unwrap();
+        assert!(!checkout.exists());
     }
 
     #[test]

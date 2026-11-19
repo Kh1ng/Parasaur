@@ -164,6 +164,7 @@ test('archiveSession saves dirty work and restoreSession rematerializes it idemp
   assert.equal(restored.outcome, 'live');
   assert.equal(restored.archivedAt, null);
   assert.ok(restored.worktreePath && existsSync(restored.worktreePath));
+  assert.equal(execFileSync('git', ['branch', '--show-current'], { cwd: restored.worktreePath!, encoding: 'utf8' }).trim(), session.branch);
   assert.equal(readFileSync(join(restored.worktreePath!, 'dirty.txt'), 'utf8'), 'uncommitted work\n');
   assert.equal((await restoreSession('p', session.id, env.profileInfo)).worktreePath, restored.worktreePath);
 }));

@@ -848,6 +848,37 @@ fn loop_once_prunes_terminal_and_abandoned_open_worktrees_but_retains_live_claim
         "#!/bin/sh\ncase \"$4\" in\n  */pulls?*) echo '[{\"title\":\"[GAH] Fix: TICKET-914\",\"body\":\"\",\"head\":{\"ref\":\"gah/real-1730000000-11111111111111111111111111111914\",\"sha\":\"abandoned-sha\"},\"html_url\":\"https://github.com/owner/real/pull/2\",\"labels\":[{\"name\":\"gah-ready-for-human\"}],\"number\":2,\"state\":\"open\",\"draft\":false,\"updated_at\":\"2099-01-01T00:00:00Z\"},{\"title\":\"[GAH] Fix: TICKET-915\",\"body\":\"\",\"head\":{\"ref\":\"gah/real-1730000000-11111111111111111111111111111915\",\"sha\":\"active-sha\"},\"html_url\":\"https://github.com/owner/real/pull/3\",\"labels\":[{\"name\":\"gah-ready-for-human\"}],\"number\":3,\"state\":\"open\",\"draft\":false,\"updated_at\":\"2099-01-01T00:00:00Z\"}]'; exit 0;;\n  */check-runs?*) echo '{\"total_count\":0,\"check_runs\":[]}'; exit 0;;\n  */issues?*) echo '[]'; exit 0;;\nesac\necho \"unexpected gh invocation: $@\" >&2\nexit 1\n",
     );
 
+    let preview = bin()
+        .args([
+            "prune",
+            "--profile",
+            "real",
+            "--older-than",
+            "1",
+            "--dry-run",
+            "--config-path",
+        ])
+        .arg(&cfg_path)
+        .env("PATH", prepend_path(&fake_bin))
+        .env("GITHUB_TOKEN", "token")
+        .env("PARASAUR_CLAIM_STATE_PATH", &claim_state)
+        .output()
+        .unwrap();
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    let preview = String::from_utf8(preview.stdout).unwrap();
+    assert!(preview.contains(&format!(
+        "would remove worktree {}",
+        abandoned_worktree.display()
+    )));
+    assert!(!preview.contains(&format!(
+        "would remove worktree {}",
+        active_worktree.display()
+    )));
+
     bin()
         .args([
             "loop",

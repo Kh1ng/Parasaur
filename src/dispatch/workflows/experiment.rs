@@ -84,6 +84,7 @@ pub(crate) fn experiment(
             &worktree_base,
         ),
     )?;
+    let _activity = worktree::lock_activity(&wt, true)?;
     ledger.branch = Some(branch.clone());
     println!("Worktree: {}", wt.display());
     println!("Branch:   {}", branch);
