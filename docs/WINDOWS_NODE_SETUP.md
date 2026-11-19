@@ -8,6 +8,8 @@ It starts with a matching Actions bundle and omits maintainer-only build steps.
 
 On a Linux x64 central, both source updates and edge releases supply a worker kit with the CLI, Linux Node executable, compiled server and production dependencies. Windows verifies the kit against its revision manifest before installation. The WSL worker starts the packaged server directly. Older source-only kits still build the server during installation.
 
+Once the installed worker supports packaged updates, **Update** in the node roster installs the edge release and restarts that worker's systemd user service. To pin the fleet to a particular build, set `PARASAUR_RELEASE_MANIFEST` in the worker service environment to its manifest URL or local file. A local manifest can use the checksum-matched server bundle beside it. Older workers can take their first upgrade by rerunning the Windows worker installer from the updated central.
+
 ## Install from the central dashboard
 
 1. Open Settings → General → Add a Node.

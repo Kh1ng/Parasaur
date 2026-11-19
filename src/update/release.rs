@@ -23,6 +23,9 @@ use std::process::Command;
 
 use super::HostRole;
 
+#[cfg(target_os = "linux")]
+pub(super) mod wsl_worker;
+
 pub struct ReleaseArgs {
     pub repo: PathBuf,
     pub role: HostRole,
@@ -122,6 +125,20 @@ impl AssetLocator {
     fn source(&self, asset: &ReleaseAsset) -> Result<AssetSource> {
         let reference = asset.url.as_deref().unwrap_or(&asset.name);
         if reference.starts_with("http://") || reference.starts_with("https://") {
+            // A downloaded published manifest still contains moving edge URLs.
+            // Prefer its pinned sibling when the manifest can verify its bytes.
+            if let ManifestLocation::Path(path) = &self.location {
+                if asset.sha256.as_ref().is_some_and(|sum| sum.len() == 64)
+                    && Path::new(&asset.name)
+                        .file_name()
+                        .is_some_and(|name| name == asset.name.as_str())
+                {
+                    let sibling = path.with_file_name(&asset.name);
+                    if sibling.is_file() {
+                        return Ok(AssetSource::Path(sibling));
+                    }
+                }
+            }
             return Ok(AssetSource::Url(reference.to_string()));
         }
         if let ManifestLocation::Path(manifest_path) = &self.location {
@@ -228,10 +245,11 @@ fn fetch_asset(locator: &AssetLocator, asset: &ReleaseAsset, dest: &Path) -> Res
 
 fn sha256_of(path: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};
-    let bytes =
-        std::fs::read(path).with_context(|| format!("reading {} for checksum", path.display()))?;
-    let digest = Sha256::digest(&bytes);
-    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+    let mut digest = Sha256::new();
+    let mut file = std::fs::File::open(path)
+        .with_context(|| format!("reading {} for checksum", path.display()))?;
+    std::io::copy(&mut file, &mut digest)?;
+    Ok(format!("{:x}", digest.finalize()))
 }
 
 /// A missing checksum is a warning, not a failure: the manifest itself is

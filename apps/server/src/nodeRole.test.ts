@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateNodeRole, workerMemoryEnvironment, workerRouteGuard } from './nodeRole.js';
 import { workerMemoryRouter } from './workerMemory.js';
+import { WorkerUpdateService } from './workerUpdate.js';
 import { RegistryService } from './registryService.js';
 import { authMiddleware } from './authMiddleware.js';
 import { resetCachedCoordinatorIdentity } from './coordinatorIdentity.js';
@@ -65,12 +66,16 @@ test('worker role reports central identity and permits execution without hosting
   assert.deepEqual(localOnlyRegistry.getNodesSummary(), []);
   assert.throws(() => workerMemoryEnvironment(worker, undefined), /COORDINATOR_TOKEN/);
   assert.deepEqual(workerMemoryEnvironment(worker, 'node-token'), { TDAI_GATEWAY_URL: 'https://central.test/api/worker-memory', TDAI_GATEWAY_API_KEY: 'node-token' });
-  const app = createServer({ node: worker, runDoctor: async () => ({ schema_version: 1, generated_at: '2026-09-07T00:00:00Z', overall_status: 'ok', checks: [] } satisfies DoctorSnapshot) });
+  const app = createServer({ node: worker, workerUpdates:new WorkerUpdateService(), runDoctor: async () => ({ schema_version: 1, generated_at: '2026-09-07T00:00:00Z', overall_status: 'ok', checks: [] } satisfies DoctorSnapshot) });
   const server = createHttpServer(app);
   const url = await listen(server);
   try {
     const health = await (await fetch(`${url}/health`)).json() as { node: unknown };
     assert.deepEqual(health.node, worker);
+    assert.equal((await fetch(url + '/api/worker-update', {
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'status'})
+    })).status,200);
+    assert.equal((await fetch(url + '/api/worker-update')).status,409);
     for (const path of ['/api/settings/nodes/command', '/api/skills', '/api/claims/acquire', '/api/registry/nodes', '/api/manager-chat/sessions', '/api/worker-memory/recall', '/api/pm/plans']) {
       const response = await fetch(url + path);
       assert.equal(response.status, 409, path);
