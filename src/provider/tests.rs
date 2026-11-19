@@ -146,7 +146,7 @@ fn sync_distinguishes_runner_failure_from_code_failure_on_the_current_gitlab_hea
         dir,
         "glab",
         r#"#!/bin/sh
-dir=${0%/*}
+dir="${0%/*}"
 case "$2" in
   projects/42/merge_requests) echo '[{"iid":7,"title":"Example","source_branch":"gah/7","state":"opened","sha":"current","labels":["gah-ready-for-human"]}]' ;;
   projects/42/merge_requests/7/pipelines) /bin/cat "$dir/pipelines" ;;
