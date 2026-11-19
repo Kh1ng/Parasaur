@@ -42,13 +42,20 @@ if [[ ${3:-} == --install ]]; then
     XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
     PARASAUR_SMOKE_ACTIVATE=1 xvfb-run -a -s "-screen 0 1600x1000x24" \
     "$fixture/check" "$fixture/AppImage" "$fixture/home/first-window.png" || result=$?
-  for item in first-window.png first-window.log dashboard.png; do
+  for item in first-window.png first-window.log setup-retry.png dashboard.png; do
     if sudo test -f "$fixture/home/$item"; then sudo cat "$fixture/home/$item" > "$(dirname "$shot")/$item"; fi
   done
   exit "$result"
 fi
 if [ -z "${DISPLAY:-}" ]; then
   exec dbus-run-session -- xvfb-run -a -s "-screen 0 1600x1000x24" "$0" "$appimage" "$shot"
+fi
+if [[ ${PARASAUR_SMOKE_ACTIVATE:-} == 1 ]]; then
+  # Xvfb sets these only in this shell. The separately started systemd user
+  # manager and D-Bus activator must pass them to the accessibility services.
+  dbus-update-activation-environment --systemd DISPLAY XAUTHORITY
+  gdbus call --session --timeout 10 --dest org.a11y.Bus --object-path /org/a11y/bus \
+    --method org.a11y.Bus.GetAddress
 fi
 mkdir -p "$(dirname "$shot")"
 log="${shot%.png}.log"
@@ -74,7 +81,7 @@ trap 'pkill -P "$pid" || true; wait "$pid" 2>/dev/null || true; rm -rf "$profile
 
 # Prints what it found; exits 0 only when onboarding is ready.
 onboarding() {
-  python3 -I - "$1" "${2:-check}" <<'PY'
+  timeout 7s python3 -I - "$1" "${2:-check}" <<'PY'
 import sys
 import pyatspi
 
@@ -107,8 +114,13 @@ if sys.argv[2] == 'dashboard':
 settings = any(n.name == "Parasaur — Settings" for n in nodes)
 section = next((n for n in nodes if n.name == "Set up this computer" and n.childCount), None)
 inside = list(walk(section)) if section is not None else []
-if sys.argv[2] == 'install':
-    button = next(n for n in inside if n.name == 'Set up standalone' and n.getRoleName() == 'push button')
+if sys.argv[2] == 'retry-ready':
+    retry = any(n.name == 'Retry standalone setup' and n.getRoleName() == 'push button' for n in inside)
+    reason = any('Another standalone installation is running' in text(n) for n in inside if n.getRoleName() == 'status bar')
+    sys.exit(0 if retry and reason else 1)
+if sys.argv[2] in {'install', 'retry'}:
+    label = 'Set up standalone' if sys.argv[2] == 'install' else 'Retry standalone setup'
+    button = next(n for n in inside if n.name == label and n.getRoleName() == 'push button')
     sys.exit(0 if button.queryAction().doAction(0) else 1)
 status = next((text(n) for n in inside if n.getRoleName() == "status bar"), "")
 checked = bool(status) and not status.startswith("Checking what this computer has")
@@ -122,7 +134,8 @@ PY
 
 result="no Parasaur window yet"
 colors=0
-for _ in $(seq 90); do
+deadline=$((SECONDS + 90))
+while (( SECONDS < deadline )); do
   sleep 1
   if ! kill -0 "$pid" 2>/dev/null; then
     echo "FAIL: the AppImage exited during startup. Output:" >&2
@@ -133,15 +146,30 @@ for _ in $(seq 90); do
   window=$(xdotool search --onlyvisible --name '^Parasaur$' 2>/dev/null | head -n 1) || true
   [ -n "$app" ] && [ -n "$window" ] || continue
   ok=0
-  result=$(onboarding "$app" 2>/dev/null) && ok=1
+  result=$(onboarding "$app" 2>&1) && ok=1
   import -window "$window" "$shot" 2>/dev/null || continue
   # Look below the native menu bar so the menu's own text cannot pass.
   colors=$(convert "$shot" -gravity south -crop 100%x75%+0+0 +repage -format %k info:)
   if [ "$ok" = 1 ] && [ "$colors" -gt 16 ]; then
     echo "PASS: onboarding is shown ($result; $colors colours): $shot"
     if [[ ${PARASAUR_SMOKE_ACTIVATE:-} == 1 ]]; then
+      # Exercise a real, recoverable installer error in this disposable account.
+      runtime="$HOME/.local/share/parasaur/standalone"
+      mkdir -p "$runtime"
+      exec {held}>"$runtime/install.lock"
+      flock -n "$held"
       onboarding "$app" install
-      for _ in $(seq 90); do
+      deadline=$((SECONDS + 30))
+      until onboarding "$app" retry-ready; do
+        (( SECONDS < deadline )) || { echo 'FAIL: setup did not show the lock error and retry action.' >&2; exit 1; }
+        sleep 1
+      done
+      import -window "$window" "$(dirname "$shot")/setup-retry.png"
+      flock -u "$held"
+      exec {held}>&-
+      onboarding "$app" retry
+      deadline=$((SECONDS + 90))
+      while (( SECONDS < deadline )); do
         if systemctl --user is-active --quiet parasaur-standalone && onboarding "$app" dashboard; then
           window=$(xdotool search --onlyvisible --name '^Parasaur$' | head -n 1)
           import -window "$window" "$(dirname "$shot")/dashboard.png"

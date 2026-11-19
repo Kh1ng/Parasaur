@@ -134,7 +134,7 @@ function checkUnresolved(status: SetupStatus): boolean {
   return status.state === 'status_unknown' || status.state === 'status_failed';
 }
 
-/** `gah setup --check` as a checklist; the work itself happens in Terminal. Resolves to readiness. */
+/** Render the prerequisites and installation paths available on this computer. */
 async function refreshSetup(): Promise<boolean> {
   const result = await invoke<SetupCheck>('setup_check', { role: nodeRole === 'central' && !isMac && (!central.value || /^http:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(central.value)) ? 'standalone' : nodeRole });
   packagedStandalone = result.packaged_standalone;
@@ -201,10 +201,19 @@ async function refreshSetup(): Promise<boolean> {
   list.hidden = list.childElementCount === 0;
   button.hidden = !pending || !result.terminal;
   const standalone = document.querySelector<HTMLButtonElement>('#setup-standalone')!;
-  standalone.hidden = button.hidden && !packagedStandalone;
+  const standaloneActions = document.querySelector<HTMLElement>('#standalone-actions')!;
+  standaloneActions.hidden = button.hidden && !packagedStandalone;
+  const firstRun = packagedStandalone && !central.value.trim();
+  document.querySelector<HTMLAnchorElement>('#connect-existing')!.hidden = !firstRun;
+  if (firstRun) {
+    const setup = document.querySelector<HTMLElement>('#setup-section')!;
+    document.querySelector<HTMLElement>('#connection-section')!.before(setup);
+    document.querySelector<HTMLElement>('#page-title')!.textContent = 'Set up Parasaur';
+    document.querySelector<HTMLElement>('#page-intro')!.textContent = 'Choose where to run your dashboard.';
+  }
   standalone.textContent = packagedStandalone && result.installed ? 'Start or update standalone' : 'Set up standalone';
   const note = document.querySelector<HTMLElement>('#standalone-note')!;
-  note.hidden = standalone.hidden;
+  note.hidden = standaloneActions.hidden;
   if (packagedStandalone) note.textContent = 'The AppImage includes the dashboard and local server. Setup installs them for your Linux account.';
   commandLine.hidden = !pending || result.terminal;
   commandLine.querySelector('code')!.textContent = result.command;
