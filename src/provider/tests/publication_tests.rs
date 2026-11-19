@@ -320,6 +320,33 @@ fn gitlab_mr_valid_response_returns_id_and_url() {
 }
 
 #[test]
+fn gitlab_mr_retries_only_an_explicit_missing_branch_refusal() {
+    let _guard = crate::test_support::ExecGuard::new();
+    let tmp = TempDir::new().unwrap();
+    let count = tmp.path().join("calls");
+    let _path = PathOverride::set(tmp.path().to_str().unwrap().to_owned());
+    for (response, expected_calls) in [
+        (r#"{"message":{"source_branch":["does not exist"]}}"#, 2),
+        (r#"{"message":"request timed out"}"#, 1),
+        (
+            r#"{"message":{"source_branch":["does not exist"],"title":["invalid"]}}"#,
+            1,
+        ),
+    ] {
+        fs::write(&count, "").unwrap();
+        make_fake_bin(tmp.path(), "glab", &format!(
+            "#!/bin/sh\nif [ ! -s '{0}' ]; then echo call >> '{0}'; echo '{response}'; exit 1; fi\necho call >> '{0}'\necho '{{\"iid\":42,\"web_url\":\"https://gitlab.example.com/group/repo/-/merge_requests/42\"}}'\n",
+            count.display()));
+        let result = create_draft_mr(&gitlab_profile(), "gah/test", "title", "body");
+        assert_eq!(result.is_ok(), expected_calls == 2);
+        assert_eq!(
+            fs::read_to_string(&count).unwrap().lines().count(),
+            expected_calls
+        );
+    }
+}
+
+#[test]
 fn gitlab_source_issue_comment_is_idempotent() {
     let _exec_guard = crate::test_support::ExecGuard::new();
     let tmp = TempDir::new().unwrap();

@@ -176,6 +176,69 @@ mod tests {
         assert_eq!(planned.args.run_id, request.args.run_id);
     }
     #[test]
+    fn publication_retry_requires_the_acknowledged_issue_and_worker_even_without_model_capacity() {
+        use crate::ledger::remote_dispatch::{
+            ProcessTermination, ReceivedExecution, TerminationReason,
+        };
+        let _guard = crate::test_support::ExecGuard::new();
+        let (_dir, mut cfg, _worker, mut request) = super::super::tests::fixture();
+        let profile = cfg.profiles.get_mut("test").unwrap();
+        profile.provider = "gitlab".into();
+        profile.publishing.allow_pull_request_creation = true;
+        profile.publishing.allow_commit_message_generation = true;
+        request.args.target = "1525".into();
+        let source_id = uuid::Uuid::new_v4().to_string();
+        let mut entry = crate::ledger::LedgerEntry::new(
+            "test",
+            profile,
+            "codex",
+            "fix",
+            "1525",
+            Some(source_id.clone()),
+            None,
+        );
+        entry.work_id = request.args.work_id.clone();
+        entry.source_issue_number = Some("1525".into());
+        entry.dispatch_reason = Some("initial".into());
+        entry.commit_created = true;
+        entry.validation_result = Some("passed".into());
+        entry.failure_class = Some("harness_error".into());
+        entry.error_summary = Some("Native operation authority is held: clock".into());
+        entry.effective_model = request.args.model.clone();
+        entry.branch = Some("gah/retained".into());
+        entry.remote_execution = Some(ReceivedExecution {
+            node_id: "worker".into(),
+            context_sha256: "1".repeat(64),
+            receipt_sha256: "2".repeat(64),
+            termination: ProcessTermination {
+                reason: TerminationReason::Exited,
+                exit_code: Some(1),
+                signal: None,
+            },
+        });
+        crate::ledger::append(&cfg, &entry).unwrap();
+        let mut worker = catalog(&cfg);
+        worker.instances.clear();
+        let planned = crate::dispatch::plan_native(&cfg, &request, &worker).unwrap();
+        assert_eq!(planned.publication_source.as_ref(), Some(&source_id));
+        let profile = &cfg.profiles["test"];
+        let verify = |req: &JobRequest, worker: &str, entries: &[crate::ledger::LedgerEntry]| {
+            crate::dispatch::publication_recovery::verify(req, entries, profile, worker).is_ok()
+        };
+        assert!(verify(&planned, "worker", std::slice::from_ref(&entry)));
+        assert!(!verify(
+            &planned,
+            "another-worker",
+            std::slice::from_ref(&entry)
+        ));
+        let mut changed = planned.clone();
+        changed.publication_source = Some(uuid::Uuid::new_v4().to_string());
+        assert!(!verify(&changed, "worker", std::slice::from_ref(&entry)));
+        let mut newer = entry.clone();
+        newer.mr_created = true;
+        assert!(!verify(&planned, "worker", &[entry, newer]));
+    }
+    #[test]
     fn unavailable_worker_accounts_cannot_borrow_a_coordinators_executable_or_other_model() {
         let _exec = crate::test_support::ExecGuard::new();
         let (directory, mut cfg, _worker, request) = super::super::tests::fixture();

@@ -80,7 +80,8 @@ jobs:
           set -euo pipefail
           base="${{ github.event.pull_request.base.sha }}"
           head="${{ github.event.pull_request.head.sha }}"
-          if git diff --name-only "$base" "$head" | grep -qE '^(scripts/(install|configure-node-role|bootstrap)|src/(setup/|installer/|update\.rs|node_role\.rs)|packaging/systemd/|apps/server/src/nodeRole\.ts|\.github/workflows/CI\.yml)'; then
+          git diff --name-only "$base" "$head" > "$RUNNER_TEMP/installer-changes"
+          if grep -qE '^(scripts/(install|configure-node-role|bootstrap|stage-node-test-artifacts\.mjs)|src/(setup/|installer/|update/|update\.rs|node_role\.rs)|packaging/systemd/|apps/server/src/(nodeSetup|nodeRole)\.ts|\.github/workflows/CI\.yml)' "$RUNNER_TEMP/installer-changes"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
@@ -160,6 +161,25 @@ jobs:
             || fail "gah status --role --json exited non-zero: $role_json"
           printf '%s' "$role_json" | grep -Eq '"role":[[:space:]]*"standalone"' \
             || fail "gah status does not report the standalone role: $role_json"
+
+      - name: Verify the installed service delivers a matching Windows worker kit
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          kit="$(mktemp -d)"
+          cd "$kit"
+          endpoint=http://127.0.0.1:3773/api/settings/nodes
+          curl -fsS "$endpoint/worker-artifact.json" -o manifest.json
+          jq -e --arg revision "$(git -C "$HOME/gah" rev-parse HEAD)" \
+            '.schema_version == 1 and .revision == $revision and (.files | keys) == ["gah", "install-windows.ps1", "install-wsl.sh", "source.tar.gz"]' manifest.json
+          curl -fsS "$endpoint/release/linux-cli" -o gah
+          curl -fsS "$endpoint/install.ps1" -o install-windows.ps1
+          curl -fsS "$endpoint/install-wsl.sh" -o install-wsl.sh
+          curl -fsS "$endpoint/source.tar.gz" -o source.tar.gz
+          jq -r '.files | to_entries[] | "\(.value)  \(.key)"' manifest.json | sha256sum --check --strict
+          cmp gah "$HOME/.cargo/bin/gah"
+          chmod +x gah
+          ./gah native-handoff execute --help
 
   node:
     runs-on: ubuntu-latest

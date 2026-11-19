@@ -43,6 +43,9 @@ const MAX_REPO_POLICY: u64 = 1024 * 1024;
 #[serde(deny_unknown_fields)]
 pub struct JobRequest {
     pub args: DispatchArgs,
+    /// Original acknowledged implementation, for a publication-only retry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication_source: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]

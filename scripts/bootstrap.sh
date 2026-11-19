@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
 # The paste-and-go install for Linux and macOS:
 #
-#   curl -fsSL https://raw.githubusercontent.com/Kh1ng/git-agent-harness/main/scripts/bootstrap.sh | bash
-#
-# While the repository is private, fetch it with a token and pass it along:
-#
-#   curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
-#     https://raw.githubusercontent.com/Kh1ng/git-agent-harness/main/scripts/bootstrap.sh \
-#     | GITHUB_TOKEN="$GITHUB_TOKEN" bash
+#   curl -fsSL https://raw.githubusercontent.com/Kh1ng/Parasaur/main/scripts/bootstrap.sh | bash
 #
 # It needs only git and curl. It asks before installing Rust (needed to build
 # gah), clones this repository, builds gah, and hands the terminal to
@@ -85,7 +79,7 @@ if ! command -v cargo >/dev/null 2>&1; then
   . "$HOME/.cargo/env"
 fi
 
-# While the repository is private, GITHUB_TOKEN (read access) authenticates
+# When supplied, GITHUB_TOKEN authenticates
 # the clone and later pulls. It reaches git through environment config, never
 # argv or the saved remote URL.
 if [ -n "${GITHUB_TOKEN:-}" ]; then
@@ -102,7 +96,7 @@ else
   echo "Cloning git-agent-harness into $install_dir"
   # A shallow clone: an install needs today's tree, not history (early
   # commits carry large, since-ignored build artifacts; 1.7MB vs ~350MB).
-  git clone --depth 1 https://github.com/Kh1ng/git-agent-harness.git "$install_dir"
+  git clone --depth 1 https://github.com/Kh1ng/Parasaur.git "$install_dir"
 fi
 
 cd "$install_dir"

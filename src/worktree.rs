@@ -239,7 +239,7 @@ pub(crate) fn with_repo_git_lock<T>(
     operation()
 }
 
-fn fetch_origin(repo: &Path) -> Result<()> {
+pub(crate) fn fetch_origin(repo: &Path) -> Result<()> {
     let lock = lock_repo_git_state(repo)?;
     fetch_origin_locked(&lock, repo)
 }
@@ -306,6 +306,14 @@ pub fn state_snapshot(worktree: &Path) -> Result<WorktreeStateSnapshot> {
 }
 
 pub fn git(args: &[&str], cwd: &Path) -> Result<String> {
+    let bytes = git_stdout(args, cwd)?;
+    Ok(crate::redact::redact(&String::from_utf8_lossy(&bytes))
+        .trim()
+        .to_string())
+}
+
+/// Successful, unmodified output for callers parsing Git's data formats.
+fn git_stdout(args: &[&str], cwd: &Path) -> Result<Vec<u8>> {
     let out = git_raw(args, cwd)?;
     if !out.status.success() {
         anyhow::bail!(
@@ -314,9 +322,7 @@ pub fn git(args: &[&str], cwd: &Path) -> Result<String> {
             crate::redact::redact(&String::from_utf8_lossy(&out.stderr)).trim()
         );
     }
-    Ok(crate::redact::redact(&String::from_utf8_lossy(&out.stdout))
-        .trim()
-        .to_string())
+    Ok(out.stdout)
 }
 
 /// Run git and return raw Output. Does NOT error on non-zero exit.
@@ -673,8 +679,8 @@ pub fn has_changes(worktree: &Path, target_branch: &str) -> Result<bool> {
     }
     // ponytail: compare against origin/<target> — @{upstream} fails silently on new untracked branches
     let origin_ref = format!("origin/{}", target_branch);
-    let diff = git_raw(&["diff", "HEAD", &origin_ref], worktree)?;
-    Ok(!diff.stdout.is_empty())
+    let diff = git_stdout(&["diff", "HEAD", &origin_ref], worktree)?;
+    Ok(!diff.is_empty())
 }
 
 /// Some backends (e.g. vibe) commit their own work during the run instead of
@@ -683,29 +689,26 @@ pub fn has_changes(worktree: &Path, target_branch: &str) -> Result<bool> {
 /// branch -- callers must check this separately before staging, or
 /// `ensure_staged` fails loudly on a clean tree ("nothing to commit").
 pub fn has_uncommitted_changes(worktree: &Path) -> Result<bool> {
-    let status = git_raw(&["status", "--porcelain"], worktree)?;
-    Ok(!status.stdout.is_empty())
+    let status = git_stdout(&["status", "--porcelain"], worktree)?;
+    Ok(!status.is_empty())
 }
 
 pub fn diff_patch(worktree: &Path, target_branch: &str) -> Result<String> {
     let origin_ref = format!("origin/{}", target_branch);
-    Ok(
-        String::from_utf8_lossy(&git_raw(&["diff", &origin_ref, "HEAD"], worktree)?.stdout)
-            .to_string(),
-    )
+    Ok(String::from_utf8_lossy(&git_stdout(&["diff", &origin_ref, "HEAD"], worktree)?).to_string())
 }
 
 pub fn changed_files(worktree: &Path, target_branch: &str) -> Result<Vec<String>> {
     let origin_ref = format!("origin/{}", target_branch);
-    let out = git_raw(&["diff", "--name-only", &origin_ref, "HEAD"], worktree)?;
-    let tracked = String::from_utf8_lossy(&out.stdout).to_string();
+    let out = git_stdout(&["diff", "--name-only", &origin_ref, "HEAD"], worktree)?;
+    let tracked = String::from_utf8_lossy(&out).to_string();
     let mut files: Vec<String> = tracked
         .lines()
         .filter(|l| !l.is_empty())
         .map(|l| l.to_string())
         .collect();
-    let status = git_raw(&["status", "--porcelain"], worktree)?;
-    for line in String::from_utf8_lossy(&status.stdout).lines() {
+    let status = git_stdout(&["status", "--porcelain"], worktree)?;
+    for line in String::from_utf8_lossy(&status).lines() {
         if line.is_empty() {
             continue;
         }
@@ -772,8 +775,8 @@ pub fn contract_changed_files(worktree: &Path, target_branch: &str) -> Result<Ve
 
 pub fn diff_stats(worktree: &Path, target_branch: &str) -> Result<DiffStats> {
     let origin_ref = format!("origin/{}", target_branch);
-    let out = git_raw(&["diff", "--numstat", &origin_ref, "HEAD"], worktree)?;
-    let text = String::from_utf8_lossy(&out.stdout);
+    let out = git_stdout(&["diff", "--numstat", &origin_ref, "HEAD"], worktree)?;
+    let text = String::from_utf8_lossy(&out);
     let mut stats = DiffStats::default();
     for line in text.lines() {
         let mut parts = line.split_whitespace();
@@ -957,6 +960,40 @@ pub fn push_branch(
     // resolve to a branch the guard above did not see.
     let refspec = format!("refs/heads/{name}:refs/heads/{name}");
     push_branch_with_executable(Path::new("git"), worktree, &refspec, push_url, pat)
+}
+
+/// Publish this exact object only to an absent branch. An identical remote
+/// ref is an idempotent success, including after a lost push response.
+pub(crate) fn publish_preserved_commit(
+    repo: &Path,
+    branch: &str,
+    target: &str,
+    sha: &str,
+    url: &str,
+    pat: &str,
+) -> Result<()> {
+    let name = ensure_publishable_branch(branch, target)?;
+    anyhow::ensure!(
+        sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit()),
+        "Invalid preserved commit"
+    );
+    let reference = format!("refs/heads/{name}");
+    let askpass = write_askpass()?;
+    retry_transient_git_network("push", || {
+        let mut cmd = push_command(Path::new("git"), repo, url, pat, &askpass);
+        cmd.args([
+            format!("--force-with-lease={reference}:"),
+            format!("{sha}:{reference}"),
+        ]);
+        let child = spawn_git(&mut cmd, "git push preserved commit")?;
+        let out = wait_with_timeout(child, "git push preserved commit")?;
+        anyhow::ensure!(
+            out.status.success(),
+            "Preserved commit push refused: {}",
+            crate::redact::redact(&String::from_utf8_lossy(&out.stderr)).trim()
+        );
+        Ok(())
+    })
 }
 
 /// `git push -q <push_url>`, authenticating with `token` through `askpass`.

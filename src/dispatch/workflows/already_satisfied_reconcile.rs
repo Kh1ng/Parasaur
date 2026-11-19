@@ -122,7 +122,7 @@ fn reconcile_already_satisfied_publish(context: AlreadySatisfiedContext<'_>) -> 
         wip_checkpoints,
         validation_clean,
     } = context;
-    let diff_summary = build_diff_summary(worktree, &profile.default_target_branch);
+    let diff_summary = build_diff_summary(worktree, &profile.default_target_branch)?;
     let has_changes = !diff_summary.changed_files.is_empty();
     match reconcile_before_publish(
         profile,

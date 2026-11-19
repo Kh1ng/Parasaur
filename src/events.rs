@@ -1,6 +1,6 @@
 //! TICKET-083: append-only controller event stream. Same shape/conventions
-//! as `ledger::reconcile` (TICKET-072) -- a separate JSONL file, never
-//! rewritten, only ever appended to.
+//! as `ledger::reconcile` (TICKET-072). Complete records are append-only.
+mod journal;
 
 use crate::config::GahConfig;
 use crate::controller::RemediationPlan;
@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use time::format_description::well_known::Rfc3339;
 
 /// Plain lowercase string on the wire (not a serde-tagged enum), same
@@ -176,6 +176,7 @@ pub fn append(cfg: &GahConfig, event: &ControllerEvent) -> Result<()> {
         .with_context(|| format!("locking events {}", path.display()))?;
     let mut file = OpenOptions::new()
         .create(true)
+        .read(true)
         .append(true)
         .open(&path)
         .with_context(|| format!("opening events log {}", path.display()))?;
@@ -183,6 +184,7 @@ pub fn append(cfg: &GahConfig, event: &ControllerEvent) -> Result<()> {
     crate::redact::redact_json_value(&mut value);
     let mut line = serde_json::to_vec(&value).context("serializing controller event")?;
     line.push(b'\n');
+    journal::prepare_append(&mut file, &path)?;
     file.write_all(&line).context("writing controller event")?;
     Ok(())
 }
@@ -322,22 +324,17 @@ pub fn read_events(cfg: &GahConfig) -> Result<Vec<ControllerEvent>> {
 
 /// Decode one record at a time without retaining a second copy of the entire
 /// journal. Validate every record, including those a consumer does not retain.
-pub(crate) fn visit_events(cfg: &GahConfig, mut visit: impl FnMut(ControllerEvent)) -> Result<()> {
+pub(crate) fn visit_events(cfg: &GahConfig, visit: impl FnMut(ControllerEvent)) -> Result<()> {
     let path = cfg.defaults.events_path();
     let file = match fs::File::open(&path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
     };
-    for (idx, line) in BufReader::new(file).lines().enumerate() {
-        let line = line.with_context(|| format!("reading {}", path.display()))?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let event = serde_json::from_str::<ControllerEvent>(&line)
-            .with_context(|| format!("parsing event {} from {}", idx + 1, path.display()))?;
-        visit(event);
-    }
+    // Normal appenders do not take this lock. Only truncation has to wait
+    // until a reader finishes its snapshot of the previous file length.
+    FileExt::lock_shared(&file)?;
+    journal::scan(&file, file.metadata()?.len(), &path, visit)?;
     Ok(())
 }
 
@@ -676,6 +673,56 @@ mod tests {
         let (tmp, cfg) = test_config();
         std::fs::write(tmp.path().join("events.jsonl"), "not valid json\n").unwrap();
         assert!(read_events(&cfg).is_err());
+    }
+
+    #[test]
+    fn concurrent_appends_preserve_and_retire_one_torn_tail() {
+        for tail in [vec![0; 123], br#"{"timestamp":"unfinished"#.to_vec()] {
+            let (tmp, cfg) = test_config();
+            let path = cfg.defaults.events_path();
+            super::record(&cfg, EventType::ActionDecided, None, None, "first").unwrap();
+            let prefix = std::fs::read(&path).unwrap();
+            let torn = [prefix.as_slice(), &tail].concat();
+            std::fs::write(&path, &torn).unwrap();
+            assert_eq!(read_events(&cfg).unwrap().len(), 1);
+            assert_eq!(std::fs::read(&path).unwrap(), torn);
+            std::thread::scope(|scope| {
+                for _ in 0..4 {
+                    scope.spawn(|| {
+                        super::record(&cfg, EventType::LoopStopped, None, None, "next").unwrap()
+                    });
+                }
+            });
+            assert_eq!(read_events(&cfg).unwrap().len(), 5);
+            assert!(std::fs::read(&path).unwrap().starts_with(&prefix));
+            let backups: Vec<_> = std::fs::read_dir(tmp.path())
+                .unwrap()
+                .flatten()
+                .filter(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .starts_with("events-torn-tail-")
+                })
+                .collect();
+            assert_eq!(backups.len(), 1);
+            assert_eq!(std::fs::read(backups[0].path()).unwrap(), tail);
+        }
+    }
+
+    #[test]
+    fn complete_unterminated_event_survives_append_and_interior_corruption_blocks_repair() {
+        let (_tmp, cfg) = test_config();
+        let path = cfg.defaults.events_path();
+        let record = br#"{"timestamp":"now","event_type":"custom"}"#;
+        std::fs::write(&path, record).unwrap();
+        super::record(&cfg, EventType::LoopStopped, None, None, "next").unwrap();
+        assert_eq!(read_events(&cfg).unwrap()[0].event_type, "custom");
+        for corrupt in [&b"{\n\0"[..], &b"not json"[..], &b"{}"[..]] {
+            std::fs::write(&path, corrupt).unwrap();
+            assert!(read_events(&cfg).is_err());
+            assert!(super::record(&cfg, EventType::LoopStopped, None, None, "next").is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), corrupt);
+        }
     }
 
     #[test]

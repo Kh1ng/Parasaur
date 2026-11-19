@@ -325,6 +325,13 @@ fn no_admission_diagnostics_names_blocked_items_capacity_and_empty_queue() {
     );
     assert!(quiet.contains("queue: empty"), "{quiet}");
 
+    snapshot.open_managed_mr_count = 1;
+    let held = no_admission_diagnostics(&snapshot, 0, 2, None);
+    assert!(
+        held.contains("no selectable work (1 open managed MR"),
+        "{held}"
+    );
+
     snapshot.blocked_work_items.push(capped_pr_blocker());
     let deferred = no_admission_diagnostics(&snapshot, 1, 2, Some("node memory is critical"));
     assert!(

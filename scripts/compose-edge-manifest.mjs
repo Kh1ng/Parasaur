@@ -12,7 +12,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 
-const repo = process.env.GITHUB_REPOSITORY || 'Kh1ng/git-agent-harness';
+const repo = process.env.GITHUB_REPOSITORY || 'Kh1ng/Parasaur';
 const headSha = process.argv[2];
 if (!headSha || !/^[0-9a-f]{7,40}$/.test(headSha)) {
   throw new Error('usage: compose-edge-manifest.mjs <head-sha>');

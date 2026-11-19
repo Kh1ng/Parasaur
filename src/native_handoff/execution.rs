@@ -3,7 +3,7 @@
 //! processes cannot opt in through serialized dispatch arguments or ambient env.
 use super::{
     worker::{OperationPermission, OperationPurpose, WorkerRun},
-    WorkerContext,
+    JobRequest, WorkerContext,
 };
 use crate::{
     config::{GahConfig, Profile},
@@ -139,6 +139,11 @@ impl Execution {
         profile: Option<&Profile>,
     ) -> Result<OperationPermission> {
         ensure!(
+            self.context.request.publication_source.is_none()
+                || purpose == OperationPurpose::Publish,
+            "Publication recovery permits only a publication operation"
+        );
+        ensure!(
             !self.unconfirmed.load(Ordering::SeqCst),
             "Native operation completion is unconfirmed; stop and reconcile this job"
         );
@@ -180,6 +185,16 @@ impl Execution {
         // is expected here; its journal and completion remain separate.
         WorkerRun::open_waiting(&self.work, &self.context.binding)?.complete_operation(permission)
     }
+}
+
+pub(crate) fn publication_context() -> Result<(&'static JobRequest, &'static str)> {
+    let execution = CURRENT
+        .get()
+        .context("Publication recovery requires a verified native worker")?;
+    Ok((
+        &execution.context.request,
+        &execution.context.binding.node_id,
+    ))
 }
 
 fn quiescent(run_id: &str) -> Result<()> {

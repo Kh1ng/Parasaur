@@ -35,6 +35,7 @@ function authority(root: string, centralUrl: string, config: string | undefined,
     checking = true;
     let workerCatalogFile:string|undefined;
     let owned:NativeHeldWork[]|undefined;
+    let stage = 'read controller state';
     const currentHolds=()=>holds?.(binding.profile).sort((left,right)=>left.run_id.localeCompare(right.run_id));
     try {
       const run = resolve(ownedRoot, binding.run_id);
@@ -42,22 +43,29 @@ function authority(root: string, centralUrl: string, config: string | undefined,
       const before = await readLoopExecutionState(binding.profile, signal);
       if (before.state !== 'active') return { allowed: false, reason: before.state === 'paused' ? 'factory_paused' : 'authority_unavailable' };
       if(catalog) {
+        stage = 'read worker catalog and held work';
         const current=await catalog(binding,signal);
         owned=currentHolds();
         if(!owned) return {allowed:false,reason:'authority_unavailable'};
         workerCatalogFile=join(run,`catalog-${randomUUID()}.json`);
         writeFileAtomic(workerCatalogFile,JSON.stringify({catalog:current,held_work:owned}),0o600,process.platform!=='win32');
       }
+      stage = checkWork ? 'check selected work and policy' : 'check running route and policy';
       const current = await runCheckNativePolicy({ contextDirectory: join(run, 'context'), contextSha256: binding.context_sha256,
         nodeId: binding.node_id, centralUrl, config, signal, checkWork, checkRoute: !checkWork,workerCatalogFile });
       if (!isDeepStrictEqual(current, binding)) return { allowed: false, reason: 'policy_changed' };
       if(owned && !isDeepStrictEqual(owned,currentHolds())) return {allowed:false,reason:'claim_lost'};
+      stage = 'recheck controller state';
       const after = await readLoopExecutionState(binding.profile, signal);
       if (signal?.aborted) return { allowed: false, reason: 'authority_unavailable' };
       if (after.state !== 'active') return { allowed: false, reason: after.state === 'paused' ? 'factory_paused' : 'authority_unavailable' };
       if (!isDeepStrictEqual(before, after)) return { allowed: false, reason: 'controller_changed' };
       return { allowed: true };
-    } catch { return { allowed: false, reason: 'authority_unavailable' }; }
+    } catch {
+      // CLI errors can contain profile settings. Log only the known operation.
+      console.warn(`Native authority unavailable for run ${binding.run_id} during ${stage}${signal?.aborted ? ' (deadline exceeded)' : ''}`);
+      return { allowed: false, reason: 'authority_unavailable' };
+    }
     finally { if(workerCatalogFile) {try {unlinkSync(workerCatalogFile);}catch{/* Keep private evidence when cleanup fails. */}} checking = false; }
   };
 }

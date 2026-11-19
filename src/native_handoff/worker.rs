@@ -371,6 +371,12 @@ impl WorkerRun {
             "running"
         } else if held && self.journal.phase == Phase::Ready && self.require_uncancelled().is_ok() {
             "ready"
+        } else if held
+            && self.unused_launch().ok().flatten().is_some_and(|job| {
+                super::host::terminal_job(&self.journal.binding.run_id, job).is_ok()
+            })
+        {
+            "exited_before_dispatch"
         } else {
             "unknown"
         }

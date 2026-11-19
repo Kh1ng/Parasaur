@@ -38,6 +38,7 @@ export type NativeOperationAuthorization = (NativeOperationRequest & { allowed: 
   | { allowed: false; reason: 'invalid_operation' | 'operation_in_progress' | Exclude<NativeAuthorization, {allowed:true}>['reason'] };
 export type NativeWorkerObservation = NativeClaimBinding & (
   { state: 'waiting_capacity' } | { state: 'ready'; reservation: NativeHostReservation }
+  | { state: 'exited_before_dispatch'; reservation_id: string }
   | { state: 'running' } | { state: 'unknown' } | { state: 'terminal'; receipt_json: string }
 );
 /** The worker verifies central's acknowledgement itself and proves physical
@@ -219,7 +220,7 @@ export class NativeDispatchBroker {
     return leases.map(lease=>{
       const hold=lease.native_handoff!;let reserves_intake=true;
       try {const binding=this.get(hold.run_id).binding;
-        reserves_intake=binding.mode==='fix' && binding.branch===null && ['initial','retry','escalate'].includes(binding.dispatch_reason??'');
+        reserves_intake=binding.mode==='fix' && binding.branch===null && ['initial','retry','escalate','recover_publication'].includes(binding.dispatch_reason??'');
       }catch{/* Unknown native work still reserves intake conservatively. */}
       return {profile,work_id:lease.work_id,run_id:hold.run_id,node_id:hold.node_id,context_sha256:hold.context_sha256,reserves_intake};
     });
@@ -349,7 +350,8 @@ export class NativeDispatchBroker {
 
   private operationMatches(journal: Journal, request: NativeOperationRequest): boolean {
     const previous=request.purpose==='claim'?journal.last_claim_operation:journal.last_operation;
-    return journal.start_offered && !!journal.start_grant?.consumed_at && !journal.terminal_observed
+    return (journal.binding.dispatch_reason !== 'recover_publication' || request.purpose === 'publish')
+      && journal.start_offered && !!journal.start_grant?.consumed_at && !journal.terminal_observed
       && journal.phase!=='terminal' && same(journal.binding,request)
       && journal.start_grant.reservation.id===request.reservation_id
       && this.now()>=Date.parse(journal.start_grant.consumed_at)
@@ -362,7 +364,7 @@ export class NativeDispatchBroker {
   }
   private grantRefusal(journal: Journal, grant: NativeStartGrant): 'invalid_grant' | 'expired' | 'already_consumed' | undefined {
     const stored = journal.start_grant;
-    if (!journal.start_offered || journal.phase === 'terminal' || journal.terminal_observed || !stored || !same(grant, journal.binding)
+    if (!journal.start_offered || journal.reservation_release || journal.phase === 'terminal' || journal.terminal_observed || !stored || !same(grant, journal.binding)
       || grant.reservation_id !== stored.reservation.id || grant.expires_at !== stored.expires_at
       || !timingSafeEqual(Buffer.from(hash(grant.token), 'hex'), Buffer.from(stored.token_sha256, 'hex'))) return 'invalid_grant';
     if (stored.consumed_at) return 'already_consumed';
@@ -456,7 +458,9 @@ export class NativeDispatchBroker {
         || !Number.isFinite(Date.parse(claimOperation.authorized_at)) || Date.parse(claimOperation.authorized_at)<Date.parse(grant.consumed_at)))
       || ((journal.phase==='cancelling' || journal.phase==='cancelled') && !cancellation)
       || (Object.hasOwn(journal,'reservation_release') && (!cancellation || !['cancelling','cancelled'].includes(journal.phase)
-        || journal.start_offered || journal.terminal_observed || !!journal.acknowledgement || !same(cancellation.reservation,journal.binding)
+        || (journal.start_offered && (!grant || grant.consumed_at !== undefined
+          || grant.reservation.id !== cancellation.reservation?.id || grant.reservation.expires_at !== cancellation.reservation?.expires_at))
+        || journal.terminal_observed || !!journal.acknowledgement || !same(cancellation.reservation,journal.binding)
         || !cancellation.reservation.id || typeof cancellation.reservation.id!=='string' || cancellation.reservation.id.length>4096
         || /[\x00-\x1f\x7f]/.test(cancellation.reservation.id) || !Number.isFinite(Date.parse(cancellation.reservation.expires_at))
         || (cancellation.proof && !this.reservationReleased(journal.binding,cancellation.reservation,cancellation.proof))
@@ -509,6 +513,17 @@ export class NativeDispatchBroker {
     // Once termination is saved centrally, a stale live-worker observation
     // must not postpone canonical import or downgrade its recovery state.
     if (journal.terminal_observed && journal.receipt_file) return this.importResult(journal);
+    if (observation.state === 'exited_before_dispatch') {
+      const grant = journal.start_grant;
+      // A lost successful reply leaves consumed_at on central. Keep that run
+      // fenced even if the worker never recorded its execution identity.
+      if (!grant || grant.consumed_at !== undefined || !journal.start_offered || journal.terminal_observed
+        || grant.reservation.id !== observation.reservation_id || Date.parse(grant.expires_at) > this.now()) {
+        return this.uncertain(journal, 'start_unconfirmed');
+      }
+      return this.cancelReservation(this.update(journal, { phase: 'cancelling', reason: 'exited_before_dispatch',
+        reservation_release: { reservation: grant.reservation, reason: 'worker_release_unconfirmed' } }));
+    }
     if (observation.state === 'unknown') return journal.receipt_file ? this.importResult(journal) : this.uncertain(journal, 'worker_state_unconfirmed');
     if (observation.state === 'running') {
       if (!journal.start_offered) return this.uncertain(journal, 'execution_without_start_intent');

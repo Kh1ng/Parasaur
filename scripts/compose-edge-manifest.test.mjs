@@ -27,6 +27,7 @@ function fixture(t, { fragments = [] } = {}) {
   const run = (headSha = '0123456789abcdef0123456789abcdef01234567') =>
     spawnSync(process.execPath, ['../scripts/compose-edge-manifest.mjs', headSha], {
       cwd: dir,
+      env: { ...process.env, GITHUB_REPOSITORY: 'fixture/parasaur-fork' },
       encoding: 'utf8'
     });
   return { dir, run };
@@ -49,7 +50,7 @@ test('composes edge-manifest.json with per-asset SHA-256 and no desktop feed whe
   const bundle = manifest.assets.find((asset) => asset.kind === 'server-bundle');
   assert.equal(bundle.name, 'gah-server-bundle.tar.gz');
   assert.match(bundle.sha256, /^[0-9a-f]{64}$/);
-  assert.equal(bundle.url, 'https://github.com/Kh1ng/git-agent-harness/releases/download/edge/gah-server-bundle.tar.gz');
+  assert.equal(bundle.url, 'https://github.com/fixture/parasaur-fork/releases/download/edge/gah-server-bundle.tar.gz');
   for (const asset of manifest.assets) {
     assert.ok(asset.size > 0);
   }
@@ -82,7 +83,7 @@ test('merges per-platform fragments into the signed latest.json feed', t => {
   assert.equal(feed.platforms['darwin-aarch64'].signature, 'minisig-macos');
   assert.equal(
     feed.platforms['windows-x86_64'].url,
-    'https://github.com/Kh1ng/git-agent-harness/releases/download/edge/PARASAUR_0.1.3_x64-setup.exe'
+    'https://github.com/fixture/parasaur-fork/releases/download/edge/PARASAUR_0.1.3_x64-setup.exe'
   );
 });
 

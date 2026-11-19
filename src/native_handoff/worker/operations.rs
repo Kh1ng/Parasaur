@@ -79,6 +79,22 @@ fn date(value: &str) -> Result<OffsetDateTime> {
     OffsetDateTime::parse(value, &Rfc3339).context("Invalid native permission timestamp")
 }
 
+/// A newly delivered grant can be a fraction of a second ahead of this host.
+/// Wait for its actual validity window without moving either boundary. A
+/// distant timestamp or a clock that fails to advance still refuses the grant.
+fn require_current_window(issued: OffsetDateTime, expires: OffsetDateTime) -> Result<()> {
+    let delay = issued - crate::clock::now_utc();
+    if delay.is_positive() && delay <= time::Duration::seconds(1) {
+        std::thread::sleep(delay.unsigned_abs());
+    }
+    let now = crate::clock::now_utc();
+    ensure!(
+        issued <= now && now < expires,
+        "Native permission is expired or not yet valid"
+    );
+    Ok(())
+}
+
 pub(super) fn response_body(response: crate::curl_http::CurlResponse) -> Result<Vec<u8>> {
     if response.status == 200 {
         return Ok(response.body);
@@ -237,6 +253,8 @@ impl WorkerRun {
             "Native execution already entered or lacks a durable start fence"
         );
         let binding = &self.journal.binding;
+        let issued = date(&consumed.consumed_at)?;
+        let expires = date(&consumed.expires_at)?;
         ensure!(
             consumed.allowed
                 && consumed.run_id == binding.run_id
@@ -248,12 +266,11 @@ impl WorkerRun {
                     .start
                     .as_ref()
                     .is_some_and(|start| start.expires_at == consumed.expires_at)
-                && date(&consumed.consumed_at)? <= crate::clock::now_utc()
-                && date(&consumed.expires_at)? > crate::clock::now_utc()
-                && date(&consumed.expires_at)? - date(&consumed.consumed_at)?
-                    <= time::Duration::seconds(10),
+                && expires > issued
+                && expires - issued <= time::Duration::seconds(10),
             "Consumed native start does not match this current job"
         );
+        require_current_window(issued, expires)?;
         let invocation =
             std::env::var("INVOCATION_ID").context("Native execution requires its job service")?;
         let pid = std::process::id();
@@ -429,10 +446,9 @@ impl WorkerRun {
                 )?,
             "Native operation permission predates start consumption"
         );
-        ensure!(
-            !fresh || (issued <= crate::clock::now_utc() && expires > crate::clock::now_utc()),
-            "Native operation permission is expired or not yet valid"
-        );
+        if fresh {
+            require_current_window(issued, expires)?;
+        }
         Ok(())
     }
 

@@ -390,7 +390,8 @@ fn the_wsl_installer_rejects_a_release_too_old_for_it() {
     for (body, ok) in [
         ("echo 'old CLI help'\n", false),
         ("case \"$*\" in \"config set --help\"|\"status --help\") echo '--node-role --role';; *) exit 2;; esac\n", false),
-        ("case \"$*\" in \"config set --help\"|\"status --help\") echo '--node-role --role';; \"installer --help\") exit 0;; *) exit 2;; esac\n", true),
+        ("case \"$*\" in \"config set --help\"|\"status --help\") echo '--node-role --role';; \"installer --help\") exit 0;; *) exit 2;; esac\n", false),
+        ("case \"$*\" in \"config set --help\"|\"status --help\") echo '--node-role --role';; \"installer --help\"|\"native-handoff execute --help\") exit 0;; *) exit 2;; esac\n", true),
     ] {
         executable(&cli, body);
         let output = bash(&["-ec", check], &[("release_dir", release)], false);
