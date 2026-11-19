@@ -177,8 +177,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: refs/heads/main
+          fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
+      - name: Select the green revision from main
+        env:
+          EDGE_REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          [[ "$EDGE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$EDGE_REVISION" HEAD
+          git checkout --detach "$EDGE_REVISION"
       - uses: ./.github/actions/build-linux-appimage
         with:
           artifact_name: edge-linux-standalone
