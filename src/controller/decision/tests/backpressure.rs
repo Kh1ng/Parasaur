@@ -130,3 +130,54 @@ fn implementation_resumes_below_the_managed_mr_limit() {
         NextAction::DispatchTicket { .. }
     ));
 }
+
+#[test]
+fn infra_failure_retries_only_when_a_backend_is_eligible() {
+    let mut snapshot = empty_snapshot();
+    snapshot.available_tickets.push(ticket(
+        "docs/tickets/TICKET-002-x.md",
+        Some("TICKET-002"),
+        1,
+        Some("harness_error"),
+        false,
+        false,
+    ));
+
+    // No eligible backend at all -> must not retry blindly.
+    let action = decide_next_action(&snapshot);
+    assert_eq!(action.kind(), "no_op");
+
+    // Now a backend is eligible -> retry.
+    snapshot.availability.push(ScopeStatusJson {
+        backend_instance: None,
+        backend: "codex".into(),
+        model: None,
+        quota_pool: None,
+        eligible_now: true,
+        reason: None,
+        unavailable_until: None,
+        source: None,
+        last_error_summary: None,
+        observed_at: None,
+        scope: None,
+    });
+    let action = decide_next_action(&snapshot);
+    match action {
+        NextAction::Retry { work_id, .. } => assert_eq!(work_id, "TICKET-002"),
+        other => panic!("expected Retry, got {other:?}"),
+    }
+    snapshot
+        .work_waypoint_evidence
+        .entry("TICKET-002".into())
+        .or_default()
+        .interrupted_checkpoint = true;
+    snapshot.availability[0].eligible_now = false;
+    snapshot.availability[0].unavailable_until = Some("2030-01-01T00:00:00Z".into());
+    assert_ne!(
+        decide_next_action(&snapshot).kind(),
+        "retry",
+        "a checkpoint must respect an observed cooldown"
+    );
+    snapshot.availability.clear();
+    assert_eq!(decide_next_action(&snapshot).kind(), "retry");
+}

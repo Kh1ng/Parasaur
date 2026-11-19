@@ -11,7 +11,9 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 mod pm;
+mod waypoints;
 pub use self::pm::PmParentStatus;
+pub use waypoints::WorkWaypointEvidence;
 
 mod gates;
 mod intake;
@@ -165,60 +167,6 @@ pub struct StatusSnapshot {
     /// durable skill-inventory store; `gah skills refresh` is what actually
     /// queries a backend.
     pub skill_inventory: Vec<crate::skill_inventory::SkillInventoryView>,
-}
-
-#[derive(Default, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct WorkWaypointEvidence {
-    pub first_dispatch_at: Option<String>,
-    pub first_commit_at: Option<String>,
-    pub first_validation_at: Option<String>,
-    pub first_pull_request_at: Option<String>,
-    /// Per-issue budget usage and remaining allowance, present only when
-    /// the profile's `routing.issue_budget` limits an axis and the issue
-    /// has recorded usage.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub issue_budget: Option<IssueBudgetStatus>,
-}
-
-fn project_work_waypoint_evidence(
-    entries_by_work_id: &ledger::LedgerEntriesByWorkId,
-    repo_id: &str,
-) -> std::collections::BTreeMap<String, WorkWaypointEvidence> {
-    entries_by_work_id
-        .iter()
-        .filter_map(|(work_id, entries)| {
-            let mut evidence = WorkWaypointEvidence::default();
-            for entry in entries {
-                if entry.repo_id != repo_id || ledger::is_entry_stale(entry) {
-                    continue;
-                }
-                if entry.mode == "clear_attempts" {
-                    evidence = WorkWaypointEvidence::default();
-                    continue;
-                }
-                let is_dispatch = entry.dispatch_reason.is_some()
-                    || entry.attempts_started.unwrap_or_default() > 0
-                    || entry.backend_exit_code.is_some()
-                    || entry.commit_attempted
-                    || entry.validation_result.is_some();
-                if is_dispatch && evidence.first_dispatch_at.is_none() {
-                    evidence.first_dispatch_at = Some(entry.timestamp.clone());
-                }
-                if entry.commit_created && evidence.first_commit_at.is_none() {
-                    evidence.first_commit_at = Some(entry.timestamp.clone());
-                }
-                if entry.validation_result.as_deref() == Some("passed")
-                    && evidence.first_validation_at.is_none()
-                {
-                    evidence.first_validation_at = Some(entry.timestamp.clone());
-                }
-                if entry.mr_created && evidence.first_pull_request_at.is_none() {
-                    evidence.first_pull_request_at = Some(entry.timestamp.clone());
-                }
-            }
-            (evidence != WorkWaypointEvidence::default()).then(|| (work_id.clone(), evidence))
-        })
-        .collect()
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -479,7 +427,7 @@ fn build_snapshot_inner(
     // enriched with their backend/model and review verdict (TICKET-198).
     let ledger_entries_by_work_id = ledger::index_entries_by_work_id(entries);
     let mut work_waypoint_evidence =
-        project_work_waypoint_evidence(&ledger_entries_by_work_id, &profile.repo_id);
+        waypoints::project(&ledger_entries_by_work_id, profile_name, &profile.repo_id);
     if effective_routing.issue_budget.is_enforced() {
         issue_budget::project(
             &effective_routing.issue_budget,

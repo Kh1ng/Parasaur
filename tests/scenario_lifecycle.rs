@@ -2,6 +2,10 @@
 
 mod support;
 
+#[cfg(unix)]
+#[path = "scenario_lifecycle/shutdown.rs"]
+mod shutdown;
+
 use serde_json::{json, Value};
 use std::fs;
 use std::process::Command;

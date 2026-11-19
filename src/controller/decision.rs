@@ -557,6 +557,17 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
     }
 
     let some_backend_eligible = snapshot.availability.iter().any(|a| a.eligible_now);
+    // An interrupted worker already had a route. On a new node the availability
+    // cache can still be empty; let dispatch recheck that route on resumption.
+    let can_retry = |ticket: &crate::models::AvailableTicket| {
+        some_backend_eligible
+            || (snapshot.availability.is_empty()
+                && ticket
+                    .work_id
+                    .as_ref()
+                    .and_then(|id| snapshot.work_waypoint_evidence.get(id))
+                    .is_some_and(|evidence| evidence.interrupted_checkpoint))
+    };
     let mut failed_tickets: Vec<_> = snapshot
         .available_tickets
         .iter()
@@ -598,7 +609,7 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
             && !budget_refuses_retry(snapshot, t)
             && t.last_failure_class
                 .as_deref()
-                .is_some_and(|fc| is_infra_failure(fc) && some_backend_eligible)
+                .is_some_and(|fc| is_infra_failure(fc) && can_retry(t))
     });
     let has_undispatched = snapshot.available_tickets.iter().any(|t| {
         ticket_consumes_worker_slot(t)
@@ -693,16 +704,18 @@ pub fn decide_next_action(snapshot: &StatusSnapshot) -> NextAction {
             continue;
         }
         if let Some(fc) = ticket.last_failure_class.as_deref() {
-            if is_infra_failure(fc) && some_backend_eligible {
+            if is_infra_failure(fc) && can_retry(ticket) {
                 return NextAction::Retry {
                     work_id: ticket
                         .work_id
                         .clone()
                         .unwrap_or_else(|| ticket.ticket_path.clone()),
                     ticket_path: ticket.ticket_path.clone(),
-                    reason: format!(
-                        "prior attempt failed ({fc}); retrying now that a backend appears available"
-                    ),
+                    reason: if some_backend_eligible {
+                        format!("prior attempt failed ({fc}); retrying now that a backend appears available")
+                    } else {
+                        "resuming the checkpoint preserved during shutdown".into()
+                    },
                 };
             }
         }

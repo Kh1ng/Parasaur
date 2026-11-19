@@ -76,6 +76,7 @@ Managed issues retain the existing dashboard dispatch fence.
 - Issue assignment: an `open` event assigned to the configured bot, or an `update` that adds the bot. Dispatch mode: `improve`, target: `#<iid>`.
 - MR review request: an `open` event with the bot reviewer, a reviewer addition, or a review re-request. Dispatch mode: `review`, MR: `<iid>`.
 - Issue or MR note: a whole `@parasaur` mention in a non-system note. The note text is the worker instruction. Issue mode: `improve`. MR mode: `fix`.
+  For a factory-managed issue, start a new issue note with `@parasaur` followed by the instruction while the worker is running. If the loop shuts down and preserves a checkpoint, the resumed worker reads trusted mentions created since the interrupted dispatch began. It receives them in chronological order and can find earlier notes on the issue if their text exceeds 32 KiB.
 - Failed pipeline: an enabled, failed branch pipeline with an open MR authored by the configured bot. The MR must match the project and pipeline SHA. Its branch must start with `gah/<repo_id>-`. Dispatch mode: `fix` on that MR.
 
 Bot-authored mention notes are ignored. Commit and snippet notes are ignored.

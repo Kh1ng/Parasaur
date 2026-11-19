@@ -42,7 +42,7 @@ fn waypoint_projection_uses_effective_repo_scoped_ledger_history() {
     let index_history = [old, clear, current.clone()];
     let index = ledger::index_entries_by_work_id(&index_history);
 
-    let projected = project_work_waypoint_evidence(&index, &profile.repo_id);
+    let projected = waypoints::project(&index, "real", &profile.repo_id);
     let evidence = &projected["#1077"];
     assert_eq!(
         evidence.first_dispatch_at.as_deref(),

@@ -42,6 +42,7 @@ mod finish;
 mod gitlab_fix;
 mod handoff;
 mod job_contract;
+mod steering;
 pub(in crate::dispatch) use job_contract::preflight as preflight_job_contract;
 mod publish_mr;
 use finish::finish_improve_workflow;
@@ -164,6 +165,17 @@ pub(crate) fn improve(
         ledger.work_id.as_deref(),
     )?;
 
+    let create_fresh_worktree = |ledger: &mut LedgerEntry| {
+        classify_worktree_result(
+            ledger,
+            worktree::create(
+                repo,
+                &profile.default_target_branch,
+                &branch,
+                &worktree_base,
+            ),
+        )
+    };
     let (branch, wt) = if let Some(ref existing_branch) = manual_fix.existing_branch {
         println!(
             "Creating worktree from existing branch '{}'...",
@@ -175,7 +187,6 @@ pub(crate) fn improve(
         )?;
         (existing_branch.clone(), wt)
     } else if let Some((checkpoint_branch, checkpoint_sha, _)) = checkpoint_result {
-        // Issue #362: Resume from existing checkpoint
         println!("Resuming from checkpoint {checkpoint_branch} (sha: {checkpoint_sha}) ...");
 
         if let Some(wt) = crate::dispatch::checkpoints::resume_checkpoint_into_worktree(
@@ -194,15 +205,7 @@ pub(crate) fn improve(
                 "Checkpoint {} is no longer valid, creating fresh worktree from {}...",
                 checkpoint_branch, profile.default_target_branch
             );
-            let wt = classify_worktree_result(
-                ledger,
-                worktree::create(
-                    repo,
-                    &profile.default_target_branch,
-                    &branch,
-                    &worktree_base,
-                ),
-            )?;
+            let wt = create_fresh_worktree(ledger)?;
             (branch, wt)
         }
     } else {
@@ -210,15 +213,7 @@ pub(crate) fn improve(
             "Creating worktree from {}...",
             profile.default_target_branch
         );
-        let wt = classify_worktree_result(
-            ledger,
-            worktree::create(
-                repo,
-                &profile.default_target_branch,
-                &branch,
-                &worktree_base,
-            ),
-        )?;
+        let wt = create_fresh_worktree(ledger)?;
         (branch, wt)
     };
     let _activity = worktree::lock_activity(&wt, true)?;
@@ -262,6 +257,14 @@ pub(crate) fn improve(
     let cargo_target = crate::build_cache::ScopedCargoTarget::acquire(&profile.artifact_root)?;
     let validation_environment = cargo_target.environment();
     let mut base_task = build_redispatch_task(profile, &wt, args, &target, issue_details.as_ref());
+    steering::append(
+        cfg,
+        profile,
+        ledger,
+        wip_checkpoints.first(),
+        &wt,
+        &mut base_task,
+    )?;
     job_contract::append_prompt(job_contract.as_ref(), &mut base_task);
     let mut gitlab_fix = gitlab_fix::GitLabFix::prepare(
         profile,
