@@ -56,6 +56,8 @@ pub async fn install_standalone(window: tauri::WebviewWindow, factory_enabled: O
     let installer = packaged_installer(&window).ok_or("Download the Linux x86-64 AppImage with the standalone runtime.")?;
     let output = tauri::async_runtime::spawn_blocking(move || {
         let mut setup = Command::new("bash");
+        #[cfg(target_os = "linux")]
+        apply_host_env(&mut setup);
         setup.arg(installer);
         if let Some(enabled) = factory_enabled { setup.arg(enabled.to_string()); }
         setup.output()
@@ -248,24 +250,24 @@ const LINUX_TERMINALS: &[(&str, &[&str])] = &[
 #[cfg(all(unix, not(target_os = "macos")))]
 fn open_terminal(line: &str) -> bool {
     let script = held(line);
-    let changes = std::env::var("APPDIR")
-        .map(|appdir| {
-            let vars = std::env::vars_os()
-                .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)));
-            host_env(vars, &appdir)
-        })
-        .unwrap_or_default();
     LINUX_TERMINALS.iter().any(|(program, prefix)| {
         let mut terminal = command(program);
         terminal.args(*prefix).args(["bash", "-lc", script.as_str()]);
-        for (key, value) in &changes {
-            match value {
-                Some(value) => terminal.env(key, value),
-                None => terminal.env_remove(key),
-            };
-        }
+        apply_host_env(&mut terminal);
         terminal.spawn().is_ok()
     })
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn apply_host_env(process: &mut Command) {
+    let Ok(appdir) = std::env::var("APPDIR") else { return };
+    let vars = std::env::vars_os().filter_map(|(k,v)| Some((k.into_string().ok()?, v.into_string().ok()?)));
+    for (key, value) in host_env(vars, &appdir) {
+        match value {
+            Some(value) => process.env(key, value),
+            None => process.env_remove(key),
+        };
+    }
 }
 
 /// Keeps the window open so the user can read how setup ended.

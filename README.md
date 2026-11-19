@@ -32,12 +32,20 @@ Select the WSL worker, reveal the command, and run it in PowerShell as administr
 Parasaur does not have account sign-in. Remote access uses the central token or device pairing.
 Provider CLIs use separate authentication inside WSL. See the [Windows tester guide](docs/WINDOWS_TESTER_GUIDE.md).
 
-### Linux — desktop worker (AppImage)
+### Linux desktop and standalone dashboard (AppImage)
 
 ```bash
 gh release download --repo Kh1ng/Parasaur --pattern '*.AppImage' --output GAH-Worker.AppImage
 chmod +x GAH-Worker.AppImage && ./GAH-Worker.AppImage
 ```
+
+On x86-64 Linux, an AppImage containing the standalone runtime can install the
+dashboard from its connection screen. Select **Set up standalone**. The app
+starts a user service on `127.0.0.1:3773` and opens the dashboard when it is
+healthy. Open the newer AppImage and select **Start or update standalone** to
+update it. Existing repositories, settings and server state stay in your
+account. Source installation is still available through **Install Parasaur in
+Terminal**.
 
 Smoke test: GAH Worker appears in the system tray.
 

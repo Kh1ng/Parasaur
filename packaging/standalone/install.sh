@@ -45,9 +45,6 @@ if [[ $active == false ]]; then
 elif [[ $previous != "$release" && -n $(systemctl --user list-units --state=active --no-legend 'gah-loop@*.service') ]]; then
   fail 'Stop active project loops before updating the standalone server.'
 fi
-args=(config set --config "$config" --node-role standalone)
-[[ -z $factory ]] || args+=(--factory-enabled "$factory")
-"$release/bin/gah" "${args[@]}"
 cat > "$tmp/unit" <<'UNIT'
 [Unit]
 Description=Parasaur standalone dashboard
@@ -64,17 +61,29 @@ if [[ ! -e $units/$service ]]; then
 elif ! cmp -s "$tmp/unit" "$units/$service"; then
   fail "An existing $service has different settings. Inspect it with systemctl --user cat $service."
 fi
+args=(config set --config "$config" --node-role standalone)
+[[ -z $factory ]] || args+=(--factory-enabled "$factory")
+"$release/bin/gah" "${args[@]}"
 select_release() { ln -s "$1" "$tmp/current"; mv -Tf "$tmp/current" "$root/current"; }
 healthy() {
   systemctl --user is-active --quiet "$service" &&
-    curl --noproxy '*' -fsS --max-time 2 http://127.0.0.1:3773/health 2>/dev/null |
-      "$release/bin/node" -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.exit(JSON.parse(s).status==="healthy"?0:1)}catch{process.exit(1)}})'
+    "$release/bin/node" --input-type=module -e 'try {
+      const r=await fetch("http://127.0.0.1:3773/health",{signal:AbortSignal.timeout(2000)});
+      const h=await r.json(); process.exit(r.ok && h.status==="healthy" && h.checks.rustBackend.ready ? 0 : 1);
+    } catch { process.exit(1); }'
 }
 if [[ $previous == "$release" && $active == true ]] && healthy; then exit 0; fi
 select_release "$release"
 if systemctl --user daemon-reload && systemctl --user enable "$service" && systemctl --user restart "$service"; then
   for ((i=0; i<60; i++)); do
-    if healthy; then exit 0; fi
+    if healthy; then
+      for candidate in "$root"/releases/*; do
+        if [[ ${candidate##*/} =~ ^[0-9a-f]{64}$ && -f $candidate/REVISION && $candidate != "$release" && $candidate != "$previous" ]]; then
+          rm -rf -- "$candidate"
+        fi
+      done
+      exit 0
+    fi
     sleep 0.5
   done
 fi

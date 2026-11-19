@@ -23,7 +23,9 @@ cp -R apps/server/dist/. "$dist/"
 cp -R apps/web/dist "$payload/apps/web/"
 rm -rf -- "$dist/node_modules" "$dist/.release-runtime"
 node scripts/stage-release-runtime.mjs "$PWD" "$dist/.release-runtime"
-(cd "$dist/.release-runtime" && npm ci --omit=dev --workspace=apps/server --include-workspace-root=false --ignore-scripts --no-audit --no-fund)
+# Standalone uses the user's chosen coding agents. Optional native provider
+# downloads include both glibc and musl executables and are not server dependencies.
+(cd "$dist/.release-runtime" && npm ci --omit=dev --omit=optional --workspace=apps/server --include-workspace-root=false --ignore-scripts --no-audit --no-fund)
 node "$dist/.release-runtime/link.mjs"
 # The server resolves shipped tools and templates relative to its JS files.
 # Use Git to exclude local settings, credentials and generated dependencies.

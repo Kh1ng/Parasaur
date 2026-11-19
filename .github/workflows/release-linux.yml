@@ -25,7 +25,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install Rust (stable)
@@ -82,6 +82,9 @@ jobs:
         run: |
           bash ../../scripts/build-linux-standalone.sh
           npx tauri build --config standalone.bundle.json --bundles appimage
+
+      - name: Verify the packaged standalone runtime
+        run: bash scripts/smoke-standalone-runtime.sh apps/desktop/target/release/bundle/appimage/*.AppImage
 
       # Issue #1326: never publish an AppImage whose first window is blank.
       - name: Smoke-test the AppImage's first window

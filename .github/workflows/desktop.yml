@@ -11,6 +11,7 @@ on:
       - 'scripts/build-signed-macos*'
       - 'scripts/smoke-linux-appimage.sh'
       - 'scripts/build-linux-standalone.sh'
+      - 'scripts/smoke-standalone-runtime.sh'
       - 'packaging/standalone/**'
       - 'scripts/setup-windows.ps1'
       - 'scripts/test-windows-setup.ps1'
@@ -123,7 +124,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install Rust (stable)
@@ -162,6 +163,9 @@ jobs:
         run: |
           bash ../../scripts/build-linux-standalone.sh
           npx tauri build --config standalone.bundle.json --bundles appimage
+
+      - name: Run the packaged standalone dashboard without host build tools
+        run: bash scripts/smoke-standalone-runtime.sh apps/desktop/target/release/bundle/appimage/*.AppImage
 
       # Issue #1326: the artifact itself must show the Settings page, not a blank view.
       - name: Smoke-test the AppImage's first window
