@@ -1,10 +1,12 @@
 // Package existing build outputs with their source revision and content hashes.
-import { copyFileSync, mkdirSync, mkdtempSync, renameSync, rmdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, createReadStream, mkdirSync, mkdtempSync, renameSync, rmdirSync, rmSync, readdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 
-const [kind, destination, builtCli] = process.argv.slice(2);
+const [kind, destination, builtCli, runtimeOption] = process.argv.slice(2);
+if (runtimeOption !== undefined && (kind !== 'worker' || runtimeOption !== '--bundle-runtime')) throw new Error('Expected --bundle-runtime with a worker CLI');
 const installWorker = kind === 'worker' && builtCli !== undefined;
 if (!['desktop', 'worker'].includes(kind) || !destination) throw new Error('Usage: node scripts/stage-node-test-artifacts.mjs desktop|worker DESTINATION');
 const revision = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -23,7 +25,19 @@ if (kind === 'desktop') {
 } else {
   sources.gah = builtCli || 'target/release/gah';
   sources['install-wsl.sh'] = 'scripts/install-wsl-worker.sh';
-  execFileSync('git', ['archive', '--format=tar.gz', `--output=${join(output, 'source.tar.gz')}`, revision]);
+  const archive = join(output, 'source.tar.gz');
+  execFileSync('git', ['archive', '--format=tar.gz', `--output=${archive}`, revision]);
+  if (runtimeOption) {
+    const payload = mkdtempSync(join(tmpdir(), 'parasaur-worker-runtime-'));
+    try {
+      execFileSync('tar', ['-xzf', archive, '-C', payload]);
+      // Worker ACP sessions can use their adapters' bundled Linux executables.
+      execFileSync('bash', ['scripts/stage-linux-server-runtime.sh', payload, '--include=optional'], { stdio: 'inherit' });
+      execFileSync('tar', ['-czf', archive, '-C', payload, '.']);
+    } finally {
+      rmSync(payload, { recursive: true, force: true });
+    }
+  }
 }
 for (const [name, source] of Object.entries(sources)) {
   // Export scripts from Git so Windows checkout CRLF conversion cannot mix bundle hashes.
@@ -31,7 +45,12 @@ for (const [name, source] of Object.entries(sources)) {
   else copyFileSync(source, join(output, name));
 }
 const names = [...Object.keys(sources), ...(kind === 'worker' ? ['source.tar.gz'] : [])];
-const files = Object.fromEntries(names.map(name => [name, createHash('sha256').update(readFileSync(join(output, name))).digest('hex')]));
+const files = {};
+for (const name of names) {
+  const hash = createHash('sha256');
+  for await (const bytes of createReadStream(join(output, name))) hash.update(bytes);
+  files[name] = hash.digest('hex');
+}
 writeFileSync(join(output, `${kind}-artifact.json`), JSON.stringify({ schema_version: 1, revision, files }, null, 2) + '\n');
 
 if (installWorker) {

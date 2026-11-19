@@ -6,7 +6,7 @@ The desktop lists Windows and WSL tools separately. A listed executable does not
 For an external test, use the [Windows tester guide](WINDOWS_TESTER_GUIDE.md).
 It starts with a matching Actions bundle and omits maintainer-only build steps.
 
-On a Linux x64 central, a source update stages the worker CLI, installer and source archive together. The edge release workflow includes the same kit in the server bundle. Windows verifies the downloaded files against its revision manifest before installing the WSL worker.
+On a Linux x64 central, both source updates and edge releases supply a worker kit with the CLI, Linux Node executable, compiled server and production dependencies. Windows verifies the kit against its revision manifest before installation. The WSL worker starts the packaged server directly. Older source-only kits still build the server during installation.
 
 ## Install from the central dashboard
 

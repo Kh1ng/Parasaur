@@ -146,7 +146,9 @@ jobs:
           name: edge-cli-linux
           path: worker-cli
       - name: Stage the Windows worker bundle from this revision
-        run: node scripts/stage-node-test-artifacts.mjs worker apps/server/dist/worker-artifacts worker-cli/gah-linux-x86_64
+        run: node scripts/stage-node-test-artifacts.mjs worker apps/server/dist/worker-artifacts worker-cli/gah-linux-x86_64 --bundle-runtime
+      - name: Install and probe the bundled WSL worker
+        run: bash scripts/smoke-packaged-wsl-worker.sh apps/server/dist/worker-artifacts
       - name: Archive the release bundle
         run: bash scripts/build-release-bundle.sh gah-server-bundle.tar.gz
       - uses: actions/upload-artifact@v4
