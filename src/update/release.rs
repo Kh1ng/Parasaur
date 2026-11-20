@@ -16,6 +16,7 @@
 
 #[cfg(target_os = "linux")]
 pub(super) mod central_directory;
+mod linux_runtime;
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
@@ -432,7 +433,11 @@ fn install_server_bundle(staging: &Path, repo: &Path, central: bool) -> Result<(
 /// Prepare an isolated release dependency tree before replacing any artifact.
 /// Legacy bundles have no workspace metadata for that installation, so they
 /// require matching checkout dependencies instead of reinstalling an old lock.
-fn prepare_server_bundle_dependencies(staging: &Path, repo: &Path) -> Result<()> {
+fn prepare_server_bundle_dependencies(
+    staging: &Path,
+    repo: &Path,
+    revision: Option<&str>,
+) -> Result<()> {
     let runtime = staging.join("apps/server/dist/.release-runtime");
     if runtime.exists() {
         let format: serde_json::Value = serde_json::from_slice(
@@ -448,11 +453,25 @@ fn prepare_server_bundle_dependencies(staging: &Path, repo: &Path) -> Result<()>
         {
             bail!("release dependency runtime lockfile does not match the bundle");
         }
-        // Prepare everything before any binary or dist output is replaced.
-        // npm uses the release's complete workspace metadata, never the old
-        // checkout's manifests. Failure drops only the extraction directory.
-        super::run_command(&runtime, "npm", super::NPM_CI_ARGS)?;
+        // Prepare the release's own packages before replacing any installed output.
+        let prebuilt = linux_runtime::unpack_if_compatible(staging, revision)?;
+        if !prebuilt {
+            super::run_command(&runtime, "npm", super::NPM_CI_ARGS)?;
+        }
         super::run_command(&runtime, "node", &["link.mjs"])?;
+        if prebuilt {
+            let dist = staging.join("apps/server/dist");
+            for package in ["express", "@git-agent-harness/contracts"] {
+                anyhow::ensure!(
+                    dist.join("node_modules")
+                        .join(package)
+                        .join("package.json")
+                        .is_file(),
+                    "Packaged Linux server dependency is missing: {package}"
+                );
+            }
+            linux_runtime::probe(Path::new("node"), &dist)?;
+        }
         return Ok(());
     }
     if server_bundle_needs_dependency_refresh(staging, repo) {
@@ -594,7 +613,7 @@ fn install_release_artifacts(
                 )
             })?;
         let staging = extract_server_bundle(&fetch(asset)?, repo, serves_control_plane)?;
-        prepare_server_bundle_dependencies(staging.path(), repo)?;
+        prepare_server_bundle_dependencies(staging.path(), repo, manifest.commit.as_deref())?;
         Some((asset, staging))
     } else {
         None
@@ -937,13 +956,13 @@ mod tests {
     fn bundle_dependency_preflight_requires_readable_matching_lockfiles() {
         let staging = tempfile::tempdir().unwrap();
         let repo = tempfile::tempdir().unwrap();
-        assert!(prepare_server_bundle_dependencies(staging.path(), repo.path()).is_err());
+        assert!(prepare_server_bundle_dependencies(staging.path(), repo.path(), None).is_err());
         fs::write(staging.path().join("package-lock.json"), "new").unwrap();
-        assert!(prepare_server_bundle_dependencies(staging.path(), repo.path()).is_err());
+        assert!(prepare_server_bundle_dependencies(staging.path(), repo.path(), None).is_err());
         fs::write(repo.path().join("package-lock.json"), "old").unwrap();
-        assert!(prepare_server_bundle_dependencies(staging.path(), repo.path()).is_err());
+        assert!(prepare_server_bundle_dependencies(staging.path(), repo.path(), None).is_err());
         fs::write(repo.path().join("package-lock.json"), "new").unwrap();
-        prepare_server_bundle_dependencies(staging.path(), repo.path()).unwrap();
+        prepare_server_bundle_dependencies(staging.path(), repo.path(), None).unwrap();
     }
 
     #[test]
@@ -977,7 +996,7 @@ mod tests {
             include_str!("../../scripts/link-release-runtime.mjs"),
         )
         .unwrap();
-        prepare_server_bundle_dependencies(staging.path(), repo.path()).unwrap();
+        prepare_server_bundle_dependencies(staging.path(), repo.path(), None).unwrap();
         let probe = runtime.parent().unwrap().join("probe.mjs");
         fs::write(
             &probe,
@@ -1004,7 +1023,7 @@ mod tests {
         fs::create_dir_all(&runtime).unwrap();
         fs::write(runtime.join("format.json"), r#"{"schema":2}"#).unwrap();
         assert!(
-            prepare_server_bundle_dependencies(staging.path(), repo.path())
+            prepare_server_bundle_dependencies(staging.path(), repo.path(), None)
                 .unwrap_err()
                 .to_string()
                 .contains("unsupported release dependency runtime schema")
@@ -1013,7 +1032,7 @@ mod tests {
         fs::write(runtime.join("package-lock.json"), "different").unwrap();
         fs::write(staging.path().join("package-lock.json"), "bundle lock").unwrap();
         assert!(
-            prepare_server_bundle_dependencies(staging.path(), repo.path())
+            prepare_server_bundle_dependencies(staging.path(), repo.path(), None)
                 .unwrap_err()
                 .to_string()
                 .contains("lockfile does not match")
