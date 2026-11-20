@@ -145,6 +145,28 @@ fn is_codex_event_type(event_type: &str) -> bool {
     )
 }
 
+/// A cached Codex login can still pass `login status` after workspace discovery
+/// rejects it. Only the latest protocol event can establish that rejection.
+pub(crate) fn codex_workspace_login_rejected(text: &str) -> bool {
+    if !text.contains("workspace routing discovery unauthorized (401)") {
+        return false;
+    }
+    for line in text.lines().rev() {
+        let Ok(event) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(kind) = event.get("type").and_then(Value::as_str) else {
+            continue;
+        };
+        if is_codex_event_type(kind) {
+            return kind == "turn.failed"
+                && event.pointer("/error/message").and_then(Value::as_str)
+                    == Some("workspace routing discovery unauthorized (401)");
+        }
+    }
+    false
+}
+
 /// Extract only the final agent message belonging to the newest completed
 /// Codex turn. Tool events, usage records, stale turns, and incomplete turns
 /// are never returned.

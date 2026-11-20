@@ -79,3 +79,50 @@ fn login_failure_still_blocks_when_the_login_check_agrees() {
         .unwrap()
         .contains("authentication_error"));
 }
+
+#[cfg(unix)]
+#[test]
+fn codex_failed_workspace_discovery_overrules_cached_login() {
+    let tmp = tempfile::tempdir().unwrap();
+    let identity = identity_with_login_check(tmp.path(), "Logged in using ChatGPT", 0);
+    let state = tmp.path().join("availability.json");
+    let rejected = r#"{"type":"turn.failed","error":{"message":"workspace routing discovery unauthorized (401)"}}"#;
+    let stderr =
+        "ERROR codex_login::auth::manager: Failed to refresh token status=401 Unauthorized";
+    assert!(!crate::auth_health::login_recovered(&identity));
+    let quoted = serde_json::json!({
+        "type": "item.completed",
+        "item": {"type": "command_execution", "aggregated_output": rejected}
+    });
+    let recovered =
+        format!("{rejected}\n{{\"type\":\"turn.started\"}}\n{{\"type\":\"turn.completed\"}}");
+    for output in [quoted.to_string(), recovered] {
+        assert!(mark_backend_unavailable_from_output_for_identity_at(
+            &state,
+            &identity,
+            &format!("{output}\n{stderr}"),
+            "review log",
+        )
+        .unwrap()
+        .is_none());
+        assert!(!state.exists());
+    }
+
+    for output in [rejected.to_string(), format!("{rejected}\n{stderr}")] {
+        let parsed = mark_backend_unavailable_from_output_for_identity_at(
+            &state,
+            &identity,
+            &output,
+            "review log",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            parsed.kind,
+            crate::quota_parser::FailureKind::AuthenticationError
+        );
+        assert!(fs::read_to_string(&state)
+            .unwrap()
+            .contains("authentication_error"));
+    }
+}

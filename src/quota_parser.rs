@@ -468,7 +468,16 @@ pub fn parse(backend: &str, text: &str, now: OffsetDateTime) -> Option<ParsedFai
         }
     }
 
-    if let Some(m) = authentication_error_re().find(text) {
+    let auth_evidence = if kind == Some(BackendKind::Codex)
+        && crate::runner::output::codex_workspace_login_rejected(text)
+    {
+        Some("Codex workspace discovery rejected the login (401)".to_string())
+    } else {
+        authentication_error_re()
+            .find(text)
+            .map(|m| extract_evidence_line(text, m.start(), m.end()))
+    };
+    if let Some(matched_evidence) = auth_evidence {
         return Some(ParsedFailure {
             backend: backend.to_string(),
             kind: FailureKind::AuthenticationError,
@@ -476,7 +485,7 @@ pub fn parse(backend: &str, text: &str, now: OffsetDateTime) -> Option<ParsedFai
             reset_at: None,
             retry_after_seconds: None,
             confidence: Confidence::High,
-            matched_evidence: extract_evidence_line(text, m.start(), m.end()),
+            matched_evidence,
             unresolved_timezone: None,
         });
     }

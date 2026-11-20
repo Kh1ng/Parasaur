@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn subscription_login_recovers_after_a_successful_account_query() {
+    let _guard = crate::test_support::ExecGuard::new();
+    let f = fixture();
+    make_json_rpc_codex(&f.bin_dir, &f.record_dir);
+    let executable = f.bin_dir.join("codex");
+    let script = fs::read_to_string(&executable).unwrap().replacen(
+        "#!/bin/sh\n",
+        "#!/bin/sh\nif [ \"$1\" = login ]; then echo 'Logged in using ChatGPT'; exit 0; fi\n",
+        1,
+    );
+    fs::write(&executable, script).unwrap();
+    let mut identity = crate::execution_identity::ExecutionIdentity::legacy_candidate(
+        "codex",
+        Some("gpt-5"),
+        None::<String>,
+    );
+    identity.set_executable(Some(executable));
+    assert!(crate::auth_health::login_recovered(&identity));
+}
+
+#[test]
 fn account_rate_limits_read_round_trips_over_app_server() {
     let _exec_guard = crate::test_support::ExecGuard::new();
     let f = fixture();
