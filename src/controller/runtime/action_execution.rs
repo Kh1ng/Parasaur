@@ -18,17 +18,7 @@ pub(crate) fn action_dispatch_context(
     pm_parents: &[crate::status::PmParentStatus],
 ) -> Result<ActionDispatchContext> {
     let planned_child = super::action_creates_managed_mr(action)
-        && action
-            .work_id()
-            .and_then(|id| id.strip_prefix('#'))
-            .is_some_and(|number| {
-                pm_parents.iter().any(|parent| {
-                    parent
-                        .child_issue_numbers
-                        .iter()
-                        .any(|child| child == number)
-                })
-            });
+        && crate::status::is_planned_issue_child(pm_parents, action.work_id());
     let prior_attempt = match action {
         NextAction::Retry { work_id, .. } | NextAction::Escalate { work_id, .. } => {
             let profile = crate::config::get_profile(cfg, profile_name)?;

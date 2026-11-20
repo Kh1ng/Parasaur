@@ -13,6 +13,21 @@ pub struct PmParentStatus {
     pub reconciled: bool,
 }
 
+/// The published plan in the controller's ledger identifies an implementation
+/// child. A reference to a parent in an issue's description is insufficient.
+pub(crate) fn is_planned_issue_child(parents: &[PmParentStatus], work_id: Option<&str>) -> bool {
+    work_id
+        .and_then(|id| id.strip_prefix('#'))
+        .is_some_and(|number| {
+            parents.iter().any(|parent| {
+                parent
+                    .child_issue_numbers
+                    .iter()
+                    .any(|child| child == number)
+            })
+        })
+}
+
 pub(super) fn project(
     profile: &Profile,
     profile_name: &str,

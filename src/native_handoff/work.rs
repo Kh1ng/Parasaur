@@ -102,7 +102,11 @@ pub(super) fn check_current(
                 .and_then(|mr| mr.review_generation.as_deref()),
             _ => None,
         };
-        ensure!(matches_action(args,&action,generation,&profile.local_path),"Prepared native work is no longer the current controller action ({}); reconcile without starting it",action.kind());
+        ensure!(
+            matches_action(args, &action, generation, &profile.local_path, &snapshot.pm_parent_states),
+            "Prepared native work is no longer the current controller action ({}); reconcile without starting it",
+            action.kind()
+        );
     }
     let mut current = crate::ledger::LedgerEntry::new(
         &args.profile,
@@ -164,6 +168,7 @@ fn matches_action(
     action: &NextAction,
     generation: Option<&str>,
     repo: &str,
+    parents: &[crate::status::PmParentStatus],
 ) -> bool {
     let work = |id: Option<&str>| {
         id.zip(args.work_id.as_deref())
@@ -220,7 +225,12 @@ fn matches_action(
                 NextAction::Retry { .. } => ("retry", false),
                 _ => ("escalate", true),
             };
-            args.mode == "fix"
+            let mode = if crate::status::is_planned_issue_child(parents, action.work_id()) {
+                "improve"
+            } else {
+                "fix"
+            };
+            args.mode == mode
                 && (args.dispatch_reason.as_deref() == Some(reason)
                     || (reason == "retry"
                         && args.dispatch_reason.as_deref()
@@ -253,6 +263,47 @@ fn matches_action(
 mod tests {
     use super::*;
     #[test]
+    fn implementation_must_match_the_child_in_the_current_published_plan() {
+        let (_tmp, _central, _worker, request) = crate::native_handoff::tests::fixture();
+        let mut args = request.args;
+        args.target = "1525".into();
+        args.dispatch_reason = Some("initial".into());
+        let action = NextAction::DispatchTicket {
+            ticket_path: "1525".into(),
+            work_id: args.work_id.clone(),
+            recommended_backend: None,
+            recommended_model: None,
+            reason: "fixture".into(),
+        };
+        let parents = [crate::status::PmParentStatus {
+            work_id: "#12".into(),
+            source_issue_number: "12".into(),
+            plan_fingerprint: "fixture".into(),
+            child_issue_numbers: vec!["1525".into()],
+            open_child_count: 1,
+            completed: false,
+            reconciled: false,
+        }];
+        assert!(matches_action(&args, &action, None, "/central/repo", &[]));
+        assert!(!matches_action(
+            &args,
+            &action,
+            None,
+            "/central/repo",
+            &parents
+        ));
+        args.mode = "improve".into();
+        assert!(matches_action(
+            &args,
+            &action,
+            None,
+            "/central/repo",
+            &parents
+        ));
+        assert!(!matches_action(&args, &action, None, "/central/repo", &[]));
+    }
+
+    #[test]
     fn repair_and_pm_intents_do_not_imply_merge_or_publication_authority() {
         let (_tmp, _central, _worker, request) = crate::native_handoff::tests::fixture();
         let mut args = request.args;
@@ -267,7 +318,7 @@ mod tests {
             title: None,
             reason: "fixture".into(),
         };
-        assert!(matches_action(&args, &plan, None, "/central/repo"));
+        assert!(matches_action(&args, &plan, None, "/central/repo", &[]));
         args.mode = "fix".into();
         args.target = "feature".into();
         args.existing_branch = Some("feature".into());
@@ -282,9 +333,9 @@ mod tests {
             review_generation: Some("selected".into()),
             reason: "fixture".into(),
         };
-        assert!(matches_action(&args, &repair, None, "/central/repo"));
+        assert!(matches_action(&args, &repair, None, "/central/repo", &[]));
         args.expected_review_generation = Some("stale".into());
-        assert!(!matches_action(&args, &repair, None, "/central/repo"));
+        assert!(!matches_action(&args, &repair, None, "/central/repo", &[]));
         args.expected_review_generation = Some("selected".into());
         let merge = NextAction::MergeMr {
             work_id: Some("#1525".into()),
@@ -293,7 +344,7 @@ mod tests {
             review_generation: Some("selected".into()),
             reason: "fixture".into(),
         };
-        assert!(!matches_action(&args, &merge, None, "/central/repo"));
+        assert!(!matches_action(&args, &merge, None, "/central/repo", &[]));
     }
     #[test]
     fn changed_work_purpose_target_or_review_generation_cannot_start_a_prepared_job() {
@@ -304,7 +355,7 @@ mod tests {
             ticket_path: "docs/task.md".into(),
             reason: "fixture".into(),
         };
-        assert!(matches_action(&args, &action, None, "/central/repo"));
+        assert!(matches_action(&args, &action, None, "/central/repo", &[]));
         for changed in ["other-work", "other-purpose", "other-target", "escalate"] {
             let mut wrong = args.clone();
             match changed {
@@ -313,7 +364,7 @@ mod tests {
                 "other-target" => wrong.target = "docs/other.md".into(),
                 _ => wrong.escalate = true,
             }
-            assert!(!matches_action(&wrong, &action, None, "/central/repo"));
+            assert!(!matches_action(&wrong, &action, None, "/central/repo", &[]));
         }
         args.mode = "review".into();
         args.target.clear();
@@ -330,21 +381,23 @@ mod tests {
             &args,
             &review,
             Some("generation-a"),
-            "/central/repo"
+            "/central/repo",
+            &[]
         ));
         assert!(!matches_action(
             &args,
             &review,
             Some("generation-b"),
-            "/central/repo"
+            "/central/repo",
+            &[]
         ));
-        assert!(!matches_action(&args, &review, None, "/central/repo"));
+        assert!(!matches_action(&args, &review, None, "/central/repo", &[]));
         let blocked = NextAction::HumanRequired {
             work_id: Some("#1525".into()),
             reason: "review gated".into(),
             reference: None,
             reason_code: None,
         };
-        assert!(!matches_action(&args, &blocked, None, "/central/repo"));
+        assert!(!matches_action(&args, &blocked, None, "/central/repo", &[]));
     }
 }

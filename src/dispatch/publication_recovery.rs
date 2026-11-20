@@ -32,7 +32,7 @@ pub(super) fn source<'a>(
     profile: &Profile,
 ) -> Option<&'a LedgerEntry> {
     let number = args.target.trim_start_matches('#');
-    if args.mode != "fix"
+    if !matches!(args.mode.as_str(), "fix" | "improve")
         || args.existing_branch.is_some()
         || args.branch.is_some()
         || number.parse::<u64>().ok()? == 0
@@ -63,7 +63,7 @@ pub(super) fn source<'a>(
                     .as_deref()
                     .is_some_and(|s| s.starts_with("Native operation authority is held"));
             return (e.provider == "gitlab"
-                && e.mode == "fix"
+                && e.mode == args.mode
                 && e.remote_execution.is_some()
                 && matches!(
                     e.dispatch_reason.as_deref(),

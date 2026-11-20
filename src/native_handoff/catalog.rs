@@ -169,11 +169,15 @@ mod tests {
         request.args.backend = "auto".into();
         request.args.backend_instance = None;
         request.args.model = None;
-        let planned = crate::dispatch::plan_native(&cfg, &request, &catalog(&cfg)).unwrap();
-        assert_eq!(planned.args.backend, "codex");
-        assert_eq!(planned.args.backend_instance.as_deref(), Some("work"));
-        assert_eq!(planned.args.model.as_deref(), Some("fixture-model"));
-        assert_eq!(planned.args.run_id, request.args.run_id);
+        for mode in ["fix", "improve"] {
+            request.args.mode = mode.into();
+            let planned = crate::dispatch::plan_native(&cfg, &request, &catalog(&cfg)).unwrap();
+            assert_eq!(planned.args.mode, mode);
+            assert_eq!(planned.args.backend, "codex");
+            assert_eq!(planned.args.backend_instance.as_deref(), Some("work"));
+            assert_eq!(planned.args.model.as_deref(), Some("fixture-model"));
+            assert_eq!(planned.args.run_id, request.args.run_id);
+        }
     }
     #[test]
     fn publication_retry_requires_the_acknowledged_issue_and_worker_even_without_model_capacity() {
@@ -226,6 +230,12 @@ mod tests {
             crate::dispatch::publication_recovery::verify(req, entries, profile, worker).is_ok()
         };
         assert!(verify(&planned, "worker", std::slice::from_ref(&entry)));
+        let mut child = planned.clone();
+        child.args.mode = "improve".into();
+        assert!(!verify(&child, "worker", std::slice::from_ref(&entry)));
+        let mut child_entry = entry.clone();
+        child_entry.mode = "improve".into();
+        assert!(verify(&child, "worker", &[child_entry]));
         assert!(!verify(
             &planned,
             "another-worker",

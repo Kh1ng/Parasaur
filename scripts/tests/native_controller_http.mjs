@@ -14,7 +14,8 @@ import { pathToFileURL } from 'node:url';
 
 assert.equal(process.platform,'linux');
 const [runtime,binaryArgument,mode='normal']=process.argv.slice(2);
-assert.ok(['normal','lost-reservation','lost-activation','provider-claims','provider-claims-paused','provider-claims-lost'].includes(mode));
+assert.ok(['normal','planned-child','lost-reservation','lost-activation','provider-claims','provider-claims-paused','provider-claims-lost'].includes(mode));
+const plannedChild = mode === 'planned-child';
 const providerClaims=mode.startsWith('provider-claims');
 const claimFault=mode==='provider-claims-paused'||mode==='provider-claims-lost';
 const binary=resolve(binaryArgument),modules=pathToFileURL(`${resolve(runtime)}/`);
@@ -64,10 +65,10 @@ const forge=join(base,'forge');mkdirSync(forge,{mode:0o700});
 for(const name of ['main.py','model.py','api.py'])writeFileSync(join(forge,name),readFileSync(new URL(`../../tests/support/forge/${name}`,import.meta.url)),{mode:0o600});
 const forgeState=join(forge,'state.json');
 writeFileSync(forgeState,JSON.stringify({now:new Date().toISOString(),login:'fixture',repo:'fixture/diagnostic',project:'42',
-  issues:{},pulls:{},branches:{},checks:{},pipelines:{},labels:[],next_number:1,next_id:1,calls:[],effects:[]}),{mode:0o600});
+  issues:{},pulls:{},branches:{},checks:{},pipelines:{},labels:['exec:autonomous'],next_number:1,next_id:1,calls:[],effects:[]}),{mode:0o600});
 writeFileSync(join(bins,'gh'),`#!/bin/sh\nexport PARASAUR_TEST_NOW="$(/usr/bin/date -u +%Y-%m-%dT%H:%M:%S.000Z)"\nexec /usr/bin/python3 '${join(forge,'main.py')}' '${forgeState}' '${join(forge,'commands.log')}' gh "$@"\n`,{mode:0o700});
 sync('gh',['api','repos/fixture/diagnostic/issues','--method','POST','--raw-field','title=Disposable native controller task',
-  '--raw-field','body=Update README.md. Acceptance criteria: README.md contains worker edit.', '--raw-field','labels=exec:autonomous']);
+  '--raw-field','body=Update README.md. Acceptance criteria: README.md contains worker edit.', '--raw-field',plannedChild ? 'labels=planning' : 'labels=exec:autonomous']);
 const profile={name:'fixture',repo_id:'controller-http',repo:'fixture/diagnostic'};
 const config=join(base,'central.toml'),workerConfig=join(base,'worker.toml');
 Object.assign(process.env,{PARASAUR_CONFIG:config,PARASAUR_CONFIG_PATH:config});
@@ -115,11 +116,31 @@ supported_models = ["fixture-model"]
 `;
 }
 writeFileSync(config,configuration('central'),{mode:0o600});writeFileSync(workerConfig,configuration('worker'),{mode:0o600});
+let workId = '#1';
+if (plannedChild) {
+  const plan = join(base, 'pm-plan-v1.json');
+  writeFileSync(plan, JSON.stringify({
+    schema_version: 1, profile: 'Disposable controller HTTP fixture', repo: profile.repo, target: '#1',
+    open_issue_count: 1, open_mr_count: 0, merged_mr_count: 0, ticket_count: 1,
+    plan: { title: 'Documentation plan', summary: 'Document the worker edit', tickets: [{
+      key: 'readme', title: 'Update README.md', summary: 'Record the worker edit', objective: 'Add the worker edit to README.md',
+      task_class: 'feature', difficulty: 'easy', risk: 'low', execution_disposition: 'autonomous',
+      recommended_routing: { capability: 'edit', min_tier: 'standard' }, affected_areas: ['documentation'],
+      affected_files: ['README.md'], acceptance_criteria: ['README.md contains worker edit'], verification_commands: ['true'],
+      depends_on: [], duplicate_evidence: ['No existing child'], uncovered_reason: 'This change is still needed'
+    }] }
+  }), { mode: 0o600 });
+  sync(binary, ['pm', 'publish', '--profile', 'fixture', '--plan', plan, '--config', config]);
+  const publication = readFileSync(process.env.PARASAUR_LEDGER_PATH, 'utf8').trim().split('\n').map(JSON.parse)
+    .find(row => row.mode === 'pm_publish' && row.pm_publication_status === 'published');
+  assert.equal(publication?.pm_child_issue_numbers.length, 1);
+  workId = '#' + publication.pm_child_issue_numbers[0];
+}
 const worker=new NativeWorker({root:join(base,'remote'),nodeId:workerId,binary,config:workerConfig,profiles:async()=>[profile],centralToken:()=>owner});
 const remote=express();remote.use(express.json({limit:'9mb'}));remote.use(authMiddleware);remote.use('/api/native-worker',nativeWorkerRouter(worker));
 const remoteApi=remote.listen(0,'127.0.0.1');await new Promise(done=>remoteApi.once('listening',done));
-const node={node_id:workerId,advertised_url:`http://127.0.0.1:${remoteApi.address().port}`,transport_mode:'authenticated_remote',secret_ref:'fixture',profiles:['fixture']};
-const transport=new NativeWorkerHttpTransport({contextRoot:root,worker:id=>id===workerId?node:undefined,secret:()=>owner});
+const node={node_id:workerId,advertised_url:`http://127.0.0.1:${remoteApi.address().port}`,transport_mode:'authenticated_remote',secret_ref:'env:COORDINATOR_TOKEN',profiles:['fixture']};
+const transport=new NativeWorkerHttpTransport({contextRoot:root,worker:id=>id===workerId?node:undefined});
 let claims,broker,producer;
 function reload() {
   claims=new ClaimsService(join(base,'claims.json'));
@@ -139,11 +160,12 @@ try {
   const loop=await execute(binary,['loop','--profile','fixture','--config-path',config,'--once'],{env:process.env,timeout:45_000,maxBuffer:128*1024});
   writeFileSync(join(base,'controller.stdout'),loop.stdout,{mode:0o600});
   writeFileSync(join(base,'controller.stderr'),loop.stderr,{mode:0o600});
-  const prepared=producer.status('fixture','#1');
+  const prepared=producer.status('fixture', workId);
   assert.ok(prepared,`Controller did not prepare work: ${loop.stdout} ${loop.stderr}`);
   binding=broker.get(prepared.run_id).binding;
   assert.equal(binding.backend_instance,'work');assert.equal(binding.model,'fixture-model');
-  assert.equal(binding.work_id,'#1');
+  assert.equal(binding.work_id,workId);
+  assert.equal(binding.mode, plannedChild ? 'improve' : 'fix');
   if(mode==='lost-reservation') {
     assert.equal(broker.get(binding.run_id).activated,false);assert.equal(existsSync(marker),false);
     reload();
@@ -172,11 +194,11 @@ try {
     }
     await new Promise(done=>setTimeout(done,200));view=await broker.reconcile(binding.run_id);
   }
-  assert.equal(claims.getLease('fixture','#1'),undefined);
+  assert.equal(claims.getLease('fixture',workId),undefined);
   assert.equal(view.worker_release.context_history_cleaned,true);
   assert.equal(readFileSync(marker,'utf8'),'attempt\n');
   const rows=readFileSync(process.env.PARASAUR_LEDGER_PATH,'utf8').trim().split('\n').map(JSON.parse);
-  const result=rows.filter(row=>row.session_id===binding.run_id && row.mode==='fix');
+  const result=rows.filter(row=>row.session_id===binding.run_id && row.mode===binding.mode);
   assert.equal(result.length,1);assert.equal(result[0].attempts_started,1);
   if(claimFault) {
     assert.ok(faultApplied);assert.ok(result[0].failure_class);
@@ -226,8 +248,10 @@ try {
   report.providerClaimRenewedDuringBackend=providerClaims&&!claimFault;
   report.providerRenewalRefusedAfterPause=mode==='provider-claims-paused';
   report.providerClaimLossStopsCompletion=mode==='provider-claims-lost';
-  const release=JSON.parse(readFileSync(new URL('../../../../release.json',modules),'utf8'));
-  report.apiCoreRevision=release.core;report.apiPrivateRevision=release.enterprise;
+  const releaseFile = new URL('../../../../release.json', modules);
+  const release = existsSync(releaseFile) ? JSON.parse(readFileSync(releaseFile, 'utf8')) : null;
+  report.apiCoreRevision = release?.core ?? null;
+  report.apiPrivateRevision = release?.enterprise ?? null;
   report.binarySha256=createHash('sha256').update(readFileSync(binary)).digest('hex');
   const manifestPath=join(dirname(binary),'manifest.json');
   report.binarySourceRevision=null;
@@ -240,6 +264,6 @@ try {
   process.stderr.write(`Native controller acceptance failed; inspect ${base}\n`);throw error;
 } finally {
   for(const server of [api,remoteApi]){server.closeAllConnections();await new Promise(done=>server.close(done));}
-  const run=binding?.run_id??producer.status('fixture','#1')?.run_id;
+  const run=binding?.run_id??producer.status('fixture',workId)?.run_id;
   if(run)for(const kind of ['job','capacity'])await execute('/usr/bin/systemctl',['--user','stop',`gah-native-${kind}-${run}.service`],{timeout:8000}).catch(()=>undefined);
 }
