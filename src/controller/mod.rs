@@ -36,6 +36,7 @@ pub(crate) use self::runtime::{
 };
 pub(crate) use self::runtime::{action_dispatch_context, execute_action};
 pub(crate) use self::runtime::{NodeAdmissionDeferred, WorkerNodeLease};
+pub(crate) use runtime::native_dispatch_enabled;
 #[cfg(unix)]
 pub(crate) use runtime::project_native_holds;
 // The CLI facade is the only production caller of this crate-private path.

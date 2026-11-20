@@ -32,6 +32,7 @@ mod dispatch_policy;
 #[path = "runtime/native_dispatch.rs"]
 mod native_dispatch;
 pub(crate) use action_execution::{action_dispatch_context, execute_action};
+pub(crate) use native_dispatch::enabled as native_dispatch_enabled;
 #[cfg(unix)]
 pub(crate) use native_dispatch::project_native_holds;
 #[path = "runtime/dispatch_state.rs"]

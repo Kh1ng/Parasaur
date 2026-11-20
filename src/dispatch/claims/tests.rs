@@ -666,6 +666,21 @@ fn scan_available_tickets_reflects_claim_lifecycle() {
         "a claim is a lease marker, not a counted attempt"
     );
 
+    // The separately metered estimator also writes a terminal entry under
+    // this work ID. Implementation still owns its original claim and retry budget.
+    let mut estimate = LedgerEntry::new("test", &prof, "codex", "estimate", "x", None, None);
+    estimate.work_id = claim.work_id.clone();
+    estimate.dispatch_reason = Some(crate::dispatch::issue_estimate::REASON.into());
+    estimate.failure_class = Some("agent_failure".into());
+    let history = [claim.clone(), estimate];
+    let candidates = scan_available_tickets(
+        &prof,
+        &[],
+        &crate::ledger::index_entries_by_work_id(&history),
+    );
+    assert!(candidates[0].has_active_claim);
+    assert_eq!(candidates[0].prior_attempt_count, 0);
+
     // A real completion entry after the claim resolves it.
     let mut completed = LedgerEntry::new("test", &prof, "codex", "fix", "x", None, None);
     completed.work_id = Some("TICKET-501".into());

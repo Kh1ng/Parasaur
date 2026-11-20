@@ -364,10 +364,12 @@ pub(super) fn run_backend_for_identity(
     env_path: Option<&str>,
     work_id: Option<&str>,
     hard_timeout_seconds: Option<u64>,
+    route_admission: Option<&crate::controller::RouteNodeAdmission>,
     write_intent: runner::WriteIntent,
     ledger: Option<&mut LedgerEntry>,
 ) -> Result<runner::RunResult> {
     super::native_guard::attempt(identity, || {
+        let _admission = reserve_backend_attempt(profile, identity, route_admission)?;
         run_backend_with_reserved_route(
             identity,
             profile,
@@ -380,7 +382,7 @@ pub(super) fn run_backend_for_identity(
             cfg,
             profile_name,
             work_id,
-            false,
+            true,
             hard_timeout_seconds,
             write_intent,
             ledger,

@@ -107,6 +107,12 @@ pub(super) fn check_current(
             "Prepared native work is no longer the current controller action ({}); reconcile without starting it",
             action.kind()
         );
+        if args.mode == "estimate" {
+            ensure!(
+                crate::dispatch::issue_estimate::still_needed(cfg, profile, args)?,
+                "Prepared estimate is no longer needed for the current issue"
+            );
+        }
     }
     let mut current = crate::ledger::LedgerEntry::new(
         &args.profile,
@@ -230,11 +236,18 @@ fn matches_action(
             } else {
                 "fix"
             };
-            args.mode == mode
-                && (args.dispatch_reason.as_deref() == Some(reason)
-                    || (reason == "retry"
-                        && args.dispatch_reason.as_deref()
-                            == Some(crate::dispatch::publication_recovery::REASON)))
+            let current_purpose = match args.dispatch_reason.as_deref() {
+                Some(crate::dispatch::issue_estimate::REASON) => {
+                    reason == "initial"
+                        && args.mode == "estimate"
+                        && args.prior_attempt_context.is_none()
+                }
+                Some(crate::dispatch::publication_recovery::REASON) => {
+                    reason == "retry" && args.mode == mode
+                }
+                other => args.mode == mode && other == Some(reason),
+            };
+            current_purpose
                 && args.escalate == escalate
                 && !args.allow_unknown_red_baseline
                 && args.branch.is_none()

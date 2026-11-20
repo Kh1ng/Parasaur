@@ -68,7 +68,22 @@ pub(crate) fn plan_native(
         };
         let issue = issues::resolve_target_to_issue_or_string(profile, target, false)?;
         if let Some(issue) = issue {
-            Some(issues::parse_ticket_metadata_from_issue(&issue))
+            let mut metadata = issues::parse_ticket_metadata_from_issue(&issue);
+            match issue_estimate::for_issue(cfg, profile, args, &issue.number, &metadata)? {
+                issue_estimate::Estimate::Recorded(difficulty) => {
+                    metadata.difficulty = Some(difficulty)
+                }
+                issue_estimate::Estimate::Needed
+                    if args.dispatch_reason.as_deref() == Some("initial") =>
+                {
+                    if let Some(route) = issue_estimate::route(cfg, profile, args, &runtime) {
+                        planned.args = issue_estimate::request(args, &issue.number, route);
+                        return checked(planned);
+                    }
+                }
+                _ => {}
+            }
+            Some(metadata)
         } else {
             let path = std::path::Path::new(target);
             let path = if path.is_absolute() {
@@ -198,6 +213,10 @@ pub(crate) fn plan_native(
         .identity
         .explicit_instance
         .then_some(route.identity.backend_instance);
+    checked(planned)
+}
+
+fn checked(mut planned: JobRequest) -> Result<JobRequest> {
     planned.args.route_admission = None;
     let mut safe = serde_json::to_value(&planned)?;
     crate::redact::redact_json_value(&mut safe);

@@ -129,6 +129,8 @@ fn effective_human_gate_for_scope<'a>(
                 .as_deref()
                 .is_some_and(|id| aliases.iter().any(|alias| alias == id))
             && !is_entry_stale(entry)
+            && (!crate::dispatch::issue_estimate::is_preliminary(entry)
+                || entry.validation_result.as_deref() == Some("cancelled_operator"))
     }) {
         match entry.mode.as_str() {
             "clear_attempts" => {

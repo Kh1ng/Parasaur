@@ -141,6 +141,7 @@ pub(crate) fn experiment(
         env_path,
         ledger.work_id.clone().as_deref(),
         None,
+        args.route_admission.as_ref(),
         runner::WriteIntent::Implementation,
         Some(ledger),
     ) {

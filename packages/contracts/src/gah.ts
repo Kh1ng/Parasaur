@@ -1337,6 +1337,7 @@ export interface ConfigProfileSummary {
   improve_candidates: RoutingCandidateSummary[];
   review_candidates: RoutingCandidateSummary[];
   task_routing_rules: TaskRoutingRuleSummary[];
+  estimate_issue_difficulty?: boolean;
   /** Strict allow-lists by job kind (for example `review`); a kind without an entry is open. */
   allowed_models?: Record<string, RoutingCandidateSummary[]>;
   routine_reviewer: RoutingCandidateSummary | null;

@@ -264,7 +264,7 @@ pub(crate) fn try_acquire_native(
 ) -> std::io::Result<LiveAdmission> {
     let kind = match mode {
         "fix" | "improve" => WorkerKind::Implementation,
-        "pm" => WorkerKind::Decomposition,
+        "pm" | "estimate" => WorkerKind::Decomposition,
         "review" => WorkerKind::Review,
         _ => {
             return Err(std::io::Error::other(

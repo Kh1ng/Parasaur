@@ -129,6 +129,9 @@ pub struct RoutingPolicy {
     /// trusted ticket metadata. Empty means no class-specific override.
     #[serde(default)]
     pub task_routing_rules: Vec<TaskRoutingRule>,
+    /// Run a read-only estimate before implementing an unclassified provider issue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_issue_difficulty: Option<bool>,
     #[serde(default)]
     pub review_candidates: Option<Vec<CandidateConfig>>,
     #[serde(default)]
@@ -629,6 +632,9 @@ pub(super) fn merge_routing_policy(
     if repo.task_routing_rules.is_empty() {
         repo.task_routing_rules = canonical.task_routing_rules.clone();
     }
+    repo.estimate_issue_difficulty = repo
+        .estimate_issue_difficulty
+        .or(canonical.estimate_issue_difficulty);
     repo.review_candidates = repo.review_candidates.or(canonical.review_candidates);
     repo.allow_review_fallback = repo.allow_review_fallback || canonical.allow_review_fallback;
     repo.allow_implementation_fallback =

@@ -77,6 +77,7 @@ fn pinned_skill_dispatch_records_and_delivers_the_exact_version() {
             None,
             None,
             None,
+            None,
             crate::runner::WriteIntent::Implementation,
             Some(&mut ledger),
         )
