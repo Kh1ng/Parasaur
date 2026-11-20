@@ -174,19 +174,26 @@ try {
         $startupScript = @'
 $ErrorActionPreference = 'Stop'
 $settings = ConvertFrom-Json '__SETTINGS__'
-$ips = (& wsl.exe --distribution $settings.distribution --exec hostname -I | Out-String).Trim() -split '\s+'
-if ($LASTEXITCODE -ne 0) { throw 'Cannot start WSL.' }
-& netsh.exe interface portproxy delete v4tov4 listenaddress=$($settings.worker_ip) listenport=3774 | Out-Null
-if ($settings.worker_ip -notin $ips) {
-    $ip = $ips | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } | Select-Object -First 1
-    if (-not $ip) { throw 'Cannot find the WSL IPv4 address.' }
-    & netsh.exe interface portproxy add v4tov4 listenaddress=$($settings.worker_ip) listenport=3774 connectaddress=$ip connectport=3774
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot configure the WSL worker port.' }
+while ($true) {
+    try {
+        $ips = (& wsl.exe --distribution $settings.distribution --exec hostname -I | Out-String).Trim() -split '\s+'
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot start WSL.' }
+        $ip = $ips | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } | Select-Object -First 1
+        if (-not $ip) { throw 'Cannot find the WSL IPv4 address.' }
+        & netsh.exe interface portproxy delete v4tov4 listenaddress=$($settings.worker_ip) listenport=3774 | Out-Null
+        if ($settings.worker_ip -notin $ips) {
+            & netsh.exe interface portproxy add v4tov4 listenaddress=$($settings.worker_ip) listenport=3774 connectaddress=$ip connectport=3774
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot configure the WSL worker port.' }
+        }
+        & wsl.exe --distribution $settings.distribution --exec systemctl --user start gah-worker.service
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot start gah-worker.service.' }
+        & wsl.exe --distribution $settings.distribution --exec sleep infinity
+        Write-Warning "WSL worker keepalive exited (exit $LASTEXITCODE). Retrying in one minute."
+    } catch {
+        Write-Warning "WSL worker startup failed. $($_.Exception.Message) Retrying in one minute."
+    }
+    Start-Sleep -Seconds 60
 }
-& wsl.exe --distribution $settings.distribution --exec systemctl --user start gah-worker.service
-if ($LASTEXITCODE -ne 0) { throw 'Cannot start gah-worker.service.' }
-& wsl.exe --distribution $settings.distribution --exec sleep infinity
-throw "WSL worker keepalive exited (exit $LASTEXITCODE). Task Scheduler must retry the worker."
 '@
         [IO.File]::WriteAllText($startup, $startupScript.Replace('__SETTINGS__', $startupSettings.Replace("'", "''")), $utf8)
         if (-not (Get-NetFirewallRule -Name 'GAH-WSL-Worker' -ErrorAction SilentlyContinue)) {

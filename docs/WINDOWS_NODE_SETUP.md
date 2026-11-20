@@ -26,6 +26,12 @@ The connection screen remains available when the central node cannot load.
 Worker setup requires x64 Windows and an initialized, non-root Ubuntu user in WSL2.
 If WSL needs installation or a restart, the command stops with instructions. Complete those steps, then run the command again.
 
+After installation, the **GAH WSL Worker** logon task keeps the distribution
+running. If WSL exits or its address is unavailable, the task retries every
+minute. On recovery it reads the current WSL address, refreshes forwarding,
+and starts the worker service. On an existing Windows installation, rerun the
+updated worker installer to replace the Windows logon script.
+
 The central server needs these settings:
 
 - `COORDINATOR_TOKEN` for authenticated access.

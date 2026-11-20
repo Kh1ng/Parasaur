@@ -11,34 +11,42 @@ $startup = $assignment.Right.Find({ param($node) $node -is [System.Management.Au
 [void][System.Management.Automation.Language.Parser]::ParseInput($startup, [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
 
-# Mirrored WSL owns the Windows address, so a portproxy would loop back onto itself.
+# Begin on mirrored networking, lose WSL for four probes, then return behind NAT.
 $script:networkCalls = @()
+$script:probes = 0
+$script:waits = 0
 function wsl.exe {
     $global:LASTEXITCODE = 0
     $script:networkCalls += "wsl $args"
-    if ($args -contains 'hostname') { '192.168.1.11 172.28.0.1' }
-    if ($args -contains 'sleep') { $global:LASTEXITCODE = $script:keepaliveExitCode }
+    if ($args -contains 'hostname') {
+        $script:probes++
+        if ($script:probes -eq 1) { '192.168.1.11 172.28.0.1' }
+        elseif ($script:probes -le 5) { $global:LASTEXITCODE = 1 }
+        else { '172.28.0.3' }
+    }
 }
 function netsh.exe {
     $global:LASTEXITCODE = 0
     $script:networkCalls += "netsh $args"
 }
+function Start-Sleep([int]$Seconds) {
+    if ($Seconds -ne 60) { throw 'Expected a one-minute recovery delay.' }
+    $script:waits++
+    if ($script:waits -eq 6) { throw 'Fixture complete.' }
+}
 try {
-    # Any keepalive exit must fail the task so Task Scheduler restarts it.
-    foreach ($exitCode in @(0, 17)) {
-        $script:networkCalls = @()
-        $script:keepaliveExitCode = $exitCode
-        $retryRequired = $false
-        try { & ([scriptblock]::Create($startup)) } catch {
-            if ($_.Exception.Message -cne "WSL worker keepalive exited (exit $exitCode). Task Scheduler must retry the worker.") { throw }
-            $retryRequired = $true
-        }
-        if (-not $retryRequired) { throw 'An exited keepalive must trigger Task Scheduler retry.' }
-        $networkLog = $script:networkCalls -join "`n"
-        if ($networkLog -notmatch 'portproxy delete' -or $networkLog -match 'portproxy add') { throw 'Mirrored WSL must remove, not create, a self-looping portproxy.' }
-        if ($networkLog -notmatch 'systemctl --user start gah-worker.service' -or $networkLog -notmatch 'sleep infinity') { throw 'Startup must start the worker and keep WSL alive.' }
+    try { & ([scriptblock]::Create($startup)) } catch {
+        if ($_.Exception.Message -cne 'Fixture complete.') { throw }
     }
-} finally { Remove-Item Function:\wsl.exe, Function:\netsh.exe }
+    if ($script:probes -ne 6 -or $script:waits -ne 6) { throw 'The worker stopped retrying during the outage.' }
+    $deletes = @($script:networkCalls -match 'portproxy delete')
+    $adds = @($script:networkCalls -match 'portproxy add')
+    if ($deletes.Count -ne 2 -or $adds.Count -ne 1 -or $adds[0] -notmatch 'connectaddress=172\.28\.0\.3') {
+        throw 'Expected forwarding to use the recovered NAT address and avoid a mirrored self-loop.'
+    }
+    if (@($script:networkCalls -match 'systemctl --user start gah-worker.service').Count -ne 2 -or
+        @($script:networkCalls -match 'sleep infinity').Count -ne 2) { throw 'Both successful starts must keep WSL alive.' }
+} finally { Remove-Item Function:\wsl.exe, Function:\netsh.exe, Function:\Start-Sleep }
 
 # Load only the connection writer; executing the installer would mutate this machine.
 $writer = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Save-DesktopConnection' }, $true)
