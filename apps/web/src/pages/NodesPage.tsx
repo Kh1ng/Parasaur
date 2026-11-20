@@ -58,7 +58,7 @@ function versionBadge(node: NodeSummary): { text: string; tone: string } | null 
 function describeWorkerUpdate(status: WorkerUpdateStatus): string {
   switch (status.status) {
     case 'waiting':
-      return status.active_dispatches === null ? 'Checking active dispatches before updating' : `Waiting for active dispatches to finish (${status.active_dispatches})`;
+      return status.active_dispatches === null ? 'Checking active dispatches before updating' : `Waiting for active dispatches to finish (at least ${status.active_dispatches})`;
     case 'running':
       return 'Installing the release update…';
     case 'success':

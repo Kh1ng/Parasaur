@@ -7,6 +7,7 @@ use crate::{work_claim, work_claim::canonical_scope_for_profile};
 
 pub fn run(command: ClaimsCommands) -> Result<()> {
     match command {
+        ClaimsCommands::ActiveCount => println!("{}", work_claim::active_dispatch_count()?),
         ClaimsCommands::List {
             json,
             profile,

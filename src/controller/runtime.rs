@@ -53,6 +53,7 @@ mod admission;
 mod merge;
 #[path = "runtime/node_capacity.rs"]
 mod node_capacity;
+pub(crate) use node_capacity::active_capacity_count;
 #[cfg(test)]
 pub(crate) use node_capacity::test_lease as test_node_lease;
 #[cfg(target_os = "linux")]

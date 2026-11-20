@@ -308,36 +308,7 @@ fn acquire_reservation_in_dir(
     let registry_lock = open_registry_lock(dir)?;
     registry_lock.lock_exclusive()?;
 
-    let mut committed = WorkerReservation::default();
-    let mut active_workers = 0usize;
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|value| value.to_str()) != Some("lease") {
-            continue;
-        }
-        let Some(mut file) = open_existing_lease(&path)? else {
-            // A previous process may have completed between read_dir and
-            // open. That is a normal release race, not an integrity failure.
-            continue;
-        };
-        match file.try_lock_exclusive() {
-            Ok(()) => {
-                // No process holds this lease anymore.
-                drop(file);
-                let _ = std::fs::remove_file(path);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                let mut encoded = String::new();
-                file.read_to_string(&mut encoded)?;
-                let reservation = decode_reservation(&encoded)?;
-                committed += reservation;
-                active_workers += 1;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-
+    let (active_workers, committed) = scan_live_leases(dir, true)?;
     let admission_active_workers = active_workers.max(local_active_workers);
     let reservation = match admission_for_reservation(
         requested,
@@ -389,6 +360,46 @@ impl Drop for NodeCapacityLease {
             let _ = std::fs::remove_file(&self.path);
         }
     }
+}
+
+/// Called under the registry lock. Only a kernel-held lease represents work.
+fn scan_live_leases(dir: &Path, prune_stale: bool) -> std::io::Result<(usize, WorkerReservation)> {
+    let mut committed = WorkerReservation::default();
+    let mut active_workers = 0;
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("lease") {
+            continue;
+        }
+        let Some(mut file) = open_existing_lease(&path)? else {
+            continue;
+        };
+        match file.try_lock_exclusive() {
+            Ok(()) if prune_stale => {
+                drop(file);
+                let _ = std::fs::remove_file(path);
+            }
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                let mut encoded = String::new();
+                file.read_to_string(&mut encoded)?;
+                committed += decode_reservation(&encoded)?;
+                active_workers += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok((active_workers, committed))
+}
+
+pub(crate) fn active_capacity_count() -> std::io::Result<usize> {
+    let dir = capacity_dir();
+    if !dir.try_exists()? {
+        return Ok(0);
+    }
+    let lock = open_registry_lock(&dir)?;
+    lock.lock_exclusive()?;
+    Ok(scan_live_leases(&dir, false)?.0)
 }
 
 fn open_registry_lock(dir: &Path) -> std::io::Result<std::fs::File> {

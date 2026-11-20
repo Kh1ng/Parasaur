@@ -256,6 +256,7 @@ pub fn run(args: Args) -> Result<()> {
             work_dir,
             config_path,
         } => {
+            let _admission = crate::native_handoff::host::reservation_admission()?;
             for key in [
                 "PARASAUR_LEDGER_PATH",
                 "PARASAUR_EVENTS_PATH",

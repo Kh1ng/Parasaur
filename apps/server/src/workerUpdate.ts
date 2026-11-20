@@ -16,7 +16,7 @@ import { basename, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import type { WorkerUpdateStatus } from '@git-agent-harness/contracts';
 import { COORDINATOR_VERSION } from '@git-agent-harness/contracts';
-import { findGahBinary, runClaimsList } from './gahCli.js';
+import { countActiveDispatches, findGahBinary } from './gahCli.js';
 import { persistReleaseManifest, selectReleaseManifest } from './releaseFeed.js';
 import { buildCommit, runningBuild } from './buildRevision.js';
 
@@ -43,11 +43,10 @@ interface WorkerUpdateRecord extends WorkerUpdateStatus {
 }
 
 /** Outside the Git checkout, same reasoning as adminUpdate.ts. */
-function statePath(): string {
-  return (
-    process.env.PARASAUR_WORKER_UPDATE_STATE_PATH ||
-    resolve(process.env.XDG_STATE_HOME || resolve(homedir(), '.local', 'state'), 'gah', 'worker-update-state.json')
-  );
+export function workerUpdateStatePath(): string {
+  const override = process.env.PARASAUR_WORKER_UPDATE_STATE_PATH;
+  return override ? resolve(override) :
+    resolve(process.env.XDG_STATE_HOME || resolve(homedir(), '.local', 'state'), 'gah', 'worker-update-state.json');
 }
 
 function idleStatus(): WorkerUpdateStatus {
@@ -74,7 +73,7 @@ function pidAlive(pid: number): boolean {
 }
 
 function writeState(record: WorkerUpdateRecord): void {
-  const path = statePath();
+  const path = workerUpdateStatePath();
   const dir = dirname(path);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const tmpPath = `${path}.${process.pid}.tmp`;
@@ -87,16 +86,9 @@ function view(record: WorkerUpdateRecord): WorkerUpdateStatus {
   return status;
 }
 
-/** Live local claims, stale ones excluded: a stale claim is a dead dispatch,
- * not a run the update has to wait for. */
-export async function countActiveClaims(): Promise<number> {
-  const claims = await runClaimsList(undefined);
-  return claims.filter((claim) => !claim.is_stale).length;
-}
-
 export interface WorkerUpdateDeps {
   spawnFn?: typeof spawn;
-  /** Override for `gah claims list --json`; tests inject a stub. */
+  /** Override for `gah claims active-count`; tests inject a stub. */
   countActiveClaims?: () => Promise<number>;
   /** Override for the post-success worker restart (macOS LaunchAgent);
    * tests inject a stub so nothing real is spawned. */
@@ -106,6 +98,7 @@ export interface WorkerUpdateDeps {
 
 export class WorkerUpdateService {
   private drainTimer: NodeJS.Timeout | null = null;
+  private updaterPid?: number;
   private starting?: Promise<{ started: boolean; status: WorkerUpdateStatus }>;
   private readonly spawnFn: typeof spawn;
   private readonly cwd: string;
@@ -117,7 +110,7 @@ export class WorkerUpdateService {
   }
 
   private read(): WorkerUpdateRecord {
-    const path = statePath();
+    const path = workerUpdateStatePath();
     if (!existsSync(path)) return { ...idleStatus(), pid: null };
     try {
       const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<WorkerUpdateRecord>;
@@ -161,7 +154,7 @@ export class WorkerUpdateService {
       // unlike central, a worker update never restarts this server as its
       // own final step (the macOS restart happens after success is
       // recorded), so a dead pid here means the updater was killed.
-      if (record.status === 'running' && record.pid !== null && !pidAlive(record.pid)) {
+      if (record.status === 'running' && record.pid !== null && record.pid !== this.updaterPid && !pidAlive(record.pid)) {
         record.status = 'failed';
         record.finished_at = new Date().toISOString();
         record.output = `${record.output}\n[gah] the updater process disappeared without recording an exit`.slice(-MAX_OUTPUT_CHARS);
@@ -177,6 +170,12 @@ export class WorkerUpdateService {
     return view(this.read());
   }
 
+  draining(): boolean {
+    if (this.starting) return true;
+    const status = this.read().status;
+    return status === 'waiting' || status === 'running' || status === 'inferred_restart';
+  }
+
   async start(expected?: string): Promise<{ started: boolean; status: WorkerUpdateStatus }> {
     if (this.starting) {
       const result = await this.starting;
@@ -189,7 +188,7 @@ export class WorkerUpdateService {
 
   private async startOnce(expected?: string): Promise<{ started: boolean; status: WorkerUpdateStatus }> {
     const existing = this.read();
-    if ((existing.status === 'inferred_restart' && existing.restart) || (existing.status === 'running' && existing.pid !== null && pidAlive(existing.pid))) {
+    if ((existing.status === 'inferred_restart' && existing.restart) || (existing.status === 'running' && existing.pid !== null)) {
       return { started: false, status: view(existing) };
     }
     if (existing.status === 'waiting') {
@@ -231,7 +230,7 @@ export class WorkerUpdateService {
    * worker mid-dispatch. */
   private async countClaims(): Promise<number | null> {
     try {
-      return await (this.deps.countActiveClaims ?? countActiveClaims)();
+      return await (this.deps.countActiveClaims ?? countActiveDispatches)();
     } catch {
       return null;
     }
@@ -275,7 +274,7 @@ export class WorkerUpdateService {
       if (revision && (!selected || buildCommit(JSON.parse(selected).commit) !== revision)) {
         throw new Error('The saved manifest for the selected worker build is unavailable.');
       }
-      const manifest = selected ? persistReleaseManifest(statePath(), selected) : process.env.PARASAUR_RELEASE_MANIFEST;
+      const manifest = selected ? persistReleaseManifest(workerUpdateStatePath(), selected) : process.env.PARASAUR_RELEASE_MANIFEST;
       child = this.spawnFn(findGahBinary(), [
         'update', '--from-release', '--role', 'worker', '--repo', this.cwd,
         ...(manifest ? ['--release-manifest', manifest] : [])
@@ -291,6 +290,7 @@ export class WorkerUpdateService {
       return;
     }
     child.unref();
+    this.updaterPid = child.pid;
 
     let record: WorkerUpdateRecord = {
       ...idleStatus(),
@@ -312,6 +312,15 @@ export class WorkerUpdateService {
     child.stderr?.on('data', appendOutput);
 
     child.on('close', (code) => {
+      this.updaterPid = undefined;
+      // A reservation can win after the poll but before the installer's
+      // exclusive maintenance check. Keep the original release selection.
+      if (code === 75) {
+        writeState({ ...record, status: 'waiting', pid: null, started_at: null, armed_at: new Date().toISOString(),
+          active_dispatches: null, selectedManifest: selected });
+        this.scheduleDrain();
+        return;
+      }
       record = {
         ...record,
         status: code === 0 ? 'success' : 'failed',
@@ -339,6 +348,7 @@ export class WorkerUpdateService {
     });
 
     child.on('error', (error) => {
+      this.updaterPid = undefined;
       record = {
         ...record,
         status: 'failed',

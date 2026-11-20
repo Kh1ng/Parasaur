@@ -7,6 +7,8 @@ Requires a unified cgroup user manager with systemd-notify --fd (systemd 254+)
 and enough real headroom for the default 4 GiB implementation reservation.
 Pass "http-lost-consume <node> <compiled server dist>" to exercise a consumed
 start whose HTTP reply is lost, followed by a lost capacity-release reply.
+Pass "worker-update-drain <node> <compiled server dist>" to check maintenance
+admission and release an armed update after the host reservation finishes.
 """
 import fcntl
 import datetime
@@ -59,7 +61,7 @@ def empty(group):
 def main():
     binary = Path(sys.argv[1]).resolve(strict=True)
     mode = sys.argv[2] if len(sys.argv) > 2 else 'running'
-    assert mode in ('running', 'release-unused', 'release-unused-lost-reply', 'release-unused-broker', 'http-broker', 'http-lost-consume')
+    assert mode in ('running', 'release-unused', 'release-unused-lost-reply', 'release-unused-broker', 'http-broker', 'http-lost-consume', 'worker-update-drain')
     assert Path('/sys/fs/cgroup/cgroup.controllers').exists()
     # Read-only inventory before the fixture. Never clean another worker's file.
     runtime = Path(os.environ['XDG_RUNTIME_DIR'])
@@ -105,6 +107,19 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
         environment = {k: v for k, v in os.environ.items() if not k.startswith(('PARASAUR_', 'GAH_'))}
         environment['PARASAUR_COORDINATOR_IDENTITY_PATH'] = str(identity)
         environment['PARASAUR_LEDGER_PATH'] = str(root / 'history.jsonl')
+        maintenance_env = {'XDG_STATE_HOME': str(root / 'state'),
+                           'PARASAUR_WORKER_UPDATE_STATE_PATH': str(root / 'worker-update.json')}
+        if mode == 'worker-update-drain':
+            # Exercise the real service manager, with a separate lease registry so
+            # jobs already running on this worker cannot affect the fixture count.
+            fixture_runtime = root / 'runtime'
+            fixture_runtime.mkdir(mode=0o700)
+            maintenance_env.update(XDG_RUNTIME_DIR=str(fixture_runtime),
+                                   DBUS_SESSION_BUS_ADDRESS=os.environ.get('DBUS_SESSION_BUS_ADDRESS',
+                                                                          f'unix:path={runtime}/bus'))
+            registry = fixture_runtime / 'gah-node-capacity'
+            previous = set()
+        environment.update(maintenance_env)
         request = root / 'request.json'
         request.write_text(json.dumps({'args': {
             'profile': 'fixture', 'mode': 'fix', 'backend': 'codex', 'model': 'fixture-model',
@@ -147,6 +162,7 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
         launcher.write_text('import os\n'
                             f'env={{k:v for k,v in os.environ.items() if not k.startswith(("PARASAUR_", "GAH_"))}}\n'
                             f'env["PARASAUR_COORDINATOR_IDENTITY_PATH"]={str(identity)!r}\n'
+                            f'env.update({maintenance_env!r})\n'
                             f'os.dup2(os.open({str(stdout)!r},os.O_CREAT|os.O_WRONLY,0o600),1)\n'
                             f'os.dup2(os.open({str(stderr)!r},os.O_CREAT|os.O_WRONLY,0o600),2)\n'
                             f'os.execve({str(binary)!r},{arguments + ["--work-dir", str(root / "work")]!r},env)\n')
@@ -156,12 +172,28 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
         stopper.write_text(f'from pathlib import Path\nimport time\nwith Path({str(stop_count)!r}).open("a") as f:f.write("stop\\n")\ntime.sleep(4)\n')
         stop_properties = ['-p', f'ExecStop=/usr/bin/python3 {stopper}'] if mode == 'release-unused-lost-reply' else []
         try:
-            result = run('/usr/bin/systemd-run', '--user', '--collect', '--unit=' + holder,
+            holder_command = ['/usr/bin/systemd-run', '--user', '--collect', '--unit=' + holder,
                          '-p', 'Type=oneshot', '-p', 'RemainAfterExit=yes',
                          '-p', 'FileDescriptorStoreMax=1', '-p', 'FileDescriptorStorePreserve=yes',
                          '-p', 'NotifyAccess=all', '-p', 'MemoryMax=512M', '-p', 'TimeoutStartSec=20',
                          *stop_properties,
-                         '/usr/bin/python3', str(launcher), check=False)
+                         '/usr/bin/python3', str(launcher)]
+            if mode == 'worker-update-drain':
+                lock = root / 'state/gah/agent-cli-updates/update.lock'
+                lock.parent.mkdir(parents=True, exist_ok=True)
+                def expect_deferred(reason):
+                    result = run(*holder_command, check=False)
+                    assert result.returncode != 0 and reason in stderr.read_text(), result.stderr
+                    assert not (root / 'work').exists()
+                    wait_for(lambda: properties(holder).get('LoadState') == 'not-found')
+                with lock.open('w') as file:
+                    fcntl.flock(file, fcntl.LOCK_EX)
+                    expect_deferred('during node maintenance')
+                update_state = root / 'worker-update.json'
+                update_state.write_text(json.dumps({'status': 'inferred_restart'}))
+                expect_deferred('during worker update')
+                update_state.write_text(json.dumps({'status': 'success'}))
+            result = run(*holder_command, check=False)
             assert result.returncode == 0, stderr.read_text() if stderr.exists() else result.stderr
             held = properties(holder)
             assert held['ActiveState'] == 'active' and held['SubState'] == 'exited', held
@@ -211,6 +243,21 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                       if path.read_text() == '4294967296 2.000\n' and is_locked(path)]
             assert len(leases) == 1, 'Expected this real default admission lease'
             lease = leases[0]
+            if mode == 'worker-update-drain':
+                install_root = root / '.local/share/gah/worker'
+                release = install_root / 'release.fixture'
+                release.mkdir(parents=True)
+                for filename in ['identity.json', 'worker.env']:
+                    (install_root / filename).touch()
+                fixture_env = dict(environment, HOME=str(root), PARASAUR_CONFIG_PATH=str(worker))
+                busy = run(str(binary), 'update', '--from-release', '--role', 'worker', '--repo', str(release),
+                           '--release-manifest', str(root / 'missing.json'), env=fixture_env, check=False)
+                assert busy.returncode == 75 and 'active dispatches' in busy.stderr, busy.stderr
+                probe = Path(__file__).with_name('native_worker_update.mjs')
+                result = subprocess.run([sys.argv[3], str(probe), sys.argv[4], str(binary), str(root),
+                                         response['holder_invocation']], env=fixture_env, timeout=40)
+                assert result.returncode == 0 and (not lease.exists() or not is_locked(lease))
+                return
             if mode == 'release-unused-broker':
                 probe = Path(__file__).with_name('native_reservation_broker.mjs')
                 result = run(sys.argv[3], str(probe), sys.argv[4], str(binary), str(root), env=environment, check=False)

@@ -470,11 +470,12 @@ fn resolve_state_path_from_env(xdg_state_home: Option<&str>, home: Option<&str>)
 /// Load work claim state from file
 fn load_state() -> Result<WorkClaimState> {
     let path = work_claims_path();
-    if !path.exists() {
-        return Ok(WorkClaimState::new());
-    }
-    let content = fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read work claims file: {:?}", path))?;
+    let content = match fs::read_to_string(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(WorkClaimState::new())
+        }
+        result => result.with_context(|| format!("Failed to read work claims file: {:?}", path))?,
+    };
     serde_json::from_str(&content)
         .with_context(|| format!("Failed to parse work claims file: {:?}", path))
 }
@@ -507,19 +508,25 @@ fn save_state(state: &WorkClaimState) -> Result<()> {
 /// A claim held on another host expires after this; see `WorkClaim::is_stale`.
 const CLAIM_MAX_AGE_SECS: u64 = 3600;
 
-/// Requires the exclusive maintenance lock to keep claim admission closed.
+/// Some local dispatches own both a claim and a capacity lease. The larger
+/// count is a lower bound on active work. Zero means both registries are idle.
+pub(crate) fn active_dispatch_count() -> Result<usize> {
+    let claims = load_state()?
+        .claims
+        .into_values()
+        .flatten()
+        .filter(|claim| !claim.detail().is_stale)
+        .count();
+    Ok(claims.max(crate::controller::active_capacity_count()?))
+}
+
+/// Requires the exclusive maintenance lock to keep dispatch admission closed.
 pub(crate) fn ensure_node_idle() -> Result<()> {
-    with_locked_state(|state| {
-        if state
-            .claims
-            .values()
-            .flatten()
-            .any(|claim| !claim.detail().is_stale)
-        {
-            anyhow::bail!("Node has active dispatches; retry after they finish");
-        }
-        Ok(())
-    })
+    anyhow::ensure!(
+        active_dispatch_count()? == 0,
+        "Node has active dispatches; retry after they finish"
+    );
+    Ok(())
 }
 
 /// Claim a work_id for a profile and persist to file

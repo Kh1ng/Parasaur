@@ -188,12 +188,14 @@ test('a draining worker retains the selected manifest when the channel moves', a
       assets: [['cli', 'gah-' + platform], ['mcp-server', 'mcp-' + platform], ['server-bundle', 'bundle']].map(([kind, name]) => ({
         name, kind, sha256: '1'.repeat(64), url: name
       })) });
-    const child = fakeChildProcess(process.pid);
+    const children: ChildProcess[] = [];
     let claims = 1;
     let selected: string | undefined;
     const service = new WorkerUpdateService({ countActiveClaims: async () => claims, spawnFn: ((_bin, args: string[]) => {
       const path = args[args.indexOf('--release-manifest') + 1];
       selected = JSON.parse(readFileSync(path, 'utf8')).commit;
+      const child = fakeChildProcess(process.pid);
+      children.push(child);
       return child;
     }) as typeof spawn });
     try {
@@ -210,7 +212,18 @@ test('a draining worker retains the selected manifest when the channel moves', a
       await new Promise<void>(done => setImmediate(done));
       assert.equal(selected, expected);
       assert.equal(service.status().status, 'running');
-      (child as unknown as EventEmitter).emit('close', 0);
+      // Admission beat the poll. The installer exits before any file changes.
+      children[0].emit('close', 75);
+      assert.equal(service.status().status, 'waiting');
+      assert.equal(service.draining(), true);
+      selected = undefined;
+      t.mock.timers.tick(15_000);
+      await new Promise<void>(done => setImmediate(done));
+      assert.equal(selected, expected);
+      assert.equal(service.status().status, 'running');
+      assert.equal(children.length, 2);
+      children[1].emit('close', 0);
+      assert.equal(service.draining(), false);
     } finally {
       if (env === undefined) delete process.env.PARASAUR_RELEASE_MANIFEST;
       else process.env.PARASAUR_RELEASE_MANIFEST = env;
