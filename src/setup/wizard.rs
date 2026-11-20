@@ -99,17 +99,17 @@ pub struct Setup<'a> {
 struct InstallEnv(Vec<(&'static str, String)>);
 
 impl<'a> Setup<'a> {
-    /// How to run setup again right now: `gah setup` once gah is installed,
-    /// else the binary the paste script just built.
+    /// A downloaded CLI can run setup against a separate source checkout.
     fn again(&self) -> String {
-        if self.host.probe("gah", &["--version"]).is_some() {
-            "gah setup".into()
-        } else {
-            format!(
-                "{} setup",
-                self.options.source.join("target/release/gah").display()
-            )
-        }
+        let executable = std::env::current_exe()
+            .ok()
+            .or_else(|| std::env::args_os().next().map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("gah"));
+        format!(
+            "{} setup --source {}",
+            shell_quote(&executable.to_string_lossy()),
+            shell_quote(&self.options.source.to_string_lossy())
+        )
     }
 
     fn ask_choice(&mut self, question: &str, options: &[String], default: usize) -> Result<usize> {
