@@ -750,7 +750,7 @@ fn a_missing_prerequisite_is_offered_and_a_declined_one_stops_before_building() 
         role: Some(Role::CliOnly),
         agent: Some(Agent::Claude),
         provider: Some(Provider::Github),
-        source: PathBuf::from("/src"),
+        source: PathBuf::from("/source checkout"),
         ..Default::default()
     };
     // Blank project path, then decline every offer.
@@ -769,12 +769,12 @@ fn a_missing_prerequisite_is_offered_and_a_declined_one_stops_before_building() 
     }
     .run()
     .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("run `/src/target/release/gah setup` again"),
-        "before gah is installed, the hint names the binary the paste script built"
+    let executable = std::env::current_exe().unwrap();
+    let retry = format!(
+        "run `{} setup --source '/source checkout'` again",
+        shell_quote(&executable.to_string_lossy())
     );
+    assert!(error.to_string().contains(&retry), "{error}");
     assert!(
         effects.commands.is_empty(),
         "nothing is installed or built without a yes"
