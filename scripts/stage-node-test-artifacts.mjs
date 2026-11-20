@@ -53,7 +53,9 @@ try {
     for await (const bytes of createReadStream(join(output, name))) hash.update(bytes);
     files[name] = hash.digest('hex');
   }
-  writeFileSync(join(output, `${kind}-artifact.json`), JSON.stringify({ schema_version: 1, revision, files }, null, 2) + '\n');
+  const manifest = { schema_version: 1, revision, files };
+  if (runtimeOption && process.report.getReport().header.glibcVersionRuntime) manifest.runtime = 'linux-x64-gnu';
+  writeFileSync(join(output, `${kind}-artifact.json`), JSON.stringify(manifest, null, 2) + '\n');
 
   if (installWorker) {
     for (const name of [...names, 'worker-artifact.json']) renameSync(join(output, name), join(final, name));

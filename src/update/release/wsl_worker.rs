@@ -191,25 +191,5 @@ fn stage(
 }
 
 fn probe_runtime(dir: &Path) -> Result<()> {
-    let node = dir.join("bin/node");
-    let dist = dir.join("apps/server/dist");
-    for args in [
-        vec!["--check", "bin.js"],
-        vec![
-            "--input-type=module",
-            "-e",
-            "await import('express'); await import('@git-agent-harness/contracts')",
-        ],
-    ] {
-        ensure!(
-            Command::new(&node)
-                .args(args)
-                .current_dir(&dist)
-                .status()?
-                .success(),
-            "Bundled worker server probe failed"
-        );
-    }
-
-    Ok(())
+    super::linux_runtime::probe(&dir.join("bin/node"), &dir.join("apps/server/dist"))
 }

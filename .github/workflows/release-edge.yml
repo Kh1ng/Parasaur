@@ -345,6 +345,8 @@ jobs:
         run: |
           cd edge
           node ../scripts/compose-edge-manifest.mjs "$HEAD_SHA"
+      - name: Install the Linux control plane with npm unavailable
+        run: bash scripts/smoke-offline-central-update.sh edge
       - name: Publish the edge prerelease
         shell: bash
         env:

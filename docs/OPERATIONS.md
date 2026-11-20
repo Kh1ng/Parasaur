@@ -112,8 +112,12 @@ The updater installs dependencies there before replacing any CLI, MCP server or
 dashboard output. Relative module links preserve workspace-local and hoisted
 dependency versions when the prepared output moves into place. npm failure
 leaves the existing installation intact; tracked checkout files and its npm
-dependencies are not changed. Installation needs Node/npm and registry access
-or an adequate npm cache, but does not rebuild the application.
+dependencies are not changed. On Linux x86_64 with glibc, bundles that identify
+a prebuilt Linux worker runtime supply those same production packages to the
+control plane. The updater checks the worker archive checksum, release revision
+and lockfile, then links the packages using Node. These bundles can update from
+local release files with npm and the registry unavailable. Other platforms and
+older bundles use npm with registry access or a populated npm cache.
 
 Legacy bundles without this metadata require matching readable bundle and
 checkout lockfiles. Otherwise the update stops before installing anything;
