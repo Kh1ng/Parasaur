@@ -95,8 +95,14 @@ function NodeUpdateControls({ node, fleetStatus, onChanged }: { node: NodeSummar
       }
     } catch (err) {
       if (current === sequence.current) {
-        // A restarted service can briefly refuse connections; preserve its last phase.
-        setReconnecting(!(err instanceof GahApiError && err.status === 404));
+        if (err instanceof GahApiError && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429) {
+          setStatus(null);
+          setReconnecting(false);
+          if (err.status !== 404) setError(err.message);
+        } else {
+          // A restarted service can briefly refuse connections; preserve its last phase.
+          setReconnecting(true);
+        }
       }
     }
   }, [node.node_id]);
