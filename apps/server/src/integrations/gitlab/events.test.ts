@@ -213,6 +213,31 @@ test('pipeline repairs require bot ownership, configured prefix, matching projec
   assert.equal(h.starts.length, 0);
 });
 
+test('proxy hook verifies the public project through its configured transport before dispatch', async () => {
+  const mention = event('note-mr');
+  const proxy = { ...profile, web_url: 'http://forge.internal/team/project', provider_project_id: '1',
+    provider_api_base: 'http://forge.internal:8080/api/v4' };
+  const project = { id: 1, path_with_namespace: proxy.repo, web_url: mention.project.url };
+  for (const [identity, accepted] of [
+    [project, true], [{ ...project, id: 7 }, false],
+    [{ ...project, path_with_namespace: 'other/project' }, false],
+    [{ ...project, web_url: 'https://another.example/team/project' }, false],
+  ] as const) {
+    const h = harness({ listProfiles: async () => [proxy], cli: async (_command, args) => {
+      assert.equal(args[args.indexOf('--hostname') + 1], 'forge.internal:8080');
+      assert.ok(['projects/1', 'users/2'].includes(args[1]));
+      return { stdout: JSON.stringify(args[1] === 'projects/1' ? identity : { username: 'maintainer', bot: false }) };
+    } });
+    await dispatchGitLabEvent(mention, options, h.deps);
+    assert.equal(h.starts.length, accepted ? 1 : 0);
+    if (accepted) assert.equal(h.starts[0].gitlab?.webUrl, mention.project.url);
+  }
+  const ambiguous = harness({ listProfiles: async () => [profile, proxy],
+    cli: async () => ({ stdout: JSON.stringify(project) }) });
+  await dispatchGitLabEvent(mention, options, ambiguous.deps);
+  assert.equal(ambiguous.starts.length, 0);
+});
+
 async function serve(app: express.Express) {
   const server = http.createServer(app);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));

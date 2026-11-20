@@ -26,6 +26,8 @@ import { readLedger } from '../../roleMetrics.js';
 import { runEvents, runProfileList, runReport } from '../../gahCli.js';
 import { getFleetDispatch } from '../../wsServer.js';
 import { isGitLabProjectPath } from './dispatchContext.js';
+import { publicProjectProfiles } from './projectIdentity.js';
+import type { execProviderCli } from '../../managerChat/providerCli.js';
 
 /** Ledger modes that bookkeep policy, not a model doing a job. */
 const NOT_RUNS = new Set(['review_hold', 'review_hold_release', 'clear_attempts', 'tombstone']);
@@ -340,6 +342,7 @@ export function buildGitLabRunsFeed(inputs: GitLabRunsFeedInputs, context: GitLa
 
 export type GitLabRunsFeedDeps = {
   listProfiles: typeof runProfileList;
+  cli?: typeof execProviderCli;
   /** Ledger path via the same `gah report` indirection as /api/report/roles. */
   report: typeof runReport;
   ledger: (path: string) => LedgerEntry[];
@@ -373,11 +376,16 @@ export class UnconfiguredGitLabOriginError extends Error {
 /** Load every input and build the feed for a validated context. */
 export async function loadGitLabRunsFeed(context: GitLabRunsContext, deps: GitLabRunsFeedDeps = defaultDeps): Promise<GitLabRunsFeedResponse> {
   const profiles = await deps.listProfiles();
-  if (context.origin !== null
-    && !profiles.some(profile => profile.provider === 'gitlab' && originOf(profile.web_url) === context.origin)) {
-    throw new UnconfiguredGitLabOriginError();
-  }
   const matched = matchingGitLabProfiles(profiles, context);
+  if (context.origin !== null) {
+    const publicUrl = `${context.origin}/${context.project}`;
+    const otherOrigins = profiles.filter(profile => originOf(profile.web_url) !== context.origin);
+    const aliases = await publicProjectProfiles(otherOrigins, context.project, publicUrl, deps.cli);
+    matched.push(...aliases.map(profile => ({ ...profile, web_url: publicUrl })));
+    if (!matched.length && !profiles.some(profile => profile.provider === 'gitlab' && originOf(profile.web_url) === context.origin)) {
+      throw new UnconfiguredGitLabOriginError();
+    }
+  }
   const [sessions, report, ...eventLists] = await Promise.all([
     deps.sessions(),
     deps.report({ since: '1d' }),
@@ -385,5 +393,5 @@ export async function loadGitLabRunsFeed(context: GitLabRunsContext, deps: GitLa
   ]);
   const events: Record<string, ControllerEvent[]> = {};
   matched.forEach((profile, index) => { events[profile.name] = eventLists[index] ?? []; });
-  return buildGitLabRunsFeed({ profiles, sessions, ledgerEntries: deps.ledger(report.ledger_path), events }, context);
+  return buildGitLabRunsFeed({ profiles: matched, sessions, ledgerEntries: deps.ledger(report.ledger_path), events }, context);
 }

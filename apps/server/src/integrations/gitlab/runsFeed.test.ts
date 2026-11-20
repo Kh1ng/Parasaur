@@ -10,11 +10,13 @@ import {
   GITLAB_RUNS_FEED_DEFAULT_LIMIT,
   buildGitLabRunsFeed,
   ledgerEntryMatchesGitLabContext,
+  loadGitLabRunsFeed,
   matchingGitLabProfiles,
   parseGitLabResourceUrl,
   parseGitLabRunsQuery,
   sessionMatchesGitLabContext,
-  type GitLabRunsContext
+  type GitLabRunsContext,
+  type GitLabRunsFeedDeps
 } from './runsFeed.js';
 
 const context = (overrides: Partial<GitLabRunsContext> = {}): GitLabRunsContext => ({
@@ -290,6 +292,30 @@ test('profile matching narrows by provider, project path and origin', () => {
     matchingGitLabProfiles(profiles, context({ origin: 'https://gitlab.other.test' })).map(profile => profile.name),
     ['gl-other-host']
   );
+});
+
+test('public-origin feed loads only histories backed by that GitLab project', async () => {
+  const origin = 'https://gitlab.example.test';
+  const publicUrl = `${origin}/${GITLAB_PROFILE.repo}`;
+  const proxy = { ...GITLAB_PROFILE, web_url: `http://internal.test/${GITLAB_PROFILE.repo}`, provider_project_id: '7' };
+  const other = { ...proxy, name: 'other', provider_project_id: '8' };
+  const deps: GitLabRunsFeedDeps = {
+    listProfiles: async () => [proxy, other],
+    cli: async (_command, args) => {
+      assert.equal(args[args.indexOf('--hostname') + 1], 'internal.test');
+      const correct = args[1] === 'projects/7';
+      return { stdout: JSON.stringify({ id: correct ? 7 : 8, path_with_namespace: proxy.repo,
+        web_url: correct ? publicUrl : `https://other.example/${proxy.repo}` }) };
+    },
+    report: async () => ({ ledger_path: 'ledger', since: '1d', group_by: '', profile: null, total_entries: 2, comparisons: [], trend: [] }),
+    ledger: () => [ledgerEntry({ source_issue_number: '42' }), ledgerEntry({ profile: other.name, source_issue_number: '42' })],
+    events: async name => { assert.equal(name, proxy.name); return []; }, sessions: () => []
+  };
+  const feed = await loadGitLabRunsFeed(context({ origin }), deps);
+  assert.deepEqual(feed.context.profiles, [proxy.name]);
+  assert.equal(feed.context.webUrl, publicUrl);
+  assert.deepEqual(feed.runs.map(run => run.profile), [proxy.name]);
+  await assert.rejects(loadGitLabRunsFeed(context({ origin: 'https://unrelated.example' }), deps), /configured GitLab profile/);
 });
 
 test('buildGitLabRunsFeed returns only the context runs, newest first, bounded', () => {
