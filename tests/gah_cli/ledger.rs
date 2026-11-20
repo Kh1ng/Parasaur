@@ -52,6 +52,7 @@ fn ledger_receive_dispatch_replays_once_and_refuses_a_changed_worker_result() {
             },
         },
         ledger: entry,
+        pm_plan: None,
     };
     let binding_file = tmp.path().join("prepared-binding.json");
     let receipt_file = tmp.path().join("worker-receipt.json");
