@@ -125,6 +125,18 @@ impl WorkerRun {
         }
     }
 
+    pub(super) fn collected_unused_exit(
+        &self,
+        job: &super::super::host::JobIdentity,
+    ) -> Result<()> {
+        super::super::host::collected_unused_exit(
+            &self.journal.binding,
+            &self.journal.holder_invocation,
+            job,
+            &self.directory,
+        )
+    }
+
     fn read_reservation_release(&self) -> Result<Release> {
         let release: Release = read_json(&read_blob(
             &self.directory.join("reservation-release.json"),
@@ -192,7 +204,11 @@ impl WorkerRun {
             match fs::symlink_metadata(self.directory.join("reservation-release.json")) {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     if let Some(job) = self.unused_launch()? {
-                        super::super::host::terminal_job(&self.journal.binding.run_id, job)?;
+                        if super::super::host::terminal_job(&self.journal.binding.run_id, job)
+                            .is_err()
+                        {
+                            self.collected_unused_exit(job)?;
+                        }
                     }
                     Release {
                         version: 1,

@@ -21,7 +21,7 @@ struct Lease {
     inode: u64,
 }
 
-fn registry() -> Result<PathBuf> {
+fn registry(allow_missing: bool) -> Result<PathBuf> {
     let runtime = PathBuf::from(
         std::env::var_os("XDG_RUNTIME_DIR").context("Native capacity runtime is unavailable")?,
     );
@@ -29,7 +29,12 @@ fn registry() -> Result<PathBuf> {
     let path = runtime.join("gah-node-capacity");
     // Ordinary capacity workers use their normal umask here. The enclosing
     // owned 0700 runtime directory supplies the privacy boundary.
-    let metadata = std::fs::symlink_metadata(&path)?;
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Err(error) if allow_missing && error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(path)
+        }
+        result => result?,
+    };
     ensure!(
         metadata.is_dir() && metadata.uid() == unsafe { libc::geteuid() },
         "Native capacity registry is not an owned directory"
@@ -45,7 +50,7 @@ pub(in crate::native_handoff) fn record_lease(
 ) -> Result<()> {
     let path = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
     ensure!(
-        path.parent() == Some(registry()?.as_path())
+        path.parent() == Some(registry(false)?.as_path())
             && path.extension().is_some_and(|value| value == "lease"),
         "Native lease is outside its owned registry"
     );
@@ -99,8 +104,7 @@ fn job_empty(run_id: &str, identity: Option<&JobIdentity>) -> Result<()> {
     let values = state(&unit)?;
     if values.get("LoadState").map(String::as_str) == Some("not-found") {
         ensure!(
-            values.get("MainPID").map(String::as_str) == Some("0")
-                && values.get("InvocationID").is_some_and(String::is_empty),
+            super::collected::unit_collected(&values, &unit),
             "Native absent job has inconsistent identity"
         );
     } else {
@@ -126,11 +130,7 @@ fn holder_absent(run_id: &str, holder: &str) -> Result<bool> {
         validate_contract(&values, &unit, holder)?;
         return Ok(true);
     }
-    Ok(empty
-        && values.get("LoadState").map(String::as_str) == Some("not-found")
-        && values.get("MainPID").map(String::as_str) == Some("0")
-        && values.get("NFileDescriptorStore").map(String::as_str) == Some("0")
-        && values.get("InvocationID").is_some_and(String::is_empty))
+    Ok(super::collected::unit_collected(&values, &unit))
 }
 
 /// Caller must persist a verified acknowledgement and StopIntent first. A
@@ -185,16 +185,22 @@ fn capacity_state(
         None,
         super::super::MAX_JSON,
     )?)?;
+    job_empty(&binding.run_id, identity)?;
+    let absent = holder_absent(&binding.run_id, holder)?;
     ensure!(
         lease.version == 1
             && serde_json::to_vec(&lease.binding)? == serde_json::to_vec(binding)?
             && lease.holder_invocation == holder
-            && lease.path.parent() == Some(registry()?.as_path())
+            && lease.path.parent() == Some(registry(absent)?.as_path())
+            && lease
+                .path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| uuid::Uuid::parse_str(s)
+                    .is_ok_and(|id| !id.is_nil() && id.to_string() == s))
             && lease.path.extension().is_some_and(|value| value == "lease"),
         "Native capacity identity changed"
     );
-    job_empty(&binding.run_id, identity)?;
-    let absent = holder_absent(&binding.run_id, holder)?;
     let verifier = match OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)

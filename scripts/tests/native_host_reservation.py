@@ -7,6 +7,7 @@ Requires a unified cgroup user manager with systemd-notify --fd (systemd 254+)
 and enough real headroom for the default 4 GiB implementation reservation.
 Pass "http-lost-consume <node> <compiled server dist>" to exercise a consumed
 start whose HTTP reply is lost, followed by a lost capacity-release reply.
+Use "http-collected-start" to also collect the exited job and capacity units.
 Pass "worker-update-drain <node> <compiled server dist>" to check maintenance
 admission and release an armed update after the host reservation finishes.
 """
@@ -61,7 +62,8 @@ def empty(group):
 def main():
     binary = Path(sys.argv[1]).resolve(strict=True)
     mode = sys.argv[2] if len(sys.argv) > 2 else 'running'
-    assert mode in ('running', 'release-unused', 'release-unused-lost-reply', 'release-unused-broker', 'http-broker', 'http-lost-consume', 'worker-update-drain')
+    lost_start_reply = mode in ('http-lost-consume', 'http-collected-start')
+    assert lost_start_reply or mode in ('running', 'release-unused', 'release-unused-lost-reply', 'release-unused-broker', 'http-broker', 'worker-update-drain')
     assert Path('/sys/fs/cgroup/cgroup.controllers').exists()
     # Read-only inventory before the fixture. Never clean another worker's file.
     runtime = Path(os.environ['XDG_RUNTIME_DIR'])
@@ -79,7 +81,7 @@ def main():
         executable.write_text(f'#!/bin/sh\ntouch {canary}\nexit 91\n')
         executable.chmod(0o700)
         origin = 'https://native-host-fixture.invalid'
-        if mode == 'http-lost-consume':
+        if lost_start_reply:
             listener.bind(('127.0.0.1', 0))
             listener.listen()
             origin = f'http://127.0.0.1:{listener.getsockname()[1]}'
@@ -99,7 +101,10 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
 '''
         central, worker = root / 'central.toml', root / 'worker.toml'
         for path, role in [(central, 'central'), (worker, 'worker')]:
-            path.write_text(f'[defaults]\nnode_role="{role}"\n' + common)
+            config = f'[defaults]\nnode_role="{role}"\n' + common
+            if mode == 'http-collected-start':
+                config += '\n[defaults.node_capacity]\nworker_memory_mib=512\nmemory_floor_mib=512\nworker_cpu_cores=1\n'
+            path.write_text(config)
             path.chmod(0o600)
         identity = root / 'identity.json'
         identity.write_text('{"node_id":"native-host-fixture"}')
@@ -135,16 +140,16 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
                                  '--output', str(context), '--node-id', 'native-host-fixture',
                                  '--central-url', origin,
                                  '--config-path', str(central), env=environment).stdout)
-        if mode in ('http-broker', 'http-lost-consume'):
+        if mode == 'http-broker' or lost_start_reply:
             expected = root / 'binding.json'
             expected.write_text(json.dumps(binding))
             expected.chmod(0o600)
             probe = Path(__file__).with_name('native_worker_http.mjs')
             args = [sys.argv[3], str(probe), sys.argv[4], str(binary), str(root)]
             descriptors = ()
-            if mode == 'http-lost-consume':
+            if lost_start_reply:
                 descriptors = (listener.fileno(),)
-                args.append(str(listener.fileno()))
+                args.extend([str(listener.fileno()), mode])
             result = subprocess.run(args, env=environment, pass_fds=descriptors, capture_output=True, text=True, timeout=45)
             assert result.returncode == 0, result.stderr
             report = json.loads(result.stdout)
