@@ -162,8 +162,11 @@ fn mark_failure(
     }
     // Output also carries the agent's own work, which can quote login-failure
     // text from the repository it is editing, and a login block never
-    // expires. The backend's own login check overrules such a match.
+    // expires. Check the login before trusting ambiguous output. Codex's
+    // terminal workspace rejection is stronger evidence than its cached login.
     if parsed.kind == crate::quota_parser::FailureKind::AuthenticationError
+        && !(identity.runner_kind == "codex"
+            && crate::runner::output::codex_workspace_login_rejected(log_text))
         && crate::auth_health::login_confirmed(identity)
     {
         return Ok(None);

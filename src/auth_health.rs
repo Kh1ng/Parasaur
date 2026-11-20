@@ -380,15 +380,22 @@ pub(crate) fn timed_out() -> AuthHealth {
 /// Codex login state from `codex login status`, optionally under an
 /// isolated state root. `None` when the check did not finish.
 pub fn codex_login(executable: &Path, state_root: Option<&Path>) -> Option<AuthHealth> {
+    codex_login_status(executable, state_root).map(|output| {
+        classify_status_output(output.status.success(), &output.stdout, &output.stderr)
+    })
+}
+
+fn codex_login_status(
+    executable: &Path,
+    state_root: Option<&Path>,
+) -> Option<std::process::Output> {
     let codex_home = state_root.map(|root| root.join(".codex"));
     let mut env: Vec<(&str, &Path)> = Vec::new();
     if let (Some(root), Some(home)) = (state_root, codex_home.as_deref()) {
         env.push(("HOME", root));
         env.push(("CODEX_HOME", home));
     }
-    run(executable, &["login", "status"], &env).map(|output| {
-        classify_status_output(output.status.success(), &output.stdout, &output.stderr)
-    })
+    run(executable, &["login", "status"], &env)
 }
 
 /// Claude login state from `claude auth status --json`. `None` when the
@@ -419,6 +426,36 @@ pub fn login_confirmed(identity: &crate::execution_identity::ExecutionIdentity) 
         _ => None,
     };
     health.is_some_and(|health| health.state == AuthState::Ok)
+}
+
+/// Before restoring a blocked ChatGPT subscription, verify that the provider
+/// accepts the saved credential. `codex login status` only checks local state.
+pub(crate) fn login_recovered(identity: &crate::execution_identity::ExecutionIdentity) -> bool {
+    if identity.runner_kind != "codex" {
+        return login_confirmed(identity);
+    }
+    let Some(executable) = identity.executable.as_deref() else {
+        return false;
+    };
+    let Some(output) = codex_login_status(executable, identity.state_root.as_deref()) else {
+        return false;
+    };
+    if classify_status_output(output.status.success(), &output.stdout, &output.stderr).state
+        != AuthState::Ok
+    {
+        return false;
+    }
+    let subscription = [&output.stdout, &output.stderr].iter().any(|stream| {
+        String::from_utf8_lossy(stream)
+            .to_ascii_lowercase()
+            .contains("chatgpt")
+    });
+    if !subscription {
+        return true;
+    }
+    let mut environment = Vec::new();
+    identity.apply_instance_state_env(&mut environment);
+    crate::usage::refresh_codex_quota(&executable.to_string_lossy(), None, &environment).is_ok()
 }
 
 fn resolve(command: &str) -> Option<PathBuf> {

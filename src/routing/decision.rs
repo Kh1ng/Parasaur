@@ -1018,7 +1018,7 @@ where
                 &identity.runner_kind,
             ));
         }
-        if crate::auth_health::login_confirmed(&blocked) {
+        if crate::auth_health::login_recovered(&blocked) {
             if decision.scope == Some(BlockScope::BackendWide) {
                 blocked.effective_model = None;
             }
