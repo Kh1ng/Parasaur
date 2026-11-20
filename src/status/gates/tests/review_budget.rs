@@ -3,8 +3,8 @@ use super::*;
 const GENERATION: &str = "review-v1:fixture-head:sha256:fixture";
 
 fn held_preflight_entries(profile: &Profile) -> Vec<LedgerEntry> {
+    let earlier = crate::clock::now_utc() - time::Duration::seconds(1);
     let mut preflight = LedgerEntry::new("test", profile, "auto", "review", "#1525", None, None);
-    preflight.timestamp = "2026-11-06T00:00:00Z".into();
     preflight.work_id = Some("#1525".into());
     preflight.branch = Some("gah/1525".into());
     preflight.review_source_sha = Some("fixture-head".into());
@@ -12,7 +12,9 @@ fn held_preflight_entries(profile: &Profile) -> Vec<LedgerEntry> {
     preflight.review_generation = Some(GENERATION.into());
     preflight.usage.usage_unknown_reason = Some(ledger::UsageUnknownReason::NoAttemptStarted);
     let mut refusal = preflight.clone();
-    refusal.timestamp = "2026-11-06T00:00:01Z".into();
+    preflight.timestamp = earlier
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
     refusal.validation_result = Some("review_budget_exhausted".into());
     refusal.human_required = true;
     refusal.human_required_reason_code = Some("retry_budget_exhausted".into());
