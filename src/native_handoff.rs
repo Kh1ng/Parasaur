@@ -18,6 +18,8 @@ mod catalog;
 mod credential_socket;
 mod current;
 pub use catalog::{WorkerCatalog, WorkerCheckScope};
+/// Version 2 workers include validated decomposition artifacts in their receipts.
+pub const CATALOG_PROTOCOL: u32 = 2;
 #[cfg(target_os = "linux")]
 pub mod execution;
 mod history;

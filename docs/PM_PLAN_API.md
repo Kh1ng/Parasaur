@@ -12,6 +12,12 @@ Planning still uses PM dispatch. These endpoints inspect or publish its saved ar
 | `POST /api/pm/plans/ID/publish` with `{ "profile": "P", "approve": true, "plan_fingerprint": "..." }` | Explicit publication through the existing Rust policy checks |
 
 A plan ID names one dispatch session in the configured profile's artifact directory.
+For a trusted issue with a decomposition label, the controller can send planning to
+a registered worker. The worker returns the validated plan with its terminal receipt.
+Once central acknowledges the receipt, the plan is available here under the worker
+run ID. The next eligible factory cycle can publish children using the recorded
+fingerprint and the profile's child-count, depth and repository policy. An operator
+can also inspect, dry-run or publish that same plan through these endpoints.
 IDs cannot contain directory separators. Unknown profiles, foreign artifacts, and symlinked
 sessions, artifacts, or publication files are rejected. The API accepts no filesystem path,
 configuration path, raw command arguments, repository override, or provider override.

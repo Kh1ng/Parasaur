@@ -12,7 +12,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const PUBLICATION_SCHEMA_VERSION: u32 = 1;
-const MAX_ARTIFACT_BYTES: usize = 400_000;
+pub(crate) const MAX_ARTIFACT_BYTES: usize = 400_000;
 const MAX_PROVIDER_BODY_BYTES: usize = 60_000;
 
 trait IssuePublisher {
@@ -551,12 +551,16 @@ pub(super) fn read_artifact(path: &Path, profile: &Profile) -> Result<PmPlanArti
     fs::File::open(path)?
         .take((MAX_ARTIFACT_BYTES + 1) as u64)
         .read_to_end(&mut bytes)?;
+    parse_artifact(&bytes, profile)
+}
+
+pub(super) fn parse_artifact(bytes: &[u8], profile: &Profile) -> Result<PmPlanArtifact> {
     anyhow::ensure!(
         bytes.len() <= MAX_ARTIFACT_BYTES,
         "PM plan artifact exceeds {MAX_ARTIFACT_BYTES} bytes"
     );
     let artifact: PmPlanArtifact =
-        serde_json::from_slice(&bytes).context("invalid PM plan artifact")?;
+        serde_json::from_slice(bytes).context("invalid PM plan artifact")?;
     validate_publication_contract(profile, &artifact)?;
     validate_plan(&artifact.plan)?;
     Ok(artifact)

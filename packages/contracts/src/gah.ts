@@ -1391,6 +1391,7 @@ export type SettingsConfigProfileSummary = Omit<ConfigProfileSummary, 'notificat
 
 /** Versioned allowlisted response from `gah config show --json --full`. */
 export interface ConfigShowFull {
+  native_worker_protocol?: number;
   /** Absent on older hosts, which retain factory automation behavior. */
   factory_enabled?: boolean;
   node?: NodeRoleStatus;

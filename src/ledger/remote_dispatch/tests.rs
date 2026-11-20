@@ -62,6 +62,7 @@ fn fixture() -> (
         ..Default::default()
     });
     let receipt = DispatchReceipt {
+        pm_plan: None,
         context_sha256: binding.context_sha256.clone(),
         execution: RemoteExecution {
             node_id: binding.node_id.clone(),
@@ -75,6 +76,80 @@ fn fixture() -> (
     };
     cfg.profiles.insert("test".into(), profile);
     (tmp, cfg, binding, receipt)
+}
+
+#[test]
+fn returned_plan_is_scoped_to_its_issue_and_replay_restores_only_the_accepted_artifact() {
+    let (tmp, mut cfg, mut binding, mut receipt) = fixture();
+    let expected: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../packages/contracts/src/fixtures/pm-plan-github.json"
+    ))
+    .unwrap();
+    let artifact = serde_json::to_string(&expected["artifact"]).unwrap();
+    let profile = cfg.profiles.get_mut("test").unwrap();
+    profile.display_name = "PM project".into();
+    profile.repo = "owner/github".into();
+    let root = tmp.path().join("central-artifacts");
+    profile.artifact_root = root.display().to_string();
+    binding.repo = profile.repo.clone();
+    binding.mode = "pm".into();
+    binding.dispatch_reason = Some("pm_decomposition".into());
+    binding.work_id = "#42".into();
+    binding.branch = None;
+    binding.review_generation = None;
+    receipt.ledger.repo = binding.repo.clone();
+    receipt.ledger.mode = binding.mode.clone();
+    receipt.ledger.work_id = Some(binding.work_id.clone());
+    receipt.ledger.dispatch_reason = binding.dispatch_reason.clone();
+    receipt.ledger.review_generation = None;
+    receipt.ledger.branch = None;
+    receipt.ledger.backend_exit_code = Some(0);
+    receipt.ledger.pm_plan_fingerprint = expected["publication"]["plan_fingerprint"]
+        .as_str()
+        .map(str::to_owned);
+    receipt.ledger.session_dir = Some("/untrusted-worker-location".into());
+
+    assert!(receive(&cfg, &binding, &receipt).is_err());
+    let mut wrong = expected["artifact"].clone();
+    wrong["target"] = "#99".into();
+    receipt.pm_plan = Some(wrong.to_string());
+    assert!(receive(&cfg, &binding, &receipt).is_err());
+    receipt.pm_plan = Some(artifact.clone());
+    let mut failed = receipt.clone();
+    failed.execution.termination.exit_code = Some(1);
+    assert!(receive(&cfg, &binding, &failed).is_err());
+    let mut published = receipt.clone();
+    published.ledger.mr_created = true;
+    assert!(receive(&cfg, &binding, &published).is_err());
+    let mut ordinary = binding.clone();
+    ordinary.mode = "fix".into();
+    let mut unexpected = receipt.clone();
+    unexpected.ledger.mode = "fix".into();
+    assert!(receive(&cfg, &ordinary, &unexpected).is_err());
+    assert!(super::super::read_entries(&cfg).unwrap().is_empty());
+
+    assert_eq!(
+        receive(&cfg, &binding, &receipt).unwrap(),
+        ReceiveOutcome::Recorded
+    );
+    let session = root.join("sessions").join(&binding.run_id);
+    let path = session.join("pm-plan-v1.json");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), artifact);
+    std::fs::write(&path, "conflicting artifact").unwrap();
+    assert!(receive(&cfg, &binding, &receipt).is_err());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "conflicting artifact"
+    );
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(
+        receive(&cfg, &binding, &receipt).unwrap(),
+        ReceiveOutcome::AlreadyRecorded
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), artifact);
+    let entries = super::super::read_entries(&cfg).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].session_dir.as_deref(), session.to_str());
 }
 
 #[test]

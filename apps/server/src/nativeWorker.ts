@@ -46,7 +46,7 @@ export class NativeWorker {
     const profile=(await this.options.profiles()).find(profile=>profile.name===binding.profile);
     if(!profile || profile.repo!==binding.repo || profile.repo_id!==binding.repo_id) throw Error('Native worker profile changed');
   }
-  async catalog(scope:{node_id:string;profile:string;repo_id:string;repo:string}):Promise<NativeWorkerCatalog> {
+  async catalog(scope:{node_id:string;profile:string;repo_id:string;repo:string}, protocol:1|2=1):Promise<NativeWorkerCatalog> {
     if(scope.node_id!==this.options.nodeId || !Object.values(scope).every(value=>typeof value==='string' && value.length>0 && value.length<=4096)) throw Error('Invalid worker catalog scope');
     const profile=(await this.options.profiles()).find(profile=>profile.name===scope.profile);
     if(!profile || profile.repo!==scope.repo || profile.repo_id!==scope.repo_id) throw Error('Worker catalog repository changed');
@@ -54,7 +54,8 @@ export class NativeWorker {
       ...(this.options.config?['--config-path',this.options.config]:[])]) as ConfigShowFull;
     const instances=configuration.profiles[scope.profile]?.backend_instances;
     if(!instances || instances.length>128) throw Error('Worker account metadata unavailable');
-    return {protocol:1,...scope,instances:instances.map(instance=>({backend_instance:instance.backend_instance,
+    const negotiated = protocol === 2 && configuration.native_worker_protocol === 2 ? 2 : 1;
+    return {protocol:negotiated,...scope,instances:instances.map(instance=>({backend_instance:instance.backend_instance,
       logical_backend:instance.logical_backend,enabled:instance.enabled===true,executable_ready:instance.executable_resolved===true,
       auth_ready:typeof instance.auth_ready==='boolean'?instance.auth_ready:null,supported_models:instance.supported_models}))};
   }
@@ -168,7 +169,7 @@ export function nativeWorkerRouter(worker:NativeWorker):Router {
     res.set('Cache-Control','no-store');
     const body=req.body as {node_id:string;profile:string;repo_id:string;repo:string}|undefined;
     if(!body || Object.keys(body).length!==4 || !['node_id','profile','repo_id','repo'].every(key=>Object.hasOwn(body,key))) return void res.sendStatus(400);
-    try {res.json(await worker.catalog(body));}
+    try {res.json(await worker.catalog(body, req.query.protocol === '2' ? 2 : 1));}
     catch {res.status(409).json({error:'Worker account metadata unavailable'});}
   });
   router.post('/',async(req,res)=>{

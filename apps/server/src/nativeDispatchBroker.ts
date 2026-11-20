@@ -377,6 +377,7 @@ export class NativeDispatchBroker {
   private operationMatches(journal: Journal, request: NativeOperationRequest): boolean {
     const previous=request.purpose==='claim'?journal.last_claim_operation:journal.last_operation;
     return (journal.binding.dispatch_reason !== 'recover_publication' || request.purpose === 'publish')
+      && (journal.binding.mode !== 'pm' || request.purpose === 'attempt')
       && journal.start_offered && !!journal.start_grant?.consumed_at && !journal.terminal_observed
       && journal.phase!=='terminal' && !journal.reservation_release && same(journal.binding,request)
       && journal.start_grant.reservation.id===request.reservation_id

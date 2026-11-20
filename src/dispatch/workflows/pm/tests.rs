@@ -421,7 +421,7 @@ fn persist_pm_plan_artifact_does_not_mutate_the_repository() {
     let mut prof = profile(repo);
     prof.provider = "github".into();
     prof.repo = "owner/repo".into();
-    let path =
+    let (path, _) =
         super::persist_pm_plan_artifact(&session_dir, &prof, &preflight, "#42", &plan).unwrap();
     assert_eq!(path, session_dir.join("pm-plan-v1.json"));
     assert!(

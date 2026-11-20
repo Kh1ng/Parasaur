@@ -18,7 +18,8 @@ pub(crate) fn plan_native(
     );
     let args = &request.args;
     ensure!(
-        matches!(args.mode.as_str(), "improve" | "fix" | "review")
+        (matches!(args.mode.as_str(), "improve" | "fix" | "review")
+            || (args.mode == "pm" && args.dispatch_reason.as_deref() == Some("pm_decomposition")))
             && !args.dry_run
             && !args.prod
             && !args.current_branch
@@ -27,8 +28,12 @@ pub(crate) fn plan_native(
             && !args.allow_draft_fail
             && args.mr.is_none()
             && args.oh_profile.is_none()
-            && args.retries == 2,
-        "Native planning requires an ordinary implementation or review controller request"
+            && args.retries == if args.mode == "pm" { 0 } else { 2 },
+        "Native planning requires a controller implementation, review, or decomposition request"
+    );
+    ensure!(
+        args.mode != "pm" || catalog.protocol >= 2,
+        "Worker cannot return a native plan artifact"
     );
     let profile = config::get_profile(cfg, &args.profile)?;
     let work_id = args
@@ -74,7 +79,8 @@ pub(crate) fn plan_native(
                     metadata.difficulty = Some(difficulty)
                 }
                 issue_estimate::Estimate::Needed
-                    if args.dispatch_reason.as_deref() == Some("initial") =>
+                    if catalog.protocol >= 2
+                        && args.dispatch_reason.as_deref() == Some("initial") =>
                 {
                     if let Some(route) = issue_estimate::route(cfg, profile, args, &runtime) {
                         planned.args = issue_estimate::request(args, &issue.number, route);

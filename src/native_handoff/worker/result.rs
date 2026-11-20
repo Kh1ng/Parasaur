@@ -62,9 +62,28 @@ impl WorkerRun {
         // Keep the validated original row verbatim. Re-serializing telemetry
         // can normalize floats, defaults and future fields before central sees
         // them; it also makes cold receipt hashing depend on normalization.
-        let mut receipt_json = serde_json::to_string(&serde_json::json!({
+        let mut envelope = serde_json::json!({
             "context_sha256": self.journal.binding.context_sha256, "execution":execution
-        }))?;
+        });
+        if self.journal.binding.mode == "pm"
+            && self.journal.binding.dispatch_reason.as_deref() == Some("pm_decomposition")
+        {
+            let entry: crate::ledger::LedgerEntry = read_json(&ledger)?;
+            if entry.failure_class.is_none() {
+                let sessions = self.directory.join("sessions");
+                private_directory(&sessions)?;
+                let session = sessions.join(&self.journal.binding.run_id);
+                private_directory(&session)?;
+                let bytes = read_blob(
+                    &session.join("pm-plan-v1.json"),
+                    None,
+                    crate::dispatch::pm_plans::received::MAX_ARTIFACT_BYTES as u64,
+                )?;
+                crate::dispatch::pm_plans::received::ensure_shareable(&read_json(&bytes)?)?;
+                envelope["pm_plan"] = String::from_utf8(bytes)?.into();
+            }
+        }
+        let mut receipt_json = serde_json::to_string(&envelope)?;
         receipt_json.pop();
         receipt_json.push_str(",\"ledger\":");
         receipt_json.push_str(std::str::from_utf8(&ledger)?.trim_end());

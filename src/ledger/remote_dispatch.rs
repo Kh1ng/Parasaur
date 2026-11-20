@@ -67,6 +67,8 @@ pub struct DispatchReceipt {
     pub context_sha256: String,
     pub execution: RemoteExecution,
     pub ledger: LedgerEntry,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pm_plan: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -160,7 +162,7 @@ pub fn receive_acknowledged(
         "A remote review requires its selected review generation"
     );
     let entry = &receipt.ledger;
-    if ledger_mode == "handoff" {
+    if ledger_mode == "handoff" || kind == crate::job_kind::JobKind::Pm {
         ensure!(
             !entry.push_attempted
                 && !entry.push_succeeded
@@ -261,6 +263,45 @@ pub fn receive_acknowledged(
         "Worker process termination is unconfirmed or malformed"
     );
     let mut entry = entry.clone();
+    let decomposition =
+        binding.mode == "pm" && binding.dispatch_reason.as_deref() == Some("pm_decomposition");
+    if decomposition && entry.failure_class.is_none() {
+        let plan = receipt.pm_plan.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("Successful native decomposition is missing its plan")
+        })?;
+        ensure!(
+            termination.reason == TerminationReason::Exited
+                && termination.exit_code == Some(0)
+                && entry.dispatch_reason == binding.dispatch_reason
+                && entry.backend_exit_code == Some(0)
+                && !entry.human_required
+                && entry.attempt_routing.iter().any(|attempt| attempt
+                    .identity
+                    .as_ref()
+                    .is_some_and(|identity| identity.logical_backend == binding.backend
+                        && identity.effective_model == binding.model))
+                && entry.attempts_completed.unwrap_or(0) > 0,
+            "Native plan lacks a successful planner invocation"
+        );
+        crate::dispatch::pm_plans::received::validate(
+            profile,
+            &binding.work_id,
+            entry.pm_plan_fingerprint.as_deref(),
+            plan,
+        )?;
+        entry.session_dir = Some(
+            std::path::Path::new(&profile.artifact_root)
+                .join("sessions")
+                .join(&binding.run_id)
+                .to_string_lossy()
+                .into_owned(),
+        );
+    } else {
+        ensure!(
+            receipt.pm_plan.is_none(),
+            "Unexpected plan in native worker result"
+        );
+    }
     entry.schema_version = LEDGER_SCHEMA_VERSION;
     entry.remote_execution = Some(ReceivedExecution {
         node_id: receipt.execution.node_id.clone(),
@@ -269,6 +310,9 @@ pub fn receive_acknowledged(
         receipt_sha256: receipt_sha256.clone(),
     });
     let outcome = super::jsonl::append_received_dispatch(cfg, &entry)?;
+    if let Some(plan) = receipt.pm_plan.as_deref() {
+        crate::dispatch::pm_plans::received::install(profile, &binding.run_id, plan)?;
+    }
     if outcome == ReceiveOutcome::Recorded {
         // The result is recorded either way; attribution only feeds reports.
         if let Err(error) = super::review_attribution::attribute_received_review(cfg, &entry) {

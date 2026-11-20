@@ -3,25 +3,48 @@ use crate::job_kind::JobKind;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
+#[derive(Debug, PartialEq)]
+pub(super) struct PendingPlan {
+    path: PathBuf,
+    fingerprint: Option<String>,
+}
+
 pub(super) fn pending_plan(
     cfg: &crate::config::GahConfig,
     profile_name: &str,
     repo_id: &str,
     work_id: &str,
-) -> Result<Option<PathBuf>> {
+) -> Result<Option<PendingPlan>> {
     let entries = crate::ledger::read_entries(cfg)?;
-    Ok(entries.into_iter().rev().find_map(|entry| {
-        (entry.profile == profile_name
+    for entry in entries.into_iter().rev().filter(|entry| {
+        entry.profile == profile_name
             && entry.repo_id == repo_id
             && entry.work_id.as_deref() == Some(work_id)
             && JobKind::parse(&entry.mode) == Ok(JobKind::Pm)
             && entry.failure_class.is_none()
-            && entry.validation_result.as_deref() != Some("failed"))
-        .then(|| entry.session_dir.map(PathBuf::from))
-        .flatten()
-        .map(|session| session.join("pm-plan-v1.json"))
-        .filter(|plan| plan.is_file())
-    }))
+            && entry.validation_result.as_deref() != Some("failed")
+    }) {
+        let fingerprint = entry.pm_plan_fingerprint;
+        if entry.remote_execution.is_some() {
+            if entry.dispatch_reason.as_deref() == Some("pm_decomposition") && fingerprint.is_some()
+            {
+                let id = entry
+                    .session_id
+                    .as_deref()
+                    .context("Received PM plan has no session ID")?;
+                let path = crate::dispatch::pm_plans::plan_path(cfg, profile_name, id)?;
+                return Ok(Some(PendingPlan { path, fingerprint }));
+            }
+        } else if let Some(path) = entry
+            .session_dir
+            .map(PathBuf::from)
+            .map(|session| session.join("pm-plan-v1.json"))
+            .filter(|path| path.is_file())
+        {
+            return Ok(Some(PendingPlan { path, fingerprint }));
+        }
+    }
+    Ok(None)
 }
 
 struct PmExecutionContext<'a> {
@@ -195,12 +218,13 @@ pub(super) fn execute(
                 return Err(error);
             }
         }
-        plan_path = Some(
-            PathBuf::from(&profile.artifact_root)
+        plan_path = Some(PendingPlan {
+            path: PathBuf::from(&profile.artifact_root)
                 .join("sessions")
                 .join(&run_id)
                 .join("pm-plan-v1.json"),
-        );
+            fingerprint: None,
+        });
         crate::events::record_with_run_id(
             cfg,
             crate::events::EventType::PmPlanned,
@@ -210,9 +234,14 @@ pub(super) fn execute(
             format!("validated PM plan for {ticket_path}"),
         )?;
     }
-    let plan_path = plan_path.context("PM planning succeeded without an artifact path")?;
-    let summary = match crate::dispatch::publish_pm_plan(cfg, profile_name, &plan_path, false, None)
-    {
+    let pending = plan_path.context("PM planning succeeded without an artifact path")?;
+    let summary = match crate::dispatch::publish_pm_plan(
+        cfg,
+        profile_name,
+        &pending.path,
+        false,
+        pending.fingerprint.as_deref(),
+    ) {
         Ok(summary) => summary,
         Err(error) => {
             execution.append_failure(
@@ -307,7 +336,10 @@ mod tests {
 
         assert_eq!(
             pending_plan(&cfg, "real", &profile.repo_id, "#561").unwrap(),
-            Some(plan)
+            Some(super::PendingPlan {
+                path: plan,
+                fingerprint: None
+            })
         );
     }
 

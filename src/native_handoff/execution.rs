@@ -144,6 +144,10 @@ impl Execution {
             "Publication recovery permits only a publication operation"
         );
         ensure!(
+            self.context.binding.mode != "pm" || purpose == OperationPurpose::Attempt,
+            "Native decomposition grants only planner attempts"
+        );
+        ensure!(
             !self.unconfirmed.load(Ordering::SeqCst),
             "Native operation completion is unconfirmed; stop and reconcile this job"
         );
