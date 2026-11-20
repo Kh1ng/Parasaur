@@ -103,7 +103,8 @@ test('archive assets are service-readable without changing restrictive build out
   assert.equal(run().status, 0);
   const extracted = join(root, 'extracted');
   mkdirSync(extracted);
-  const result = spawnSync('tar', ['-xzf', out, '-C', extracted], { encoding: 'utf8' });
+  // Inspect the modes recorded in the archive independently of the test user's umask.
+  const result = spawnSync('tar', ['-xzpf', out, '-C', extracted], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(statSync(join(extracted, 'apps/web/dist/index.html')).mode & 0o777, 0o644);
   assert.equal(statSync(asset).mode & 0o777, 0o600, 'the build tree is untouched');
