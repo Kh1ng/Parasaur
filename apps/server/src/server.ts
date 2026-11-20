@@ -806,6 +806,7 @@ export function createServer(
       display_name: identity.display_name,
       advertised_url: identity.advertised_url,
       version: identity.version,
+      build_revision: identity.build_revision,
       schema_digest: identity.schema_digest,
       timestamp: Date.now(),
       checks: { ...readiness.checks, nodeRole: { name: 'nodeRole', ready: true } }
@@ -824,6 +825,7 @@ export function createServer(
         display_name: identity.display_name,
         advertised_url: identity.advertised_url,
         version: identity.version,
+        build_revision: identity.build_revision,
         schema_digest: identity.schema_digest
       },
       endpoints: {
@@ -1078,11 +1080,17 @@ export function createServer(
       res.setHeader('Cache-Control', 'no-store');
       const body = req.body ?? {};
       try {
-        if (body.action === 'start') return res.json(await updates.start());
+        if (body.action === 'start') {
+          if (body.expected_commit !== undefined && (typeof body.expected_commit !== 'string' || !/^[0-9a-f]{40}$/.test(body.expected_commit))) {
+            return res.status(400).json({ message: 'Expected a full release commit.' });
+          }
+          return res.json(await updates.start(body.expected_commit));
+        }
         if (body.action === 'status') return res.json({ started: true, status: updates.status() });
         if (body.action === 'cancel') return res.json({ cancelled: updates.cancel() });
         return res.status(400).json({ message: 'Unknown worker update action.' });
       } catch (error) {
+        if (error instanceof ReleaseChanged) return res.status(409).json({ message: error.message });
         return res.status(500).json({
           message: error instanceof Error ? error.message : 'The worker update failed.'
         });
@@ -1249,6 +1257,7 @@ export function createServer(
         display_name: identity.display_name,
         advertised_url: identity.advertised_url,
         version: identity.version,
+        build_revision: identity.build_revision,
         schema_digest: identity.schema_digest,
         resource_pressure: getLocalResourcePressure(),
         event_cursor: status.recent_ledger?.most_recent_dispatch_timestamp ?? status.generated_at,

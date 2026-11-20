@@ -3,12 +3,14 @@ import { resolve } from 'node:path';
 import crypto from 'node:crypto';
 import { COORDINATOR_SCHEMA_SEED, COORDINATOR_VERSION } from '@git-agent-harness/contracts';
 import { preserveCorruptFile, writeFileAtomic } from './atomicFile.js';
+import { runningBuild } from './buildRevision.js';
 
 export interface CoordinatorIdentity {
   node_id: string;
   display_name: string;
   advertised_url: string;
   version: string;
+  build_revision?: string | null;
   schema_digest: string;
 }
 
@@ -72,6 +74,7 @@ export function getCoordinatorIdentity(
     display_name,
     advertised_url,
     version,
+    build_revision: runningBuild.revision,
     schema_digest
   };
   cachedIdentity = { cacheKey, identity };

@@ -647,6 +647,8 @@ test('checkNodeHealth distinguishes different failure kinds', async () => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         status: 'healthy',
+        node_id: 'mock-node',
+        build_revision: 'c'.repeat(40),
         version: '0.1.5',
         schema_digest: nodeObj.schema_digest
       }));
@@ -654,6 +656,9 @@ test('checkNodeHealth distinguishes different failure kinds', async () => {
     const successRes = await registry.checkNodeHealth('mock-node');
     assert.equal(successRes.status, 'healthy');
     assert.equal(successRes.error, undefined);
+    const stored = new RegistryService(tempPath).getNode('mock-node');
+    assert.equal(stored?.version, '0.1.5');
+    assert.equal(stored?.build_revision, 'c'.repeat(40));
 
   } finally {
     delete process.env.MOCK_NODE_TOKEN;
@@ -1365,7 +1370,7 @@ test('getNodesSummary classifies each node against the coordinator version and i
     const current = summaries.find((entry) => entry.node_id === 'node-1');
     const old = summaries.find((entry) => entry.node_id === 'node-2');
 
-    assert.equal(current?.update?.status, 'current');
+    assert.equal(current?.update?.status, 'unverified');
     assert.equal(current?.update?.coordinator_version, COORDINATOR_VERSION);
     // 0.1.0 sorts below the minimum supported worker version, so it is
     // `unsupported`, not merely `behind` -- the warning the fleet page shows.
@@ -1385,8 +1390,15 @@ test('nodeVersionStatus separates `behind` from `unsupported` (issue #1416)', ()
   // worker is always `unsupported`; `behind` appears once the coordinator
   // advances past the minimum it still supports. Exercise the classifier
   // directly with both shapes.
-  const current = nodeVersionStatus(COORDINATOR_VERSION);
+  const earlier = 'a'.repeat(40);
+  const installed = 'b'.repeat(40);
+  const build = { revision: installed, ancestors: new Set([earlier]) };
+  const current = nodeVersionStatus(COORDINATOR_VERSION, installed, build);
   assert.equal(current.status, 'current');
+  assert.equal(nodeVersionStatus(COORDINATOR_VERSION, earlier, build).status, 'behind');
+  assert.equal(nodeVersionStatus(COORDINATOR_VERSION, 'c'.repeat(40), build).status, 'different_build');
+  assert.equal(nodeVersionStatus(COORDINATOR_VERSION, null, build).status, 'unverified');
+  assert.equal(nodeVersionStatus('9.9.9', earlier, build).status, 'ahead');
   assert.equal(current.coordinator_version, COORDINATOR_VERSION);
 
   const unsupported = nodeVersionStatus('0.0.1');

@@ -176,6 +176,48 @@ test('a second start is refused while the updater is alive, and cancel only disa
   });
 });
 
+test('a draining worker retains the selected manifest when the channel moves', async t => {
+  await withStatePath(async path => {
+    t.mock.timers.enable({ apis: ['setInterval'] });
+    const env = process.env.PARASAUR_RELEASE_MANIFEST;
+    const feed = join(dirname(path), 'edge.json');
+    process.env.PARASAUR_RELEASE_MANIFEST = feed;
+    const expected = 'a'.repeat(40);
+    const platform = process.platform === 'darwin' ? 'macos' : process.arch === 'arm64' ? 'linux-aarch64' : 'linux-x86_64';
+    const release = (commit: string) => JSON.stringify({ schema: 1, channel: 'edge', version: '0.3.0', commit,
+      assets: [['cli', 'gah-' + platform], ['mcp-server', 'mcp-' + platform], ['server-bundle', 'bundle']].map(([kind, name]) => ({
+        name, kind, sha256: '1'.repeat(64), url: name
+      })) });
+    const child = fakeChildProcess(process.pid);
+    let claims = 1;
+    let selected: string | undefined;
+    const service = new WorkerUpdateService({ countActiveClaims: async () => claims, spawnFn: ((_bin, args: string[]) => {
+      const path = args[args.indexOf('--release-manifest') + 1];
+      selected = JSON.parse(readFileSync(path, 'utf8')).commit;
+      return child;
+    }) as typeof spawn });
+    try {
+      writeFileSync(feed, release(expected));
+      await assert.rejects(service.start('c'.repeat(40)), /published build changed/);
+      assert.equal(service.status().status, 'idle');
+      const armed = await service.start(expected);
+      assert.equal(armed.status.status, 'waiting');
+      assert.equal(armed.status.target_revision, expected);
+      assert.equal('selectedManifest' in armed.status, false);
+      writeFileSync(feed, release('b'.repeat(40)));
+      claims = 0;
+      t.mock.timers.tick(15_000);
+      await new Promise<void>(done => setImmediate(done));
+      assert.equal(selected, expected);
+      assert.equal(service.status().status, 'running');
+      (child as unknown as EventEmitter).emit('close', 0);
+    } finally {
+      if (env === undefined) delete process.env.PARASAUR_RELEASE_MANIFEST;
+      else process.env.PARASAUR_RELEASE_MANIFEST = env;
+    }
+  });
+});
+
 test('a running record whose pid died is reconciled to failed', async () => {
   await withStatePath((statePath) => {
     const deadPid = 999_999_999; // far past any real pid.

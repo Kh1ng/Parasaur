@@ -16,16 +16,19 @@ test('the server records the checked-out build revision only for identifiable so
     execFileSync(process.execPath, ['scripts/write-server-revision.mjs'], {
       cwd: root, env: { ...process.env, GITHUB_SHA: 'f'.repeat(40) }
     });
-    return JSON.parse(readFileSync(join(root, 'apps/server/dist/build-revision.json'), 'utf8')).revision;
+    return JSON.parse(readFileSync(join(root, 'apps/server/dist/build-revision.json'), 'utf8'));
   };
-  assert.equal(stamp(), null);
+  assert.deepEqual(stamp(), { revision: null, ancestors: [] });
   const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
   git('init', '-q');
   writeFileSync(join(root, 'apps/server/src/bin.ts'), 'export {};\n');
   git('add', 'scripts', 'apps/server/src');
   git('-c', 'user.name=Build test', '-c', 'user.email=build@example.invalid', 'commit', '-qm', 'Build source');
-  assert.equal(stamp(), git('rev-parse', 'HEAD'));
+  const earlier = git('rev-parse', 'HEAD');
+  assert.deepEqual(stamp(), { revision: earlier, ancestors: [] });
+  git('-c', 'user.name=Build test', '-c', 'user.email=build@example.invalid', 'commit', '--allow-empty', '-qm', 'Next build');
+  assert.deepEqual(stamp(), { revision: git('rev-parse', 'HEAD'), ancestors: [earlier] });
   git('config', 'status.showUntrackedFiles', 'no');
   writeFileSync(join(root, 'apps/server/src/new.ts'), 'export const changed = true;\n');
-  assert.equal(stamp(), null);
+  assert.deepEqual(stamp(), { revision: null, ancestors: [] });
 });

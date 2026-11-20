@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AuthHealthRow, DoctorSnapshot, FleetSnapshot, FleetUpdateResult, NodeHealthCheckResult, NodeObservationSnapshot, NodeSummary, PairedDevice, WorkerUpdateStatus } from '@git-agent-harness/contracts';
-import { authHealthApi, gahApi, pairingApi, type CoordinatorInfo } from '../api/client.js';
+import { authHealthApi, gahApi, GahApiError, pairingApi, type CoordinatorInfo } from '../api/client.js';
 import { PageHeader } from '../components/ui/PageHeader.js';
 import { LoginRepairPanel } from '../components/LoginRepairPanel.js';
 import { NodeReadinessCard } from '../components/NodeReadinessCard.js';
@@ -37,6 +37,11 @@ const LOGIN_PROBLEM: Partial<Record<AuthHealthRow['state'], string>> = { expired
 function versionBadge(node: NodeSummary): { text: string; tone: string } | null {
   const update = node.update;
   if (!update || update.status === 'current') return null;
+  const builds = update.node_revision && update.coordinator_revision
+    ? `${update.node_revision.slice(0, 8)} → ${update.coordinator_revision.slice(0, 8)}` : null;
+  if (update.status === 'unverified') return { text: 'Build revision unavailable', tone: 'text-secondary' };
+  if (update.status === 'ahead') return { text: `Worker v${update.node_version} is ahead of central v${update.coordinator_version}`, tone: 'text-secondary' };
+  if (update.status === 'different_build') return { text: `Different build · worker ${update.node_revision?.slice(0, 8)}, central ${update.coordinator_revision?.slice(0, 8)}`, tone: 'text-secondary' };
   if (update.status === 'unsupported') {
     return {
       text: `Unsupported version v${update.node_version} — this coordinator supports v${update.minimum_worker_version} and newer`,
@@ -44,7 +49,8 @@ function versionBadge(node: NodeSummary): { text: string; tone: string } | null 
     };
   }
   return {
-    text: `Behind — v${update.node_version} → v${update.coordinator_version}`,
+    text: update.node_version === update.coordinator_version && builds
+      ? `Update available · ${builds}` : `Behind — v${update.node_version} → v${update.coordinator_version}`,
     tone: 'text-warning'
   };
 }
@@ -52,13 +58,13 @@ function versionBadge(node: NodeSummary): { text: string; tone: string } | null 
 function describeWorkerUpdate(status: WorkerUpdateStatus): string {
   switch (status.status) {
     case 'waiting':
-      return `Waiting for ${status.active_dispatches ?? 0} active dispatch(es) to finish before updating`;
+      return status.active_dispatches === null ? 'Checking active dispatches before updating' : `Waiting for active dispatches to finish (${status.active_dispatches})`;
     case 'running':
       return 'Installing the release update…';
     case 'success':
-      return `Updated to v${status.current_version}`;
+      return `Updated to v${status.current_version}${status.current_revision ? ' · ' + status.current_revision.slice(0, 8) : ''}`;
     case 'inferred_restart':
-      return 'Update finished; the node is restarting';
+      return 'Waiting for the worker to restart';
     case 'failed':
       return 'Update failed — see the node operator logs';
     default:
@@ -70,39 +76,64 @@ function describeWorkerUpdate(status: WorkerUpdateStatus): string {
  * pull the same release artifacts central installs, and opt it in to
  * automatic updates whenever central sees it behind. The worker itself
  * waits for a running dispatch to finish before restarting anything. */
-function NodeUpdateControls({ node, onChanged }: { node: NodeSummary; onChanged: () => void }) {
+function NodeUpdateControls({ node, fleetStatus, onChanged }: { node: NodeSummary; fleetStatus?: WorkerUpdateStatus | null; onChanged: () => void }) {
   const [status, setStatus] = useState<WorkerUpdateStatus | null>(null);
   const [autoUpdate, setAutoUpdate] = useState(node.auto_update === true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [reconnecting, setReconnecting] = useState(false);
   const sequence = useRef(0);
+  const inFlight = status?.status === 'running' || status?.status === 'waiting' || status?.status === 'inferred_restart';
 
   const refreshStatus = useCallback(async () => {
     const current = ++sequence.current;
     try {
       const next = await gahApi.getNodeUpdateStatus(node.node_id);
-      if (current === sequence.current) setStatus(next);
-    } catch {
-      // Older workers do not expose the update endpoint; the controls stay quiet.
-      if (current === sequence.current) setStatus(null);
+      if (current === sequence.current) {
+        setStatus(next);
+        setReconnecting(false);
+      }
+    } catch (err) {
+      if (current === sequence.current) {
+        if (err instanceof GahApiError && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429) {
+          setStatus(null);
+          setReconnecting(false);
+          if (err.status !== 404) setError(err.message);
+        } else {
+          // A restarted service can briefly refuse connections; preserve its last phase.
+          setReconnecting(true);
+        }
+      }
     }
   }, [node.node_id]);
 
   useEffect(() => {
     void refreshStatus();
+    return () => { ++sequence.current; };
   }, [refreshStatus]);
 
   useEffect(() => {
-    if (status?.status !== 'waiting' && status?.status !== 'running') return;
+    if (fleetStatus) {
+      ++sequence.current;
+      setStatus(fleetStatus);
+      setReconnecting(false);
+    }
+  }, [fleetStatus]);
+
+  useEffect(() => {
+    if (!inFlight && !reconnecting) return;
     let cancelled = false;
-    const timer = setInterval(() => {
-      if (!cancelled) void refreshStatus();
-    }, 3_000);
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      await refreshStatus();
+      if (!cancelled) timer = setTimeout(poll, 3_000);
+    };
+    timer = setTimeout(poll, 3_000);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      clearTimeout(timer);
     };
-  }, [status?.status, refreshStatus]);
+  }, [inFlight, reconnecting, refreshStatus]);
 
   const updateNode = async () => {
     const current = ++sequence.current;
@@ -129,8 +160,6 @@ function NodeUpdateControls({ node, onChanged }: { node: NodeSummary; onChanged:
     }
   };
 
-  const inFlight = status?.status === 'running' || status?.status === 'waiting';
-
   return <div className="flex flex-wrap items-center gap-3 text-sm">
     <button type="button" className="btn-secondary" disabled={busy || inFlight} onClick={() => void updateNode()}>
       {inFlight ? 'Updating…' : 'Update node'}
@@ -139,7 +168,8 @@ function NodeUpdateControls({ node, onChanged }: { node: NodeSummary; onChanged:
       <input type="checkbox" checked={autoUpdate} onChange={(event) => void toggleAutoUpdate(event.target.checked)} />
       Auto-update when behind
     </label>
-    {status && status.status !== 'idle' && <span className={status.status === 'failed' ? 'text-critical' : 'text-secondary'}>{describeWorkerUpdate(status)}</span>}
+    {reconnecting ? <span role="status" className="text-secondary">Reconnecting to the worker…</span>
+      : status && status.status !== 'idle' && <span role="status" className={status.status === 'failed' ? 'text-critical' : 'text-secondary'}>{describeWorkerUpdate(status)}</span>}
     {error && <span role="alert" className="text-critical">{error}</span>}
   </div>;
 }
@@ -324,7 +354,7 @@ export function NodesPage() {
             </div>
             <p className="text-sm text-secondary"><span className="font-mono break-all">{node.node_id}</span> · seen {age(observed?.last_seen_at ?? node.last_seen_at)} · v{node.version}{node.update && <span className={`ml-2 ${badge?.tone ?? ''}`}>{badge?.text}</span>}</p>
             {(observed?.error || node.last_error_kind) && <p className="text-sm text-critical">{observed?.error?.kind ?? node.last_error_kind}: {observed?.error?.message ?? node.last_error_message}</p>}
-            <NodeUpdateControls node={node} onChanged={() => void refresh()} />
+            <NodeUpdateControls node={node} fleetStatus={updateAllResults?.find(result => result.node_id === node.node_id)?.status} onChanged={() => void refresh()} />
           </section>;
         })}
       </div>

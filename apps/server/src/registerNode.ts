@@ -10,6 +10,7 @@
  */
 
 import type { RegisteredNode } from '@git-agent-harness/contracts';
+import { buildCommit } from './buildRevision.js';
 
 export interface RegisterNodeOptions {
   centralUrl: string;
@@ -34,6 +35,7 @@ interface SelfIdentity {
   display_name: string;
   advertised_url: string;
   version: string;
+  build_revision?: string | null;
   schema_digest: string;
 }
 
@@ -45,12 +47,14 @@ export async function registerNode(opts: RegisterNodeOptions): Promise<RegisterN
     throw new Error(`Failed to read own identity from ${selfUrl}/health: HTTP ${healthRes.status}`);
   }
   const identity = (await healthRes.json()) as SelfIdentity;
+  const revision = buildCommit(identity.build_revision);
 
   const payload: RegisteredNode = {
     node_id: identity.node_id,
     display_name: identity.display_name,
     advertised_url: identity.advertised_url,
     version: identity.version,
+    ...(revision ? { build_revision: revision } : {}),
     schema_digest: identity.schema_digest,
     transport_mode: opts.transportMode,
     secret_ref: opts.secretRef,

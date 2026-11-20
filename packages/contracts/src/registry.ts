@@ -56,6 +56,7 @@ export interface RegisteredNode {
   display_name: string;
   advertised_url: string;
   version: string;
+  build_revision?: string | null;
   schema_digest: string;
   labels?: string[];
   transport_mode: 'loopback' | 'authenticated_remote' | 'trusted_lan';
@@ -77,13 +78,15 @@ export interface RegisteredNode {
 /** Issue #1416: how a registered node's version relates to this
  * coordinator. Computed coordinator-side so every client sees the same
  * verdict instead of re-deriving it from raw versions. */
-export type NodeVersionStatus = 'current' | 'behind' | 'unsupported';
+export type NodeVersionStatus = 'current' | 'behind' | 'unsupported' | 'ahead' | 'different_build' | 'unverified';
 
 export interface NodeUpdateInfo {
   status: NodeVersionStatus;
   node_version: string;
   coordinator_version: string;
   minimum_worker_version: string;
+  node_revision?: string | null;
+  coordinator_revision?: string | null;
 }
 
 export interface NodeSummary {
@@ -91,6 +94,7 @@ export interface NodeSummary {
   display_name: string;
   advertised_url: string;
   version: string;
+  build_revision?: string | null;
   schema_digest: string;
   labels?: string[];
   profiles?: string[];
@@ -173,6 +177,7 @@ export interface NodeObservationSnapshot {
   display_name: string;
   advertised_url: string;
   version: string;
+  build_revision?: string | null;
   schema_digest: string;
   state: NodeObservationState;
   observed_at: string;
@@ -282,6 +287,8 @@ export type WorkerUpdateState =
 export interface WorkerUpdateStatus {
   status: WorkerUpdateState;
   current_version: string;
+  current_revision?: string | null;
+  target_revision?: string | null;
   target_version: string | null;
   armed_at: string | null;
   started_at: string | null;

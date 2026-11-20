@@ -14,12 +14,11 @@
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import type { AdminUpdateCommitInfo, AdminUpdatePendingInfo, AdminUpdateState } from '@git-agent-harness/contracts';
 import { findGahBinary } from './gahCli.js';
-import { serverReleaseManifest } from './releaseFeed.js';
+import { persistReleaseManifest, serverReleaseManifest } from './releaseFeed.js';
 
 export type { AdminUpdateCommitInfo, AdminUpdatePendingInfo, AdminUpdateStatus, AdminUpdateState } from '@git-agent-harness/contracts';
 
@@ -176,12 +175,7 @@ export function startAdminUpdate(options: StartAdminUpdateOptions = {}): StartAd
     if (options.selectedManifest) {
       // Keep the selected artifact checksums as a receipt. Concurrent or later
       // requests cannot replace a different manifest underneath a running CLI.
-      const digest = createHash('sha256').update(options.selectedManifest).digest('hex');
-      manifest = statePath() + '.manifest-' + digest + '.json';
-      mkdirSync(dirname(manifest), { recursive: true });
-      const temporary = manifest + '.' + process.pid + '.tmp';
-      writeFileSync(temporary, options.selectedManifest, { mode: 0o600 });
-      renameSync(temporary, manifest);
+      manifest = persistReleaseManifest(statePath(), options.selectedManifest);
     }
     args.push('--from-release', '--release-manifest', manifest);
   } else {

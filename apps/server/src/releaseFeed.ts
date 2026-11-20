@@ -10,7 +10,9 @@
  * the anonymous rate limit for nothing.
  */
 import { execFile } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { writeFileAtomic } from './atomicFile.js';
+import { buildCommit as commit, runningBuild } from './buildRevision.js';
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -38,21 +40,6 @@ interface GithubRelease {
   body: string | null;
   assets: { id?: number; name: string; browser_download_url: string; state: string }[];
 }
-
-function commit(value: unknown): string | null {
-  return typeof value === 'string' && /^[0-9a-f]{40}$/i.test(value) ? value.toLowerCase() : null;
-}
-
-// Capture the stamp once. The files on disk can be updated while this process
-// is still serving the previous build.
-const runningCommit = (() => {
-  try {
-    const stamp = readFileSync(new URL('./build-revision.json', import.meta.url), 'utf8');
-    return commit(JSON.parse(stamp).revision);
-  } catch {
-    return null;
-  }
-})();
 
 export function serverReleaseManifest(): string {
   const releasePath = configuredChannel() === 'stable' ? 'latest/download' : 'download/edge';
@@ -156,6 +143,13 @@ async function readManifest(source: string, fetchFn: typeof fetch, headers?: Rec
 
 export class ReleaseChanged extends Error {}
 
+export function persistReleaseManifest(statePath: string, contents: string): string {
+  const digest = createHash('sha256').update(contents).digest('hex');
+  const path = statePath + '.manifest-' + digest + '.json';
+  writeFileAtomic(path, contents);
+  return path;
+}
+
 /** Preserve the selected manifest across the dashboard-to-CLI handoff. Resolve
  * its relative asset URLs before moving the snapshot into the state directory. */
 export async function selectReleaseManifest(expected: string, source = serverReleaseManifest(), fetchFn = fetch): Promise<string> {
@@ -205,7 +199,7 @@ export async function getReleaseStatus(
   const repo = options.repo ?? configuredRepo();
   const channel = options.channel ?? configuredChannel();
   const pin = options.manifest ?? process.env.PARASAUR_RELEASE_MANIFEST;
-  const current = options.currentCommit === undefined ? runningCommit : commit(options.currentCommit);
+  const current = options.currentCommit === undefined ? runningBuild.revision : commit(options.currentCommit);
   const fetchFn = options.fetch ?? fetch;
   const key = JSON.stringify([repo, channel, pin, current]);
   if (cache?.key === key && now() - cache.at < CACHE_TTL_MS) return cache.status;
