@@ -114,7 +114,7 @@ pub(crate) fn pm(
         session_id: session_dir.file_name().and_then(|s| s.to_str()),
         usage_summary: None,
         last_failure_class: None,
-        exact_route_required: false,
+        exact_route_required: super::super::native_guard::active(),
     };
     let mut plan_route = decide_route(cfg, profile, route_req.clone(), None, ledger)?;
     apply_route_to_ledger(ledger, &plan_route)?;
@@ -219,12 +219,40 @@ pub(crate) fn pm(
         ) {
             anyhow::bail!(crate::dispatch_cancel::Cancelled);
         }
+        if result.resources != crate::ledger::AttemptResourceUsage::never_launched() {
+            ledger.attempts_started = Some(ledger.attempts_started.unwrap_or_default() + 1);
+            ledger.attempts_completed = ledger.attempts_started;
+            ledger.attempts.push(crate::ledger::AttemptRecord {
+                attempt_number: attempt_index as u32,
+                backend: plan_route.effective_backend.clone(),
+                effective_model: plan_route.effective_model.clone(),
+                exit_code: Some(result.exit_code),
+                failure_class: (result.exit_code != 0)
+                    .then(|| crate::ledger::FailureClass::BackendError.as_str().into()),
+                failure_stage: (result.exit_code != 0)
+                    .then(|| crate::ledger::FailureStage::AgentRun.as_str().into()),
+                duration_seconds: Some(result.duration_secs),
+                resources: Some(result.resources.clone()),
+                cli_version: result.agy_version.clone(),
+                usage: super::super::attempts::attempt_usage(
+                    &result.log_path,
+                    result.agy_cli_log_delta.as_deref(),
+                    crate::usage_attribution::UsageAttribution::from_route(&plan_route),
+                    result.transcript_path.as_deref(),
+                    None,
+                ),
+                ..Default::default()
+            });
+        }
         ledger.validation_result = Some("not_run".into());
         record_external_approval_consumption_for_last_attempt(cfg, profile_name, profile, ledger);
-        let log_text = fs::read_to_string(&result.log_path).unwrap_or_default();
         if result.exit_code == 0 {
-            break log_text;
+            break match result.final_summary {
+                Some(summary) => summary,
+                None => fs::read_to_string(&result.log_path)?,
+            };
         }
+        let log_text = fs::read_to_string(&result.log_path).unwrap_or_default();
 
         // Restore hard wall-clock timeout guard that was deleted in the previous attempt
         if log_text.contains("hard wall-clock timeout") {
@@ -349,8 +377,11 @@ pub(crate) fn pm(
     };
 
     let plan = parse_pm_plan(&log_text)?;
-    let artifact =
+    let (artifact, fingerprint) =
         persist_pm_plan_artifact(session_dir, profile, &preflight_ctx, &args.target, &plan)?;
+    ledger.pm_plan_fingerprint = Some(fingerprint);
+    ledger.failure_class = None;
+    ledger.failure_stage = None;
     println!(
         "Plan validated; no provider issues were created. Publish explicitly with: \
          gah pm publish --profile {} --plan {}",
@@ -1141,7 +1172,7 @@ fn persist_pm_plan_artifact(
     preflight: &PmPreflight,
     target: &str,
     plan: &PmPlan,
-) -> Result<PathBuf> {
+) -> Result<(PathBuf, String)> {
     let artifact = PmPlanArtifact {
         schema_version: PM_PLAN_JSON_SCHEMA_VERSION,
         profile: profile.display_name.clone(),
@@ -1153,6 +1184,10 @@ fn persist_pm_plan_artifact(
         ticket_count: plan.tickets.len(),
         plan: plan.clone(),
     };
+    let fingerprint = publish::plan_fingerprint(&artifact)?;
+    if super::super::native_guard::active() {
+        plans::received::ensure_shareable(&serde_json::to_value(&artifact)?)?;
+    }
     let bytes = serde_json::to_vec_pretty(&artifact)?;
     if bytes.len() > PM_PLAN_JSON_MAX_BYTES * 2 {
         anyhow::bail!(
@@ -1163,7 +1198,7 @@ fn persist_pm_plan_artifact(
     let path = session_dir.join("pm-plan-v1.json");
     fs::write(&path, &bytes)?;
     println!("Wrote PM plan artifact: {}", path.display());
-    Ok(path)
+    Ok((path, fingerprint))
 }
 
 #[cfg(test)]

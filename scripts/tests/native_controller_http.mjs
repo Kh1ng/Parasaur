@@ -14,21 +14,24 @@ import { pathToFileURL } from 'node:url';
 
 assert.equal(process.platform,'linux');
 const [runtime,binaryArgument,mode='normal']=process.argv.slice(2);
-assert.ok(['normal','planned-child','estimated-issue','failed-estimate','classified-issue','lost-reservation','lost-activation','provider-claims','provider-claims-paused','provider-claims-lost'].includes(mode));
+assert.ok(['normal','planned-child','planned-parent','planned-parent-gitlab','estimated-issue','failed-estimate','legacy-estimator','classified-issue','lost-reservation','lost-activation','provider-claims','provider-claims-paused','provider-claims-lost'].includes(mode));
 const plannedChild = mode === 'planned-child';
+const gitlab = mode === 'planned-parent-gitlab';
+const plannedParent = mode === 'planned-parent' || gitlab;
+const provider = gitlab ? 'gitlab' : 'github';
 const runEstimate = mode === 'estimated-issue' || mode === 'failed-estimate';
-const estimateEnabled = runEstimate || mode === 'classified-issue';
+const estimateEnabled = runEstimate || mode === 'classified-issue' || mode === 'legacy-estimator';
 const implementationModel = ['estimated-issue', 'classified-issue'].includes(mode) ? 'fixture-strong' : 'fixture-model';
-const expectedInvocations = (runEstimate ? 'estimate\n' : '') + 'attempt\n';
+const expectedInvocations = (runEstimate ? 'estimate\n' : plannedParent ? 'plan\n' : '') + 'attempt\n';
 const providerClaims=mode.startsWith('provider-claims');
 const claimFault=mode==='provider-claims-paused'||mode==='provider-claims-lost';
 const binary=resolve(binaryArgument),modules=pathToFileURL(`${resolve(runtime)}/`);
 const execute=promisify(execFile);
 const [{NativeWorker,nativeWorkerRouter},{NativeWorkerHttpTransport},{NativeDispatchBroker},
   {NativeDispatchProducer},{ClaimsService},{authMiddleware},{nativeGrantRouter},
-  {nativeDispatchAuthority,nativeContinuationAuthority},{runReceiveNativeResult}]=await Promise.all([
+  {nativeDispatchAuthority,nativeContinuationAuthority},{runReceiveNativeResult},{pmPlansRouter}]=await Promise.all([
   'nativeWorker','nativeWorkerTransport','nativeDispatchBroker','nativeDispatchProducer',
-  'claimsService','authMiddleware','nativeGrantRouter','nativeDispatchAuthority','gahCli'
+  'claimsService','authMiddleware','nativeGrantRouter','nativeDispatchAuthority','gahCli','pmPlans'
 ].map(name=>import(new URL(`${name}.js`,modules))));
 const express=(await import(new URL('../../../node_modules/express/index.js',modules))).default;
 const base=mkdtempSync(join(homedir(),'.cache/parasaur-controller-http.'));chmodSync(base,0o700);
@@ -50,14 +53,19 @@ sync('git',['-C',repo,'config','user.name','Native Fixture']);
 sync('git',['-C',repo,'config','user.email','fixture@invalid']);
 writeFileSync(join(repo,'README.md'),'Disposable controller fixture\n');
 sync('git',['-C',repo,'add','README.md']);sync('git',['-C',repo,'-c','commit.gpgSign=false','commit','-m','fixture']);
-const origin=join(base,'github','fixture','diagnostic.git');mkdirSync(join(base,'github','fixture'),{recursive:true,mode:0o700});
+const origin=join(base,provider,'fixture','diagnostic.git');mkdirSync(join(base,provider,'fixture'),{recursive:true,mode:0o700});
 sync('git',['init','--bare',origin]);sync('git',['-C',repo,'remote','add','origin',origin]);sync('git',['-C',repo,'push','-u','origin','main']);
-sync('git',['config','--file',join(home,'.gitconfig'),`url.file://${join(base,'github')}/.insteadOf`,'https://github.com/']);
+sync('git',['config','--file',join(home,'.gitconfig'),`url.file://${join(base,provider)}/.insteadOf`,gitlab ? 'https://gitlab.example.test/' : 'https://github.com/']);
 const marker=join(base,'backend-invocations'),backend=join(bins,'codex');
 writeFileSync(backend,`#!/bin/sh
 if [ "$1" = login ]; then echo 'Logged in using ChatGPT'; exit 0; fi
 if [ "$1" != exec ]; then echo 'fixture codex'; exit 0; fi
 for arg in "$@"; do
+  if [ "$arg" = fixture-planner ]; then
+    echo plan >> '${marker}'
+    cat '${join(base, 'planner-response.jsonl')}'
+    exit 0
+  fi
   if [ "$arg" = fixture-estimator ]; then
     echo estimate >> '${marker}'
     echo '${JSON.stringify({type:'item.completed',item:{type:'agent_message',text:mode === 'failed-estimate' ? 'unparseable estimate' : '{"difficulty":"hard"}'}})}'
@@ -79,9 +87,10 @@ for(const name of ['main.py','model.py','api.py'])writeFileSync(join(forge,name)
 const forgeState=join(forge,'state.json');
 writeFileSync(forgeState,JSON.stringify({now:new Date().toISOString(),login:'fixture',repo:'fixture/diagnostic',project:'42',
   issues:{},pulls:{},branches:{},checks:{},pipelines:{},labels:['exec:autonomous'],next_number:1,next_id:1,calls:[],effects:[]}),{mode:0o600});
-writeFileSync(join(bins,'gh'),`#!/bin/sh\nexport PARASAUR_TEST_NOW="$(/usr/bin/date -u +%Y-%m-%dT%H:%M:%S.000Z)"\nexec /usr/bin/python3 '${join(forge,'main.py')}' '${forgeState}' '${join(forge,'commands.log')}' gh "$@"\n`,{mode:0o700});
-sync('gh',['api','repos/fixture/diagnostic/issues','--method','POST','--raw-field','title=Disposable native controller task',
-  '--raw-field','body=Update README.md. Acceptance criteria: README.md contains worker edit.' + (mode === 'classified-issue' ? '\nDifficulty: hard' : ''), '--raw-field',plannedChild ? 'labels=planning' : 'labels=exec:autonomous']);
+const cli = gitlab ? 'glab' : 'gh';
+writeFileSync(join(bins,cli),`#!/bin/sh\nexport PARASAUR_TEST_NOW="$(/usr/bin/date -u +%Y-%m-%dT%H:%M:%S.000Z)"\nexec /usr/bin/python3 '${join(forge,'main.py')}' '${forgeState}' '${join(forge,'commands.log')}' ${cli} "$@"\n`,{mode:0o700});
+sync(cli,['api',gitlab ? 'projects/42/issues' : 'repos/fixture/diagnostic/issues','--method','POST','--raw-field','title=Disposable native controller task',
+  '--raw-field',(gitlab ? 'description=' : 'body=') + 'Update README.md. Acceptance criteria: README.md contains worker edit.' + (mode === 'classified-issue' ? '\nDifficulty: hard' : ''), '--raw-field',plannedChild || plannedParent ? 'labels=planning' : 'labels=exec:autonomous']);
 const profile={name:'fixture',repo_id:'controller-http',repo:'fixture/diagnostic'};
 const config=join(base,'central.toml'),workerConfig=join(base,'worker.toml');
 Object.assign(process.env,{PARASAUR_CONFIG:config,PARASAUR_CONFIG_PATH:config});
@@ -109,7 +118,8 @@ worktree_base = ${JSON.stringify(join(base,'worktrees'))}
 display_name = "Disposable controller HTTP fixture"
 repo_id = "${profile.repo_id}"
 repo = "${profile.repo}"
-provider = "github"
+provider = "${provider}"
+${gitlab ? 'provider_api_base = "https://gitlab.example.test/api/v4"\nprovider_project_id = "42"' : ''}
 local_path = ${JSON.stringify(repo)}
 artifact_root = ${JSON.stringify(state)}
 default_target_branch = "main"
@@ -117,9 +127,11 @@ codex_path = ${JSON.stringify(role==='worker'?backend:join(base,'absent-central-
 validation_commands = ["true"]
 [profiles.fixture.publishing]
 allow_pull_request_creation = false
+${gitlab ? 'trusted_issue_human_authors = ["fixture"]' : ''}
 ${providerClaims?'[profiles.fixture.publishing.issue_claim]\nmode = "github_assignee"\nttl_minutes = 1\nverify_seconds = 0\npriority_logins = ["other", "fixture"]':''}
 [profiles.fixture.routing]
 improve_candidates = [{backend="codex",instance="work",model="fixture-model"}]
+${plannedParent ? 'pm_candidates = [{backend="codex",instance="work",model="fixture-planner"}]' : ''}
 ${estimateEnabled ? `estimate_issue_difficulty = true
 [profiles.fixture.routing.allowed_models]
 estimate = [{backend="codex",instance="work",model="fixture-estimator"}]
@@ -132,14 +144,14 @@ runner_kind = "codex"
 logical_backend = "codex"
 account_label = "work"
 executable = ${JSON.stringify(role==='worker'?backend:join(base,'absent-central-codex'))}
-supported_models = ["fixture-model","fixture-estimator","fixture-strong"]
+supported_models = ["fixture-model","fixture-estimator","fixture-strong","fixture-planner"]
 `;
 }
 writeFileSync(config,configuration('central'),{mode:0o600});writeFileSync(workerConfig,configuration('worker'),{mode:0o600});
 let workId = '#1';
-if (plannedChild) {
+if (plannedChild || plannedParent) {
   const plan = join(base, 'pm-plan-v1.json');
-  writeFileSync(plan, JSON.stringify({
+  const artifact = {
     schema_version: 1, profile: 'Disposable controller HTTP fixture', repo: profile.repo, target: '#1',
     open_issue_count: 1, open_mr_count: 0, merged_mr_count: 0, ticket_count: 1,
     plan: { title: 'Documentation plan', summary: 'Document the worker edit', tickets: [{
@@ -149,14 +161,27 @@ if (plannedChild) {
       affected_files: ['README.md'], acceptance_criteria: ['README.md contains worker edit'], verification_commands: ['true'],
       depends_on: [], duplicate_evidence: ['No existing child'], uncovered_reason: 'This change is still needed'
     }] }
-  }), { mode: 0o600 });
-  sync(binary, ['pm', 'publish', '--profile', 'fixture', '--plan', plan, '--config', config]);
+  };
+  writeFileSync(join(base, 'planner-response.jsonl'), JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify(artifact.plan)}})
+    + '\n' + JSON.stringify({type:'turn.completed',usage:{input_tokens:9,output_tokens:3}}) + '\n', {mode:0o600});
+  if (plannedChild) {
+    writeFileSync(plan, JSON.stringify(artifact), {mode:0o600});
+    sync(binary, ['pm', 'publish', '--profile', 'fixture', '--plan', plan, '--config', config]);
+    workId = publishedChild();
+  }
+}
+function publishedChild() {
   const publication = readFileSync(process.env.PARASAUR_LEDGER_PATH, 'utf8').trim().split('\n').map(JSON.parse)
     .find(row => row.mode === 'pm_publish' && row.pm_publication_status === 'published');
   assert.equal(publication?.pm_child_issue_numbers.length, 1);
-  workId = '#' + publication.pm_child_issue_numbers[0];
+  return '#' + publication.pm_child_issue_numbers[0];
 }
 const worker=new NativeWorker({root:join(base,'remote'),nodeId:workerId,binary,config:workerConfig,profiles:async()=>[profile],centralToken:()=>owner});
+if (mode === 'legacy-estimator') {
+  // An older worker ignores a request to negotiate protocol 2.
+  const catalog = worker.catalog.bind(worker);
+  worker.catalog = scope => catalog(scope, 1);
+}
 const remote=express();remote.use(express.json({limit:'9mb'}));remote.use(authMiddleware);remote.use('/api/native-worker',nativeWorkerRouter(worker));
 const remoteApi=remote.listen(0,'127.0.0.1');await new Promise(done=>remoteApi.once('listening',done));
 const node={node_id:workerId,advertised_url:`http://127.0.0.1:${remoteApi.address().port}`,transport_mode:'authenticated_remote',secret_ref:'env:COORDINATOR_TOKEN',profiles:['fixture']};
@@ -172,11 +197,58 @@ function reload() {
   producer=new NativeDispatchProducer({root,centralUrl,coordinatorId:'fixture-central',claims,broker,transport,workers:()=>[node],profiles:async()=>[profile]});
 }
 reload();
+app.use('/api/pm',pmPlansRouter());
 app.use('/api/native-dispatch',nativeGrantRouter({get broker(){return broker;},get producer(){return producer;},worker:id=>id===workerId?node:undefined}));
 app.get('/api/skills/resolve',(_req,res)=>res.json({profile:'fixture',backend:'codex',instance:'work',source:'fixture',skills:[]}));
 app.post('/api/events',(_req,res)=>res.sendStatus(204));
 let binding;
 try {
+  if (plannedParent) {
+    const cycle = () => execute(binary,['loop','--profile','fixture','--config-path',config,'--once'],{env:process.env,timeout:45_000});
+    const first = await cycle();
+    const run = producer.status('fixture', workId)?.run_id;
+    assert.ok(run, `No native plan prepared at ${base}: ${first.stdout} ${first.stderr}`);
+    let view = broker.get(run);
+    assert.equal(view.binding.mode, 'pm');
+    assert.equal(view.binding.model, 'fixture-planner');
+    const deadline = Date.now() + 60_000;
+    while (view.phase !== 'terminal' || view.worker_release?.phase !== 'released') {
+      assert.ok(view.phase !== 'cancelled' && Date.now() < deadline, `Plan did not return at ${base}: ${JSON.stringify(view)}`);
+      await new Promise(done=>setTimeout(done,200));
+      view = await broker.reconcile(run);
+    }
+    assert.equal(readFileSync(marker,'utf8'), 'plan\n');
+    assert.deepEqual(Object.keys(JSON.parse(readFileSync(forgeState,'utf8')).issues), ['1']);
+    const planUrl = `${centralUrl}/api/pm/plans/${run}`;
+    const headers = {authorization:`Bearer ${owner}`,'content-type':'application/json'};
+    const show = await fetch(planUrl + '?profile=fixture',{headers});
+    assert.equal(show.status,200);
+    const detail = await show.json();
+    assert.equal(detail.source_work_id, '#1');assert.equal(detail.artifact.plan.tickets[0].key, 'readme');
+    const operation = (action, data) => fetch(planUrl + '/' + action, {
+      method:'POST',headers,body:JSON.stringify({profile:'fixture',...data})
+    });
+    const preview = await operation('dry-run',{});
+    assert.equal(preview.status,200);assert.equal((await preview.json()).dry_run,true);
+    assert.deepEqual(Object.keys(JSON.parse(readFileSync(forgeState,'utf8')).issues), ['1']);
+    const row = readFileSync(process.env.PARASAUR_LEDGER_PATH, 'utf8').trim().split('\n').map(JSON.parse).find(row=>row.mode==='pm' && row.session_id===run);
+    assert.equal(row.remote_execution.receipt_sha256, view.acknowledgement.receipt_sha256);
+    assert.equal(row.attempts_completed, 1);assert.equal(row.usage.input_tokens, 9);
+    assert.equal(row.session_dir, join(state,'sessions',run));
+    reload();
+    if (gitlab) {
+      await cycle();
+    } else {
+      const approval = {approve:true,plan_fingerprint:detail.publication.plan_fingerprint};
+      for (let attempt=0; attempt<2; attempt++) {
+        const published = await operation('publish',approval);
+        assert.equal(published.status,200);assert.equal((await published.json()).success,true);
+      }
+    }
+    assert.deepEqual(Object.keys(JSON.parse(readFileSync(forgeState,'utf8')).issues), ['1','2']);
+    workId = publishedChild();
+    assert.equal(readFileSync(marker,'utf8'), 'plan\n');
+  }
   if (runEstimate) {
     const first = await execute(binary,['loop','--profile','fixture','--config-path',config,'--once'],{env:process.env,timeout:45_000});
     const estimateId = producer.status('fixture', workId)?.run_id;
@@ -215,7 +287,7 @@ try {
   binding=broker.get(prepared.run_id).binding;
   assert.equal(binding.backend_instance,'work');assert.equal(binding.model,implementationModel);
   assert.equal(binding.work_id,workId);
-  assert.equal(binding.mode, plannedChild ? 'improve' : 'fix');
+  assert.equal(binding.mode, plannedChild || plannedParent ? 'improve' : 'fix');
   if(mode==='lost-reservation') {
     assert.equal(broker.get(binding.run_id).activated,false);assert.equal(existsSync(marker),false);
     reload();
@@ -287,10 +359,10 @@ try {
   writeFileSync(join(base,'controller-completed.stdout'),completedCycle.stdout,{mode:0o600});
   assert.equal(readFileSync(process.env.PARASAUR_LEDGER_PATH,'utf8'),before);
   assert.equal(readFileSync(marker,'utf8'),expectedInvocations);
-  assert.equal(readdirSync(root).filter(name=>name!== 'preparations').length,runEstimate ? 2 : 1);
+  assert.equal(readdirSync(root).filter(name=>name!== 'preparations').length,runEstimate || plannedParent ? 2 : 1);
   const report={passed:true,fixtureRoot:base,actualControllerCycle:true,actualRustPlanning:true,centralExecutableAbsent:true,
     actualWorkerAccountCatalog:true,actualAuthenticatedHttp:true,actualFreshCentralAuthority:true,controlledManagedLoopObservation:true,
-    actualDefaultSystemdAdmission:true,actualBackendFixtureAttempts:runEstimate ? 2 : 1,implementationModel,actualCanonicalImport:true,actualAcknowledgedRelease:true,
+    actualDefaultSystemdAdmission:true,actualBackendFixtureAttempts:runEstimate || plannedParent ? 2 : 1,implementationModel,actualCanonicalImport:true,actualAcknowledgedRelease:true,
     reloadDoesNotRelaunchOrReimport:true,completedWorkNotRedispatched:!claimFault,stoppedWorkNotRedispatched:claimFault,realModelInvoked:false,productionServicesChanged:false,runId:binding.run_id,
     outcome:result[0].failure_class?'failed':result[0].validation_result,validationResult:result[0].validation_result,
     processExitCode:result[0].remote_execution.termination.exit_code,actualCostUsd:result[0].usage.actual_cost_usd,mode,

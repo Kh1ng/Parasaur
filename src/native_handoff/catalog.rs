@@ -41,7 +41,7 @@ impl WorkerCatalog {
             !value.is_empty() && value.len() <= 4096 && !value.chars().any(char::is_control)
         };
         ensure!(
-            self.protocol == 1
+            (1..=super::CATALOG_PROTOCOL).contains(&self.protocol)
                 && self.node_id == node_id
                 && bounded(node_id)
                 && self.profile == profile_name
@@ -117,6 +117,10 @@ impl WorkerCheckScope {
         bound: &DispatchBinding,
         snapshot: Option<&mut crate::status::StatusSnapshot>,
     ) -> Result<()> {
+        ensure!(
+            bound.mode != "pm" || self.catalog.protocol >= 2,
+            "Worker cannot return a native plan artifact"
+        );
         ensure!(
             self.held_work.iter().any(|hold| hold.profile == profile
                 && hold.run_id == bound.run_id
@@ -280,6 +284,19 @@ mod tests {
                 "accepted unavailable account case {change}"
             );
         }
+    }
+    #[test]
+    fn old_workers_cannot_accept_native_decomposition() {
+        let (_directory, cfg, _worker, mut request) = super::super::tests::fixture();
+        request.args.mode = "pm".into();
+        request.args.retries = 0;
+        request.args.dispatch_reason = Some("pm_decomposition".into());
+        let error = crate::dispatch::plan_native(&cfg, &request, &catalog(&cfg))
+            .err()
+            .unwrap();
+        assert!(error
+            .to_string()
+            .contains("cannot return a native plan artifact"));
     }
     #[test]
     fn catalog_identity_and_canonical_ownership_scope_are_independent_requirements() {

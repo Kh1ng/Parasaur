@@ -11,6 +11,8 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub(crate) mod received;
+
 #[derive(Serialize)]
 pub(crate) struct PlanDetail {
     pub schema_version: u32,

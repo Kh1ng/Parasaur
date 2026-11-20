@@ -257,6 +257,7 @@ pub struct ConfigShowSummary {
 
 #[derive(serde::Serialize)]
 pub struct ConfigShowFull {
+    pub native_worker_protocol: u32,
     pub orchestration_mode: config::OrchestrationMode,
     pub supabase: SupabaseSummary,
     pub factory_enabled: bool,
@@ -538,6 +539,7 @@ pub fn config_show_full(
     }
 
     Ok(ConfigShowFull {
+        native_worker_protocol: crate::native_handoff::CATALOG_PROTOCOL,
         orchestration_mode: cfg.defaults.orchestration_mode,
         supabase: SupabaseSummary::from_environment(),
         factory_enabled: if !config_path.exists() {

@@ -58,10 +58,10 @@ export class NativeWorkerHttpTransport implements NativeWorkerTransport {
     // Authority callers hold a complete binding. Pick the wire fields explicitly:
     // TypeScript's structural Pick does not remove extra runtime properties.
     const identity={node_id:scope.node_id,profile:scope.profile,repo_id:scope.repo_id,repo:scope.repo};
-    const catalog=await this.request(identity,'/api/native-worker/catalog',identity,signal) as NativeWorkerCatalog;
+    const catalog=await this.request(identity,'/api/native-worker/catalog?protocol=2',identity,signal) as NativeWorkerCatalog;
     const bounded=(value:unknown):value is string=>typeof value==='string' && value.length>0 && value.length<=4096 && !/[\x00-\x1f\x7f]/.test(value);
     const ids=new Set<string>();
-    if(!catalog || catalog.protocol!==1 || catalog.node_id!==scope.node_id || catalog.profile!==scope.profile
+    if(!catalog || ![1,2].includes(catalog.protocol) || catalog.node_id!==scope.node_id || catalog.profile!==scope.profile
       || catalog.repo_id!==scope.repo_id || catalog.repo!==scope.repo || Object.keys(catalog).length!==6
       || !Array.isArray(catalog.instances) || catalog.instances.length>128 || catalog.instances.some(instance=>{
         if(!instance || Object.keys(instance).length!==6 || !bounded(instance.backend_instance) || !bounded(instance.logical_backend)

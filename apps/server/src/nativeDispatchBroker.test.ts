@@ -407,6 +407,15 @@ test('publication recovery reserves issue intake and cannot acquire a backend or
   assert.equal((await f.broker.authorizeOperation(operation(f,1,'publish'))).allowed, true);
 });
 
+test('native plan generation grants an attempt and keeps publication with central', async () => {
+  const f = fixture('pm_decomposition', 'pm');
+  await f.broker.offerPrepared(f.run, f.binding.context_sha256);
+  for (const purpose of ['publish', 'claim'] as const) {
+    assert.deepEqual(await f.broker.authorizeOperation(operation(f, 1, purpose)), {allowed:false,reason:'invalid_operation'});
+  }
+  assert.equal((await f.broker.authorizeOperation(operation(f))).allowed, true);
+});
+
 test('provider claim writes advance an independent durable sequence during a backend attempt',async()=>{
   const f=fixture();await f.broker.offerPrepared(f.run,f.binding.context_sha256);
   assert.equal((await f.broker.authorizeOperation(operation(f))).allowed,true);

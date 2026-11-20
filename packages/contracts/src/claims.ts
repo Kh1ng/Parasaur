@@ -42,7 +42,7 @@ export interface NativeReservationRelease extends NativeClaimBinding {
 
 /** Authenticated worker metadata; no credentials or local executable paths. */
 export interface NativeWorkerCatalog {
-  protocol: 1;
+  protocol: 1 | 2;
   node_id: string;
   profile: string;
   repo_id: string;
