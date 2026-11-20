@@ -97,6 +97,9 @@ pub enum Command {
         work_dir: PathBuf,
         #[arg(long)]
         binding_file: PathBuf,
+        /// Clear only a confirmed pre-transfer capacity refusal so staging can retry.
+        #[arg(long)]
+        rearm_deferred_admission: bool,
     },
     #[cfg(target_os = "linux")]
     HostReserve {
@@ -240,14 +243,23 @@ pub fn run(args: Args) -> Result<()> {
         Command::WorkerStatus {
             work_dir,
             binding_file,
+            rearm_deferred_admission,
         } => {
             let binding = crate::native_handoff::worker::read_binding(&binding_file)?;
             ensure!(
                 binding.node_id == crate::central_claims::resolve_node_id()?,
                 "Native journal belongs to a different worker"
             );
-            let run = crate::native_handoff::worker::WorkerRun::open(&work_dir, &binding)?;
-            println!("{}", run.inspect()?);
+            let mut run = crate::native_handoff::worker::WorkerRun::open(&work_dir, &binding)?;
+            if rearm_deferred_admission {
+                run.rearm_deferred_admission()?;
+                println!(
+                    "{}",
+                    serde_json::json!({"binding":binding,"retry_admission":true})
+                );
+            } else {
+                println!("{}", run.inspect()?);
+            }
         }
         #[cfg(target_os = "linux")]
         Command::HostReserve {
@@ -266,16 +278,16 @@ pub fn run(args: Args) -> Result<()> {
             }
             let cfg = crate::config::load(config_path.as_deref())?;
             let node_id = crate::central_claims::resolve_node_id()?;
-            let context = crate::native_handoff::load(
-                &cfg,
-                &context_dir,
-                &expected_context,
-                &node_id,
-                &work_dir,
-            )?;
+            let existing = work_dir.try_exists()?;
+            let load = if existing {
+                crate::native_handoff::resume
+            } else {
+                crate::native_handoff::load
+            };
+            let context = load(&cfg, &context_dir, &expected_context, &node_id, &work_dir)?;
             println!(
                 "{}",
-                crate::native_handoff::host::reserve(&context, &work_dir)?
+                crate::native_handoff::host::reserve(&context, &work_dir, existing)?
             );
         }
         Command::CheckCurrentPolicy {

@@ -46,6 +46,25 @@ async function fixture(draining?:()=>boolean) {
 }
 const state=async(reply:Promise<unknown>)=>(await reply as NativeWorkerObservation).state;
 
+test('retry a refused stage only after rearming the same binding and leaving maintenance',linuxOnly,async()=>{
+  let draining=true;
+  const f=await fixture(()=>draining);
+  f.worker.contexts.offerStage(f.binding);f.admissionBegins();
+  const refused={state:'waiting_capacity',capacity_held:false};
+  f.reportStatus({...refused,retry_admission:true});
+  assert.equal(await state(f.worker.action(f.binding,'observe',{})),'waiting_capacity');
+  assert.equal(f.launches(),0);
+  draining=false;
+  for(const status of [{...refused,retry_admission:false},{...refused,capacity_held:null,retry_admission:true}]) {
+    f.reportStatus(status);
+    assert.equal(await state(f.worker.action(f.binding,'observe',{})),'unknown');
+    assert.equal(f.launches(),0);
+  }
+  f.reportStatus({...refused,retry_admission:true});
+  assert.equal(await state(f.restart().action(f.binding,'observe',{})),'waiting_capacity');
+  assert.equal(f.launches(),1);
+});
+
 test('an exited launcher needs both identities and confirmed capacity, including an already released lease',linuxOnly,async()=>{
   const f=await fixture();
   const original={state:'exited_before_dispatch',holder_invocation:'a'.repeat(32),exited_job_invocation:'b'.repeat(32)};
