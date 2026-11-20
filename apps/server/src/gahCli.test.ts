@@ -611,7 +611,8 @@ test(
       script,
       `#!/bin/sh
 sleep 60 &
-echo $! > "${marker}"
+echo $! > "${marker}.tmp"
+mv "${marker}.tmp" "${marker}"
 wait
 `
     );
@@ -759,7 +760,13 @@ test('factory module disabled rejects loop starts before touching systemd', asyn
 test('a closed dispatch parent does not complete while its process group can still execute', { skip: process.platform !== 'linux', timeout: 10000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-parent-exit-'));
   const script = join(dir, 'fake-gah'); const marker = join(dir, 'child.pid');
-  writeFileSync(script, `#!/bin/sh\nsleep 60 >/dev/null 2>&1 &\necho $! > "${marker}"\nexit 0\n`);chmodSync(script, 0o755);
+  writeFileSync(script, `#!/bin/sh
+sleep 60 >/dev/null 2>&1 &
+echo $! > "${marker}.tmp"
+mv "${marker}.tmp" "${marker}"
+exit 0
+`);
+  chmodSync(script, 0o755);
   const original = process.env.PARASAUR_BINARY;process.env.PARASAUR_BINARY = script;
   let pid: number | undefined;
   try {
