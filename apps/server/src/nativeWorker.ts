@@ -69,15 +69,21 @@ export class NativeWorker {
     if(this.options.config && ['start','host-reserve','release-result'].includes(action)) args.push('--config-path',this.options.config);
     return args;
   }
-  async stage(binding:NativeDispatchBinding):Promise<NativeWorkerObservation> {
-    await this.check(binding);
+  private async stage(binding:NativeDispatchBinding):Promise<NativeWorkerObservation> {
     const offered=this.contexts.offerStage(binding);
-    // An earlier offer whose admission never created the job directory holds
-    // no capacity: this server stopped, or the launch failed, after the fence
-    // was written. Observation alone would leave that run unknown for good, so
-    // launch it again. That cannot admit the run twice: admission creates the
-    // job directory exclusively and systemd refuses a second unit of this name.
-    if(!offered && this.contexts.admissionBegan(binding)) return this.observe(binding);
+    // A missing job directory can replay its original offer. Once the
+    // directory exists, only a verified pre-transfer refusal permits a retry.
+    const retryAdmission=!offered && this.contexts.admissionBegan(binding);
+    if(retryAdmission) {
+      const observed=await this.observe(binding);
+      if(observed.state!=='waiting_capacity' || this.options.draining?.()) return observed;
+      // Rust holds the journal lock while checking the lease and original
+      // systemd invocation again. Concurrent retries can offer only one unit.
+      try {
+        const rearmed=await command(this.binary,[...this.args(binding,'worker-status'),'--rearm-deferred-admission']) as Record<string,unknown>;
+        if(!isDeepStrictEqual(rearmed.binding,binding) || rearmed.retry_admission!==true) return {...binding,state:'unknown'};
+      } catch { return this.observe(binding); }
+    }
     // Keep the offer durable. Central can replay this exact stage after restart.
     if(this.options.draining?.()) return {...binding,state:'unknown'};
     const {run}=this.contexts.paths(binding);
@@ -108,13 +114,14 @@ export class NativeWorker {
     // A repeated launch is refused while the first unit is still loaded; what
     // that unit did is then for observation to report.
     await (offered?launched:launched.catch(()=>undefined));
-    return this.observe(binding);
+    return retryAdmission?{...binding,state:'waiting_capacity'}:this.observe(binding);
   }
   async observe(binding:NativeDispatchBinding):Promise<NativeWorkerObservation> {
     const unknown:NativeWorkerObservation={...binding,state:'unknown'};
     try {
       const status=await command(this.binary,this.args(binding,'worker-status')) as {binding:NativeDispatchBinding;state:string;holder_invocation:string;capacity_held:boolean|null;exited_job_invocation?:string};
       if(!isDeepStrictEqual(status.binding,binding)) return unknown;
+      if(status.state==='waiting_capacity' && status.capacity_held===false) return {...binding,state:'waiting_capacity'};
       if(status.state==='ready' && status.capacity_held===true && /^[a-f0-9]{32}$/.test(status.holder_invocation)) {
         return {...binding,state:'ready',reservation:{...binding,id:status.holder_invocation,expires_at:new Date(Date.now()+20_000).toISOString()}};
       }
@@ -137,7 +144,7 @@ export class NativeWorker {
     if(action==='prepare') return {files:this.contexts.begin(binding),stage_offered:this.contexts.stageOffered(binding)};
     this.contexts.paths(binding);
     if(action==='stage') return this.stage(binding);
-    if(action==='observe') return this.contexts.stageOffered(binding) && !this.contexts.admissionBegan(binding)?this.stage(binding):this.observe(binding);
+    if(action==='observe') return this.contexts.stageOffered(binding)?this.stage(binding):this.observe(binding);
     if(action==='start') {
       const grant=body.grant as NativeStartGrant|undefined;
       if(!grant || !isDeepStrictEqual([grant.run_id,grant.node_id,grant.context_sha256],[binding.run_id,binding.node_id,binding.context_sha256])

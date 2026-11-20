@@ -8,6 +8,8 @@ and enough real headroom for the default 4 GiB implementation reservation.
 Pass "http-lost-consume <node> <compiled server dist>" to exercise a consumed
 start whose HTTP reply is lost, followed by a lost capacity-release reply.
 Use "http-collected-start" to also collect the exited job and capacity units.
+Use "http-capacity-retry <node> <compiled server dist> [old gah]" to retry a
+real memory refusal after restoring the worker budget and reopening the broker.
 Pass "worker-update-drain <node> <compiled server dist>" to check maintenance
 admission and release an armed update after the host reservation finishes.
 """
@@ -62,7 +64,7 @@ def empty(group):
 def main():
     binary = Path(sys.argv[1]).resolve(strict=True)
     mode = sys.argv[2] if len(sys.argv) > 2 else 'running'
-    lost_start_reply = mode in ('http-lost-consume', 'http-collected-start')
+    lost_start_reply = mode in ('http-lost-consume', 'http-collected-start', 'http-capacity-retry')
     assert lost_start_reply or mode in ('running', 'release-unused', 'release-unused-lost-reply', 'release-unused-broker', 'http-broker', 'worker-update-drain')
     assert Path('/sys/fs/cgroup/cgroup.controllers').exists()
     # Read-only inventory before the fixture. Never clean another worker's file.
@@ -102,8 +104,9 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
         central, worker = root / 'central.toml', root / 'worker.toml'
         for path, role in [(central, 'central'), (worker, 'worker')]:
             config = f'[defaults]\nnode_role="{role}"\n' + common
-            if mode == 'http-collected-start':
-                config += '\n[defaults.node_capacity]\nworker_memory_mib=512\nmemory_floor_mib=512\nworker_cpu_cores=1\n'
+            if mode in ('http-collected-start', 'http-capacity-retry'):
+                memory = 1048576 if mode == 'http-capacity-retry' and role == 'worker' else 512
+                config += f'\n[defaults.node_capacity]\nworker_memory_mib={memory}\nmemory_floor_mib=512\nworker_cpu_cores=1\n'
             path.write_text(config)
             path.chmod(0o600)
         identity = root / 'identity.json'
@@ -149,7 +152,9 @@ improve_candidates = [{{backend="codex",model="fixture-model"}}]
             descriptors = ()
             if lost_start_reply:
                 descriptors = (listener.fileno(),)
-                args.extend([str(listener.fileno()), mode])
+            args.extend([str(listener.fileno()) if lost_start_reply else '', mode])
+            if mode == 'http-capacity-retry' and len(sys.argv) > 5:
+                args.append(str(Path(sys.argv[5]).resolve(strict=True)))
             result = subprocess.run(args, env=environment, pass_fds=descriptors, capture_output=True, text=True, timeout=45)
             assert result.returncode == 0, result.stderr
             report = json.loads(result.stdout)

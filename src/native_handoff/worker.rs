@@ -4,6 +4,7 @@
 use super::*;
 use fs2::FileExt;
 use std::time::{Duration, Instant};
+mod admission;
 mod operations;
 mod release;
 mod reservation_release;
@@ -30,6 +31,7 @@ pub struct StartGrant {
 #[serde(rename_all = "snake_case")]
 enum Phase {
     ReservationIntent,
+    WaitingCapacity,
     Ready,
     StartIntent,
 }
@@ -386,6 +388,9 @@ impl WorkerRun {
             value["exited_job_invocation"] = job.invocation.as_str().into();
             value["capacity_held"] = held.into();
             "exited_before_dispatch"
+        } else if !held && self.deferred_admission().is_ok() {
+            value["capacity_held"] = false.into();
+            "waiting_capacity"
         } else {
             "unknown"
         }

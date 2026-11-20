@@ -2,15 +2,15 @@
  * Real broker, HTTP, context store, worker service and CLI. Either admission
  * is denied or the worker loses the reply to its one-time start request. */
 import assert from 'node:assert/strict';
-import { readFileSync,existsSync,writeFileSync } from 'node:fs';
+import { readFileSync,existsSync,unlinkSync,writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-const [runtime,binary,fixture,listenerFd,mode]=process.argv.slice(2);
-const loseConsumption = listenerFd !== undefined;
+const [runtime,binary,fixture,listenerFd,mode,priorBinary]=process.argv.slice(2);
+const loseConsumption = !!listenerFd;
 const modules=pathToFileURL(`${runtime.replace(/\/$/,'')}/`);
 const [{NativeWorker,nativeWorkerRouter},{NativeWorkerHttpTransport},{NativeDispatchBroker},{ClaimsService},{authMiddleware},{nativeGrantRouter}]=await Promise.all([
   import(new URL('nativeWorker.js',modules)),import(new URL('nativeWorkerTransport.js',modules)),
@@ -20,8 +20,9 @@ const express=(await import(new URL('../../../node_modules/express/index.js',mod
 const binding=JSON.parse(readFileSync(join(fixture,'binding.json'),'utf8'));
 const root=join(fixture,'runs'),claimsPath=join(fixture,'http-claims.json');
 process.env.COORDINATOR_TOKEN='native-http-fixture-service';
-const worker=new NativeWorker({root:join(fixture,'remote'),nodeId:binding.node_id,binary,config:join(fixture,'worker.toml'),
+const openWorker=binary=>new NativeWorker({root:join(fixture,'remote'),nodeId:binding.node_id,binary,config:join(fixture,'worker.toml'),
   profiles:async()=>[{name:binding.profile,repo:binding.repo,repo_id:binding.repo_id}],centralToken:()=>process.env.COORDINATOR_TOKEN});
+let worker=openWorker(priorBinary??binary);
 const observeHost=worker.observe.bind(worker);
 const app=express();app.use(express.json());app.use(authMiddleware);
 let releaseRequests=0, consumedReplies=0, operationRequests=0;
@@ -36,7 +37,8 @@ app.use((req,res,next)=>{
   }
   next();
 });
-app.use('/api/native-worker',nativeWorkerRouter(worker));
+let workerRouter=nativeWorkerRouter(worker);
+app.use('/api/native-worker',(req,res,next)=>workerRouter(req,res,next));
 const server=loseConsumption ? app.listen({fd:Number(listenerFd)}) : app.listen(0,'127.0.0.1');
 await new Promise(resolve=>server.once('listening',resolve));
 const node={node_id:binding.node_id,advertised_url:`http://127.0.0.1:${server.address().port}`,
@@ -50,6 +52,7 @@ const dependencies=()=>({root,centralUrl:loseConsumption ? node.advertised_url :
 });
 const execute=promisify(execFile);
 let collection;
+let refusedHolder;
 if(mode==='http-collected-start') {
   // Hold the first terminal observation until collection. Both start and
   // reconcile can return it, including after the grant has already expired.
@@ -98,8 +101,40 @@ async function collectExitedStart() {
 }
 try {
   broker=new NativeDispatchBroker(dependencies());
-  app.use('/api/native-dispatch',nativeGrantRouter({broker,worker:id=>id===binding.node_id?node:undefined}));
+  app.use('/api/native-dispatch',nativeGrantRouter({get broker(){return broker;},worker:id=>id===binding.node_id?node:undefined}));
   await broker.offerPrepared(binding.run_id,binding.context_sha256);
+  if(mode==='http-capacity-retry') {
+    const log=join(fixture,'remote',binding.run_id,'admission.stderr');
+    const until=Date.now()+20_000;
+    while(!existsSync(log) || !readFileSync(log,'utf8').includes('Native host admission deferred')) {
+      assert.ok(Date.now()<until,'The fixture must reach a real capacity refusal');
+      await new Promise(resolve=>setTimeout(resolve,100));
+      if(!existsSync(log)) await broker.reconcile(binding.run_id);
+    }
+    const {work,run}=worker.contexts.paths(binding);
+    assert.equal(existsSync(join(work,'capacity.json')),false);
+    assert.ok(claims.getLease(binding.profile,binding.work_id)?.native_handoff);
+    const refused=JSON.parse(readFileSync(join(work,'worker.json'),'utf8'));
+    assert.equal(refused.phase,priorBinary?'reservation_intent':'waiting_capacity');
+    refusedHolder=refused.holder_invocation;
+    worker=openWorker(binary);workerRouter=nativeWorkerRouter(worker);
+    const lease=join(work,'capacity.json');
+    writeFileSync(lease,'{}',{flag:'wx',mode:0o600});
+    try {
+      assert.equal((await worker.observe(binding)).state,'unknown');
+      await assert.rejects(execute(binary,['native-handoff','worker-status','--rearm-deferred-admission',
+        '--work-dir',work,'--binding-file',join(run,'binding.json')]));
+    } finally { unlinkSync(lease); }
+    while((await worker.observe(binding)).state!=='waiting_capacity') {
+      assert.ok(Date.now()<until,'Failed holder and empty lease should report waiting for capacity');
+      await new Promise(resolve=>setTimeout(resolve,100));
+    }
+    const config=join(fixture,'worker.toml');
+    writeFileSync(config,readFileSync(config,'utf8').replace('worker_memory_mib=1048576','worker_memory_mib=512'));
+    claims=new ClaimsService(claimsPath);broker=new NativeDispatchBroker(dependencies());
+    assert.equal((await broker.reconcile(binding.run_id)).phase,'waiting_capacity');
+    assert.ok(claims.getLease(binding.profile,binding.work_id)?.native_handoff);
+  }
   const deadline=Date.now()+25_000;
   while(releaseRequests===0) {
     const view=broker.get(binding.run_id);
@@ -119,6 +154,7 @@ try {
   const paths=worker.contexts.paths(binding);
   assert.equal(JSON.parse(readFileSync(join(paths.work,'reservation-release.json'),'utf8')).phase,'released');
   const journal=JSON.parse(readFileSync(join(paths.work,'worker.json'),'utf8'));
+  if(refusedHolder) assert.notEqual(journal.holder_invocation,refusedHolder);
   if(loseConsumption) {
     assert.equal(consumedReplies,1);
     assert.ok(pending.grant_consumed_at);
@@ -138,7 +174,8 @@ try {
   assert.equal((await broker.offerPrepared(binding.run_id,binding.context_sha256)).phase,'cancelled');
   assert.equal(releaseRequests,2);
   console.log(JSON.stringify({passed:true,actualBroker:true,actualAuthenticatedHttp:true,actualWorkerService:true,
-    actualContextTransfer:true,actualDefaultAdmission:mode!=='http-collected-start',collected:!!collection,actualKernelRelease:true,lostReleaseReplyRecovered:true,
+    actualContextTransfer:true,actualDefaultAdmission:!['http-collected-start','http-capacity-retry'].includes(mode),
+    capacityRetry:mode==='http-capacity-retry',legacyRefusal:!!priorBinary,collected:!!collection,actualKernelRelease:true,lostReleaseReplyRecovered:true,
     centralClaimRetainedUntilProof:true,centralReloadNoDuplicateStart:true,backendInvoked:false,consumedReplies,operationRequests,releaseRequests}));
 } finally {
   server.closeAllConnections();await new Promise(resolve=>server.close(resolve));

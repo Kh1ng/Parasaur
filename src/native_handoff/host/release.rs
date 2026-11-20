@@ -99,7 +99,7 @@ fn group_empty(run_id: &str) -> Result<()> {
     Ok(())
 }
 
-fn job_empty(run_id: &str, identity: Option<&JobIdentity>) -> Result<()> {
+pub(super) fn job_empty(run_id: &str, identity: Option<&JobIdentity>) -> Result<()> {
     let unit = format!("gah-native-job-{run_id}.service");
     let values = state(&unit)?;
     if values.get("LoadState").map(String::as_str) == Some("not-found") {

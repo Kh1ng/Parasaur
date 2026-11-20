@@ -8,8 +8,10 @@ use std::{
     time::Duration,
 };
 mod collected;
+mod deferred;
 mod release;
 pub(super) use collected::collected_unused_exit;
+pub(super) use deferred::deferred_holder;
 pub(super) use release::{
     record_lease, release_capacity, release_unused_capacity, released_capacity,
 };
@@ -369,7 +371,11 @@ fn terminal_state(
 /// to become active/exited with one stored FD before accepting this response.
 /// The future executor must keep the holder until its separate job cgroup is
 /// empty and its durable start state excludes a pending or concurrent launch.
-pub fn reserve(context: &WorkerContext, work: &std::path::Path) -> Result<serde_json::Value> {
+pub fn reserve(
+    context: &WorkerContext,
+    work: &std::path::Path,
+    existing: bool,
+) -> Result<serde_json::Value> {
     let run = uuid::Uuid::parse_str(&context.binding.run_id)?;
     ensure!(
         !run.is_nil() && run.to_string() == context.binding.run_id,
@@ -393,13 +399,21 @@ pub fn reserve(context: &WorkerContext, work: &std::path::Path) -> Result<serde_
         })
         .context("Native admission requires its own unified systemd cgroup")?;
     validate_holder(&state(&unit)?, &unit, &invocation, own_cgroup, false)?;
-    let mut worker = super::worker::WorkerRun::reserve(work, &context.binding, &invocation)?;
+    let mut worker = if existing {
+        let mut worker = super::worker::WorkerRun::open_waiting(work, &context.binding)?;
+        release::job_empty(&context.binding.run_id, None)?;
+        worker.rebind_deferred(&invocation)?;
+        worker
+    } else {
+        super::worker::WorkerRun::reserve(work, &context.binding, &invocation)?
+    };
     let mut lease = match crate::controller::acquire_native_capacity(
         &context.binding.mode,
         context.config.defaults.node_capacity,
     )? {
         crate::controller::NodeCapacityAdmission::Admit(lease) => lease,
         crate::controller::NodeCapacityAdmission::Defer(reason) => {
+            worker.defer_capacity()?;
             anyhow::bail!("Native host admission deferred: {reason}")
         }
     };
