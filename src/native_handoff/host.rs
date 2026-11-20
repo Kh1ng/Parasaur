@@ -34,6 +34,31 @@ fn state(unit: &str) -> Result<BTreeMap<String, String>> {
     Ok(values)
 }
 
+/// Hold from before context loading (which creates the work directory) until
+/// the physical capacity lease has a durable owner. A refused run can replay.
+pub(crate) fn reservation_admission() -> Result<std::fs::File> {
+    let lock = crate::agents::dispatch_admission()?
+        .context("Native host admission deferred during node maintenance")?;
+    // A previously queued systemd holder may run between installation and restart.
+    if let Some(path) = std::env::var_os("PARASAUR_WORKER_UPDATE_STATE_PATH") {
+        match std::fs::File::open(path) {
+            Ok(file) => {
+                let record: serde_json::Value = serde_json::from_reader(file)?;
+                ensure!(
+                    matches!(
+                        record["status"].as_str(),
+                        Some("idle" | "success" | "failed")
+                    ),
+                    "Native host admission deferred during worker update"
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(lock)
+}
+
 fn validate_holder(
     values: &BTreeMap<String, String>,
     unit: &str,

@@ -30,6 +30,35 @@ use launch_agent::install_macos_launch_agent;
 
 pub use crate::node_role::NodeRole as HostRole;
 
+/// A fleet updater may retry this refusal after the current dispatch or
+/// maintenance finishes. Artifact and installation errors stay terminal.
+#[derive(Debug)]
+pub(crate) struct WorkerUpdateBusy;
+
+impl std::fmt::Display for WorkerUpdateBusy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Worker has active dispatches or maintenance; retry after they finish")
+    }
+}
+impl std::error::Error for WorkerUpdateBusy {}
+
+fn worker_maintenance_lock() -> Result<File> {
+    let lock = crate::agents::maintenance_lock().map_err(|error| {
+        if error
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::WouldBlock)
+        {
+            anyhow::Error::new(WorkerUpdateBusy)
+        } else {
+            error
+        }
+    })?;
+    if crate::work_claim::active_dispatch_count()? > 0 {
+        return Err(WorkerUpdateBusy.into());
+    }
+    Ok(lock)
+}
+
 pub struct UpdateArgs {
     pub repo: Option<PathBuf>,
     pub pull: bool,
@@ -78,7 +107,11 @@ pub fn run(args: UpdateArgs) -> Result<()> {
         args.repair_ownership,
     )?;
     let update_lock = acquire_update_lock(&repo)?;
-    let maintenance_lock = crate::agents::maintenance_lock()?;
+    let maintenance_lock = if args.role == HostRole::Worker {
+        worker_maintenance_lock()?
+    } else {
+        crate::agents::maintenance_lock()?
+    };
     // Set when this process is the newly installed CLI finishing an update
     // the previous binary started; the plan was already accepted.
     let resumed = env::var_os(reexec::ENV).is_some();

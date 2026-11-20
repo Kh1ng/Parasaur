@@ -1297,6 +1297,8 @@ pub enum SkillsCommands {
 #[rustfmt::skip]
 #[derive(Subcommand)]
 pub enum ClaimsCommands {
+    /// Minimum active dispatches on this node, including host capacity reservations.
+    ActiveCount,
     List { #[arg(long, default_value_t = false)] json: bool, #[arg(long)] profile: Option<String>, #[arg(long, name = "config")] config_path: Option<String> },
     Clear {
         #[arg(long)]

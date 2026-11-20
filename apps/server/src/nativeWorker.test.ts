@@ -13,7 +13,7 @@ const linuxOnly={skip:process.platform!=='linux'?'native workers require Linux':
 /** A worker whose launcher is a script that records each call and exits with
  * the code in `launcher.exit`, and whose CLI always fails, so every
  * observation is `unknown`. `restart` gives a second server on the same root. */
-async function fixture() {
+async function fixture(draining?:()=>boolean) {
   const root=mkdtempSync(join(tmpdir(),'gah-native-worker-'));chmodSync(root,0o700);
   const tools=mkdtempSync(join(tmpdir(),'gah-native-tools-'));
   const calls=join(tools,'launcher.calls'),exit=join(tools,'launcher.exit');
@@ -29,7 +29,7 @@ async function fixture() {
   const binding:NativeDispatchBinding={run_id:run,node_id:'worker',context_sha256:hash(manifest),profile:'fixture',
     repo:'fixture/repo',repo_id:'fixture',work_id:'#1',mode:'fix',backend:'codex',model:'fixture-model',backend_instance:null,
     branch:null,review_generation:null,dispatch_reason:'initial'};
-  const restart=()=>new NativeWorker({root,nodeId:'worker',binary,launcher,centralToken:()=>undefined,
+  const restart=()=>new NativeWorker({root,nodeId:'worker',binary,launcher,draining,centralToken:()=>undefined,
     profiles:async()=>[{name:'fixture',repo:'fixture/repo',repo_id:'fixture'}] as never});
   const worker=restart();
   worker.contexts.begin(binding);
@@ -40,6 +40,17 @@ async function fixture() {
     admissionBegins:()=>mkdirSync(worker.contexts.paths(binding).work,{mode:0o700})};
 }
 const state=async(reply:Promise<unknown>)=>(await reply as NativeWorkerObservation).state;
+
+test('a stage deferred while draining replays after the worker restarts',linuxOnly,async()=>{
+  let draining=true;
+  const f=await fixture(()=>draining);
+  assert.equal(await state(f.worker.action(f.binding,'stage',{})),'unknown');
+  assert.equal(f.worker.contexts.stageOffered(f.binding),true);
+  assert.equal(f.launches(),0);
+  draining=false;
+  assert.equal(await state(f.restart().action(f.binding,'observe',{})),'unknown');
+  assert.equal(f.launches(),1);
+});
 
 test('a stage offer recorded before the server stopped is launched on the next observation',linuxOnly,async()=>{
   const f=await fixture();

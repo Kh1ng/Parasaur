@@ -293,7 +293,7 @@ export interface WorkerUpdateStatus {
   armed_at: string | null;
   started_at: string | null;
   finished_at: string | null;
-  /** Live claim count while `waiting`; null once the update is running. */
+  /** Lower bound on active dispatches while waiting, from live claims and capacity reservations. */
   active_dispatches: number | null;
   output: string;
 }

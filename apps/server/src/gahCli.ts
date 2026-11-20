@@ -1485,6 +1485,14 @@ export async function runClaimsList(
   return runJsonCommand(args, config);
 }
 
+export async function countActiveDispatches(): Promise<number> {
+  const count = await runJsonCommand<unknown>(['claims', 'active-count']);
+  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) {
+    throw new Error('Invalid active dispatch count');
+  }
+  return count;
+}
+
 export async function runQuotaList(
   config?: string
 ): Promise<import('@git-agent-harness/contracts').QuotaObservation[]> {

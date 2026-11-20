@@ -35,7 +35,7 @@ pub(in crate::update) fn update_if_installed(args: &crate::update::UpdateArgs) -
     {
         return Ok(false);
     }
-    let _lock = crate::agents::maintenance_lock()?;
+    let _lock = crate::update::worker_maintenance_lock()?;
     let config = crate::config::load(None)?;
     let role = crate::node_role::NodeRoleStatus::resolve(&config.defaults)?;
     ensure!(

@@ -8,6 +8,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import type { ProfileSummary,ConfigShowFull,NativeWorkerCatalog } from '@git-agent-harness/contracts';
 import { requireOwner } from './authMiddleware.js';
+import { workerUpdateStatePath } from './workerUpdate.js';
 import { NativeWorkerContext, nativeBinding, openNativeFile } from './nativeWorkerContext.js';
 import type { NativeDispatchBinding, NativeStartGrant, NativeWorkerObservation } from './nativeDispatchBroker.js';
 
@@ -35,7 +36,7 @@ export class NativeWorker {
   private readonly binary:string;
   /** `launcher` replaces systemd-run in tests; the service never sets it. */
   constructor(private readonly options:{root:string;nodeId:string;binary:string;config?:string;launcher?:string;
-    profiles:()=>Promise<ProfileSummary[]>;centralToken:()=>string|undefined}) {
+    profiles:()=>Promise<ProfileSummary[]>;centralToken:()=>string|undefined;draining?:()=>boolean}) {
     if(process.platform!=='linux') throw Error('Native workers require Linux');
     const executable=isAbsolute(options.binary)?options.binary:execFileSync('/usr/bin/which',[options.binary],{encoding:'utf8',timeout:2000}).trim();
     this.binary=realpathSync(executable);this.contexts=new NativeWorkerContext(options.root);
@@ -77,19 +78,22 @@ export class NativeWorker {
     // launch it again. That cannot admit the run twice: admission creates the
     // job directory exclusively and systemd refuses a second unit of this name.
     if(!offered && this.contexts.admissionBegan(binding)) return this.observe(binding);
+    // Keep the offer durable. Central can replay this exact stage after restart.
+    if(this.options.draining?.()) return {...binding,state:'unknown'};
     const {run}=this.contexts.paths(binding);
     for(const name of ['admission.stdout','admission.stderr']) {
       const path=join(run,name);
       closeSync(offered || !existsSync(path)?openSync(path,'wx',0o600):openNativeFile(path));
     }
-    const args=['--user','--quiet','--no-ask-password','--no-block','--expand-environment=no',
+    const args=['--user','--quiet','--collect','--no-ask-password','--no-block','--expand-environment=no',
       `--unit=gah-native-capacity-${binding.run_id}.service`];
     for(const value of ['Type=oneshot','RemainAfterExit=yes','FileDescriptorStoreMax=1','FileDescriptorStorePreserve=yes',
       'NotifyAccess=all','Restart=no','KillMode=control-group','StopWhenUnneeded=no','UMask=0077','TimeoutStartSec=60s',
       'StandardInput=null',`StandardOutput=file:${join(run,'admission.stdout')}`,`StandardError=file:${join(run,'admission.stderr')}`,
       'UnsetEnvironment=COORDINATOR_TOKEN PARASAUR_LEDGER_PATH PARASAUR_EVENTS_PATH PARASAUR_RECONCILIATION_PATH']) args.push('-p',value);
-    for(const key of ['HOME','PATH','PARASAUR_COORDINATOR_IDENTITY_PATH']) {
-      const value=process.env[key];if(value===undefined) continue;
+    const env:NodeJS.ProcessEnv = {...process.env, PARASAUR_WORKER_UPDATE_STATE_PATH:workerUpdateStatePath()};
+    for(const key of ['HOME','PATH','XDG_STATE_HOME','XDG_RUNTIME_DIR','PARASAUR_COORDINATOR_IDENTITY_PATH','PARASAUR_WORKER_UPDATE_STATE_PATH']) {
+      const value=env[key];if(value===undefined) continue;
       if(/[\x00-\x1f\x7f]/.test(value)) throw Error('Invalid native lookup environment');
       args.push(`--setenv=${key}=${value}`);
     }

@@ -1,8 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { AgentCliVersion, AgentCliUpdate, NodeAgentVersions } from '@git-agent-harness/contracts';
-import { findGahBinary } from './gahCli.js';
-import { countActiveClaims } from './workerUpdate.js';
+import { countActiveDispatches, findGahBinary } from './gahCli.js';
 import { readAdminUpdateState } from './adminUpdate.js';
 import { refreshUpdatedAgentModels } from './managerChat/registry.js';
 
@@ -124,7 +123,7 @@ export class AgentCliVersions {
     try {
       await this.checkPolicy();
       // Fail closed on unreadable claims; do not modify CLIs during dispatch.
-      if (await (this.deps.activeClaims ?? countActiveClaims)() !== 0) throw new AgentCliError(409, 'node_busy', 'Wait for active dispatches to finish.');
+      if (await (this.deps.activeClaims ?? countActiveDispatches)() !== 0) throw new AgentCliError(409, 'node_busy', 'Wait for active dispatches to finish.');
       const rows = await (this.deps.probe ?? probeVersions)();
       this.generation++;
       this.cached = { rows, at: (this.deps.now ?? Date.now)() };
@@ -133,7 +132,7 @@ export class AgentCliVersions {
       if (!release.latest || release.error) throw new AgentCliError(409, 'latest_unknown', 'Latest release unknown; retry when validated metadata is available.');
       // The Rust child closes dispatch admission and checks claims under its
       // maintenance lock. This second check also returns an immediate refusal.
-      if (await (this.deps.activeClaims ?? countActiveClaims)() !== 0) throw new AgentCliError(409, 'node_busy', 'Wait for active dispatches to finish.');
+      if (await (this.deps.activeClaims ?? countActiveDispatches)() !== 0) throw new AgentCliError(409, 'node_busy', 'Wait for active dispatches to finish.');
       this.launchError = null;
       const work = (this.deps.launch ?? launchUpdate)(backend);
       void work.catch(() => { this.launchError = `${backend} update failed. Check the node update state and installation permissions.`; }).finally(() => {

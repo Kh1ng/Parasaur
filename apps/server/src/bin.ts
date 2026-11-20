@@ -143,6 +143,7 @@ async function main() {
       root:join(process.env.XDG_STATE_HOME??join(homedir(),'.local','state'),'gah','native-worker'),
       nodeId:coordinatorIdentity.node_id,binary:findGahBinary(),config:process.env.PARASAUR_CONFIG_PATH,
       profiles:runProfileList,centralToken:()=>process.env.COORDINATOR_TOKEN,
+      draining:()=>workerUpdates?.draining() ?? false,
     }):undefined,
     webPushNotifications,
     apnsNotifications,
