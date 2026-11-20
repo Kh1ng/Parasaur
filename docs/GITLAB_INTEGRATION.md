@@ -458,6 +458,8 @@ After successful validation and push, the harness checks the report against the 
 It checks that the reported files changed since the repair's starting commit.
 Positioned threads must name a changed file from their position.
 The harness also checks that the MR remains open at the pushed SHA.
+If GitLab still shows the repair's starting commit, the harness briefly retries that read.
+A different head or a closed MR stops acknowledgement immediately.
 It then reads each thread again.
 
 Changed discussions stay open.
@@ -479,7 +481,20 @@ This integration never merges an MR.
 They cover diff versions, renamed-file patches, and resolved/unresolved discussions.
 They are not live deployment captures.
 
-Before deployment acceptance, check bot identity, Apply suggestion, and fix/reply/resolve behavior against the target GitLab instance.
+On November 20, 2026 UTC, the self-hosted acceptance project exercised two draft MRs.
+On the first, a deterministic reviewer supplied two replacements through the normal review CLI.
+The configured bot posted both as applicable GitLab suggestions. A maintainer applied one,
+and GitLab recorded the replacement on commit `f286b343`. The other discussion exposed
+the delay between a successful push and GitLab reporting the new MR head. GitLab also
+appended a non-resolvable system note when the repair changed the reviewed line.
+
+On the second MR, the live file hook delivered a maintainer's `@parasaur fix these` note.
+Replaying that delivery to an isolated controller returned HTTP 202. A duplicate returned
+204. One fleet session ran Vibe, validated the repair, and pushed commit `b1afb0d3`.
+GitLab showed only the reported file changed, a passing pipeline on that SHA, one
+bot reply naming it, and the discussion resolved by the bot. Both MRs remained open
+as drafts. The test controller used the public HTTPS project URL for hook matching
+and a checkout-local Git URL rewrite for the internal HTTP push transport.
 
 API references: [Discussions](https://docs.gitlab.com/api/discussions/) and [Merge requests](https://docs.gitlab.com/api/merge_requests/).
 

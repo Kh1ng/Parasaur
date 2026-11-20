@@ -316,7 +316,11 @@ fn gitlab_collections_read_past_first_page() {
 #[test]
 fn gitlab_resolves_after_position_refresh_but_preserves_changed_discussions() {
     let thread = fixture("discussions.json")[0].clone();
-    let refreshed = fixture("discussion-after-push.json");
+    let mut refreshed = fixture("discussion-after-push.json");
+    refreshed["notes"].as_array_mut().unwrap().push(json!({
+        "id": 11, "type": "DiffNote", "system": true, "resolvable": false,
+        "body": "changed this line in [version 4 of the diff](/group/repo/-/merge_requests/7/diffs?diff_id=4)"
+    }));
     let new_note = fixture("discussion-with-new-note.json");
     let mut edited = refreshed.clone();
     edited["notes"][0]["body"] = json!("Edited human instruction");
@@ -344,6 +348,31 @@ fn gitlab_resolves_after_position_refresh_but_preserves_changed_discussions() {
         )
         .unwrap();
         assert_eq!(writes.len(), if should_resolve { 2 } else { 0 });
+    }
+}
+
+#[test]
+fn gitlab_repair_head_retries_only_the_pre_push_revision() {
+    for (states, succeeds, waits) in [
+        (vec![("opened", "new")], true, 0),
+        (vec![("opened", "old"), ("opened", "new")], true, 1),
+        (vec![("opened", "old"), ("opened", "foreign")], false, 1),
+        (vec![("closed", "new")], false, 0),
+        (vec![("opened", "old"); 6], false, 5),
+    ] {
+        let mut states = states.into_iter();
+        let mut count = 0;
+        let result = wait_for_repair_head(
+            || {
+                let (state, sha) = states.next().expect("unexpected extra read");
+                Ok(json!({"state": state, "sha": sha}))
+            },
+            "old",
+            "new",
+            |_| count += 1,
+        );
+        assert_eq!(result.is_ok(), succeeds);
+        assert_eq!(count, waits);
     }
 }
 

@@ -264,13 +264,18 @@ pub(crate) fn resolve(
     threads: &[Value],
     report: &Value,
     files: &[String],
+    previous_sha: &str,
     sha: &str,
 ) -> Result<()> {
     let path = mr_path(profile, iid)?;
-    let current = bot_api(profile, &path, "GET", Value::Null)?;
-    if current["state"] != "opened" || current["sha"].as_str() != Some(sha) {
-        bail!("repair head changed");
-    }
+    // GitLab updates the MR asynchronously after accepting a branch push.
+    // Only its known previous head is eligible for a bounded read retry.
+    wait_for_repair_head(
+        || bot_api(profile, &path, "GET", Value::Null),
+        previous_sha,
+        sha,
+        std::thread::sleep,
+    )?;
     resolve_with(
         &mut |p, m, b| bot_api(profile, p, m, b),
         &path,
@@ -279,6 +284,31 @@ pub(crate) fn resolve(
         files,
         sha,
     )
+}
+
+fn wait_for_repair_head(
+    mut read: impl FnMut() -> Result<Value>,
+    previous: &str,
+    pushed: &str,
+    mut wait: impl FnMut(std::time::Duration),
+) -> Result<()> {
+    let mut delays = [250, 500, 1000, 2000, 4000].into_iter();
+    loop {
+        let mr = read()?;
+        if mr["state"] != "opened" {
+            bail!("repair merge request is no longer open");
+        }
+        match mr["sha"].as_str() {
+            Some(head) if head == pushed => return Ok(()),
+            Some(head) if head == previous => {
+                let delay = delays
+                    .next()
+                    .context("GitLab has not observed the repair push")?;
+                wait(std::time::Duration::from_millis(delay));
+            }
+            _ => bail!("repair head changed"),
+        }
+    }
 }
 
 fn resolve_with(
@@ -364,7 +394,12 @@ impl DiscussionIdentity {
     fn from_thread(thread: &Value) -> Option<Self> {
         let id = thread["id"].as_str().filter(|id| !id.is_empty())?;
         let mut notes = BTreeMap::new();
-        for note in thread["notes"].as_array()?.iter() {
+        for note in thread["notes"].as_array()? {
+            // GitLab appends a non-resolvable system note when the pushed
+            // commit changes this line. It has no resolution state.
+            if note["system"] == true && note["resolvable"] == false {
+                continue;
+            }
             let identity = (
                 note["resolved"].as_bool()?,
                 Sha256::digest(note["body"].as_str()?.as_bytes()).into(),
@@ -372,6 +407,9 @@ impl DiscussionIdentity {
             if notes.insert(note["id"].as_u64()?, identity).is_some() {
                 return None;
             }
+        }
+        if notes.is_empty() {
+            return None;
         }
         Some(Self {
             id: id.into(),

@@ -89,6 +89,7 @@ impl GitLabFix {
                 &self.threads,
                 &report,
                 &files,
+                &self.base,
                 sha.trim(),
             )
         })();
