@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
 let revision = null;
+let ancestors = [];
 if (existsSync(new URL('../.git', import.meta.url))) {
   const status = git('status', '--porcelain', '--untracked-files=normal', '--',
     'apps/server/src', 'apps/server/package.json', 'apps/server/tsconfig.json', 'packages/contracts',
@@ -16,6 +17,10 @@ if (existsSync(new URL('../.git', import.meta.url))) {
   const sha = head.stdout?.trim();
   if (status.status === 0 && !status.stdout.trim() && head.status === 0 && /^[0-9a-f]{40}$/.test(sha)) {
     revision = sha;
+    // Release nodes can compare builds offline. A shallow developer checkout
+    // proves ancestry only for the commits it actually contains.
+    const history = git('rev-list', '--max-count=4096', sha);
+    if (history.status === 0) ancestors = history.stdout.trim().split(/\s+/).filter(value => value !== sha);
   }
 }
-writeFileSync(new URL('../apps/server/dist/build-revision.json', import.meta.url), JSON.stringify({ revision }) + '\n');
+writeFileSync(new URL('../apps/server/dist/build-revision.json', import.meta.url), JSON.stringify({ revision, ancestors }) + '\n');

@@ -77,6 +77,22 @@ test('start posts to the worker and surfaces its status', async () => {
   assert.equal(result.status.active_dispatches, 1);
 });
 
+test('a same-version build update requires the worker to confirm the coordinator revision', async () => {
+  const worker = node();
+  const expected = 'b'.repeat(40);
+  const update = { status: 'behind' as const, node_version: worker.version, coordinator_version: worker.version,
+    minimum_worker_version: worker.version, node_revision: 'a'.repeat(40), coordinator_revision: expected };
+  let confirmed = false;
+  const broker = new WorkerUpdateBroker({ registry: registryStub([worker], [{ ...worker, update, auto_update: true }]),
+    localNodeId: 'central', fetch: fetchStub((_url, body) => {
+      assert.equal(body.expected_commit, expected);
+      return { status: 200, body: { started: true, status: { ...idleStatus, target_revision: confirmed ? expected : null } } };
+    }) });
+  await assert.rejects(broker.start(worker.node_id), /could not confirm/);
+  confirmed = true;
+  assert.equal((await broker.autoUpdateSweep())[0].status?.target_revision, expected);
+});
+
 test('start rejects an unknown node and the coordinator itself', async () => {
   const broker = new WorkerUpdateBroker({
     registry: registryStub([node()]),

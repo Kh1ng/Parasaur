@@ -37,7 +37,13 @@ export class WorkerUpdateBroker {
   constructor(private readonly deps: WorkerUpdateBrokerDeps) {}
 
   async start(nodeId: string): Promise<{ started: boolean; status: WorkerUpdateStatus }> {
-    const payload = await this.worker(nodeId, { action: 'start' });
+    const update = this.deps.registry.getNodesSummary().find(node => node.node_id === nodeId)?.update;
+    const expected = update?.node_revision && (update.status === 'behind' || update.status === 'current')
+      ? update.coordinator_revision : null;
+    const payload = await this.worker(nodeId, { action: 'start', ...(expected ? { expected_commit: expected } : {}) });
+    if (expected && payload.status.target_revision !== expected) {
+      throw new WorkerUpdateError(409, 'The worker has another update in progress or could not confirm the selected build.');
+    }
     return { started: payload.started, status: payload.status };
   }
 

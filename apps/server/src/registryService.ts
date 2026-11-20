@@ -19,6 +19,7 @@ import type {
 } from '@git-agent-harness/contracts';
 import { COORDINATOR_MINIMUM_WORKER_VERSION, COORDINATOR_VERSION, compareVersions } from '@git-agent-harness/contracts';
 import { COORDINATOR_SCHEMA_DIGEST } from './coordinatorIdentity.js';
+import { buildCommit, runningBuild } from './buildRevision.js';
 import { LinkRefused, linkTo, type WorkerLink } from './workerLink.js';
 
 export function isLoopback(urlStr: string): boolean {
@@ -145,15 +146,25 @@ function majorMinor(version: string): string | null {
  * coordinator's minimum supported worker version (update before it breaks).
  * The observation-time major.minor equality check is unchanged and still
  * the hard gate. Exported for the fleet contracts' own tests. */
-export function nodeVersionStatus(nodeVersion: string): NodeUpdateInfo {
-  const behind = compareVersions(nodeVersion, COORDINATOR_VERSION) < 0;
-  const unsupported = compareVersions(nodeVersion, COORDINATOR_MINIMUM_WORKER_VERSION) < 0;
-  return {
-    status: unsupported ? 'unsupported' : behind ? 'behind' : 'current',
+export function nodeVersionStatus(nodeVersion: string, revision?: string | null, central = runningBuild): NodeUpdateInfo {
+  const versionOrder = compareVersions(nodeVersion, COORDINATOR_VERSION);
+  const worker = buildCommit(revision);
+  const result: NodeUpdateInfo = {
+    status: 'unverified',
     node_version: nodeVersion,
     coordinator_version: COORDINATOR_VERSION,
-    minimum_worker_version: COORDINATOR_MINIMUM_WORKER_VERSION
+    minimum_worker_version: COORDINATOR_MINIMUM_WORKER_VERSION,
+    node_revision: worker,
+    coordinator_revision: central.revision
   };
+  if (compareVersions(nodeVersion, COORDINATOR_MINIMUM_WORKER_VERSION) < 0) result.status = 'unsupported';
+  else if (versionOrder < 0) result.status = 'behind';
+  else if (versionOrder > 0) result.status = 'ahead';
+  else if (worker && central.revision) {
+    if (worker === central.revision) result.status = 'current';
+    else result.status = central.ancestors.has(worker) ? 'behind' : 'different_build';
+  }
+  return result;
 }
 
 function normalizeResourcePressure(value: unknown): NodeObservationSnapshot['resource_pressure'] {
@@ -460,7 +471,7 @@ export class RegistryService {
     return this.getNodes().map(({ secret_ref, ...summary }) => {
       let link: NodeSummary['link'] = null;
       try { link = linkTo({ ...summary, secret_ref }).kind; } catch { /* Refused addresses show no link. */ }
-      return { ...summary, link, update: nodeVersionStatus(summary.version) };
+      return { ...summary, link, update: nodeVersionStatus(summary.version, summary.build_revision) };
     });
   }
 
@@ -599,6 +610,10 @@ export class RegistryService {
     // Publish only the newest request for this registration. A slow poll must
     // not undo a newer health check or restore a revoked/repointed node.
     if (this.nodes.get(node.node_id) === node && this.observationRequests.get(node.node_id) === sequence) {
+      if (result.state === 'healthy' && result.snapshot && result.snapshot.build_revision !== undefined) {
+        node.version = result.snapshot.version;
+        node.build_revision = result.snapshot.build_revision;
+      }
       this.persistObservation(node, nowIso(result.timestamp), result.state, result.last_seen_at, result.error);
       // A scoped dispatch must not replace the fleet-wide observation.
       if (!profile) {
@@ -797,6 +812,7 @@ export class RegistryService {
       display_name: typeof payload.profile?.display_name === 'string' ? payload.profile.display_name : node.display_name,
       advertised_url: node.advertised_url,
       version: payloadVersion,
+      ...(payload.node_id === node.node_id ? { build_revision: buildCommit(payload.build_revision) } : {}),
       schema_digest: payloadSchemaDigest,
       state,
       observed_at: generatedAt,
@@ -861,6 +877,9 @@ export class RegistryService {
     }
     if (!node.version || typeof node.version !== 'string') {
       throw new Error('Invalid or missing version');
+    }
+    if (node.build_revision != null && !buildCommit(node.build_revision)) {
+      throw new Error('Invalid worker build revision');
     }
     if (!node.schema_digest || typeof node.schema_digest !== 'string') {
       throw new Error('Invalid or missing schema_digest');

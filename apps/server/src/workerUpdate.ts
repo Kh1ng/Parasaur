@@ -17,6 +17,8 @@ import { homedir } from 'node:os';
 import type { WorkerUpdateStatus } from '@git-agent-harness/contracts';
 import { COORDINATOR_VERSION } from '@git-agent-harness/contracts';
 import { findGahBinary, runClaimsList } from './gahCli.js';
+import { persistReleaseManifest, selectReleaseManifest } from './releaseFeed.js';
+import { buildCommit, runningBuild } from './buildRevision.js';
 
 const MAX_OUTPUT_CHARS = 200_000;
 const DRAIN_POLL_MS = 15_000;
@@ -36,6 +38,7 @@ export function workerServiceUnit(properties: string, pid: number, invocation: s
 
 interface WorkerUpdateRecord extends WorkerUpdateStatus {
   pid: number | null;
+  selectedManifest?: string;
   restart?: { previousInvocation:string; bundle:string; requestedAt:number };
 }
 
@@ -51,6 +54,7 @@ function idleStatus(): WorkerUpdateStatus {
   return {
     status: 'idle',
     current_version: COORDINATOR_VERSION,
+    current_revision: runningBuild.revision,
     target_version: null,
     armed_at: null,
     started_at: null,
@@ -79,7 +83,7 @@ function writeState(record: WorkerUpdateRecord): void {
 }
 
 function view(record: WorkerUpdateRecord): WorkerUpdateStatus {
-  const { pid: _pid, restart: _restart, ...status } = record;
+  const { pid: _pid, restart: _restart, selectedManifest: _manifest, ...status } = record;
   return status;
 }
 
@@ -109,6 +113,7 @@ export class WorkerUpdateService {
   constructor(private readonly deps: WorkerUpdateDeps = {}) {
     this.spawnFn = deps.spawnFn ?? spawn;
     this.cwd = deps.cwd ?? process.cwd();
+    if (this.read().status === 'waiting') this.scheduleDrain();
   }
 
   private read(): WorkerUpdateRecord {
@@ -124,6 +129,9 @@ export class WorkerUpdateService {
             ? parsed.status
             : 'idle',
         current_version: base.current_version,
+        current_revision: base.current_revision,
+        target_revision: buildCommit(parsed.target_revision),
+        selectedManifest: parsed.selectedManifest,
         target_version: typeof parsed.target_version === 'string' ? parsed.target_version : null,
         armed_at: typeof parsed.armed_at === 'string' ? parsed.armed_at : null,
         started_at: typeof parsed.started_at === 'string' ? parsed.started_at : null,
@@ -140,6 +148,7 @@ export class WorkerUpdateService {
         const newInvocation = !!process.env.INVOCATION_ID && process.env.INVOCATION_ID !== record.restart.previousInvocation;
         if (newInvocation || Date.now() - record.restart.requestedAt > 60_000) {
           const loaded = newInvocation && process.env.PARASAUR_WORKER_RELEASE === record.restart.bundle
+            && (!record.target_revision || record.current_revision === record.target_revision)
             && process.execPath === resolve(this.cwd,'bin/node');
           record.status = loaded ? 'success' : 'failed';
           if (!loaded) record.output += "\n[gah] The worker did not load the selected release after restart.";
@@ -168,17 +177,17 @@ export class WorkerUpdateService {
     return view(this.read());
   }
 
-  async start(): Promise<{ started: boolean; status: WorkerUpdateStatus }> {
+  async start(expected?: string): Promise<{ started: boolean; status: WorkerUpdateStatus }> {
     if (this.starting) {
       const result = await this.starting;
       return {started:false,status:result.status};
     }
-    this.starting = this.startOnce();
+    this.starting = this.startOnce(expected);
     try { return await this.starting; }
     finally { this.starting = undefined; }
   }
 
-  private async startOnce(): Promise<{ started: boolean; status: WorkerUpdateStatus }> {
+  private async startOnce(expected?: string): Promise<{ started: boolean; status: WorkerUpdateStatus }> {
     const existing = this.read();
     if ((existing.status === 'inferred_restart' && existing.restart) || (existing.status === 'running' && existing.pid !== null && pidAlive(existing.pid))) {
       return { started: false, status: view(existing) };
@@ -187,6 +196,7 @@ export class WorkerUpdateService {
       this.scheduleDrain();
       return { started: true, status: view(existing) };
     }
+    const selected = expected === undefined ? undefined : await selectReleaseManifest(expected);
     const active = await this.countClaims();
     if (active !== 0) {
       const armed: WorkerUpdateRecord = {
@@ -194,13 +204,15 @@ export class WorkerUpdateService {
         status: 'waiting',
         armed_at: new Date().toISOString(),
         active_dispatches: active,
+        target_revision: expected,
+        selectedManifest: selected,
         pid: null
       };
       writeState(armed);
       this.scheduleDrain();
       return { started: true, status: view(armed) };
     }
-    this.launch();
+    this.launch(selected, expected);
     return { started: true, status: this.status() };
   }
 
@@ -254,26 +266,36 @@ export class WorkerUpdateService {
       return;
     }
     this.stopDrain();
-    this.launch();
+    this.launch(current.selectedManifest, current.target_revision);
   }
 
-  private launch(): void {
-    const child: ChildProcess = this.spawnFn(
-      findGahBinary(),
-      ['update', '--from-release', '--role', 'worker', '--repo', this.cwd,
-        ...(process.env.PARASAUR_RELEASE_MANIFEST ? ['--release-manifest', process.env.PARASAUR_RELEASE_MANIFEST] : [])],
-      {
+  private launch(selected?: string, revision?: string | null): void {
+    let child: ChildProcess;
+    try {
+      if (revision && (!selected || buildCommit(JSON.parse(selected).commit) !== revision)) {
+        throw new Error('The saved manifest for the selected worker build is unavailable.');
+      }
+      const manifest = selected ? persistReleaseManifest(statePath(), selected) : process.env.PARASAUR_RELEASE_MANIFEST;
+      child = this.spawnFn(findGahBinary(), [
+        'update', '--from-release', '--role', 'worker', '--repo', this.cwd,
+        ...(manifest ? ['--release-manifest', manifest] : [])
+      ], {
         cwd: this.cwd,
         env: process.env,
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe']
-      }
-    );
+      });
+    } catch (error) {
+      writeState({ ...idleStatus(), status: 'failed', pid: null, target_revision: revision,
+        finished_at: new Date().toISOString(), output: error instanceof Error ? error.message : 'Could not start the worker update.' });
+      return;
+    }
     child.unref();
 
     let record: WorkerUpdateRecord = {
       ...idleStatus(),
       status: 'running',
+      target_revision: revision,
       started_at: new Date().toISOString(),
       pid: child.pid ?? null
     };
