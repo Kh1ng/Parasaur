@@ -22,8 +22,12 @@ Set these environment variables on the central server:
 
 Configure a GitLab profile with `provider`, `repo`, `provider_api_base`, and `provider_project_id`.
 Authenticate `glab` as the configured bot with the existing provider credentials.
-The profile must match the event's project URL and repository path exactly.
-Ambiguous profiles fail closed.
+The repository path must match exactly. A profile can use the public project URL
+directly or use an internal API and Git transport behind a reverse proxy.
+For a different public HTTPS URL, Parasaur queries the configured GitLab API
+using the profile's numeric `provider_project_id`. It checks the returned ID,
+namespace path, and complete public URL against the delivery. Dispatch requires one matching
+profile. A failed lookup retries through the event queue.
 
 Use the existing profile policy:
 
@@ -123,9 +127,9 @@ Query parameters:
 - `kind` (required): `issue` or `merge_request`.
 - `iid` (required): positive issue or merge request iid.
 - `gitlab` (optional): the GitLab origin, e.g. `https://gitlab.example.com`.
-  It must be an `http(s)` origin configured for a GitLab profile; anything
-  else is a `400`. When present, only sessions and profiles that can prove
-  that origin answer; unprovable matches are excluded rather than assumed.
+  The feed accepts a configured GitLab origin or the public HTTPS origin that
+  the configured API reports for this specific project. An unrecognized origin
+  returns `400`. The feed includes only runs and profiles tied to that origin.
 - `branch` (optional): further narrow runs to one branch.
 - `limit` (optional): 1–100, default 20.
 
@@ -137,7 +141,7 @@ Responses:
   and `events` are newest first and bounded by `limit`.
 - `400`: empty or malformed context (`invalid_gitlab_context`) — a missing,
   malformed or unconfigured context never widens the feed.
-- `502`: a `gah` CLI read failed.
+- `502`: a CLI read failed, including a lookup of the public project URL.
 
 Each run is `{ id, source: 'session' | 'ledger', status, mode, workId,
 branch, backend, model, startedAt, endedAt, durationSeconds, testStatus,
@@ -495,6 +499,13 @@ GitLab showed only the reported file changed, a passing pipeline on that SHA, on
 bot reply naming it, and the discussion resolved by the bot. Both MRs remained open
 as drafts. The test controller used the public HTTPS project URL for hook matching
 and a checkout-local Git URL rewrite for the internal HTTP push transport.
+
+A third check used the existing internal HTTP transport for both Git and the API.
+A maintainer assigned a new issue to the bot. The live file hook captured the
+assignment, and an isolated controller accepted the delivery and recognized its
+duplicate. One Vibe session validated the implementation and opened a draft MR
+linked to the issue at commit `41b47130`. The public HTTPS issue panel showed
+the passing ledger entry. The checkout had no Git URL rewrite rules.
 
 API references: [Discussions](https://docs.gitlab.com/api/discussions/) and [Merge requests](https://docs.gitlab.com/api/merge_requests/).
 

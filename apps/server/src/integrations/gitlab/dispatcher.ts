@@ -6,6 +6,7 @@ import type { RoutedSessionOptions } from '../../fleetDispatch.js';
 import { getFleetDispatch } from '../../wsServer.js';
 import type { GitLabDispatchOptions } from './queue.js';
 import { record, type GitLabEvent } from './classifier.js';
+import { publicProjectProfiles, readGitLab } from './projectIdentity.js';
 
 export type GitLabDispatchDeps = {
   listProfiles: typeof runProfileList;
@@ -39,20 +40,19 @@ export async function dispatchGitLabEvent(
   options: GitLabDispatchOptions,
   deps: GitLabDispatchDeps = defaults
 ): Promise<void> {
-  const profiles = (await deps.listProfiles()).filter(profile => profile.provider === 'gitlab'
-    && profile.repo === event.project.repo && profile.web_url?.replace(/\/$/, '') === event.project.url);
+  const profiles = await publicProjectProfiles(await deps.listProfiles(), event.project.repo,
+    event.project.url, deps.cli, event.project.id);
   if (profiles.length !== 1) return;
   const profile = profiles[0];
   const policy = (await deps.config(profile.name)).event_policy;
   if (!policy) return; // Older CLIs cannot prove author trust.
-  const api = async (path: string) => {
-    const { stdout } = await deps.cli('glab', ['api', path, '--hostname', new URL(profile.web_url!).host,
-      '--method', 'GET'], profile.local_path);
-    return JSON.parse(stdout || 'null') as unknown;
-  };
+  const api = (path: string) => readGitLab(profile, path, deps.cli);
   const project = `projects/${encodeURIComponent(profile.repo)}`;
-  const identity = record(await api(project));
-  if (identity.id !== event.project.id) return;
+  // Alias matching already verified the live project ID.
+  if (profile.web_url?.replace(/\/$/, '') === event.project.url) {
+    const identity = record(await api(project));
+    if (identity.id !== event.project.id) return;
+  }
   const actor = record(await api(`users/${event.actorId}`));
   if ((event.kind === 'note' && typeof actor.username === 'string' && actor.username.toLowerCase() === options.bot.toLowerCase()) || !trusted(actor, policy, event.project.id)) return;
 
