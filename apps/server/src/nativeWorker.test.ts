@@ -35,11 +35,30 @@ async function fixture(draining?:()=>boolean) {
   worker.contexts.begin(binding);
   for(const [name,bytes] of Object.entries({'manifest.json':manifest,...contents})) await worker.contexts.accept(binding,name,Readable.from([bytes]));
   return {binding,worker,restart,
+    reportStatus:(status:Record<string,unknown>)=>{
+      const output=join(tools,'status.json');
+      writeFileSync(output,JSON.stringify({binding,...status}));
+      writeFileSync(binary,`#!/bin/sh\ncat '${output}'\n`);
+    },
     launches:()=>existsSync(calls)?readFileSync(calls,'utf8').split('\n').filter(Boolean).length:0,
     launcherExits:(code:number)=>writeFileSync(exit,String(code)),
     admissionBegins:()=>mkdirSync(worker.contexts.paths(binding).work,{mode:0o700})};
 }
 const state=async(reply:Promise<unknown>)=>(await reply as NativeWorkerObservation).state;
+
+test('an exited launcher needs both identities and confirmed capacity, including an already released lease',linuxOnly,async()=>{
+  const f=await fixture();
+  const original={state:'exited_before_dispatch',holder_invocation:'a'.repeat(32),exited_job_invocation:'b'.repeat(32)};
+  for(const capacity_held of [true,false]) {
+    f.reportStatus({...original,capacity_held});
+    assert.deepEqual(await f.worker.observe(f.binding),{...f.binding,state:original.state,
+      reservation_id:original.holder_invocation,exited_job_invocation:original.exited_job_invocation});
+  }
+  for(const changed of [{capacity_held:null},{capacity_held:undefined},{exited_job_invocation:''},{holder_invocation:'other'}]) {
+    f.reportStatus({...original,capacity_held:false,...changed});
+    assert.equal(await state(f.worker.observe(f.binding)),'unknown');
+  }
+});
 
 test('a stage deferred while draining replays after the worker restarts',linuxOnly,async()=>{
   let draining=true;

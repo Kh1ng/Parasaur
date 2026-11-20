@@ -7,7 +7,9 @@ use std::{
     collections::BTreeMap, os::fd::AsRawFd, os::unix::process::CommandExt, process::Command,
     time::Duration,
 };
+mod collected;
 mod release;
+pub(super) use collected::collected_unused_exit;
 pub(super) use release::{
     record_lease, release_capacity, release_unused_capacity, released_capacity,
 };

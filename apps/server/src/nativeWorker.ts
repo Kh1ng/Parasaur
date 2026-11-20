@@ -113,13 +113,15 @@ export class NativeWorker {
   async observe(binding:NativeDispatchBinding):Promise<NativeWorkerObservation> {
     const unknown:NativeWorkerObservation={...binding,state:'unknown'};
     try {
-      const status=await command(this.binary,this.args(binding,'worker-status')) as {binding:NativeDispatchBinding;state:string;holder_invocation:string;capacity_held:boolean;exited_job_invocation?:string};
+      const status=await command(this.binary,this.args(binding,'worker-status')) as {binding:NativeDispatchBinding;state:string;holder_invocation:string;capacity_held:boolean|null;exited_job_invocation?:string};
       if(!isDeepStrictEqual(status.binding,binding)) return unknown;
       if(status.state==='ready' && status.capacity_held===true && /^[a-f0-9]{32}$/.test(status.holder_invocation)) {
         return {...binding,state:'ready',reservation:{...binding,id:status.holder_invocation,expires_at:new Date(Date.now()+20_000).toISOString()}};
       }
       if(status.state==='running') return {...binding,state:'running'};
-      if(status.state==='exited_before_dispatch' && status.capacity_held===true) {
+      if(status.state==='exited_before_dispatch' && typeof status.capacity_held==='boolean'
+        && typeof status.holder_invocation==='string' && /^[a-f0-9]{32}$/.test(status.holder_invocation)
+        && typeof status.exited_job_invocation==='string' && /^[a-f0-9]{32}$/.test(status.exited_job_invocation)) {
         return {...binding,state:'exited_before_dispatch',reservation_id:status.holder_invocation,
           exited_job_invocation:status.exited_job_invocation};
       }

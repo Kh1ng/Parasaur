@@ -367,11 +367,14 @@ impl WorkerRun {
         } else {
             serde_json::Value::Null
         };
-        let exited_job = if held && !running {
-            self.unused_launch()
-                .ok()
-                .flatten()
-                .filter(|job| super::host::terminal_job(&self.journal.binding.run_id, job).is_ok())
+        let exited_job = if !running {
+            self.unused_launch().ok().flatten().filter(|job| {
+                if held {
+                    super::host::terminal_job(&self.journal.binding.run_id, job).is_ok()
+                } else {
+                    self.collected_unused_exit(job).is_ok()
+                }
+            })
         } else {
             None
         };
@@ -381,6 +384,7 @@ impl WorkerRun {
             "ready"
         } else if let Some(job) = exited_job {
             value["exited_job_invocation"] = job.invocation.as_str().into();
+            value["capacity_held"] = held.into();
             "exited_before_dispatch"
         } else {
             "unknown"
