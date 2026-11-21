@@ -407,7 +407,7 @@ test('loop lifecycle uses systemd enablement as the durable boot policy', () => 
   ]);
 });
 
-test('stop disables an enabled unit even when it is already inactive', () => {
+test('stop disables an enabled unit even when it is already inactive', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-stop-loop-'));
   const log = join(dir, 'systemctl.log');
   const originalPath = process.env.PATH;
@@ -424,12 +424,43 @@ printf '%s\n' "$*" >> "$SYSTEMCTL_LOG"
   chmodSync(join(dir, 'systemctl'), 0o755);
   chmodSync(join(dir, 'pgrep'), 0o755);
   try {
-    assert.deepEqual(stopLoop('sportsball'), { stopped: true });
+    assert.deepEqual(await stopLoop('sportsball'), { stopped: true });
     assert.match(readFileSync(log, 'utf8'), /disable --now gah-loop@sportsball\.service/);
   } finally {
     if (originalPath === undefined) delete process.env.PATH;
     else process.env.PATH = originalPath;
     delete process.env.SYSTEMCTL_LOG;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('stopping a loop leaves the server free to answer other requests', { skip: process.platform === 'win32' }, async () => {
+  // `disable --now` waits for the unit to stop, which can take its whole stop
+  // timeout. The same process answers the workers, so that wait must not hold
+  // the event loop.
+  const dir = mkdtempSync(join(tmpdir(), 'gah-stop-loop-slow-'));
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${dir}:${originalPath ?? ''}`;
+  writeFileSync(join(dir, 'systemctl'), `#!/bin/sh
+if [ "$2" = "show" ]; then
+  printf 'LoadState=loaded\nActiveState=active\nMainPID=4242\n'
+  exit 0
+fi
+sleep 1
+`);
+  writeFileSync(join(dir, 'pgrep'), '#!/bin/sh\nexit 1\n');
+  chmodSync(join(dir, 'systemctl'), 0o755);
+  chmodSync(join(dir, 'pgrep'), 0o755);
+  try {
+    let answeredMeanwhile = false;
+    const other = setTimeout(() => { answeredMeanwhile = true; }, 100);
+    const stopped = await stopLoop('sportsball');
+    clearTimeout(other);
+    assert.deepEqual(stopped, { stopped: true });
+    assert.equal(answeredMeanwhile, true, 'a timer due during the stop ran before it finished');
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
     rmSync(dir, { recursive: true, force: true });
   }
 });

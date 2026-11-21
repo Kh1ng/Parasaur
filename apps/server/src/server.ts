@@ -2642,14 +2642,21 @@ export function createServer(
     }
   });
 
-  app.post('/api/loop/stop', mutation('loop.stop'), (req, res) => {
+  app.post('/api/loop/stop', mutation('loop.stop'), async (req, res) => {
     const profile = typeof req.body?.profile === 'string' ? req.body.profile : defaultProfile();
-    const result = stopLoop(profile);
-    if (!result.stopped) {
-      res.status(409).json(result);
-      return;
+    try {
+      const result = await stopLoop(profile);
+      if (!result.stopped) {
+        res.status(409).json(result);
+        return;
+      }
+      res.json(result);
+    } catch (error) {
+      res.status(502).json({
+        error: 'Failed to stop gah loop',
+        message: error instanceof Error ? error.message : String(error)
+      });
     }
-    res.json(result);
   });
 
   app.get('/api/events', async (req, res) => {
