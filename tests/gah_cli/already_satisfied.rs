@@ -119,11 +119,12 @@ exit 0
 }
 
 /// A profile that may not close its own issues parks the work for a person.
-/// The issue has to say so, and the recorded reason has to be about the
-/// already-satisfied claim: it used to be recorded as a publishing restriction,
-/// which the dashboard reads as "may not publish a pull request here".
+/// The recorded reason has to be about the already-satisfied claim: it used to
+/// be recorded as a publishing restriction, which the dashboard reads as "may
+/// not publish a pull request here". The handoff writes nothing to the
+/// provider.
 #[test]
-fn dispatch_fix_already_satisfied_without_closure_rights_explains_the_handoff() {
+fn dispatch_fix_already_satisfied_without_closure_rights_records_why_it_was_parked() {
     let tmp = test_tempdir();
     let (_repo, home, cfg) = setup_fix_dispatch_repo(&tmp, "validation_commands = [\"true\"]\n");
     let ledger_path = tmp.path().join("ledger.jsonl");
@@ -178,8 +179,10 @@ exit 0
         .assert()
         .success();
 
-    let calls = fs::read_to_string(fake_bin.join("gh.calls")).unwrap();
-    assert_eq!(calls, "comment\n", "the issue is explained and left open");
+    assert!(
+        !fake_bin.join("gh.calls").exists(),
+        "the issue is neither commented on nor closed"
+    );
     let text = fs::read_to_string(&ledger_path).unwrap();
     let entry: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
     assert_eq!(entry["failure_class"], "already_satisfied");
