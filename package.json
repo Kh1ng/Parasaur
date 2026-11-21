@@ -38,6 +38,6 @@
   ],
   "overrides": {
     "postcss-selector-parser": "^7.1.6",
-    "qs": "^6.16.0"
+    "qs": "^6.16.1"
   }
 }
