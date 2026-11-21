@@ -1816,7 +1816,8 @@ export interface LoopStatus {
 export function findExternalLoopPid(profile: string): number | undefined {
   const escaped = profile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const result = spawnSync('pgrep', ['-f', `gah loop --profile ${escaped}( |$)`], {
-    encoding: 'utf8'
+    encoding: 'utf8',
+    timeout: 2000
   });
   const first = result.stdout?.split('\n').map((l) => parseInt(l, 10)).find((n) => Number.isFinite(n));
   return first;
@@ -1902,30 +1903,61 @@ export function loopSystemctlArgs(enabled: boolean, profile: string): string[] {
  * only if it was the one that changed enablement -- never if the unit was
  * already enabled (a crashed loop that is already boot-persisted must stay
  * boot-persisted). */
-function loopIsEnabled(profile: string): boolean {
-  const result = spawnSync(
-    'systemctl',
-    ['--user', 'is-enabled', loopServiceName(profile), '--no-pager'],
-    { encoding: 'utf8', env: systemdUserEnv() }
-  );
-  return !result.error && result.status === 0 && (result.stdout ?? '').trim() === 'enabled';
+/** What systemctl itself says about boot enablement. startLoop rolls back
+ * only on `disabled`, so that word is trusted only when systemctl printed it:
+ * a lookup that could not run or timed out, and every state other than the
+ * two plain ones (static, masked, indirect, ...), is `unknown`, and a unit in
+ * an unknown state is never disabled on a guess. */
+function loopEnablement(profile: string): Promise<'enabled' | 'disabled' | 'unknown'> {
+  const args = ['--user', 'is-enabled', loopServiceName(profile), '--no-pager'];
+  return new Promise(resolvePromise => {
+    // systemctl prints the state and exits non-zero for `disabled`, so the
+    // word is read whether or not the call reports an error.
+    execFile('systemctl', args, { encoding: 'utf8', env: systemdUserEnv(), timeout: 2000, maxBuffer: 16 * 1024 }, (error, stdout) => {
+      const state = error?.killed ? '' : String(stdout ?? '').trim();
+      resolvePromise(state === 'enabled' || state === 'disabled' ? state : 'unknown');
+    });
+  });
 }
 
-function setLoopEnabled(enabled: boolean, profile: string): { ok: boolean; error?: string } {
+/** The systemctl calls of starts and stops for one profile run one at a time,
+ * in the order they arrived. They used to be serialised by blocking the whole
+ * process; without that, a start that fails late could roll back a start that
+ * had since succeeded. Every call made inside has a deadline, so a queued
+ * stop always gets its turn. Other profiles and other requests proceed. */
+const loopLifecycle = new Map<string, Promise<unknown>>();
+function oneAtATime<T>(profile: string, operation: () => Promise<T>): Promise<T> {
+  const previous = loopLifecycle.get(profile) ?? Promise.resolve();
+  const next = previous.then(operation, operation);
+  const settled = next.catch(() => undefined);
+  loopLifecycle.set(profile, settled);
+  void settled.then(() => { if (loopLifecycle.get(profile) === settled) loopLifecycle.delete(profile); });
+  return next;
+}
+
+/** The loop unit's TimeoutStopSec is 60 seconds; allow that and a margin. */
+const LOOP_CONTROL_TIMEOUT_MS = 75_000;
+
+/** `enable --now` and `disable --now` wait for the unit to settle, and a loop
+ * that is finishing work can take its whole stop timeout. This process also
+ * answers the workers, so the wait must not hold its event loop, and a hung
+ * user bus must not hold the request open for ever. When the deadline passes
+ * systemd carries on with the job; only the wait for it is given up. */
+function setLoopEnabled(enabled: boolean, profile: string): Promise<{ ok: boolean; error?: string }> {
   const args = loopSystemctlArgs(enabled, profile);
-  const result = spawnSync('systemctl', args, {
-    encoding: 'utf8',
-    env: systemdUserEnv()
+  return new Promise(resolvePromise => {
+    execFile('systemctl', args, { encoding: 'utf8', env: systemdUserEnv(), timeout: LOOP_CONTROL_TIMEOUT_MS, maxBuffer: 64 * 1024 }, (error, stdout, stderr) => {
+      if (!error) return resolvePromise({ ok: true });
+      if (error.killed) {
+        return resolvePromise({
+          ok: false,
+          error: `systemctl ${args.join(' ')} did not finish within ${LOOP_CONTROL_TIMEOUT_MS / 1000} seconds; check the unit with systemctl --user status ${loopServiceName(profile)}.`
+        });
+      }
+      const detail = [stderr, stdout].filter(Boolean).join('\n').trim();
+      resolvePromise({ ok: false, error: detail || error.message });
+    });
   });
-  if (!result.error && result.status === 0) return { ok: true };
-  const detail = [result.stderr, result.stdout].filter(Boolean).join('\n').trim();
-  return {
-    ok: false,
-    error:
-      detail ||
-      result.error?.message ||
-      `systemctl ${args.join(' ')} exited with status ${result.status ?? 'unknown'}`
-  };
 }
 
 /** The systemd unit is authoritative. An externally-found loop is surfaced
@@ -1955,6 +1987,8 @@ export interface StartLoopResult {
 }
 
 export async function startLoop(profile: string): Promise<StartLoopResult> {
+  // The configuration read has no deadline of its own, so it stays outside
+  // the queue: a start waiting on it must not hold up a stop.
   const config = getConfigPath(process.env.PARASAUR_CONFIG ?? process.env.PARASAUR_CONFIG_PATH);
   const args = ['config', 'show', '--json', '--full'];
   if (config) args.push('--config', config);
@@ -1967,10 +2001,14 @@ export async function startLoop(profile: string): Promise<StartLoopResult> {
   if (module && module.factory_enabled === false) {
     return { started: false, error: 'Factory automation is disabled. Enable it in this computer’s Settings.' };
   }
+  return oneAtATime(profile, () => startLoopNow(profile));
+}
+
+async function startLoopNow(profile: string): Promise<StartLoopResult> {
   const existing = getLoopStatus(profile);
   if (existing.running) {
     if (existing.owner === 'systemd') {
-      const enabled = setLoopEnabled(true, profile);
+      const enabled = await setLoopEnabled(true, profile);
       if (!enabled.ok) return { started: false, pid: existing.pid, error: enabled.error };
     }
     return {
@@ -1989,17 +2027,17 @@ export async function startLoop(profile: string): Promise<StartLoopResult> {
   // clicks Start -> enable --now fails to activate -> rolling back with
   // disable would kill the next-boot start too. Record enablement BEFORE we
   // change it and only revert if this call is what changed it.
-  const wasEnabled = loopIsEnabled(profile);
+  const wasDisabled = (await loopEnablement(profile)) === 'disabled';
 
-  const result = setLoopEnabled(true, profile);
+  const result = await setLoopEnabled(true, profile);
   if (!result.ok) {
-    if (!wasEnabled) setLoopEnabled(false, profile);
+    if (wasDisabled) await setLoopEnabled(false, profile);
     return { started: false, error: result.error };
   }
 
   const status = getLoopStatus(profile);
   if (!status.running || status.owner !== 'systemd') {
-    if (!wasEnabled) setLoopEnabled(false, profile);
+    if (wasDisabled) await setLoopEnabled(false, profile);
     return {
       started: false,
       error: `${loopServiceName(profile)} accepted the start request but is not active; inspect it with systemctl --user status ${loopServiceName(profile)}.`
@@ -2014,7 +2052,11 @@ export interface StopLoopResult {
 }
 
 /** Graceful operator stop. Disabling the unit persists the stop across boot. */
-export function stopLoop(profile: string): StopLoopResult {
+export function stopLoop(profile: string): Promise<StopLoopResult> {
+  return oneAtATime(profile, () => stopLoopNow(profile));
+}
+
+async function stopLoopNow(profile: string): Promise<StopLoopResult> {
   const status = getLoopStatus(profile);
   if (status.owner !== 'systemd') {
     return {
@@ -2023,7 +2065,7 @@ export function stopLoop(profile: string): StopLoopResult {
     };
   }
   try {
-    const result = setLoopEnabled(false, profile);
+    const result = await setLoopEnabled(false, profile);
     if (!result.ok) return { stopped: false, error: result.error };
     return { stopped: true };
   } catch (error) {

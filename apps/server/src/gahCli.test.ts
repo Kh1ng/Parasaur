@@ -407,7 +407,7 @@ test('loop lifecycle uses systemd enablement as the durable boot policy', () => 
   ]);
 });
 
-test('stop disables an enabled unit even when it is already inactive', () => {
+test('stop disables an enabled unit even when it is already inactive', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gah-stop-loop-'));
   const log = join(dir, 'systemctl.log');
   const originalPath = process.env.PATH;
@@ -424,12 +424,174 @@ printf '%s\n' "$*" >> "$SYSTEMCTL_LOG"
   chmodSync(join(dir, 'systemctl'), 0o755);
   chmodSync(join(dir, 'pgrep'), 0o755);
   try {
-    assert.deepEqual(stopLoop('sportsball'), { stopped: true });
+    assert.deepEqual(await stopLoop('sportsball'), { stopped: true });
     assert.match(readFileSync(log, 'utf8'), /disable --now gah-loop@sportsball\.service/);
   } finally {
     if (originalPath === undefined) delete process.env.PATH;
     else process.env.PATH = originalPath;
     delete process.env.SYSTEMCTL_LOG;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('stopping a loop leaves the server free to answer other requests', { skip: process.platform === 'win32' }, async () => {
+  // `disable --now` waits for the unit to stop, which can take its whole stop
+  // timeout. The same process answers the workers, so that wait must not hold
+  // the event loop. Here the fake systemctl finishes only once a timer in this
+  // process has run: a stop that blocks the process can never complete.
+  const dir = mkdtempSync(join(tmpdir(), 'gah-stop-loop-slow-'));
+  const released = join(dir, 'released');
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${dir}:${originalPath ?? ''}`;
+  writeFileSync(join(dir, 'systemctl'), `#!/bin/sh
+if [ "$2" = "show" ]; then
+  printf 'LoadState=loaded\nActiveState=active\nMainPID=4242\n'
+  exit 0
+fi
+tries=0
+while [ ! -e '${released}' ]; do
+  tries=$((tries + 1))
+  [ "$tries" -lt 600 ] || exit 1
+  sleep 0.1
+done
+`);
+  writeFileSync(join(dir, 'pgrep'), '#!/bin/sh\nexit 1\n');
+  chmodSync(join(dir, 'systemctl'), 0o755);
+  chmodSync(join(dir, 'pgrep'), 0o755);
+  try {
+    const release = setTimeout(() => writeFileSync(released, ''), 50);
+    const stopped = await stopLoop('sportsball');
+    clearTimeout(release);
+    assert.deepEqual(stopped, { stopped: true });
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/** A fake systemctl for two overlapping starts. `enable` fails the first time
+ * it is called and succeeds afterwards; the unit reads as active once an
+ * enable has succeeded and until a disable. Every lifecycle call is logged.
+ * The failing enable holds on for two seconds or until a second enable has
+ * begun, whichever comes first: if starts can overlap, the second one is
+ * given every chance to succeed before the first reports its failure. */
+function overlappingStartFixture(isEnabledBody: string) {
+  const restoreGah = pinFakeGah(`echo '{"factory_enabled":true}'`);
+  const dir = mkdtempSync(join(tmpdir(), 'gah-start-loop-overlap-'));
+  const log = join(dir, 'systemctl.log');
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${dir}:${originalPath ?? ''}`;
+  writeFileSync(join(dir, 'systemctl'), `#!/bin/sh
+case "$2" in
+  show)
+    if [ -e '${dir}/active' ]; then printf 'LoadState=loaded\nActiveState=active\nMainPID=4242\nActiveEnterTimestamp=now\n'
+    else printf 'LoadState=loaded\nActiveState=inactive\nMainPID=0\n'; fi
+    exit 0
+    ;;
+  is-enabled)
+    ${isEnabledBody}
+    ;;
+  enable)
+    echo enable >> '${log}'
+    if [ ! -e '${dir}/first-enable-done' ]; then
+      : > '${dir}/first-enable-done'
+      tries=0
+      while [ ! -e '${dir}/second-enable-begun' ] && [ "$tries" -lt 20 ]; do
+        tries=$((tries + 1))
+        sleep 0.1
+      done
+      echo "Failed to activate" >&2
+      exit 1
+    fi
+    : > '${dir}/second-enable-begun'
+    : > '${dir}/active'
+    exit 0
+    ;;
+  disable)
+    echo disable >> '${log}'
+    rm -f '${dir}/active'
+    exit 0
+    ;;
+esac
+`);
+  writeFileSync(join(dir, 'pgrep'), '#!/bin/sh\nexit 1\n');
+  chmodSync(join(dir, 'systemctl'), 0o755);
+  chmodSync(join(dir, 'pgrep'), 0o755);
+  return {
+    calls: () => readFileSync(log, 'utf8').trim().split('\n'),
+    active: () => existsSync(join(dir, 'active')),
+    restore() {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      restoreGah();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+}
+
+test('a start that fails cannot undo a later start that succeeded', { skip: process.platform === 'win32' }, async () => {
+  const fixture = overlappingStartFixture('echo disabled; exit 1');
+  try {
+    // Either request may reach systemctl first; one fails there, one succeeds.
+    const results = await Promise.all([startLoop('sportsball'), startLoop('sportsball')]);
+    assert.deepEqual(results.map(result => result.started).sort(), [false, true]);
+    // The failed start rolls back before the other begins, never after it.
+    assert.deepEqual(fixture.calls(), ['enable', 'disable', 'enable']);
+    assert.equal(fixture.active(), true);
+  } finally {
+    fixture.restore();
+  }
+});
+
+test('a failed start leaves the unit alone when its enablement could not be read', { skip: process.platform === 'win32' }, async () => {
+  // The lookup outlasts its two second deadline, so nothing is known about
+  // whether the unit was enabled for boot. Rolling back could remove that.
+  const fixture = overlappingStartFixture("exec sleep 5");
+  try {
+    const result = await startLoop('sportsball');
+    assert.equal(result.started, false);
+    assert.deepEqual(fixture.calls(), ['enable']);
+  } finally {
+    fixture.restore();
+  }
+});
+
+test('a start still reading its configuration does not hold up a stop', { skip: process.platform === 'win32' }, async () => {
+  // The configuration read has no deadline. It stays outside the per-profile
+  // queue, so a stop requested meanwhile runs at once. Here the read finishes
+  // only when the test lets it, after the stop has returned.
+  const dir = mkdtempSync(join(tmpdir(), 'gah-start-loop-config-'));
+  const released = join(dir, 'released');
+  const restoreGah = pinFakeGah(`tries=0
+while [ ! -e '${released}' ] && [ "$tries" -lt 100 ]; do
+  tries=$((tries + 1))
+  sleep 0.1
+done
+echo '{"factory_enabled":false}'`);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${dir}:${originalPath ?? ''}`;
+  writeFileSync(join(dir, 'systemctl'), `#!/bin/sh
+if [ "$2" = "show" ]; then
+  printf 'LoadState=loaded\nActiveState=active\nMainPID=4242\n'
+fi
+exit 0
+`);
+  writeFileSync(join(dir, 'pgrep'), '#!/bin/sh\nexit 1\n');
+  chmodSync(join(dir, 'systemctl'), 0o755);
+  chmodSync(join(dir, 'pgrep'), 0o755);
+  try {
+    let startSettled = false;
+    const start = startLoop('sportsball').finally(() => { startSettled = true; });
+    const stopped = await stopLoop('sportsball');
+    assert.deepEqual(stopped, { stopped: true });
+    assert.equal(startSettled, false, 'the stop returned while the start was still reading its configuration');
+    writeFileSync(released, '');
+    assert.equal((await start).started, false);
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    restoreGah();
     rmSync(dir, { recursive: true, force: true });
   }
 });
