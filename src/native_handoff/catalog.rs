@@ -269,41 +269,57 @@ mod tests {
         let _guard = crate::test_support::ExecGuard::new();
         let (_dir, cfg, entry, planned) = unpublished_fix();
         let profile = &cfg.profiles["test"];
-        let offered_after = |earlier: &crate::ledger::LedgerEntry| {
-            crate::dispatch::publication_recovery::verify(
-                &planned,
-                &[entry.clone(), earlier.clone()],
-                profile,
-                "worker",
-            )
-            .is_ok()
+        let offered_after = |earlier: &[&crate::ledger::LedgerEntry]| {
+            let mut history = vec![entry.clone()];
+            history.extend(earlier.iter().map(|&retry| retry.clone()));
+            crate::dispatch::publication_recovery::verify(&planned, &history, profile, "worker")
+                .is_ok()
         };
-        // An earlier publication retry of the same fix, as its job records it.
-        let mut retry = entry.clone();
-        retry.session_id = Some(uuid::Uuid::new_v4().to_string());
-        retry.dispatch_reason = Some("recover_publication".into());
-        retry.commit_created = false;
+        // An earlier publication retry of the same fix. Its job records the
+        // branch and the validation result only once it has revalidated the
+        // preserved commit.
+        let retry = |error: &str, revalidated: bool| {
+            let mut retry = entry.clone();
+            retry.session_id = Some(uuid::Uuid::new_v4().to_string());
+            retry.dispatch_reason = Some("recover_publication".into());
+            retry.commit_created = false;
+            retry.error_summary = Some(error.into());
+            if !revalidated {
+                retry.branch = None;
+                retry.validation_result = None;
+            }
+            retry
+        };
 
         // Other work merged first, so the preserved commit no longer sits on
         // the target. Repeating the same retry cannot change that; it used to
         // be offered until the issue was parked for an operator.
-        let mut target_moved = retry.clone();
-        target_moved.error_summary =
-            Some("Preserved implementation needs validation against a changed target".into());
-        assert!(!offered_after(&target_moved));
+        let target_moved = retry(
+            "Preserved implementation needs validation against a changed target",
+            false,
+        );
+        assert!(!offered_after(&[&target_moved]));
 
         // Central's permission did not arrive this time either: nothing was
         // decided about the commit, so it is tried again.
-        let mut held = retry.clone();
-        held.error_summary = Some("Native operation authority is held".into());
-        assert!(offered_after(&held));
+        let held = retry("Native operation authority is held", true);
+        assert!(offered_after(&[&held]));
+        assert!(!offered_after(&[&held, &target_moved]));
 
         // The branch was pushed and only the merge request is missing. What
-        // remains is safe to repeat and must not be redone from scratch.
-        let mut pushed = retry.clone();
+        // remains is safe to repeat and must not be redone from scratch,
+        // which would leave that branch on the remote with no merge request.
+        let mut pushed = retry("Provider request failed", true);
         pushed.push_attempted = true;
-        pushed.error_summary = Some("Provider request failed".into());
-        assert!(offered_after(&pushed));
+        pushed.push_succeeded = true;
+        pushed.mr_attempted = true;
+        assert!(offered_after(&[&pushed]));
+        // That holds when a later retry then fails before it pushes again,
+        // for whatever reason.
+        let lookup_failed = retry("Provider request failed", false);
+        assert!(offered_after(&[&pushed, &lookup_failed]));
+        assert!(offered_after(&[&pushed, &target_moved]));
+        assert!(offered_after(&[&target_moved, &pushed]));
     }
     #[test]
     fn unavailable_worker_accounts_cannot_borrow_a_coordinators_executable_or_other_model() {

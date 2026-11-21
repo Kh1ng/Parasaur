@@ -40,6 +40,10 @@ pub(super) fn source<'a>(
     {
         return None;
     }
+    // What earlier recoveries of the implementation reached below did. The
+    // walk is newest first, so they are all seen before it.
+    let mut refused = false;
+    let mut pushed = false;
     for e in entries.iter().rev().filter(|e| {
         e.profile == args.profile
             && e.work_id == args.work_id
@@ -51,20 +55,25 @@ pub(super) fn source<'a>(
             return None;
         }
         if e.dispatch_reason.as_deref() == Some(REASON) {
-            // An earlier recovery of this implementation. One that only
-            // lacked central's permission, or that had begun publishing, is
-            // repeated: what remains is idempotent. One refused before it
-            // published anything cannot succeed by being repeated. Most
-            // often other work has merged and the preserved commit no longer
-            // sits on the target. Offering it again failed the same way
-            // until the issue was parked as a repeated setup failure with
-            // finished work behind it, so leave it to an ordinary retry.
-            if e.push_attempted || authority_held(e) {
-                continue;
-            }
-            return None;
+            // A recovery that only lacked central's permission decided
+            // nothing and is repeated. One refused before it published
+            // anything cannot succeed by being repeated; most often other
+            // work has merged and the preserved commit no longer sits on
+            // the target.
+            pushed |= e.push_attempted;
+            refused |= !e.push_attempted && !authority_held(e);
+            continue;
         }
         if e.commit_created || e.push_attempted || e.mr_attempted {
+            // A refused recovery used to be offered again unchanged until
+            // the issue was parked as a repeated setup failure with finished
+            // work behind it. Leave the issue to an ordinary retry instead,
+            // unless any recovery got as far as pushing: the branch is then
+            // on the remote without its merge request, what remains is safe
+            // to repeat, and redoing the work would orphan that branch.
+            if refused && !pushed {
+                return None;
+            }
             let checkpoint =
                 e.resumable_checkpoint_sha.is_some() && e.resumable_checkpoint_branch == e.branch;
             let before_push = !e.push_attempted && !e.mr_attempted && authority_held(e);
