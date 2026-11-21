@@ -205,7 +205,7 @@ fn bounded_handoff(context: BoundedHandoffContext<'_>, reason: &str) -> Result<b
     record_already_satisfied(ledger);
     ledger.human_required = true;
     ledger.human_required_reason_code = Some(
-        crate::controller::HumanRequiredReason::PublishingRestriction
+        crate::controller::HumanRequiredReason::AlreadySatisfiedUnconfirmed
             .as_str()
             .into(),
     );

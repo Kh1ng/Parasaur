@@ -1471,11 +1471,13 @@ export type HumanRequiredReasonCode =
   | 'review_ceiling_exhausted'
   | 'merge_policy'
   | 'publishing_restriction'
+  | 'already_satisfied_unconfirmed'
   | 'configuration_infra'
   | 'fix_retry_cap_exceeded'
   | 'merge_retry_cap_exceeded'
   | 'repeated_setup_failure'
   | 'stuck_loop_gate'
+  | 'terminal_harness_failure'
   | 'external_api_approval_required'
   | 'unknown';
 

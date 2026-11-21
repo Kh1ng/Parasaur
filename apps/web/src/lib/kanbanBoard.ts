@@ -193,6 +193,7 @@ function plainBlock(blocker: Blocker | undefined, ticket: AvailableTicket | null
     case 'review_evidence_gate': return 'Approved by review, but it needs your sign-off before it can merge';
     case 'stuck_loop_gate': return 'Stuck: the same step repeated with no change, so it was stopped';
     case 'publishing_restriction': return 'Finished, but it may not publish a pull request here';
+    case 'already_satisfied_unconfirmed': return 'The agent says this is already done; close the issue, or say what is missing';
     case 'fix_retry_cap_exceeded': return `Parked: past the fix limit (${fixMax} fixes used)`;
     case null: return 'Needs a person to decide';
     default: return sentence(humanize(code));

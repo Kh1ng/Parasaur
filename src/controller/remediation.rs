@@ -250,6 +250,15 @@ fn publishing_restriction_actions(
     actions
 }
 
+fn already_satisfied_actions(profile_name: &str, work_id: Option<&str>) -> Vec<RemediationAction> {
+    let mut actions = vec![RemediationAction::manual_review(
+        "Check whether the target branch already does what the issue asks",
+        "Close the issue in the provider UI/API if it is done; otherwise say in the issue what is still missing",
+    )];
+    actions.extend(inspect_actions(profile_name, work_id, None));
+    actions
+}
+
 fn availability_actions(
     profile_name: &str,
     backend: Option<&str>,
@@ -391,6 +400,15 @@ pub fn plan_remediation(context: RemediationContext<'_>) -> RemediationPlan {
             RemediationAuthority::ProfileMaintainer,
             "Publishing is disabled for this profile, so GAH cannot safely publish or merge automatically",
             publishing_restriction_actions(profile_name, work_id),
+        ),
+        HumanRequiredReason::AlreadySatisfiedUnconfirmed => no_auto(
+            profile_name,
+            work_id,
+            reference,
+            reason_code,
+            RemediationAuthority::Operator,
+            "The agent reported this work as already done and Parasaur left the issue open, so a person has to confirm it",
+            already_satisfied_actions(profile_name, work_id),
         ),
         HumanRequiredReason::PublicationFailed => no_auto(
             profile_name,
@@ -561,6 +579,10 @@ mod tests {
             (
                 HumanRequiredReason::PublishingRestriction,
                 RemediationAuthority::ProfileMaintainer,
+            ),
+            (
+                HumanRequiredReason::AlreadySatisfiedUnconfirmed,
+                RemediationAuthority::Operator,
             ),
         ];
 

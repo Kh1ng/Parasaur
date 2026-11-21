@@ -50,6 +50,11 @@ pub enum HumanRequiredReason {
     /// Publishing restriction: profile has PR/MR creation disabled
     /// (allow_pull_request_creation == false).
     PublishingRestriction,
+    /// The agent reported the work as already done, and the issue was left
+    /// open: the claim could not be confirmed well enough, or this profile may
+    /// not close its own issues. A person closes the issue or says what is
+    /// still missing. No change was published and none is pending.
+    AlreadySatisfiedUnconfirmed,
     /// Configuration or infrastructure failure at the profile level (sync
     /// failure, invalid config, required infra unavailable, auth failure with no
     /// viable route).
@@ -95,6 +100,7 @@ impl HumanRequiredReason {
             Self::ReviewCeilingExhausted => "review_ceiling_exhausted",
             Self::MergePolicy => "merge_policy",
             Self::PublishingRestriction => "publishing_restriction",
+            Self::AlreadySatisfiedUnconfirmed => "already_satisfied_unconfirmed",
             Self::ConfigurationInfra => "configuration_infra",
             Self::FixRetryCapExceeded => "fix_retry_cap_exceeded",
             Self::MergeRetryCapExceeded => "merge_retry_cap_exceeded",
@@ -119,6 +125,7 @@ impl HumanRequiredReason {
             "review_ceiling_exhausted" => Self::ReviewCeilingExhausted,
             "merge_policy" => Self::MergePolicy,
             "publishing_restriction" => Self::PublishingRestriction,
+            "already_satisfied_unconfirmed" => Self::AlreadySatisfiedUnconfirmed,
             "configuration_infra" => Self::ConfigurationInfra,
             "fix_retry_cap_exceeded" => Self::FixRetryCapExceeded,
             "merge_retry_cap_exceeded" => Self::MergeRetryCapExceeded,
@@ -142,6 +149,7 @@ impl HumanRequiredReason {
             Self::ReviewCeilingExhausted,
             Self::MergePolicy,
             Self::PublishingRestriction,
+            Self::AlreadySatisfiedUnconfirmed,
             Self::ConfigurationInfra,
             Self::FixRetryCapExceeded,
             Self::MergeRetryCapExceeded,

@@ -117,3 +117,79 @@ exit 0
     assert_eq!(entry["mr_attempted"], false);
     assert_eq!(entry["attempts"][0]["failure_class"], "already_satisfied");
 }
+
+/// A profile that may not close its own issues parks the work for a person.
+/// The recorded reason has to be about the already-satisfied claim: it used to
+/// be recorded as a publishing restriction, which the dashboard reads as "may
+/// not publish a pull request here". The handoff writes nothing to the
+/// provider.
+#[test]
+fn dispatch_fix_already_satisfied_without_closure_rights_records_why_it_was_parked() {
+    let tmp = test_tempdir();
+    let (_repo, home, cfg) = setup_fix_dispatch_repo(&tmp, "validation_commands = [\"true\"]\n");
+    let ledger_path = tmp.path().join("ledger.jsonl");
+    let fake_bin = tmp.path().join("bin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    make_fake_bin_with_body(
+        &fake_bin,
+        "codex",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"turn.started"}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"PARASAUR_DISPOSITION: already_satisfied\nfile:README.md\ntest:true"}}'
+printf '%s\n' '{"type":"turn.completed"}'
+exit 0
+"#,
+    );
+    make_fake_bin_with_body(
+        &fake_bin,
+        "gh",
+        r###"#!/bin/sh
+case "$1 $2 $3 $4" in
+  "api --method GET repos/owner/real/issues/42") printf '{"number":42,"title":"Already complete","body":"Acceptance criteria already met","labels":[],"user":{"login":"owner","type":"User"},"state":"open"}\n' ;;
+  "api --method GET repos/owner/real/issues/42/comments") printf '[]\n' ;;
+  "api --method POST repos/owner/real/issues/42/comments") echo comment >> "$0.calls" ;;
+  "issue close 42 --repo") echo close >> "$0.calls" ;;
+  "pr create"*) echo "unexpected PR creation" >&2; exit 1 ;;
+  *) echo "unexpected gh invocation: $@" >&2; exit 1 ;;
+esac
+exit 0
+"###,
+    );
+
+    bin()
+        .args([
+            "dispatch",
+            "--profile",
+            "real",
+            "--mode",
+            "fix",
+            "--config-path",
+            cfg.to_str().unwrap(),
+            "--target",
+            "#42",
+            "--retries",
+            "0",
+            "--skip-validation-gate",
+            "--issue-intake-override",
+        ])
+        .env("PATH", prepend_path(&fake_bin))
+        .env("HOME", &home)
+        .env("GITHUB_TOKEN", "token")
+        .env("PARASAUR_LEDGER_PATH", &ledger_path)
+        .assert()
+        .success();
+
+    assert!(
+        !fake_bin.join("gh.calls").exists(),
+        "the issue is neither commented on nor closed"
+    );
+    let text = fs::read_to_string(&ledger_path).unwrap();
+    let entry: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    assert_eq!(entry["failure_class"], "already_satisfied");
+    assert_eq!(entry["human_required"], true);
+    assert_eq!(
+        entry["human_required_reason_code"],
+        "already_satisfied_unconfirmed"
+    );
+    assert_eq!(entry["mr_attempted"], false);
+}
