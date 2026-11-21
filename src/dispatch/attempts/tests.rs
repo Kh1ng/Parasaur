@@ -433,7 +433,22 @@ fn a_route_is_excluded_by_its_failure_only_until_it_delivers_the_work() {
     let only_worker = HashSet::from([route("worker-model")]);
     assert_eq!(excluded(std::slice::from_ref(&failed)), only_worker);
     assert_eq!(excluded(&[delivered.clone(), failed.clone()]), only_worker);
-    assert!(excluded(&[failed, delivered]).is_empty());
+    assert!(excluded(&[failed, delivered.clone()]).is_empty());
+
+    // Anything short of a committed change that passed validation is not a
+    // delivery, and neither is a dispatch that ended in the agent's failure.
+    let mut unvalidated = delivered.clone();
+    unvalidated.validation_result = Some("failed".into());
+    assert_eq!(excluded(&[unvalidated]), only_worker);
+    let mut uncommitted = delivered.clone();
+    uncommitted.commit_created = false;
+    assert_eq!(excluded(&[uncommitted]), only_worker);
+    let mut ended_badly = delivered.clone();
+    ended_badly.failure_class = Some("agent_failure".into());
+    assert_eq!(excluded(&[ended_badly]), only_worker);
+    let mut last_attempt_failed = delivered;
+    last_attempt_failed.attempts[1].failure_class = Some("context_limit_exceeded".into());
+    assert_eq!(excluded(&[last_attempt_failed]), only_worker);
 
     // Only the route that delivered is cleared. Another route that failed
     // earlier in the same dispatch stays excluded.
