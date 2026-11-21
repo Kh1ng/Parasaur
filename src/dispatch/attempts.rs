@@ -1280,37 +1280,54 @@ fn is_implementation_execution_mode(mode: &str) -> bool {
         == Ok(crate::job_kind::JobFamily::ImproveLike)
 }
 
+/// A route that failed on this work for a reason of its own is not offered
+/// the same work again, so the next dispatch goes to another route. Call this
+/// for the work's entries oldest first: the exclusion ends once the route has
+/// delivered the work. A first attempt that made no progress, followed by an
+/// attempt on the same route that produced the change and passed validation,
+/// used to leave that route excluded. A fleet with one route could then never
+/// repair its own merge request after review, and nothing told the operator.
 pub(super) fn record_genuine_failure_routes(state: &mut RoutingRuntimeState, entry: &LedgerEntry) {
-    let mut recorded_attempt = false;
-    for attempt in &entry.attempts {
-        if attempt
+    let route = |attempt: &crate::ledger::AttemptRecord| {
+        recorded_attempt_identity(entry, attempt.attempt_number)
+            .map(CandidateIdentity::from_execution_identity)
+            .unwrap_or_else(|| {
+                CandidateIdentity::new(attempt.backend.as_str(), attempt.effective_model.as_deref())
+            })
+    };
+    let failed = |attempt: &crate::ledger::AttemptRecord| {
+        attempt
             .failure_class
             .as_deref()
             .is_some_and(crate::controller::is_genuine_agent_failure)
-        {
-            let key = recorded_attempt_identity(entry, attempt.attempt_number)
-                .map(CandidateIdentity::from_execution_identity)
-                .unwrap_or_else(|| {
-                    CandidateIdentity::new(
-                        attempt.backend.as_str(),
-                        attempt.effective_model.as_deref(),
-                    )
-                });
-            state.attempted.insert(key);
+    };
+    let mut recorded_attempt = false;
+    for attempt in &entry.attempts {
+        if failed(attempt) {
+            state.attempted.insert(route(attempt));
             recorded_attempt = true;
         }
     }
-    if !recorded_attempt
-        && entry
-            .failure_class
-            .as_deref()
-            .is_some_and(crate::controller::is_genuine_agent_failure)
-        && !entry.effective_backend.is_empty()
-    {
+    let dispatch_failed = entry
+        .failure_class
+        .as_deref()
+        .is_some_and(crate::controller::is_genuine_agent_failure);
+    if !recorded_attempt && dispatch_failed && !entry.effective_backend.is_empty() {
         state.attempted.insert(CandidateIdentity::new(
             entry.effective_backend.as_str(),
             entry.effective_model.as_deref(),
         ));
+    }
+    // The last attempt is the one whose change was committed and validated.
+    // A later failure that is not the agent's (publishing, the harness) says
+    // nothing about what the route can do.
+    if !dispatch_failed
+        && entry.commit_created
+        && entry.validation_result.as_deref() == Some("passed")
+    {
+        if let Some(delivered) = entry.attempts.last().filter(|attempt| !failed(attempt)) {
+            state.attempted.remove(&route(delivered));
+        }
     }
 }
 
