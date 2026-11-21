@@ -341,6 +341,7 @@ mod tests {
         // A push that was attempted and failed counts too: the ledger does
         // not say how far it got.
         pushed_itself.push_succeeded = false;
+        pushed_itself.mr_attempted = false;
         assert!(offered(&pushed_itself, &[&target_moved]));
     }
     #[test]

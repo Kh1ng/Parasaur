@@ -56,10 +56,13 @@ pub(super) fn source<'a>(
         }
         if e.dispatch_reason.as_deref() == Some(REASON) {
             // A recovery that only lacked central's permission decided
-            // nothing and is repeated. One refused before it published
-            // anything cannot succeed by being repeated; most often other
-            // work has merged and the preserved commit no longer sits on
-            // the target.
+            // nothing and is repeated. One that failed any other way before
+            // publishing is treated as refused and is not repeated. Most
+            // often other work has merged and the preserved commit no longer
+            // sits on the target, which no repetition can change. A passing
+            // provider error is treated the same on purpose, not told apart
+            // by its message: redoing the work once costs less than
+            // repeating a refusal until the issue is parked.
             pushed |= e.push_attempted;
             refused |= !e.push_attempted && !authority_held(e);
             continue;
