@@ -371,6 +371,84 @@ fn implementation_escalation_ignores_review_failure_routes() {
         .attempted
         .contains(&CandidateIdentity::new("codex", Some("worker-model"))));
 }
+#[test]
+fn a_route_is_excluded_by_its_failure_only_until_it_delivers_the_work() {
+    use std::collections::HashSet;
+    let tmp = tempfile::tempdir().unwrap();
+    let prof = profile(tmp.path());
+    let route = |model: &str| CandidateIdentity::new("codex", Some(model));
+    let attempt = |number: u32, model: &str, failure: Option<&str>| crate::ledger::AttemptRecord {
+        attempt_number: number,
+        backend: "codex".into(),
+        effective_model: Some(model.into()),
+        failure_class: failure.map(str::to_string),
+        ..Default::default()
+    };
+    let dispatch = |attempts: Vec<crate::ledger::AttemptRecord>, delivered: bool| {
+        let mut entry = LedgerEntry::new("test", &prof, "codex", "fix", "x", None, None);
+        entry.work_id = Some("ISSUE-42".into());
+        entry.effective_backend = "codex".into();
+        entry.effective_model = Some("worker-model".into());
+        entry.attempts = attempts;
+        if delivered {
+            entry.commit_created = true;
+            entry.validation_result = Some("passed".into());
+        }
+        entry
+    };
+    let mut current = LedgerEntry::new("test", &prof, "auto", "fix", "x", None, None);
+    current.work_id = Some("ISSUE-42".into());
+    let excluded =
+        |history: &[LedgerEntry]| routing_runtime_state_from_entries(history, &current).attempted;
+
+    // One dispatch: the first attempt changed nothing, the second produced
+    // the change that passed validation. A later repair of the same work
+    // must still be able to use that route; with one route it had nowhere
+    // else to go and was deferred for ever.
+    let delivered = dispatch(
+        vec![
+            attempt(1, "worker-model", Some("agent_no_progress")),
+            attempt(2, "worker-model", None),
+        ],
+        true,
+    );
+    assert!(excluded(std::slice::from_ref(&delivered)).is_empty());
+
+    // The same when the validated change then failed to publish: that
+    // failure is the harness's, not the route's.
+    let mut unpublished = delivered.clone();
+    unpublished.failure_class = Some("harness_error".into());
+    assert!(excluded(&[unpublished]).is_empty());
+
+    // A dispatch that never delivered excludes the route, before or after
+    // a delivery; only a delivery that comes later lifts it.
+    let mut failed = dispatch(
+        vec![
+            attempt(1, "worker-model", Some("agent_failure")),
+            attempt(2, "worker-model", Some("agent_no_progress")),
+        ],
+        false,
+    );
+    failed.failure_class = Some("agent_no_progress".into());
+    let only_worker = HashSet::from([route("worker-model")]);
+    assert_eq!(excluded(std::slice::from_ref(&failed)), only_worker);
+    assert_eq!(excluded(&[delivered.clone(), failed.clone()]), only_worker);
+    assert!(excluded(&[failed, delivered]).is_empty());
+
+    // Only the route that delivered is cleared. Another route that failed
+    // earlier in the same dispatch stays excluded.
+    let handed_over = dispatch(
+        vec![
+            attempt(1, "weak-model", Some("agent_failure")),
+            attempt(2, "worker-model", None),
+        ],
+        true,
+    );
+    assert_eq!(
+        excluded(&[handed_over]),
+        HashSet::from([route("weak-model")])
+    );
+}
 fn make_fake_bin(dir: &Path, name: &str) -> std::path::PathBuf {
     let path = dir.join(name);
     fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
