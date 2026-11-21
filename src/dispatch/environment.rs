@@ -35,9 +35,12 @@ pub(in crate::dispatch) fn export_profile_env(profile: &Profile, prod: bool) {
 /// current name the file sets itself, or one that was set on its own account,
 /// is left alone.
 ///
-/// This touches only this process's environment. The list handed to backend
-/// and reviewer processes comes from the parser unchanged, so credential
-/// filtering by declared name still sees exactly the names in the file.
+/// The added name lives in this process's environment, so helpers that inherit
+/// it (git, the provider CLIs, validation commands) see it beside the old name
+/// they were already given. Backend and reviewer processes do not: their
+/// environment is cleared and rebuilt from the parsed file, which gains no
+/// names, so credential filtering by declared name sees exactly the names in
+/// the file.
 fn adopt_current_name(key: &str, value: &str, settings: &[(String, String)]) {
     let Some(current) = crate::legacy_settings::current_name(key) else {
         return;
@@ -101,7 +104,7 @@ mod tests {
     }
 
     #[test]
-    fn an_old_name_in_the_env_file_reaches_the_current_name_in_this_process_only() {
+    fn an_old_name_in_the_env_file_reaches_the_current_name_without_changing_the_parsed_file() {
         let _exec_guard = crate::test_support::ExecGuard::new();
         let tmp = tempfile::tempdir().unwrap();
         let env_file = tmp.path().join("profile.env");
@@ -144,13 +147,17 @@ mod tests {
         // The opt-in is refused under both spellings.
         assert_eq!(std::env::var("PARASAUR_ENFORCE_JOB_FILE").ok(), opt_in);
         assert_eq!(std::env::var("GAH_ENFORCE_JOB_FILE").ok(), None);
-        // Child processes are given the parsed file, which gains no names:
-        // credential filtering matches the names an operator declared.
+        // Backend and reviewer processes are given the parsed file, and
+        // credential filtering matches the names an operator declared. A file
+        // that names a setting only the old way must therefore parse to that
+        // one name: a parser that added the current name would hand a declared
+        // credential to those processes under a name the filter never sees.
+        std::fs::write(&env_file, &old_only).unwrap();
         let names: Vec<String> = runner::load_env_file(&profile.env_file.clone().unwrap())
             .into_iter()
             .map(|(name, _)| name)
             .collect();
-        assert_eq!(names, [OLD, CURRENT]);
+        assert_eq!(names, [OLD, "GAH_ENFORCE_JOB_FILE"]);
         std::env::remove_var(OLD);
         std::env::remove_var(CURRENT);
     }
