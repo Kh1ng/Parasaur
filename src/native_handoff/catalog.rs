@@ -269,15 +269,17 @@ mod tests {
         let _guard = crate::test_support::ExecGuard::new();
         let (_dir, cfg, entry, planned) = unpublished_fix();
         let profile = &cfg.profiles["test"];
-        let offered_after = |earlier: &[&crate::ledger::LedgerEntry]| {
-            let mut history = vec![entry.clone()];
+        type Entry = crate::ledger::LedgerEntry;
+        let offered = |implementation: &Entry, earlier: &[&Entry]| {
+            let mut history = vec![implementation.clone()];
             history.extend(earlier.iter().map(|&retry| retry.clone()));
             crate::dispatch::publication_recovery::verify(&planned, &history, profile, "worker")
                 .is_ok()
         };
+        let offered_after = |earlier: &[&Entry]| offered(&entry, earlier);
         // An earlier publication retry of the same fix. Its job records the
-        // branch and the validation result only once it has revalidated the
-        // preserved commit.
+        // issue, the branch and the validation result only once it has
+        // revalidated the preserved commit.
         let retry = |error: &str, revalidated: bool| {
             let mut retry = entry.clone();
             retry.session_id = Some(uuid::Uuid::new_v4().to_string());
@@ -285,6 +287,7 @@ mod tests {
             retry.commit_created = false;
             retry.error_summary = Some(error.into());
             if !revalidated {
+                retry.source_issue_number = None;
                 retry.branch = None;
                 retry.validation_result = None;
             }
@@ -306,9 +309,10 @@ mod tests {
         assert!(offered_after(&[&held]));
         assert!(!offered_after(&[&held, &target_moved]));
 
-        // The branch was pushed and only the merge request is missing. What
-        // remains is safe to repeat and must not be redone from scratch,
-        // which would leave that branch on the remote with no merge request.
+        // A retry pushed the branch and only the merge request is missing.
+        // What remains is safe to repeat and must not be redone from
+        // scratch, which would leave that branch on the remote with no
+        // merge request.
         let mut pushed = retry("Provider request failed", true);
         pushed.push_attempted = true;
         pushed.push_succeeded = true;
@@ -320,6 +324,24 @@ mod tests {
         assert!(offered_after(&[&pushed, &lookup_failed]));
         assert!(offered_after(&[&pushed, &target_moved]));
         assert!(offered_after(&[&target_moved, &pushed]));
+
+        // The same when the push was the implementation's own: it pushed,
+        // could not create the merge request, and kept its commit as a
+        // checkpoint.
+        let mut pushed_itself = entry.clone();
+        pushed_itself.error_summary = Some("Provider request failed".into());
+        pushed_itself.push_attempted = true;
+        pushed_itself.push_succeeded = true;
+        pushed_itself.mr_attempted = true;
+        pushed_itself.resumable_checkpoint_sha = Some("3".repeat(40));
+        pushed_itself.resumable_checkpoint_branch = pushed_itself.branch.clone();
+        assert!(offered(&pushed_itself, &[]));
+        assert!(offered(&pushed_itself, &[&lookup_failed]));
+        assert!(offered(&pushed_itself, &[&target_moved]));
+        // A push that was attempted and failed counts too: the ledger does
+        // not say how far it got.
+        pushed_itself.push_succeeded = false;
+        assert!(offered(&pushed_itself, &[&target_moved]));
     }
     #[test]
     fn unavailable_worker_accounts_cannot_borrow_a_coordinators_executable_or_other_model() {

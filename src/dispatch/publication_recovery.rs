@@ -68,10 +68,11 @@ pub(super) fn source<'a>(
             // A refused recovery used to be offered again unchanged until
             // the issue was parked as a repeated setup failure with finished
             // work behind it. Leave the issue to an ordinary retry instead,
-            // unless any recovery got as far as pushing: the branch is then
-            // on the remote without its merge request, what remains is safe
-            // to repeat, and redoing the work would orphan that branch.
-            if refused && !pushed {
+            // unless a push was ever attempted, by the implementation itself
+            // or by one of its recoveries: the branch may then be on the
+            // remote without its merge request, what remains is safe to
+            // repeat, and redoing the work would orphan that branch.
+            if refused && !pushed && !e.push_attempted {
                 return None;
             }
             let checkpoint =
