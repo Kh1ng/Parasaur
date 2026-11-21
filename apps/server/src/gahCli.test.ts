@@ -451,7 +451,7 @@ fi
 tries=0
 while [ ! -e '${released}' ]; do
   tries=$((tries + 1))
-  [ "$tries" -lt 100 ] || exit 1
+  [ "$tries" -lt 600 ] || exit 1
   sleep 0.1
 done
 `);
@@ -472,7 +472,10 @@ done
 
 /** A fake systemctl for two overlapping starts. `enable` fails the first time
  * it is called and succeeds afterwards; the unit reads as active once an
- * enable has succeeded and until a disable. Every lifecycle call is logged. */
+ * enable has succeeded and until a disable. Every lifecycle call is logged.
+ * The failing enable holds on for two seconds or until a second enable has
+ * begun, whichever comes first: if starts can overlap, the second one is
+ * given every chance to succeed before the first reports its failure. */
 function overlappingStartFixture(isEnabledBody: string) {
   const restoreGah = pinFakeGah(`echo '{"factory_enabled":true}'`);
   const dir = mkdtempSync(join(tmpdir(), 'gah-start-loop-overlap-'));
@@ -493,10 +496,15 @@ case "$2" in
     echo enable >> '${log}'
     if [ ! -e '${dir}/first-enable-done' ]; then
       : > '${dir}/first-enable-done'
-      sleep 0.3
+      tries=0
+      while [ ! -e '${dir}/second-enable-begun' ] && [ "$tries" -lt 20 ]; do
+        tries=$((tries + 1))
+        sleep 0.1
+      done
       echo "Failed to activate" >&2
       exit 1
     fi
+    : > '${dir}/second-enable-begun'
     : > '${dir}/active'
     exit 0
     ;;
@@ -525,10 +533,10 @@ esac
 test('a start that fails cannot undo a later start that succeeded', { skip: process.platform === 'win32' }, async () => {
   const fixture = overlappingStartFixture('echo disabled; exit 1');
   try {
-    const [first, second] = await Promise.all([startLoop('sportsball'), startLoop('sportsball')]);
-    assert.equal(first.started, false);
-    assert.equal(second.started, true);
-    // The failed start rolls back before the second begins, never after it.
+    // Either request may reach systemctl first; one fails there, one succeeds.
+    const results = await Promise.all([startLoop('sportsball'), startLoop('sportsball')]);
+    assert.deepEqual(results.map(result => result.started).sort(), [false, true]);
+    // The failed start rolls back before the other begins, never after it.
     assert.deepEqual(fixture.calls(), ['enable', 'disable', 'enable']);
     assert.equal(fixture.active(), true);
   } finally {
@@ -546,6 +554,45 @@ test('a failed start leaves the unit alone when its enablement could not be read
     assert.deepEqual(fixture.calls(), ['enable']);
   } finally {
     fixture.restore();
+  }
+});
+
+test('a start still reading its configuration does not hold up a stop', { skip: process.platform === 'win32' }, async () => {
+  // The configuration read has no deadline. It stays outside the per-profile
+  // queue, so a stop requested meanwhile runs at once. Here the read finishes
+  // only when the test lets it, after the stop has returned.
+  const dir = mkdtempSync(join(tmpdir(), 'gah-start-loop-config-'));
+  const released = join(dir, 'released');
+  const restoreGah = pinFakeGah(`tries=0
+while [ ! -e '${released}' ] && [ "$tries" -lt 100 ]; do
+  tries=$((tries + 1))
+  sleep 0.1
+done
+echo '{"factory_enabled":false}'`);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${dir}:${originalPath ?? ''}`;
+  writeFileSync(join(dir, 'systemctl'), `#!/bin/sh
+if [ "$2" = "show" ]; then
+  printf 'LoadState=loaded\nActiveState=active\nMainPID=4242\n'
+fi
+exit 0
+`);
+  writeFileSync(join(dir, 'pgrep'), '#!/bin/sh\nexit 1\n');
+  chmodSync(join(dir, 'systemctl'), 0o755);
+  chmodSync(join(dir, 'pgrep'), 0o755);
+  try {
+    let startSettled = false;
+    const start = startLoop('sportsball').finally(() => { startSettled = true; });
+    const stopped = await stopLoop('sportsball');
+    assert.deepEqual(stopped, { stopped: true });
+    assert.equal(startSettled, false, 'the stop returned while the start was still reading its configuration');
+    writeFileSync(released, '');
+    assert.equal((await start).started, false);
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    restoreGah();
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

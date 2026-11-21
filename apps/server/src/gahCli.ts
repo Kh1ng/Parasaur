@@ -1903,24 +1903,28 @@ export function loopSystemctlArgs(enabled: boolean, profile: string): string[] {
  * only if it was the one that changed enablement -- never if the unit was
  * already enabled (a crashed loop that is already boot-persisted must stay
  * boot-persisted). */
-/** `unknown` when systemctl could not be run or did not answer in time. Only
- * an answer from systemctl itself counts as `disabled`: startLoop rolls back
- * on that, and must never disable a unit whose state it failed to read. */
+/** What systemctl itself says about boot enablement. startLoop rolls back
+ * only on `disabled`, so that word is trusted only when systemctl printed it:
+ * a lookup that could not run or timed out, and every state other than the
+ * two plain ones (static, masked, indirect, ...), is `unknown`, and a unit in
+ * an unknown state is never disabled on a guess. */
 function loopEnablement(profile: string): Promise<'enabled' | 'disabled' | 'unknown'> {
   const args = ['--user', 'is-enabled', loopServiceName(profile), '--no-pager'];
   return new Promise(resolvePromise => {
+    // systemctl prints the state and exits non-zero for `disabled`, so the
+    // word is read whether or not the call reports an error.
     execFile('systemctl', args, { encoding: 'utf8', env: systemdUserEnv(), timeout: 2000, maxBuffer: 16 * 1024 }, (error, stdout) => {
-      if (!error) return resolvePromise(stdout.trim() === 'enabled' ? 'enabled' : 'disabled');
-      // A non-zero exit is systemctl's own answer (disabled, masked, ...).
-      resolvePromise(typeof error.code === 'number' && !error.killed ? 'disabled' : 'unknown');
+      const state = error?.killed ? '' : String(stdout ?? '').trim();
+      resolvePromise(state === 'enabled' || state === 'disabled' ? state : 'unknown');
     });
   });
 }
 
-/** Starts and stops for one profile run one at a time, in the order they
- * arrived. They used to be serialised by blocking the whole process; without
- * that, a start that fails late could roll back a start that had since
- * succeeded. Requests for other profiles, and every other request, proceed. */
+/** The systemctl calls of starts and stops for one profile run one at a time,
+ * in the order they arrived. They used to be serialised by blocking the whole
+ * process; without that, a start that fails late could roll back a start that
+ * had since succeeded. Every call made inside has a deadline, so a queued
+ * stop always gets its turn. Other profiles and other requests proceed. */
 const loopLifecycle = new Map<string, Promise<unknown>>();
 function oneAtATime<T>(profile: string, operation: () => Promise<T>): Promise<T> {
   const previous = loopLifecycle.get(profile) ?? Promise.resolve();
@@ -1982,11 +1986,9 @@ export interface StartLoopResult {
   error?: string;
 }
 
-export function startLoop(profile: string): Promise<StartLoopResult> {
-  return oneAtATime(profile, () => startLoopNow(profile));
-}
-
-async function startLoopNow(profile: string): Promise<StartLoopResult> {
+export async function startLoop(profile: string): Promise<StartLoopResult> {
+  // The configuration read has no deadline of its own, so it stays outside
+  // the queue: a start waiting on it must not hold up a stop.
   const config = getConfigPath(process.env.PARASAUR_CONFIG ?? process.env.PARASAUR_CONFIG_PATH);
   const args = ['config', 'show', '--json', '--full'];
   if (config) args.push('--config', config);
@@ -1999,6 +2001,10 @@ async function startLoopNow(profile: string): Promise<StartLoopResult> {
   if (module && module.factory_enabled === false) {
     return { started: false, error: 'Factory automation is disabled. Enable it in this computer’s Settings.' };
   }
+  return oneAtATime(profile, () => startLoopNow(profile));
+}
+
+async function startLoopNow(profile: string): Promise<StartLoopResult> {
   const existing = getLoopStatus(profile);
   if (existing.running) {
     if (existing.owner === 'systemd') {
