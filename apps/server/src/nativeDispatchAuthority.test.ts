@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import fs, { mkdirSync, mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
+import type { NativeHeldWork, NativeWorkerCatalog } from '@git-agent-harness/contracts';
 import { nativeDispatchAuthority, nativeContinuationAuthority } from './nativeDispatchAuthority.js';
 import type { NativeDispatchBinding, NativeHostReservation } from './nativeDispatchBroker.js';
 
@@ -62,6 +64,30 @@ test('continuation checks current policy and exact route without reselecting the
     assert.deepEqual(await check(f.binding,f.reservation),{allowed:false,reason:'policy_changed'});
     f.policy({binding:f.binding});f.loop({state:'inactive'});
     assert.deepEqual(await check(f.binding,f.reservation),{allowed:false,reason:'factory_paused'});
+  } finally {f.close();}
+});
+
+test('the worker catalog reaches the check as a private file that is never flushed to disk and is removed afterwards',{skip:process.platform==='win32'},async(t)=>{
+  const f=fixture(),run=join(f.root,f.binding.run_id),seen=join(f.root,'seen.json');
+  try {
+    mkdirSync(run);
+    const catalog={node_id:'worker',protocol:2} as unknown as NativeWorkerCatalog;
+    const held=():NativeHeldWork[]=>[{profile:'fixture',work_id:'#1',run_id:f.binding.run_id,node_id:'worker',context_sha256:f.binding.context_sha256,reserves_intake:true}];
+    // This CLI records what it was handed, then answers like the fixture's.
+    writeFileSync(join(f.root,'gah'),`#!${process.execPath}\nconst fs=require('node:fs');const file=process.argv[process.argv.indexOf('--worker-catalog-file')+1];fs.writeFileSync(${JSON.stringify(seen)},JSON.stringify({file,mode:fs.statSync(file).mode&0o777,body:fs.readFileSync(file,'utf8')}));console.log(fs.readFileSync(${JSON.stringify(join(f.root,'policy.json'))},'utf8'));`,{mode:0o700});
+    const check=nativeContinuationAuthority(f.root,'https://central.invalid',join(f.root,'fixture.toml'),async()=>catalog,held);
+    // Each flush stops the server's only thread until the disk has committed.
+    // On a busy host that was most of the five seconds a worker waits.
+    let flushes=0;
+    t.mock.method(fs,'fsyncSync',()=>{flushes++;});syncBuiltinESMExports();
+    try {assert.deepEqual(await check(f.binding,f.reservation),{allowed:true});}
+    finally {t.mock.restoreAll();syncBuiltinESMExports();}
+    const handed=JSON.parse(readFileSync(seen,'utf8'));
+    assert.equal(dirname(handed.file),run);
+    assert.equal(handed.mode,0o600);
+    assert.deepEqual(JSON.parse(handed.body),{catalog,held_work:held()});
+    assert.equal(flushes,0);
+    assert.deepEqual(readdirSync(run),[]);
   } finally {f.close();}
 });
 
