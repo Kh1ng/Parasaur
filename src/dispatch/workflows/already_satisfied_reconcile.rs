@@ -233,10 +233,19 @@ fn bounded_handoff(context: BoundedHandoffContext<'_>, reason: &str) -> Result<b
 /// issue simply stops moving. Best effort: the handoff stands whether or not
 /// the comment is posted, since policy may forbid issue writes and the
 /// provider may be unreachable.
+///
+/// A job running on a worker under the central's authority does not post it.
+/// There, every provider write is a fenced operation, and one that fails
+/// leaves the whole job unconfirmed and held for reconciliation. An optional
+/// comment must not be able to do that to a handoff that has otherwise
+/// finished; the reason code and the dashboard carry the explanation instead.
 fn explain_handoff_on_issue(profile: &Profile, issue_number: Option<&str>, reason: &str) {
     let Some(issue_number) = issue_number else {
         return;
     };
+    if crate::dispatch::native_guard::active() {
+        return;
+    }
     if crate::policy::enforce_policy(profile, "edit-issue").is_err() {
         return;
     }
@@ -250,11 +259,9 @@ fn explain_handoff_on_issue(profile: &Profile, issue_number: Option<&str>, reaso
 
 fn render_handoff_comment(reason: &str) -> String {
     format!(
-        "Parasaur's agent reported that the target branch already does what this issue asks, so no merge request was created. Parasaur left the issue open instead of closing it.
-
-Reason: {reason}
-
-If the issue is done, close it. If something is still missing, say what is missing. Parasaur will not pick this issue up again until someone releases it."
+        "Parasaur's agent reported that the target branch already does what this issue asks, so no merge request was created. Parasaur left the issue open instead of closing it.\n\n\
+         Reason: {reason}\n\n\
+         If the issue is done, close it. If something is still missing, say what is missing."
     )
 }
 
