@@ -103,6 +103,7 @@ struct BoundedHandoffContext<'a> {
     mode: &'a str,
     wip_checkpoints: &'a [String],
     has_changes: bool,
+    issue_number: Option<&'a str>,
 }
 
 /// Returns `Ok(true)` when the disposition was reconciled and the improve
@@ -147,6 +148,7 @@ fn reconcile_already_satisfied_publish(context: AlreadySatisfiedContext<'_>) -> 
                         mode,
                         wip_checkpoints,
                         has_changes,
+                        issue_number: None,
                     },
                     &reason,
                 );
@@ -162,6 +164,7 @@ fn reconcile_already_satisfied_publish(context: AlreadySatisfiedContext<'_>) -> 
                         mode,
                         wip_checkpoints,
                         has_changes,
+                        issue_number: None,
                     },
                     "already_satisfied was grounded but no provider issue identity was available",
                 );
@@ -185,6 +188,7 @@ fn reconcile_already_satisfied_publish(context: AlreadySatisfiedContext<'_>) -> 
                 mode,
                 wip_checkpoints,
                 has_changes,
+                issue_number,
             },
             &reason,
         ),
@@ -201,15 +205,17 @@ fn bounded_handoff(context: BoundedHandoffContext<'_>, reason: &str) -> Result<b
         mode,
         wip_checkpoints,
         has_changes,
+        issue_number,
     } = context;
     record_already_satisfied(ledger);
     ledger.human_required = true;
     ledger.human_required_reason_code = Some(
-        crate::controller::HumanRequiredReason::PublishingRestriction
+        crate::controller::HumanRequiredReason::AlreadySatisfiedUnconfirmed
             .as_str()
             .into(),
     );
     emit_human_handoff(profile, ledger, branch, reason);
+    explain_handoff_on_issue(profile, issue_number, reason);
     super::super::attempts::clear_wip_checkpoints(repo, wip_checkpoints);
     if has_changes {
         worktree::preserve_wip(
@@ -220,6 +226,36 @@ fn bounded_handoff(context: BoundedHandoffContext<'_>, reason: &str) -> Result<b
     }
     worktree::cleanup(worktree, repo);
     Ok(true)
+}
+
+/// Tells the people watching the issue why it is still open. Without this the
+/// handoff is recorded only in the controller's ledger and output, and the
+/// issue simply stops moving. Best effort: the handoff stands whether or not
+/// the comment is posted, since policy may forbid issue writes and the
+/// provider may be unreachable.
+fn explain_handoff_on_issue(profile: &Profile, issue_number: Option<&str>, reason: &str) {
+    let Some(issue_number) = issue_number else {
+        return;
+    };
+    if crate::policy::enforce_policy(profile, "edit-issue").is_err() {
+        return;
+    }
+    let body = render_handoff_comment(reason);
+    if let Err(error) = crate::provider::post_issue_comment(profile, issue_number, &body) {
+        eprintln!(
+            "Parasaur could not explain the already-satisfied handoff on issue #{issue_number}: {error:#}"
+        );
+    }
+}
+
+fn render_handoff_comment(reason: &str) -> String {
+    format!(
+        "Parasaur's agent reported that the target branch already does what this issue asks, so no merge request was created. Parasaur left the issue open instead of closing it.
+
+Reason: {reason}
+
+If the issue is done, close it. If something is still missing, say what is missing. Parasaur will not pick this issue up again until someone releases it."
+    )
 }
 
 fn render_reconciliation_comment(
