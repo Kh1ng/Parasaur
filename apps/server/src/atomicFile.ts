@@ -34,6 +34,27 @@ export function writeFileAtomic(path: string, data: string, mode = 0o600, requir
   syncDirectory(directory, requireDirectorySync);
 }
 
+/**
+ * Write a private file that is handed to one child process and then deleted.
+ * It is new (never an existing file or link), private whatever the umask is,
+ * and complete when this returns. Nothing is flushed to disk: a crash loses
+ * only a file nobody will read again, while each flush stops the whole server
+ * for as long as the disk takes to commit.
+ */
+export function writeScratchFile(path: string, data: string, mode = 0o600): void {
+  const file = openSync(path, 'wx', mode);
+  let complete = false;
+  try {
+    fchmodSync(file, mode);
+    writeFileSync(file, data);
+    complete = true;
+  } finally {
+    closeSync(file);
+    // A partial file must not be mistaken for the whole one.
+    if (!complete) try { rmSync(path, { force: true }); } catch { /* The write error is the one to report. */ }
+  }
+}
+
 /** Persist the rename itself. Some platforms cannot open a directory; the rename already happened. */
 function syncDirectory(directory: string, required: boolean): void {
   let folder: number;

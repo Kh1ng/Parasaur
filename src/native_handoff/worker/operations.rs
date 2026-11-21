@@ -366,7 +366,7 @@ impl WorkerRun {
     ) -> Result<OperationPermission> {
         let endpoint = self.central_endpoint(context, "operation")?;
         self.authorize_operation(purpose, |request| {
-            let response = crate::curl_http::request_control(
+            let response = crate::curl_http::request_operation(
                 &endpoint,
                 &serde_json::to_string(request)?,
                 token,

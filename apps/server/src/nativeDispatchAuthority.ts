@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { unlinkSync } from 'node:fs';
 import type { NativeWorkerCatalog,NativeHeldWork } from '@git-agent-harness/contracts';
-import { writeFileAtomic } from './atomicFile.js';
+import { writeScratchFile } from './atomicFile.js';
 import { readLoopExecutionState, runCheckNativePolicy } from './gahCli.js';
 import type { NativeAuthorization, NativeDispatchBinding, NativeHostReservation } from './nativeDispatchBroker.js';
 
@@ -52,8 +52,11 @@ function authority(root: string, centralUrl: string, config: string | undefined,
         const current=await catalog(binding,signal);
         owned=currentHolds();
         if(!owned) return {allowed:false,reason:'authority_unavailable'};
+        // Read once by the check below, then deleted. Making it durable cost
+        // two disk flushes on the server's only thread for every start and
+        // every operation a worker asked permission for.
         workerCatalogFile=join(run,`catalog-${randomUUID()}.json`);
-        writeFileAtomic(workerCatalogFile,JSON.stringify({catalog:current,held_work:owned}),0o600,process.platform!=='win32');
+        writeScratchFile(workerCatalogFile,JSON.stringify({catalog:current,held_work:owned}));
       }
       stage = checkWork ? 'check selected work and policy' : 'check running route and policy';
       const current = await runCheckNativePolicy({ contextDirectory: join(run, 'context'), contextSha256: binding.context_sha256,

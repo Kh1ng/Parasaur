@@ -4,7 +4,7 @@ import fs, { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSy
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { preserveCorruptFile, writeFileAtomic } from './atomicFile.js';
+import { preserveCorruptFile, writeFileAtomic, writeScratchFile } from './atomicFile.js';
 
 const modeOf = (path: string) => (statSync(path).mode & 0o777).toString(8);
 
@@ -47,6 +47,48 @@ test('a failed atomic write keeps the previous contents and removes its temporar
     }
     assert.equal(readFileSync(path, 'utf8'), 'old');
     assert.deepEqual(readdirSync(dir), ['state']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a scratch file is private, new and complete, and is written without waiting for the disk', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-scratch-'));
+  try {
+    const path = join(dir, 'catalog.json');
+    // A flush here would stop every other request for as long as the disk takes.
+    t.mock.method(fs, 'fsyncSync', () => { throw new Error('a scratch file must not be flushed'); });
+    syncBuiltinESMExports();
+    try {
+      writeScratchFile(path, '{"a":1}');
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+    assert.equal(readFileSync(path, 'utf8'), '{"a":1}');
+    if (process.platform !== 'win32') assert.equal(modeOf(path), '600');
+    assert.throws(() => writeScratchFile(path, 'other'), /EEXIST/, 'an existing file is never reused');
+    assert.equal(readFileSync(path, 'utf8'), '{"a":1}');
+    assert.deepEqual(readdirSync(dir), ['catalog.json']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a scratch file that could not be written is not left behind half written', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'gah-scratch-'));
+  try {
+    t.mock.method(fs, 'writeFileSync', () => {
+      throw Object.assign(new Error('injected write failure'), { code: 'ENOSPC' });
+    });
+    syncBuiltinESMExports();
+    try {
+      assert.throws(() => writeScratchFile(join(dir, 'catalog.json'), '{"a":1}'), /injected write failure/);
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+    assert.deepEqual(readdirSync(dir), []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

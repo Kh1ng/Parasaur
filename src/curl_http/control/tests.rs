@@ -106,6 +106,23 @@ fn slow_start_authorization_can_arrive_within_the_grant_window() {
 }
 
 #[test]
+fn slow_operation_permission_is_waited_for_longer_than_a_plain_control_reply() {
+    // Central saves its decision durably before answering. Seven seconds is
+    // what that took on a busy disk; the old five-second wait gave up first.
+    let _guard = crate::test_support::ExecGuard::new();
+    let (url, received, handle) = server(|stream| {
+        thread::sleep(Duration::from_secs(7));
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+            .unwrap();
+    });
+    let response = request_operation(&url, "{}", "fixture").unwrap();
+    assert_eq!(response.status, 200);
+    received.recv_timeout(Duration::from_secs(2)).unwrap();
+    handle.join().unwrap();
+}
+
+#[test]
 fn unresponsive_control_peer_has_a_hard_deadline() {
     let _guard = crate::test_support::ExecGuard::new();
     let (stop_tx, stop_rx) = mpsc::channel();

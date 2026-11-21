@@ -21,6 +21,17 @@ pub(crate) fn request_start_grant(url: &str, body: &str, token: &str) -> Result<
     request_bounded(url, body, token, 16 * 1024, 10)
 }
 
+/// Permission for one attempt, publication or claim of a running job. Central
+/// answers only after its own checks (at most five seconds) and after saving
+/// the decision durably, which on a busy disk takes longer than the checks.
+/// Giving up after five seconds discarded finished, validated work while
+/// central was about to say yes. The wait is not the fence: a permission
+/// states its own ten-second validity and the job checks that against its
+/// clock when the reply arrives, so a late answer is refused as before.
+pub(crate) fn request_operation(url: &str, body: &str, token: &str) -> Result<CurlResponse> {
+    request_bounded(url, body, token, 16 * 1024, 20)
+}
+
 /// Preparation may stream a complete history before acknowledging ownership.
 /// A lost reply still cannot activate that dormant reservation.
 pub(crate) fn request_controller(url: &str, body: &str, token: &str) -> Result<CurlResponse> {
