@@ -31,13 +31,15 @@ function fixture(dispatch_reason: string | null = null, mode = 'fix') {
   const reservation = (): NativeHostReservation => ({ ...binding, id: 'reservation', expires_at: new Date(now + 20_000).toISOString() });
   let observation: NativeWorkerObservation = { ...binding, state: 'ready', reservation: reservation() };
   let authorize: () => Promise<NativeAuthorization> = async () => ({ allowed: true });
+  let select: (() => Promise<NativeAuthorization>) | undefined; let selectionTimeout: number | undefined;
   let grant: NativeStartGrant | undefined; let consume = true; let loseConsumedReply = false;
   let stageFails = false; let startFails = false; let importFails = false; let observeFails = false; let stageHangs = false; let timeout=5000;
   let release: ((result: NativeWorkerRelease)=>Promise<NativeWorkerRelease>) = async result=>result;
   let cancel: ((result: NativeReservationRelease)=>Promise<NativeReservationRelease>) = async result=>result;
   const ack: NativeResultAcknowledgement = { ...binding, profile: 'gah', work_id: '#1525', receipt_sha256: 'b'.repeat(64), outcome: 'recorded' };
   const deps = () => ({ root, centralUrl: 'https://central.invalid', coordinatorNodeId: 'central', claims, now: () => now, observationTimeoutMs:timeout,
-    authorizeStart: () => authorize(),
+    selectionTimeoutMs: selectionTimeout ?? timeout,
+    authorizeStart: () => (select ?? authorize)(),
     authorizeContinuation: () => authorize(),
     transport: {
       async stage() { stages++; assert.equal(JSON.parse(readFileSync(join(runPath,'broker.json'),'utf8')).stage_offered,true); if (stageHangs) return new Promise<NativeWorkerObservation>(() => undefined); if (stageFails) throw Error('PRIVATE_STAGE_TOKEN'); return observation; },
@@ -80,6 +82,9 @@ function fixture(dispatch_reason: string | null = null, mode = 'fix') {
     failStage() { stageFails = true; }, failStart() { startFails = true; }, failImport() { importFails = true; }, recoverImport() { importFails = false; }, failObserve() { observeFails = true; },
     hangStage() { stageHangs=true; timeout=5; broker=new NativeDispatchBroker(deps()); },
     shortDeadline() { timeout=5; broker=new NativeDispatchBroker(deps()); },
+    /** Only the selection check made before a start is offered. */
+    select(value: () => Promise<NativeAuthorization>) { select = value; },
+    deadlines(observation: number, selection: number) { timeout = observation; selectionTimeout = selection; broker=new NativeDispatchBroker(deps()); },
     authorize(value: () => Promise<NativeAuthorization>) { authorize = value; }, advance() { now += 24 * 60 * 60_000; },
     reload() { claims = new ClaimsService(claimsPath, () => now); broker = new NativeDispatchBroker(deps()); return broker; },
   };
@@ -750,6 +755,27 @@ test('forged identity, reservation, expiry or token cannot consume a grant, and 
   f.advance(); f.reload();
   assert.deepEqual(await f.broker.consumeStartGrant(grant),{allowed:false,reason:'expired'});
   assert.ok(f.claims.getLease('gah','#1525')?.native_handoff);
+});
+
+test('consuming a start rechecks the route and never rebuilds the queue', async () => {
+  // The selection check is the slow one. It passed before the start was
+  // offered; if consumption ran it again, a slow provider would outlast the
+  // grant and no start could ever be used.
+  const f=fixture(); f.failStart(); let selections=0;
+  f.select(async()=>{selections++; if(selections>1) return new Promise<NativeAuthorization>(()=>undefined); return {allowed:true};});
+  await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  assert.equal(selections,1);
+  assert.equal((await f.broker.consumeStartGrant(f.grant)).allowed,true);
+  assert.equal(selections,1);
+});
+
+test('a selection check slower than an observation still leads to an offered start', async () => {
+  // Observations get 200 ms here and the selection check takes three times
+  // that. Under one shared deadline the check timed out and nothing started.
+  const f=fixture(); f.deadlines(200,5000); f.failStart();
+  f.select(async()=>{await new Promise(resolve=>setTimeout(resolve,600)); return {allowed:true};});
+  await f.broker.offerPrepared(f.run,f.binding.context_sha256);
+  assert.equal(f.starts,1);
 });
 
 test('authority revoked between offer and consumption cannot authorize execution', async () => {

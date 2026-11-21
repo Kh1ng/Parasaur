@@ -10,6 +10,9 @@ import type { NativeAuthorization, NativeDispatchBinding, NativeHostReservation 
 // A current-work CLI builds the same full evidence snapshot as the controller.
 // One at a time bounds its transient memory across all profiles; do not cache
 // old permission or retain a queue of snapshots while a node is disconnected.
+// The route check builds no snapshot, so it neither takes nor waits for the
+// slot: a worker consuming its start must not be refused because another
+// run's selection is still being checked.
 let checking = false;
 
 /** Concrete central policy check for both grant issue and consumption. The
@@ -31,8 +34,10 @@ export function nativeContinuationAuthority(root: string, centralUrl: string, co
 function authority(root: string, centralUrl: string, config: string | undefined, checkWork: boolean,catalog?:Catalog,holds?:Holds) {
   const ownedRoot = resolve(root);
   return async (binding: NativeDispatchBinding, _reservation: NativeHostReservation, signal?: AbortSignal): Promise<NativeAuthorization> => {
-    if (checking) return { allowed: false, reason: 'authority_busy' };
-    checking = true;
+    if (checkWork) {
+      if (checking) return { allowed: false, reason: 'authority_busy' };
+      checking = true;
+    }
     let workerCatalogFile:string|undefined;
     let owned:NativeHeldWork[]|undefined;
     let stage = 'read controller state';
@@ -66,6 +71,6 @@ function authority(root: string, centralUrl: string, config: string | undefined,
       console.warn(`Native authority unavailable for run ${binding.run_id} during ${stage}${signal?.aborted ? ' (deadline exceeded)' : ''}`);
       return { allowed: false, reason: 'authority_unavailable' };
     }
-    finally { if(workerCatalogFile) {try {unlinkSync(workerCatalogFile);}catch{/* Keep private evidence when cleanup fails. */}} checking = false; }
+    finally { if(workerCatalogFile) {try {unlinkSync(workerCatalogFile);}catch{/* Keep private evidence when cleanup fails. */}} if (checkWork) checking = false; }
   };
 }
