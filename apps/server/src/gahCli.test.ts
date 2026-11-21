@@ -437,8 +437,10 @@ printf '%s\n' "$*" >> "$SYSTEMCTL_LOG"
 test('stopping a loop leaves the server free to answer other requests', { skip: process.platform === 'win32' }, async () => {
   // `disable --now` waits for the unit to stop, which can take its whole stop
   // timeout. The same process answers the workers, so that wait must not hold
-  // the event loop.
+  // the event loop. Here the fake systemctl finishes only once a timer in this
+  // process has run: a stop that blocks the process can never complete.
   const dir = mkdtempSync(join(tmpdir(), 'gah-stop-loop-slow-'));
+  const released = join(dir, 'released');
   const originalPath = process.env.PATH;
   process.env.PATH = `${dir}:${originalPath ?? ''}`;
   writeFileSync(join(dir, 'systemctl'), `#!/bin/sh
@@ -446,22 +448,104 @@ if [ "$2" = "show" ]; then
   printf 'LoadState=loaded\nActiveState=active\nMainPID=4242\n'
   exit 0
 fi
-sleep 1
+tries=0
+while [ ! -e '${released}' ]; do
+  tries=$((tries + 1))
+  [ "$tries" -lt 100 ] || exit 1
+  sleep 0.1
+done
 `);
   writeFileSync(join(dir, 'pgrep'), '#!/bin/sh\nexit 1\n');
   chmodSync(join(dir, 'systemctl'), 0o755);
   chmodSync(join(dir, 'pgrep'), 0o755);
   try {
-    let answeredMeanwhile = false;
-    const other = setTimeout(() => { answeredMeanwhile = true; }, 100);
+    const release = setTimeout(() => writeFileSync(released, ''), 50);
     const stopped = await stopLoop('sportsball');
-    clearTimeout(other);
+    clearTimeout(release);
     assert.deepEqual(stopped, { stopped: true });
-    assert.equal(answeredMeanwhile, true, 'a timer due during the stop ran before it finished');
   } finally {
     if (originalPath === undefined) delete process.env.PATH;
     else process.env.PATH = originalPath;
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/** A fake systemctl for two overlapping starts. `enable` fails the first time
+ * it is called and succeeds afterwards; the unit reads as active once an
+ * enable has succeeded and until a disable. Every lifecycle call is logged. */
+function overlappingStartFixture(isEnabledBody: string) {
+  const restoreGah = pinFakeGah(`echo '{"factory_enabled":true}'`);
+  const dir = mkdtempSync(join(tmpdir(), 'gah-start-loop-overlap-'));
+  const log = join(dir, 'systemctl.log');
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${dir}:${originalPath ?? ''}`;
+  writeFileSync(join(dir, 'systemctl'), `#!/bin/sh
+case "$2" in
+  show)
+    if [ -e '${dir}/active' ]; then printf 'LoadState=loaded\nActiveState=active\nMainPID=4242\nActiveEnterTimestamp=now\n'
+    else printf 'LoadState=loaded\nActiveState=inactive\nMainPID=0\n'; fi
+    exit 0
+    ;;
+  is-enabled)
+    ${isEnabledBody}
+    ;;
+  enable)
+    echo enable >> '${log}'
+    if [ ! -e '${dir}/first-enable-done' ]; then
+      : > '${dir}/first-enable-done'
+      sleep 0.3
+      echo "Failed to activate" >&2
+      exit 1
+    fi
+    : > '${dir}/active'
+    exit 0
+    ;;
+  disable)
+    echo disable >> '${log}'
+    rm -f '${dir}/active'
+    exit 0
+    ;;
+esac
+`);
+  writeFileSync(join(dir, 'pgrep'), '#!/bin/sh\nexit 1\n');
+  chmodSync(join(dir, 'systemctl'), 0o755);
+  chmodSync(join(dir, 'pgrep'), 0o755);
+  return {
+    calls: () => readFileSync(log, 'utf8').trim().split('\n'),
+    active: () => existsSync(join(dir, 'active')),
+    restore() {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      restoreGah();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+}
+
+test('a start that fails cannot undo a later start that succeeded', { skip: process.platform === 'win32' }, async () => {
+  const fixture = overlappingStartFixture('echo disabled; exit 1');
+  try {
+    const [first, second] = await Promise.all([startLoop('sportsball'), startLoop('sportsball')]);
+    assert.equal(first.started, false);
+    assert.equal(second.started, true);
+    // The failed start rolls back before the second begins, never after it.
+    assert.deepEqual(fixture.calls(), ['enable', 'disable', 'enable']);
+    assert.equal(fixture.active(), true);
+  } finally {
+    fixture.restore();
+  }
+});
+
+test('a failed start leaves the unit alone when its enablement could not be read', { skip: process.platform === 'win32' }, async () => {
+  // The lookup outlasts its two second deadline, so nothing is known about
+  // whether the unit was enabled for boot. Rolling back could remove that.
+  const fixture = overlappingStartFixture("exec sleep 5");
+  try {
+    const result = await startLoop('sportsball');
+    assert.equal(result.started, false);
+    assert.deepEqual(fixture.calls(), ['enable']);
+  } finally {
+    fixture.restore();
   }
 });
 

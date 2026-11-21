@@ -1903,13 +1903,32 @@ export function loopSystemctlArgs(enabled: boolean, profile: string): string[] {
  * only if it was the one that changed enablement -- never if the unit was
  * already enabled (a crashed loop that is already boot-persisted must stay
  * boot-persisted). */
-function loopIsEnabled(profile: string): Promise<boolean> {
+/** `unknown` when systemctl could not be run or did not answer in time. Only
+ * an answer from systemctl itself counts as `disabled`: startLoop rolls back
+ * on that, and must never disable a unit whose state it failed to read. */
+function loopEnablement(profile: string): Promise<'enabled' | 'disabled' | 'unknown'> {
   const args = ['--user', 'is-enabled', loopServiceName(profile), '--no-pager'];
   return new Promise(resolvePromise => {
     execFile('systemctl', args, { encoding: 'utf8', env: systemdUserEnv(), timeout: 2000, maxBuffer: 16 * 1024 }, (error, stdout) => {
-      resolvePromise(!error && stdout.trim() === 'enabled');
+      if (!error) return resolvePromise(stdout.trim() === 'enabled' ? 'enabled' : 'disabled');
+      // A non-zero exit is systemctl's own answer (disabled, masked, ...).
+      resolvePromise(typeof error.code === 'number' && !error.killed ? 'disabled' : 'unknown');
     });
   });
+}
+
+/** Starts and stops for one profile run one at a time, in the order they
+ * arrived. They used to be serialised by blocking the whole process; without
+ * that, a start that fails late could roll back a start that had since
+ * succeeded. Requests for other profiles, and every other request, proceed. */
+const loopLifecycle = new Map<string, Promise<unknown>>();
+function oneAtATime<T>(profile: string, operation: () => Promise<T>): Promise<T> {
+  const previous = loopLifecycle.get(profile) ?? Promise.resolve();
+  const next = previous.then(operation, operation);
+  const settled = next.catch(() => undefined);
+  loopLifecycle.set(profile, settled);
+  void settled.then(() => { if (loopLifecycle.get(profile) === settled) loopLifecycle.delete(profile); });
+  return next;
 }
 
 /** The loop unit's TimeoutStopSec is 60 seconds; allow that and a margin. */
@@ -1963,7 +1982,11 @@ export interface StartLoopResult {
   error?: string;
 }
 
-export async function startLoop(profile: string): Promise<StartLoopResult> {
+export function startLoop(profile: string): Promise<StartLoopResult> {
+  return oneAtATime(profile, () => startLoopNow(profile));
+}
+
+async function startLoopNow(profile: string): Promise<StartLoopResult> {
   const config = getConfigPath(process.env.PARASAUR_CONFIG ?? process.env.PARASAUR_CONFIG_PATH);
   const args = ['config', 'show', '--json', '--full'];
   if (config) args.push('--config', config);
@@ -1998,17 +2021,17 @@ export async function startLoop(profile: string): Promise<StartLoopResult> {
   // clicks Start -> enable --now fails to activate -> rolling back with
   // disable would kill the next-boot start too. Record enablement BEFORE we
   // change it and only revert if this call is what changed it.
-  const wasEnabled = await loopIsEnabled(profile);
+  const wasDisabled = (await loopEnablement(profile)) === 'disabled';
 
   const result = await setLoopEnabled(true, profile);
   if (!result.ok) {
-    if (!wasEnabled) await setLoopEnabled(false, profile);
+    if (wasDisabled) await setLoopEnabled(false, profile);
     return { started: false, error: result.error };
   }
 
   const status = getLoopStatus(profile);
   if (!status.running || status.owner !== 'systemd') {
-    if (!wasEnabled) await setLoopEnabled(false, profile);
+    if (wasDisabled) await setLoopEnabled(false, profile);
     return {
       started: false,
       error: `${loopServiceName(profile)} accepted the start request but is not active; inspect it with systemctl --user status ${loopServiceName(profile)}.`
@@ -2023,7 +2046,11 @@ export interface StopLoopResult {
 }
 
 /** Graceful operator stop. Disabling the unit persists the stop across boot. */
-export async function stopLoop(profile: string): Promise<StopLoopResult> {
+export function stopLoop(profile: string): Promise<StopLoopResult> {
+  return oneAtATime(profile, () => stopLoopNow(profile));
+}
+
+async function stopLoopNow(profile: string): Promise<StopLoopResult> {
   const status = getLoopStatus(profile);
   if (status.owner !== 'systemd') {
     return {
