@@ -138,6 +138,21 @@ test('only an owner-paired exact action callback can answer a manager permission
   }
 });
 
+test('/chat splits the profile from a message that keeps its own whitespace', async () => {
+  const prompts: string[] = [];
+  const { bridge, directory, transport } = pairedBridge({
+    sendTurn: async ({ text }) => { prompts.push(text); return 'ok'; }
+  });
+  try {
+    await bridge.handleTelegram(message(20, '/chat   gah \n  keep  this\nmessage'));
+    assert.match(prompts.at(-1) ?? '', /\nkeep {2}this\nmessage$/);
+    await bridge.handleTelegram(message(21, `/chat ! ${' '.repeat(3_900)}x`));
+    assert.match(transport.sent.at(-1)?.text ?? '', /Use \/chat <paired-profile> <message>/);
+  } finally {
+    rmSync(directory, { recursive: true });
+  }
+});
+
 test('chat-only identities and ambiguous remote commands fail closed', async () => {
   let turns = 0;
   const decisions: string[] = [];
@@ -221,6 +236,15 @@ test('HTTP bridge requires the Telegram secret and owner mutation receipts for p
       method: 'POST', headers: { 'content-type': 'application/json', 'x-telegram-bot-api-secret-token': 'http-secret' }, body: JSON.stringify(message(11, 'hello again'))
     });
     assert.equal(turns, 1);
+    // Secret probes share the webhook budget: three updates above, then 117
+    // more fit in the minute and the next is refused.
+    const probes: number[] = [];
+    for (let attempt = 0; attempt < 118; attempt++) {
+      probes.push((await fetch(`${origin}/api/manager-chat/bridge/telegram`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-telegram-bot-api-secret-token': 'guess' }, body: JSON.stringify(message(12, 'probe'))
+      })).status);
+    }
+    assert.deepEqual(probes, [...Array(117).fill(401), 429]);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(directory, { recursive: true });

@@ -428,7 +428,13 @@ export function createServer(
     app.use('/api/integrations/gitlab', gitLabEvents);
   }
   if (node.role === 'central') {
-    app.post('/api/manager-chat/bridge/telegram', async (req, res) => {
+    // Telegram delivers every update for the bot from its own servers, so
+    // this bounds unpaired senders and bad-secret probes, not one operator.
+    // Telegram retries an update refused with 429, so a burst is delayed,
+    // not lost.
+    const telegramWebhookLimit = rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: true, legacyHeaders: false,
+      message: { error: 'rate_limited' } });
+    app.post('/api/manager-chat/bridge/telegram', telegramWebhookLimit, async (req, res) => {
       if (!req.secure && !isLocalAddress(req.socket.remoteAddress ?? '')) {
         res.status(403).json({ error: 'https_required' });
         return;
@@ -599,6 +605,11 @@ export function createServer(
     app.use('/api/cli-router', cliRouterRouter(mutation, {}, configDeps.cliRouterQuotaObserver));
   }
   if (node.role === 'central') {
+    // Pairing and revoking rewrite the operator file; both are rare owner
+    // actions, so a small budget is plenty.
+    const bridgeOperatorLimit = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false,
+      message: { error: 'rate_limited' } });
+    app.use('/api/manager-chat/bridge/operators', bridgeOperatorLimit);
     app.get('/api/manager-chat/bridge/operators', requireOwner, (_req, res) => {
       res.json({ operators: messagingBridge.listOperators() });
     });

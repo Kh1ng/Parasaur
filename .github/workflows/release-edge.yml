@@ -57,10 +57,22 @@ jobs:
     needs: trusted-source
     runs-on: ubuntu-22.04
     steps:
+      # Check out main and select the green revision from it (as
+      # server-bundle does), so the Rust cache this job saves is only ever
+      # built from a commit already on main.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: refs/heads/main
+          fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
+      - name: Select the green revision from main
+        env:
+          EDGE_REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          [[ "$EDGE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$EDGE_REVISION" HEAD
+          git checkout --detach "$EDGE_REVISION"
       - name: Check release version
         run: node scripts/check-release-version.mjs
       - name: Install Rust (stable)
@@ -87,10 +99,22 @@ jobs:
     needs: trusted-source
     runs-on: macos-latest
     steps:
+      # Check out main and select the green revision from it (as
+      # server-bundle does), so the Rust cache this job saves is only ever
+      # built from a commit already on main.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: refs/heads/main
+          fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
+      - name: Select the green revision from main
+        env:
+          EDGE_REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          [[ "$EDGE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$EDGE_REVISION" HEAD
+          git checkout --detach "$EDGE_REVISION"
       - name: Check release version
         run: node scripts/check-release-version.mjs
       - name: Install Rust (stable)

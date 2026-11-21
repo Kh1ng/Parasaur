@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { ProfileSummary } from '@git-agent-harness/contracts';
 import {
   archiveSession,
@@ -15,6 +15,7 @@ import {
   profileStorage,
   resolveSessionCwd,
   restoreSession,
+  sessionWorktreePath,
   setChatSessionStoreOptions,
   storeSession,
   touchSession,
@@ -56,6 +57,15 @@ function withEnv(testFn: (env: TestEnv) => void | Promise<void>): () => Promise<
     }
   };
 }
+
+test('session worktree paths stay inside worktree_base', () => {
+  const base = resolve(tmpdir(), 'chat-worktree-boundary');
+  assert.equal(sessionWorktreePath(base, 'repo', 'a1b2c3d4'), join(base, 'gah-chat-repo-a1b2c3d4'));
+  for (const invalid of ['../escape', '..\\escape', 'a1b2/../../escape', base, 'a1b2\n', 'a1b2\0', '']) {
+    assert.throws(() => sessionWorktreePath(base, 'repo', invalid), /Invalid chat session identity/);
+  }
+  assert.throws(() => sessionWorktreePath(base, 'x/../../y', 'a1b2c3d4'), /must be inside worktree_base/);
+});
 
 test('createSession makes a worktree and branch under the prune-recognized names', withEnv(async (env) => {
   const session = await createSession({ profile: 'p', profileInfo: env.profileInfo, backend: 'hermes' });

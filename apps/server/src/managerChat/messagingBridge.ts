@@ -9,7 +9,7 @@ import {
   renameSync,
   writeFileSync
 } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import type { PermissionPublish } from './ManagerChatManager.js';
 import { respondManagerChatPermission, sendManagerChatMessage } from './ManagerChatManager.js';
 import { stateBase } from './chatSessions.js';
@@ -358,7 +358,10 @@ export class MessagingBridge {
     let text = input.text?.trim() ?? '';
     let profile: string;
     if (text.startsWith('/chat ')) {
-      const match = /^\/chat\s+(\S+)\s+([\s\S]+)$/.exec(text);
+      // The message must start at a non-space, so the whitespace run before
+      // it cannot also be matched by the message group; matching stays
+      // linear. The text is trimmed, so this accepts the same messages.
+      const match = /^\/chat\s+(\S+)\s+(\S[\s\S]*)$/.exec(text);
       if (!match || !operator.profiles.includes(match[1])) throw new Error('Use /chat <paired-profile> <message>.');
       profile = match[1];
       text = match[2];
@@ -417,7 +420,9 @@ export class MessagingBridge {
 
   private async handleAction(operator: BridgeOperator, token: string): Promise<string> {
     if (!/^[A-Za-z0-9_-]{24}$/.test(token) || operator.role !== 'owner') throw new Error('Action is invalid or requires an owner-paired identity.');
-    const path = join(this.directory, 'actions', `${token}.json`);
+    const actions = join(resolve(this.directory, 'actions'), sep);
+    const path = resolve(actions, `${token}.json`);
+    if (!path.startsWith(actions)) throw new Error('Action is invalid or requires an owner-paired identity.');
     if (!existsSync(path)) throw new Error('Action expired or was already used.');
     const action = JSON.parse(readFileSync(path, 'utf8')) as StoredAction;
     if (action.operatorId !== operator.id || !operator.profiles.includes(action.profile) || action.expiresAt < Date.now()) {

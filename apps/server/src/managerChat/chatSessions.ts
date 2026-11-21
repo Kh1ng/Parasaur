@@ -19,7 +19,7 @@
 import { execFile } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { ChatProfileStorage, ChatSessionSummary, ProfileSummary } from '@git-agent-harness/contracts';
 import { appendEvents, readLog } from './sessionLog.js';
@@ -124,6 +124,18 @@ export function worktreeDirName(repoId: string, sessionId: string): string {
   return `gah-chat-${repoId}-${sessionId}`;
 }
 
+const SESSION_ID = /^[a-zA-Z0-9_-]{1,128}$/;
+
+/** A session's worktree directory, resolved and checked to sit inside
+ * worktree_base, so a session identity can never name a path elsewhere. */
+export function sessionWorktreePath(worktreeBase: string, repoId: string, sessionId: string): string {
+  if (!SESSION_ID.test(sessionId)) throw new Error('Invalid chat session identity');
+  const prefix = join(resolve(worktreeBase), sep);
+  const path = resolve(prefix, worktreeDirName(repoId, sessionId));
+  if (!path.startsWith(prefix)) throw new Error('Chat session worktree must be inside worktree_base');
+  return path;
+}
+
 export function chatTitleFromText(text: string): string | null {
   const title = text.trim().replace(/\s+/g, ' ');
   if (!title) return null;
@@ -195,7 +207,7 @@ export async function createSession(input: CreateSessionInput, opts?: ChatSessio
     throw new Error(`Profile checkout not found at ${profileInfo.local_path}; cannot start a chat session`);
   }
   const sessionId = input.sessionId ?? newSessionId();
-  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(sessionId)) throw new Error('Invalid chat session identity');
+  if (!SESSION_ID.test(sessionId)) throw new Error('Invalid chat session identity');
   if (getSession(profile, sessionId, opts)) throw new Error('Chat session already exists');
   const now = Date.now();
   const record: ChatSessionSummary = {
@@ -230,8 +242,7 @@ export async function createSession(input: CreateSessionInput, opts?: ChatSessio
 export async function createWorkspace(record: ChatSessionSummary, profileInfo: Pick<ProfileSummary, 'local_path' | 'worktree_base' | 'repo_id'>): Promise<void> {
   if (!existsSync(profileInfo.local_path)) throw new Error('Profile checkout is not available on this node.');
   if (profileInfo.worktree_base.trim().length > 0) {
-    const sessionId = record.id;
-    const dir = join(profileInfo.worktree_base, worktreeDirName(profileInfo.repo_id, sessionId));
+    const dir = sessionWorktreePath(profileInfo.worktree_base, profileInfo.repo_id, record.id);
     mkdirSync(profileInfo.worktree_base, { recursive: true });
     await git(profileInfo.local_path, 'worktree', 'add', '-b', record.branch, dir);
     record.worktreePath = dir;
@@ -503,7 +514,7 @@ export async function restoreSession(
       );
     }
     if (branchExists) {
-      restoredPath = join(profileInfo.worktree_base, worktreeDirName(profileInfo.repo_id, sessionId));
+      restoredPath = sessionWorktreePath(profileInfo.worktree_base, profileInfo.repo_id, sessionId);
       mkdirSync(profileInfo.worktree_base, { recursive: true });
       await git(profileInfo.local_path, 'worktree', 'add', restoredPath, session.branch);
       try {

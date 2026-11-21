@@ -771,6 +771,7 @@ paths:
         "202": { description: New update accepted }
         "200": { description: Duplicate update already processing or replayed safely }
         "401": { description: Missing or invalid Telegram webhook secret }
+        "429": { description: Webhook rate limit reached; Telegram retries the update }
         "502": { description: Manager or Telegram delivery failed; retry the same update ID }
 
   /api/manager-chat/bridge/operators:
@@ -780,6 +781,7 @@ paths:
       responses:
         "200": { description: Bridge operator records }
         "403": { description: Owner access required }
+        "429": { description: Bridge operator rate limit reached }
     post:
       tags: [manager-chat]
       summary: Pair an exact Telegram user, chat, role, and profile scope
@@ -802,6 +804,7 @@ paths:
         "201": { description: Identity paired }
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { description: Owner access required }
+        "429": { description: Bridge operator rate limit reached }
         "409": { $ref: "#/components/responses/MutationConflict" }
 
   /api/manager-chat/bridge/operators/revoke:
@@ -823,6 +826,7 @@ paths:
       responses:
         "200": { description: Identity revoked }
         "403": { description: Owner access required }
+        "429": { description: Bridge operator rate limit reached }
         "404": { description: Active identity not found }
         "409": { $ref: "#/components/responses/MutationConflict" }
 
