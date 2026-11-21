@@ -80,6 +80,10 @@ type Deps = {
   recordCanonicalResult: (files: { bindingFile: string; receiptFile: string }) => Promise<NativeResultAcknowledgement>;
   now?: () => number;
   observationTimeoutMs?: number;
+  /** Deadline for `authorizeStart`, the full selection check made before a
+   * start is offered. It rebuilds the controller's evidence, provider calls
+   * included, so it is slower than an observation and has its own limit. */
+  selectionTimeoutMs?: number;
 };
 const MAX_JSON = 8 * 1024 * 1024;
 const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -148,11 +152,16 @@ export class NativeDispatchBroker {
   private readonly advancing = new Set<string>();
   private persistenceUncertain = false;
   private readonly timeout: number;
+  private readonly selectionTimeout: number;
 
   constructor(private readonly deps: Deps) {
     this.root = resolve(deps.root); this.now = deps.now ?? Date.now;
     this.timeout = deps.observationTimeoutMs ?? 5000;
     if (!Number.isInteger(this.timeout) || this.timeout < 1 || this.timeout > 60_000) throw Error('Invalid native observation timeout');
+    // A ready worker's reservation is good for 20 seconds, so a selection
+    // check that outlasts this would only issue a start no worker can use.
+    this.selectionTimeout = deps.selectionTimeoutMs ?? 15_000;
+    if (!Number.isInteger(this.selectionTimeout) || this.selectionTimeout < 1 || this.selectionTimeout > 60_000) throw Error('Invalid native selection timeout');
     mkdirSync(this.root, { recursive: true, mode: 0o700 });
     directory(this.root);
     // Persist directory entries up to the first parent where this account
@@ -313,8 +322,14 @@ export class NativeDispatchBroker {
       const refusal = this.grantRefusal(journal, grant);
       if (refusal) return { allowed: false, reason: refusal };
       if (!this.owns(journal.binding)) return { allowed: false, reason: 'claim_lost' };
+      // The grant is itself the proof that the full selection check passed
+      // moments ago: it is issued only after that check and lives ten seconds.
+      // What can still be withdrawn in that time is rechecked here (the
+      // controller, the worker's account and route, policy and the claim).
+      // Rebuilding the whole queue again took longer than the grant lived
+      // whenever the provider was slow, and every start then expired.
       let decision: NativeAuthorization;
-      try { decision = await this.deadline(signal => this.deps.authorizeStart(journal.binding, journal.start_grant!.reservation, signal)); }
+      try { decision = await this.deadline(signal => this.deps.authorizeContinuation(journal.binding, journal.start_grant!.reservation, signal)); }
       catch { return { allowed: false, reason: 'authority_unavailable' }; }
       if (decision?.allowed !== true) return { allowed: false, reason: this.denialReason(decision) };
       // Fresh permission cannot revive an expired/consumed grant or replace
@@ -400,11 +415,11 @@ export class NativeDispatchBroker {
 
   /** Abort only the network observation. The recorded worker operation may
    * still have happened; deadlines never cancel or re-offer the native run. */
-  private async deadline<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  private async deadline<T>(operation: (signal: AbortSignal) => Promise<T>, limit = this.timeout): Promise<T> {
     const controller = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([operation(controller.signal), new Promise<never>((_, reject) => {
-        timer = setTimeout(() => { controller.abort(); reject(Error('Native observation deadline exceeded')); }, this.timeout);
+        timer = setTimeout(() => { controller.abort(); reject(Error('Native observation deadline exceeded')); }, limit);
       })]);
     } finally { if (timer) clearTimeout(timer); }
   }
@@ -577,7 +592,7 @@ export class NativeDispatchBroker {
       || !Number.isFinite(Date.parse(reservation.expires_at))) return this.uncertain(journal, 'host_reservation_invalid');
     if (bindingHash(this.prepared(binding.run_id, binding.context_sha256)) !== journal.binding_sha256) return this.uncertain(journal, 'prepared_context_changed');
     let decision: NativeAuthorization;
-    try { decision = await this.deadline(signal => this.deps.authorizeStart(binding, reservation, signal)); }
+    try { decision = await this.deadline(signal => this.deps.authorizeStart(binding, reservation, signal), this.selectionTimeout); }
     catch { decision = { allowed: false, reason: 'authority_unavailable' }; }
     journal = this.read(binding.run_id);
     if (journal.phase === 'terminal') return view(journal);

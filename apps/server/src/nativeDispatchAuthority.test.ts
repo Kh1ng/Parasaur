@@ -16,7 +16,7 @@ function fixture() {
   const save=()=>{writeFileSync(loopFile,JSON.stringify(loop));writeFileSync(policyFile,JSON.stringify(policy));}; save();
   writeFileSync(join(root,'systemctl'),`#!${process.execPath}\nconst s=JSON.parse(require('node:fs').readFileSync(${JSON.stringify(loopFile)},'utf8'));if(s.hold)setInterval(()=>{},1000);else console.log('LoadState='+s.load+'\\nActiveState='+s.state+'\\nMainPID='+s.pid+'\\nActiveEnterTimestamp='+s.started);`,{mode:0o700});
   const executable=join(root,'gah');
-  writeFileSync(executable,`#!${process.execPath}\nconst fs=require('node:fs');const p=JSON.parse(fs.readFileSync(${JSON.stringify(policyFile)},'utf8'));const work=process.argv.includes('--check-work'),route=process.argv.includes('--check-route');if(work===route)process.exit(91);if(p.restart){const s=JSON.parse(fs.readFileSync(${JSON.stringify(loopFile)},'utf8'));s.pid++;fs.writeFileSync(${JSON.stringify(loopFile)},JSON.stringify(s));}fs.writeFileSync(${JSON.stringify(entered)},work?'work':'route');if(p.hold)setInterval(()=>{},1000);else console.log(JSON.stringify(p));`,{mode:0o700});
+  writeFileSync(executable,`#!${process.execPath}\nconst fs=require('node:fs');const p=JSON.parse(fs.readFileSync(${JSON.stringify(policyFile)},'utf8'));const work=process.argv.includes('--check-work'),route=process.argv.includes('--check-route');if(work===route)process.exit(91);if(p.restart){const s=JSON.parse(fs.readFileSync(${JSON.stringify(loopFile)},'utf8'));s.pid++;fs.writeFileSync(${JSON.stringify(loopFile)},JSON.stringify(s));}fs.writeFileSync(${JSON.stringify(entered)},work?'work':'route');if(p.hold&&work)setInterval(()=>{},1000);else console.log(JSON.stringify(p));`,{mode:0o700});
   const saved={PATH:process.env.PATH,PARASAUR_BINARY:process.env.PARASAUR_BINARY};
   process.env.PATH=`${root}:${saved.PATH}`;process.env.PARASAUR_BINARY=executable;
   return {root,binding,reservation,entered,check:nativeDispatchAuthority(root,'https://central.invalid',join(root,'fixture.toml')),
@@ -71,8 +71,12 @@ test('authority bounds simultaneous evidence snapshots and abort does not leave 
     f.policy({hold:true});const pending=f.check(f.binding,f.reservation,controller.signal);
     const deadline=Date.now()+5000;
     while(!existsSync(f.entered)){assert.ok(Date.now()<deadline,'Fixture CLI started');await new Promise(resolve=>setTimeout(resolve,10));}
-    const other=nativeContinuationAuthority(f.root,'https://central.invalid');
-    assert.deepEqual(await other(f.binding,f.reservation),{allowed:false,reason:'authority_busy'});
+    // A second selection check waits for nothing and is refused; a route
+    // check builds no snapshot and is answered while the first still runs.
+    const second=nativeDispatchAuthority(f.root,'https://central.invalid',join(f.root,'fixture.toml'));
+    assert.deepEqual(await second(f.binding,f.reservation),{allowed:false,reason:'authority_busy'});
+    const route=nativeContinuationAuthority(f.root,'https://central.invalid',join(f.root,'fixture.toml'));
+    assert.deepEqual(await route(f.binding,f.reservation),{allowed:true});
     controller.abort();assert.deepEqual(await pending,{allowed:false,reason:'authority_unavailable'});
     f.policy({hold:false});assert.deepEqual(await f.check(f.binding,f.reservation),{allowed:true});
   } finally {controller.abort();f.close();}
