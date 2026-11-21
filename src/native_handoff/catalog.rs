@@ -183,13 +183,19 @@ mod tests {
             assert_eq!(planned.args.run_id, request.args.run_id);
         }
     }
-    #[test]
-    fn publication_retry_requires_the_acknowledged_issue_and_worker_even_without_model_capacity() {
+    /// A fix that finished and passed validation on the worker but never got
+    /// central's permission to publish, and the publication retry planned
+    /// for it. The worker offers no model: publishing needs none.
+    fn unpublished_fix() -> (
+        tempfile::TempDir,
+        GahConfig,
+        crate::ledger::LedgerEntry,
+        JobRequest,
+    ) {
         use crate::ledger::remote_dispatch::{
             ProcessTermination, ReceivedExecution, TerminationReason,
         };
-        let _guard = crate::test_support::ExecGuard::new();
-        let (_dir, mut cfg, _worker, mut request) = super::super::tests::fixture();
+        let (dir, mut cfg, _worker, mut request) = super::super::tests::fixture();
         let profile = cfg.profiles.get_mut("test").unwrap();
         profile.provider = "gitlab".into();
         profile.publishing.allow_pull_request_creation = true;
@@ -229,6 +235,12 @@ mod tests {
         worker.instances.clear();
         let planned = crate::dispatch::plan_native(&cfg, &request, &worker).unwrap();
         assert_eq!(planned.publication_source.as_ref(), Some(&source_id));
+        (dir, cfg, entry, planned)
+    }
+    #[test]
+    fn publication_retry_requires_the_acknowledged_issue_and_worker_even_without_model_capacity() {
+        let _guard = crate::test_support::ExecGuard::new();
+        let (_dir, cfg, entry, planned) = unpublished_fix();
         let profile = &cfg.profiles["test"];
         let verify = |req: &JobRequest, worker: &str, entries: &[crate::ledger::LedgerEntry]| {
             crate::dispatch::publication_recovery::verify(req, entries, profile, worker).is_ok()
@@ -251,6 +263,47 @@ mod tests {
         let mut newer = entry.clone();
         newer.mr_created = true;
         assert!(!verify(&planned, "worker", &[entry, newer]));
+    }
+    #[test]
+    fn a_publication_retry_refused_before_publishing_is_not_offered_again() {
+        let _guard = crate::test_support::ExecGuard::new();
+        let (_dir, cfg, entry, planned) = unpublished_fix();
+        let profile = &cfg.profiles["test"];
+        let offered_after = |earlier: &crate::ledger::LedgerEntry| {
+            crate::dispatch::publication_recovery::verify(
+                &planned,
+                &[entry.clone(), earlier.clone()],
+                profile,
+                "worker",
+            )
+            .is_ok()
+        };
+        // An earlier publication retry of the same fix, as its job records it.
+        let mut retry = entry.clone();
+        retry.session_id = Some(uuid::Uuid::new_v4().to_string());
+        retry.dispatch_reason = Some("recover_publication".into());
+        retry.commit_created = false;
+
+        // Other work merged first, so the preserved commit no longer sits on
+        // the target. Repeating the same retry cannot change that; it used to
+        // be offered until the issue was parked for an operator.
+        let mut target_moved = retry.clone();
+        target_moved.error_summary =
+            Some("Preserved implementation needs validation against a changed target".into());
+        assert!(!offered_after(&target_moved));
+
+        // Central's permission did not arrive this time either: nothing was
+        // decided about the commit, so it is tried again.
+        let mut held = retry.clone();
+        held.error_summary = Some("Native operation authority is held".into());
+        assert!(offered_after(&held));
+
+        // The branch was pushed and only the merge request is missing. What
+        // remains is safe to repeat and must not be redone from scratch.
+        let mut pushed = retry.clone();
+        pushed.push_attempted = true;
+        pushed.error_summary = Some("Provider request failed".into());
+        assert!(offered_after(&pushed));
     }
     #[test]
     fn unavailable_worker_accounts_cannot_borrow_a_coordinators_executable_or_other_model() {

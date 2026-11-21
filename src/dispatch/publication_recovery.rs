@@ -51,17 +51,23 @@ pub(super) fn source<'a>(
             return None;
         }
         if e.dispatch_reason.as_deref() == Some(REASON) {
-            continue;
+            // An earlier recovery of this implementation. One that only
+            // lacked central's permission, or that had begun publishing, is
+            // repeated: what remains is idempotent. One refused before it
+            // published anything cannot succeed by being repeated. Most
+            // often other work has merged and the preserved commit no longer
+            // sits on the target. Offering it again failed the same way
+            // until the issue was parked as a repeated setup failure with
+            // finished work behind it, so leave it to an ordinary retry.
+            if e.push_attempted || authority_held(e) {
+                continue;
+            }
+            return None;
         }
         if e.commit_created || e.push_attempted || e.mr_attempted {
             let checkpoint =
                 e.resumable_checkpoint_sha.is_some() && e.resumable_checkpoint_branch == e.branch;
-            let before_push = !e.push_attempted
-                && !e.mr_attempted
-                && e.failure_class.as_deref() == Some("harness_error")
-                && e.error_summary
-                    .as_deref()
-                    .is_some_and(|s| s.starts_with("Native operation authority is held"));
+            let before_push = !e.push_attempted && !e.mr_attempted && authority_held(e);
             return (e.provider == "gitlab"
                 && e.mode == args.mode
                 && e.remote_execution.is_some()
@@ -78,6 +84,14 @@ pub(super) fn source<'a>(
         }
     }
     None
+}
+
+/// The job finished but central's permission for its next step never arrived.
+fn authority_held(e: &LedgerEntry) -> bool {
+    e.failure_class.as_deref() == Some("harness_error")
+        && e.error_summary
+            .as_deref()
+            .is_some_and(|s| s.starts_with("Native operation authority is held"))
 }
 
 pub(super) fn plan(request: &mut JobRequest, e: &LedgerEntry, node: &str) -> Result<()> {
