@@ -40,6 +40,10 @@ pub(super) fn source<'a>(
     {
         return None;
     }
+    // What earlier recoveries of the implementation reached below did. The
+    // walk is newest first, so they are all seen before it.
+    let mut refused = false;
+    let mut pushed = false;
     for e in entries.iter().rev().filter(|e| {
         e.profile == args.profile
             && e.work_id == args.work_id
@@ -51,17 +55,32 @@ pub(super) fn source<'a>(
             return None;
         }
         if e.dispatch_reason.as_deref() == Some(REASON) {
+            // A recovery that only lacked central's permission decided
+            // nothing and is repeated. One that failed any other way before
+            // publishing is treated as refused and is not repeated. Most
+            // often other work has merged and the preserved commit no longer
+            // sits on the target, which no repetition can change. A passing
+            // provider error is treated the same on purpose, not told apart
+            // by its message: redoing the work once costs less than
+            // repeating a refusal until the issue is parked.
+            pushed |= e.push_attempted;
+            refused |= !e.push_attempted && !authority_held(e);
             continue;
         }
         if e.commit_created || e.push_attempted || e.mr_attempted {
+            // A refused recovery used to be offered again unchanged until
+            // the issue was parked as a repeated setup failure with finished
+            // work behind it. Leave the issue to an ordinary retry instead,
+            // unless a push was ever attempted, by the implementation itself
+            // or by one of its recoveries: the branch may then be on the
+            // remote without its merge request, what remains is safe to
+            // repeat, and redoing the work would orphan that branch.
+            if refused && !pushed && !e.push_attempted {
+                return None;
+            }
             let checkpoint =
                 e.resumable_checkpoint_sha.is_some() && e.resumable_checkpoint_branch == e.branch;
-            let before_push = !e.push_attempted
-                && !e.mr_attempted
-                && e.failure_class.as_deref() == Some("harness_error")
-                && e.error_summary
-                    .as_deref()
-                    .is_some_and(|s| s.starts_with("Native operation authority is held"));
+            let before_push = !e.push_attempted && !e.mr_attempted && authority_held(e);
             return (e.provider == "gitlab"
                 && e.mode == args.mode
                 && e.remote_execution.is_some()
@@ -78,6 +97,14 @@ pub(super) fn source<'a>(
         }
     }
     None
+}
+
+/// The job finished but central's permission for its next step never arrived.
+fn authority_held(e: &LedgerEntry) -> bool {
+    e.failure_class.as_deref() == Some("harness_error")
+        && e.error_summary
+            .as_deref()
+            .is_some_and(|s| s.starts_with("Native operation authority is held"))
 }
 
 pub(super) fn plan(request: &mut JobRequest, e: &LedgerEntry, node: &str) -> Result<()> {
