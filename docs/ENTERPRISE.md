@@ -19,3 +19,6 @@ Public core interfaces remain available for independent integrations. Existing l
 Keep enterprise source, deployment credentials, node credentials, and provider login files out of public changes and build artifacts. Git submodule access does not grant workspace membership, provider account permission, or a product entitlement.
 
 For Auth account creation, workspace owner bootstrap, invitations, and the hosted owner sign-off, use the [closed beta runbook](CLOSED_BETA.md).
+
+For hosted migrations and the live node-health acceptance check for #1605, use the
+[hosted deployment handoff](HOSTED_NODE_HEALTH.md).
