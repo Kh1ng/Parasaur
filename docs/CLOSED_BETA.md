@@ -121,6 +121,10 @@ An accepted invitation grants membership. The tester also needs a current entitl
 
 ## Local regression and owner sign-off
 
+For the two-account, remote-node, dispatched-job gate in issue #1606, use the
+[hosted pilot checklist](testing/closed-beta-pilot.md). The provisioning checks
+below do not establish that end-to-end gate.
+
 Install Docker Desktop, Supabase CLI, `psql`, and Node.js 18 or newer. Then run:
 
 ```sh
